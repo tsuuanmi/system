@@ -143,10 +143,18 @@ The **`agents` Worker source**: agent runtimes as Workers
     `LS`, `Glob`, `Grep` inside the run's workspace → `read`; `Write`, `Edit`,
     `MultiEdit`, `NotebookEdit` of a file inside it → `workspace-write`; `Bash`
     → `command`, the argv the command split on single spaces (the policy's
-    exact-argv rule, so a metacharacter is `forbid`), with no input field beyond
-    `command`, `description`, `timeout`, `run_in_background`; `WebFetch`,
-    `WebSearch` → `external-send`. Anything else, or a path outside the
-    workspace, is denied by the gate's own rule;
+    exact-argv rule); `WebFetch`, `WebSearch` → `external-send`. Anything
+    else is denied by the gate's own rule, without asking the policy, and so is:
+    - a path whose real location (every symlink followed, `..` resolved on
+      disk; for a file not yet there, its deepest existing ancestor's) is
+      outside the workspace's real path, or that cannot be resolved;
+    - an input field the tool's Claude Agent SDK type does not declare (Bash's
+      `dangerouslyDisableSandbox`, say), or a declared one of another type;
+    - a `Bash` argv word that is empty or holds a shell metacharacter
+      (`SHELL_METACHARACTER`, the policy's own set, from `approvals-core`).
+
+    A symlink created after the check is bounded by the runtime's own
+    confinement, not by the gate;
   - it judges the action with `ctx.approvals.check` under the studio policy
     (no trusted envelope names an agent run's project yet): `forbid` denies
     with the decision's reason; `auto` and `notify` allow. A rule's required
@@ -165,7 +173,10 @@ The **`agents` Worker source**: agent runtimes as Workers
     later call is denied, and the run fails as `config_error` naming the
     request, whatever the runtime reported (the workers seam has no waiting
     status). A later run of the same session that makes the same exact call
-    defers again on the same request while it is open, runs it once approved
+    finds that request and checks it in full (subject, ref naming the agent run
+    that opened it, version, action class, requester `worker` with that run and
+    this session; any difference denies, never asks again), then defers again
+    on the same request while it is open, runs it once approved
     (one approval, one call: the same call again asks anew), and is denied when
     it was rejected, expired, or withdrawn, with nothing new queued. A run with
     no session cannot wait, so an `ask` there is denied and nothing is queued;

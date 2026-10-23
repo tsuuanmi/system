@@ -199,18 +199,26 @@ flowchart LR
 ### How a call is classified
 
 By code, from the tool's name and input only, never by a model's judgment; a call the table does
-not cover is denied.
+not cover is denied. Each tool in the table takes only the input fields its Claude Agent SDK type
+declares (`MultiEdit`, `NotebookRead`, and `LS`, which the SDK no longer declares, their last
+published shapes), each of its declared type: an unknown field, or a known one of another type, is
+denied, its reason naming the field.
 
 | Tool | Action |
 |---|---|
-| `Read`, `NotebookRead`, `LS`, `Glob`, `Grep` | `read`, for a path inside the run's workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern that is absolute outside it, or climbs with `..`, is denied |
+| `Read`, `NotebookRead`, `LS`, `Glob`, `Grep` | `read`, for a path inside the run's workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal leading directory is outside it, or that climbs with `..`, is denied |
 | `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `workspace-write`, for a file inside the workspace; outside it is denied (and refused by the runtime) |
-| `Bash` | `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`, and a word with a shell metacharacter is `forbid`. An input field beyond `command`, `description`, `timeout`, and `run_in_background` is denied |
+| `Bash` | `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`. A word with a shell metacharacter (the policy's own set, `SHELL_METACHARACTER`), or an empty word (a doubled, leading, or trailing space), is denied by the gate before the policy is asked; the policy forbids the former too. Its input fields are `command`, `description`, `timeout`, and `run_in_background`: `dangerouslyDisableSandbox` is denied |
 | `WebFetch`, `WebSearch` | `external-send`, which always asks |
 | any other tool, or an input that is not an object | denied by the gate's own rule |
 
-Paths are judged lexically against the workspace; a home path (`~`) is never inside it. The
-runtime's pre-approvals still bind each tool to the workspace on disk.
+A path is inside the workspace when it is both as written and on disk: its real location, every
+symlink followed and `..` resolved on disk, is inside the workspace's real path. A path that does
+not exist yet (a write target) is placed by its deepest existing ancestor's real path, the rest
+appended, which must hold no `..`; a path that cannot be resolved (a dangling symlink, a loop, a
+permission error) is not inside, and a home path (`~`) never is. A symlink created after the
+check is [the runtime's confinement's to bound](#where-a-workers-gate-leaves-room). The runtime's
+pre-approvals still bind each tool to the workspace on disk.
 
 ### What each verdict does
 
@@ -243,7 +251,10 @@ ids, never the call's input.
   ends the headless query with the call kept in the session's transcript.
 - **Resume.** The same session continues in a later run (by its native handle), and the hook
   runs again on the deferred call. The gate finds the request opened for that exact call in
-  that session: while it is open, the call defers again on the same request, and nothing new is
+  that session, and checks it in full before using it: subject type `content`, ref
+  `agent-tool-call:<the agent run that opened it>:<tool>`, version the input's content id, the
+  action class, and requester `worker` with that agent run and this session. Any difference is a
+  deny, never a new request. While it is open, the call defers again on the same request, and nothing new is
   queued; approved, the call runs, once (the approval is then used, and the same call asks
   again); rejected, expired, or withdrawn, it is denied, and nothing new is queued. A different
   input is a different call, with a request of its own.
@@ -252,6 +263,12 @@ ids, never the call's input.
 
 ### Where a Worker's gate leaves room
 
+- **Symlinks after the check.** The gate resolves a path when the call comes. A symlink the
+  agent creates or changes between that check and the tool's own open (by a `Bash` command, say),
+  or one a recursive `Glob` or `Grep` walks into below the path it names, is not the gate's to
+  see. The runtime's own confinement bounds it, which the gate does not replace: the host read
+  confinement ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)) and the
+  SDK sandbox ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
 - **Project.** Every call is judged under the studio policy. A project policy only narrows it,
   so a project's stricter rule does not reach a Worker's tool calls until a trusted envelope
   (the run's `WorkerStart`) names the run's project.

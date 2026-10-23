@@ -2,7 +2,7 @@
 // runtime that asks the gate before each tool call as a gating runtime does: forbid denies, auto
 // allows, ask opens one request on the exact call and defers, a later run of the session makes an
 // approved call once, a rejected or expired one stays denied, and every other case fails closed.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,7 +19,7 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { ClaudeAgentRuntime, type QueryFn } from '@tsuuanmi/system-runtime-claude-agent-sdk'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
@@ -151,14 +151,20 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(await ctx.approvals.list()).toEqual([])
   })
 
-  it('denies a command with a shell metacharacter in a word, though commands ask: argv is never parsed by a shell', async () => {
-    const agent = new GatedAgent([[bash('ls; rm -rf .'), bash('cat $HOME/x'), bash('npm test | tee log')]])
+  it('denies a command with a shell metacharacter in a word, or an empty word, by its own rule before the policy is asked, though commands ask: argv is never parsed by a shell', async () => {
+    const metacharacters = ['ls; rm -rf .', 'cat $HOME/x', 'npm test | tee log', 'echo safe;id', 'echo $(id)', 'echo a\nid', 'echo a\rid']
+    const empty = ['echo  a', ' echo a', 'echo a ']
+    const agent = new GatedAgent([[...metacharacters, ...empty].map(bash)])
     const { ctx, run } = await boot(agent)
+    const check = vi.spyOn(ctx.get('approvals')!, 'check')
     await run()
-    for (const verdict of agent.verdicts[0]! as Array<{ decision: string; reason: string }>) {
-      expect(verdict).toMatchObject({ decision: 'deny', reason: expect.stringContaining('shell metacharacter') })
-      expect(decisionOf(ctx, verdict.reason)).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'forbid' } })
+    const verdicts = agent.verdicts[0]! as Array<{ decision: string; reason: string }>
+    expect(verdicts).toHaveLength(metacharacters.length + empty.length)
+    for (const [i, verdict] of verdicts.entries()) {
+      expect(verdict).toMatchObject({ decision: 'deny', reason: expect.stringContaining(i < metacharacters.length ? 'shell metacharacter' : 'is empty') })
+      expect(decisionOf(ctx, verdict.reason)).toMatchObject({ decisionType: 'gate', decider: { id: 'agent-workers.tool-gate' }, outcome: { option: 'deny' } })
     }
+    expect(check).not.toHaveBeenCalled()
     expect(await ctx.approvals.list()).toEqual([])
   })
 
@@ -243,6 +249,37 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(await ctx.approvals.list()).toEqual([])
   })
 
+  it('checks a stored request in full before its approval is used: one whose ref, session, or requester is not this call\'s is denied, and never asked again (INV-5)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')], [bash('npm test')], [bash('npm test')]])
+    const { ctx, run } = await boot(agent)
+    const first = await run()
+    const [opened] = await ctx.approvals.list()
+    const inputHash = contentId({ command: 'npm test' })
+    const verdict = await ctx.approvals.check({ class: 'command', command: ['npm', 'test'] })
+    const action = { class: 'command' as const, summary: 'Bash: npm test' }
+    const forged = [
+      { subject: { type: 'content' as const, ref: 'agent-tool-call:arun_other:Bash', version: inputHash }, requester: { component: 'worker' as const, runId: first.runId, sessionId: 'ses_dev' } },
+      { subject: opened!.subject, requester: { component: 'worker' as const, runId: first.runId, sessionId: 'ses_other' } },
+      { subject: opened!.subject, requester: { component: 'board' as const, runId: first.runId, sessionId: 'ses_dev' } },
+    ]
+    for (const [i, { subject, requester }] of forged.entries()) {
+      const request = await ctx.approvals.request({ subject, action, requester, verdict, command: ['npm', 'test'], classification: 'operator-shared' })
+      expect(await ctx.approvals.decide([{ requestId: request.requestId, subject, verdict: 'approved' }])).toMatchObject([{ state: 'approved' }])
+      // The gate's row for this exact call in this session now names the forged request.
+      ctx.store.transaction((tx) => {
+        tx.prepare('INSERT INTO agent_tool_requests (request_id, scope, tool, input_hash, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(request.requestId, 'session:ses_dev', 'Bash', inputHash, first.runId, new Date(Date.now() + (i + 1) * 60_000).toISOString())
+      })
+      const before = (await ctx.approvals.list()).length
+      const done = await run()
+      const denied = agent.verdicts[i + 1]![0] as { decision: string; reason: string }
+      expect(denied).toMatchObject({ decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} is for another call than this one (its ${['subject ref', 'requester session', 'requester component'][i]} differs)`) })
+      expect(decisionOf(ctx, denied.reason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
+      expect(done.status).toBe('completed')
+      expect(await ctx.approvals.list()).toHaveLength(before)
+    }
+  })
+
   it('denies an ask in a run with no session, by its own rule: no later run could make the call, so nothing is queued', async () => {
     const agent = new GatedAgent([[bash('npm test')]])
     const { ctx, run } = await boot(agent)
@@ -316,23 +353,105 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
 })
 
 describe('classify: a tool call as the action the policy judges', () => {
-  const ws = '/work/repo'
-  it('reads and writes inside the workspace only, lexically, and never by a home path', () => {
+  // A real tree: the workspace, a directory beside it, and symlinks from one into the other.
+  const tree = realpathSync(mkdtempSync(join(tmpdir(), 'system-gate-tree-')))
+  afterAll(() => rmSync(tree, { recursive: true, force: true }))
+  const ws = join(tree, 'repo')
+  const outside = join(tree, 'outside')
+  mkdirSync(join(ws, 'src'), { recursive: true })
+  mkdirSync(outside)
+  writeFileSync(join(ws, 'src', 'a.ts'), 'x')
+  writeFileSync(join(outside, 'secret'), 'x')
+  symlinkSync(join(outside, 'secret'), join(ws, 'link-file'))
+  symlinkSync(outside, join(ws, 'link-dir'))
+  symlinkSync(outside, join(ws, 'src', 'up'))
+  symlinkSync(join(outside, 'new'), join(ws, 'dangling'))
+  symlinkSync(join(ws, 'loop'), join(ws, 'loop'))
+  symlinkSync(join(ws, 'src'), join(ws, 'inner'))
+  symlinkSync(ws, join(tree, 'repo-link'))
+  const edit = (file_path: string) => ({ tool: 'Edit', input: { file_path, old_string: 'a', new_string: 'b' } })
+  const write = (file_path: string) => ({ tool: 'Write', input: { file_path, content: 'x' } })
+
+  it('reads and writes inside the workspace only, and never by a home path', () => {
     expect(classify({ tool: 'Read', input: { file_path: 'src/a.ts' } }, ws)).toMatchObject({ class: 'read' })
-    expect(classify({ tool: 'Read', input: { file_path: '/work/repo/src/a.ts' } }, ws)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'Read', input: { file_path: join(ws, 'src/a.ts') } }, ws)).toMatchObject({ class: 'read' })
     expect(classify({ tool: 'Grep', input: { pattern: 'x' } }, ws)).toMatchObject({ class: 'read' })
-    for (const path of ['../other/a', '/work/repo-other/a', '~/.ssh/id_rsa', '']) {
+    for (const path of ['../other/a', `${ws}-other/a`, '~/.ssh/id_rsa', '']) {
       expect(classify({ tool: 'Read', input: { file_path: path } }, ws)).toHaveProperty('refused')
       expect(classify({ tool: 'Edit', input: { file_path: path, old_string: 'a', new_string: 'b' } }, ws)).toHaveProperty('refused')
     }
     expect(classify({ tool: 'Glob', input: { pattern: '../**' } }, ws)).toHaveProperty('refused')
     expect(classify({ tool: 'Glob', input: { pattern: '/etc/**' } }, ws)).toHaveProperty('refused')
-    expect(classify({ tool: 'Glob', input: { pattern: '/work/repo/**/*.ts' } }, ws)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'Glob', input: { pattern: `${ws}/**/*.ts` } }, ws)).toMatchObject({ class: 'read' })
     expect(classify({ tool: 'NotebookEdit', input: { notebook_path: 'n.ipynb' } }, ws)).toMatchObject({ class: 'workspace-write' })
   })
 
-  it('splits a command on single spaces, exactly as the policy matches it, and refuses an input field it does not know', () => {
-    expect(classify(bash('npm  test'), ws)).toMatchObject({ class: 'command', command: ['npm', '', 'test'] })
+  it('follows every symlink: a path whose real location is outside the real workspace is refused, for a read and for a write', () => {
+    for (const path of ['link-file', join(ws, 'link-file'), 'link-dir/secret', 'src/up/secret']) {
+      expect(classify({ tool: 'Read', input: { file_path: path } }, ws), path).toMatchObject({ refused: expect.stringContaining('not inside the workspace') })
+      expect(classify(write(path), ws), path).toMatchObject({ refused: expect.stringContaining('not inside the workspace') })
+      expect(classify(edit(path), ws), path).toHaveProperty('refused')
+    }
+    expect(classify({ tool: 'LS', input: { path: 'link-dir' } }, ws)).toHaveProperty('refused')
+    expect(classify({ tool: 'Grep', input: { pattern: 'x', path: 'link-dir' } }, ws)).toHaveProperty('refused')
+    expect(classify({ tool: 'Glob', input: { pattern: 'link-dir/**' } }, ws)).toHaveProperty('refused')
+    expect(classify({ tool: 'Glob', input: { pattern: '**', path: 'link-dir' } }, ws)).toHaveProperty('refused')
+    // A symlink that stays inside is inside.
+    expect(classify({ tool: 'Read', input: { file_path: 'inner/a.ts' } }, ws)).toMatchObject({ class: 'read' })
+  })
+
+  it('places a file that does not exist yet by its deepest existing ancestor: a new file under a symlinked directory pointing outside is refused, a new file inside is allowed', () => {
+    for (const path of ['link-dir/new.txt', 'link-dir/deeper/new.txt', 'dangling', 'loop/x', 'loop']) {
+      expect(classify(write(path), ws), path).toMatchObject({ refused: expect.stringContaining('not inside the workspace') })
+    }
+    // `..` is resolved on disk, never lexically: src/up/.. is the directory beside the workspace.
+    expect(classify(write('src/up/../new.txt'), ws)).toHaveProperty('refused')
+    // A `..` under a directory that does not exist cannot be placed, so it is refused.
+    expect(classify(write('nope/../src/new.ts'), ws)).toHaveProperty('refused')
+    for (const path of ['src/new.ts', 'new/deep/file.ts', join(ws, 'b.ts'), 'inner/new.ts']) {
+      expect(classify(write(path), ws), path).toMatchObject({ class: 'workspace-write' })
+    }
+    // A workspace named through a symlink is its real directory; one that does not exist holds nothing.
+    expect(classify(write('src/new.ts'), join(tree, 'repo-link'))).toMatchObject({ class: 'workspace-write' })
+    expect(classify(write('link-dir/new.txt'), join(tree, 'repo-link'))).toHaveProperty('refused')
+    expect(classify(write('a.ts'), join(tree, 'missing'))).toHaveProperty('refused')
+  })
+
+  it('refuses an input field a classified tool does not declare, or a declared one of another type, naming it', () => {
+    const valid: Array<[string, Record<string, unknown>]> = [
+      ['Read', { file_path: 'src/a.ts', offset: 1, limit: 10, pages: '1-2', allow_large: true }],
+      ['NotebookRead', { notebook_path: 'n.ipynb', cell_id: 'c1' }],
+      ['LS', { path: '.', ignore: ['node_modules'] }],
+      ['Glob', { pattern: '**/*.ts', path: 'src' }],
+      ['Grep', { 'pattern': 'x', 'path': 'src', 'glob': '*.ts', 'output_mode': 'content', '-B': 1, '-A': 1, '-C': 1, 'context': 1, '-n': true, '-i': true, '-o': false, 'type': 'ts', 'head_limit': 5, 'offset': 0, 'multiline': false }],
+      ['Write', { file_path: 'b.ts', content: 'x' }],
+      ['Edit', { file_path: 'b.ts', old_string: 'a', new_string: 'b', replace_all: true }],
+      ['MultiEdit', { file_path: 'b.ts', edits: [{ old_string: 'a', new_string: 'b', replace_all: false }] }],
+      ['NotebookEdit', { notebook_path: 'n.ipynb', cell_id: 'c1', new_source: 'x', cell_type: 'code', edit_mode: 'replace' }],
+      ['Bash', { command: 'npm test', description: 'run', timeout: 1000, run_in_background: false }],
+      ['WebFetch', { url: 'https://example.com', prompt: 'read it', offset: 0 }],
+      ['WebSearch', { query: 'x', allowed_domains: ['example.com'], blocked_domains: [] }],
+    ]
+    const wrong: Record<string, [string, unknown]> = {
+      Read: ['offset', '1'], NotebookRead: ['cell_id', 1], LS: ['ignore', 'node_modules'], Glob: ['path', 1], Grep: ['-i', 'yes'], Write: ['content', 1],
+      Edit: ['replace_all', 'true'], MultiEdit: ['edits', [{ old_string: 'a', new_string: 'b', extra: 1 }]], NotebookEdit: ['new_source', 1],
+      Bash: ['timeout', '1000'], WebFetch: ['prompt', 1], WebSearch: ['allowed_domains', 'example.com'],
+    }
+    for (const [tool, input] of valid) {
+      expect(classify({ tool, input }, ws), tool).not.toHaveProperty('refused')
+      expect(classify({ tool, input: { ...input, extra: 1 } }, ws), tool).toEqual({ refused: `${tool} carries "extra", a field the gate does not classify` })
+      const [field, value] = wrong[tool]!
+      expect(classify({ tool, input: { ...input, [field]: value } }, ws), tool).toMatchObject({ refused: expect.stringContaining(`${tool} carries ${JSON.stringify(field)} that is not a `) })
+    }
+    expect(classify({ tool: 'Bash', input: { command: 'npm test', dangerouslyDisableSandbox: true } }, ws)).toEqual({ refused: 'Bash carries "dangerouslyDisableSandbox", a field the gate does not classify' })
+    expect(classify({ tool: 'Read', input: JSON.parse('{"file_path": "src/a.ts", "__proto__": {"x": 1}}') as Record<string, unknown> }, ws)).toHaveProperty('refused')
+  })
+
+  it('splits a command on single spaces, exactly as the policy matches it, and refuses an empty word, a shell metacharacter, and an input field it does not know', () => {
+    expect(classify(bash('npm run build'), ws)).toMatchObject({ class: 'command', command: ['npm', 'run', 'build'] })
+    for (const command of ['npm  test', ' npm test', 'npm test ', 'echo safe;id', 'echo $(id)', 'echo a\nid', 'ls ~', 'echo `id`']) {
+      expect(classify(bash(command), ws), command).toHaveProperty('refused')
+    }
     expect(classify({ tool: 'Bash', input: { command: 'npm test', timeout: 1000, description: 'run', run_in_background: false } }, ws)).toMatchObject({ command: ['npm', 'test'] })
     expect(classify({ tool: 'Bash', input: { command: 'npm test', dangerouslyDisableSandbox: true } }, ws)).toHaveProperty('refused')
     expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toHaveProperty('refused')
@@ -397,7 +516,7 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(await ctx.approvals.list()).toEqual([])
   })
 
-  it('passes each Bash command through the gate by its exact argv: a shell metacharacter is forbidden, a plain command waits for the operator; the sandbox only bounds where it acts (ADR-0038)', async () => {
+  it('passes each Bash command through the gate by its exact argv: a shell metacharacter is denied, a plain command waits for the operator; the sandbox only bounds where it acts (ADR-0038)', async () => {
     const outputs: Array<Record<string, unknown>> = []
     const optionsSeen: Array<Record<string, unknown>> = []
     const calls = [['Bash', { command: 'npm test && curl https://example.com' }], ['Bash', { command: 'npm test', description: 'run the tests' }], ['Read', { file_path: 'src/a.ts' }]] as const
@@ -407,7 +526,7 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(optionsSeen[0]).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: [WORKSPACE] }, network: { allowedDomains: [] } } })
     const decision = (output: Record<string, unknown>) => (output.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string }).permissionDecision
     expect(outputs.map(decision)).toEqual(['deny', 'defer'])
-    expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'forbid' } })
+    expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
   })

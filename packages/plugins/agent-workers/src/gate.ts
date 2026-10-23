@@ -8,10 +8,11 @@
  * run of the same session runs once the operator approved it.
  * @module @tsuuanmi/system-agent-workers/gate
  */
-import { resolve, sep } from 'node:path'
+import { lstatSync, realpathSync } from 'node:fs'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCall, ToolGate, ToolVerdict } from '@tsuuanmi/system-agent-runtime-core'
-import type { ActionClass, ApprovalRequest, Approvals, ArtifactRef, AutonomyVerdict, Check } from '@tsuuanmi/system-approvals-core'
+import { type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { contentId } from '@tsuuanmi/system-libs'
@@ -38,36 +39,134 @@ const READS: Record<string, { field: string; required: boolean }> = {
 const WRITES: Record<string, string> = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' }
 /** Tools that send data out of this machine, and the input field the operator is shown. */
 const SENDS: Record<string, string> = { WebFetch: 'url', WebSearch: 'query' }
-/** The tool that runs a command, and the input fields it may carry; any other field is refused. */
+/** The tool that runs a command. */
 const COMMAND = 'Bash'
-const COMMAND_FIELDS = new Set(['command', 'description', 'timeout', 'run_in_background'])
+
+/** The type an input field must have: `edits` is `MultiEdit`'s list of `{ old_string, new_string, replace_all? }`. */
+type FieldType = 'string' | 'number' | 'boolean' | 'strings' | 'edits'
+/**
+ * Every input field each classified tool may carry, and its type, from the Claude Agent SDK's tool
+ * input types (`sdk-tools.d.ts`; `MultiEdit`, `NotebookRead`, and `LS`, which it no longer
+ * declares, from their last published shapes). A field not listed (Bash's
+ * `dangerouslyDisableSandbox`, say, which would run it outside its sandbox), or a listed one of
+ * another type, refuses the call: the gate classifies only an input it knows whole.
+ */
+const FIELDS: Record<string, Record<string, FieldType>> = {
+  Read: { file_path: 'string', offset: 'number', limit: 'number', pages: 'string', allow_large: 'boolean' },
+  NotebookRead: { notebook_path: 'string', cell_id: 'string' },
+  LS: { path: 'string', ignore: 'strings' },
+  Glob: { pattern: 'string', path: 'string' },
+  Grep: {
+    'pattern': 'string', 'path': 'string', 'glob': 'string', 'output_mode': 'string', '-B': 'number', '-A': 'number', '-C': 'number', 'context': 'number',
+    '-n': 'boolean', '-i': 'boolean', '-o': 'boolean', 'type': 'string', 'head_limit': 'number', 'offset': 'number', 'multiline': 'boolean',
+  },
+  Write: { file_path: 'string', content: 'string' },
+  Edit: { file_path: 'string', old_string: 'string', new_string: 'string', replace_all: 'boolean' },
+  MultiEdit: { file_path: 'string', edits: 'edits' },
+  NotebookEdit: { notebook_path: 'string', cell_id: 'string', new_source: 'string', cell_type: 'string', edit_mode: 'string' },
+  Bash: { command: 'string', description: 'string', timeout: 'number', run_in_background: 'boolean' },
+  WebFetch: { url: 'string', prompt: 'string', offset: 'number' },
+  WebSearch: { query: 'string', allowed_domains: 'strings', blocked_domains: 'strings' },
+}
+const EDIT_FIELDS: Record<string, FieldType> = { old_string: 'string', new_string: 'string', replace_all: 'boolean' }
 
 const SUMMARY_MAX = 500
 const clamp = (text: string): string => (text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1)}…` : text)
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
-/** Whether `path` (relative to the workspace, or absolute) names the workspace or a path inside it, lexically. */
+/** Whether `value` has type `type`. */
+function typed(value: unknown, type: FieldType): boolean {
+  switch (type) {
+    case 'string': return typeof value === 'string'
+    case 'number': return typeof value === 'number' && Number.isFinite(value)
+    case 'boolean': return typeof value === 'boolean'
+    case 'strings': return Array.isArray(value) && value.every((v) => typeof v === 'string')
+    case 'edits': return Array.isArray(value) && value.every((edit) => isObject(edit) && unknownField(edit, EDIT_FIELDS) === undefined)
+  }
+}
+
+/** The first field of `input` that `fields` does not list, or lists with another type, and why; undefined when there is none. */
+function unknownField(input: Record<string, unknown>, fields: Record<string, FieldType>): string | undefined {
+  for (const [key, value] of Object.entries(input)) {
+    if (!Object.hasOwn(fields, key)) return `carries ${JSON.stringify(key.slice(0, 100))}, a field the gate does not classify`
+    if (!typed(value, fields[key]!)) return `carries ${JSON.stringify(key)} that is not a ${fields[key] === 'strings' ? 'list of strings' : fields[key] === 'edits' ? 'list of edits' : fields[key]}`
+  }
+  return undefined
+}
+
+const inside = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
+const code = (error: unknown): unknown => (error as NodeJS.ErrnoException | undefined)?.code
+
+/**
+ * Where `path` (absolute) is on disk, every symlink followed, `..` resolved physically: an existing
+ * path's real path; for one that does not exist yet (a write target), its deepest existing
+ * ancestor's real path and the rest appended, which must hold no `..`. Undefined when it cannot be
+ * resolved (a dangling symlink, a loop, a permission error, a `..` in the rest): such a path is
+ * outside every workspace.
+ */
+function realLocation(path: string): string | undefined {
+  try {
+    return realpathSync.native(path)
+  } catch (error) {
+    if (code(error) !== 'ENOENT') return undefined
+  }
+  const segments = path.split(sep).filter((s) => s !== '' && s !== '.')
+  for (let i = segments.length; i >= 0; i -= 1) {
+    const ancestor = sep + segments.slice(0, i).join(sep)
+    try {
+      lstatSync(ancestor)
+    } catch (error) {
+      if (code(error) === 'ENOENT') continue
+      return undefined
+    }
+    const rest = segments.slice(i)
+    if (rest.includes('..')) return undefined
+    try {
+      // The deepest entry that exists: a symlink there that does not resolve (dangling) refuses.
+      return join(realpathSync.native(ancestor), ...rest)
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+/**
+ * Whether `path` (relative to the workspace, or absolute) names the workspace or a path inside it,
+ * both as written (lexically) and on disk: its real location (every symlink followed) is inside
+ * the workspace's real path. A path that cannot be resolved is not inside. A symlink created after
+ * this check is bounded by the runtime's own confinement, which the gate does not replace.
+ */
 function within(workspace: string, path: string): boolean {
-  if (path === '' || path.startsWith('~')) return false
+  if (path === '' || path.startsWith('~') || path.includes('\0')) return false
   const root = resolve(workspace)
-  const full = resolve(root, path)
-  return full === root || full.startsWith(root.endsWith(sep) ? root : root + sep)
+  if (!inside(root, resolve(root, path))) return false
+  let realRoot: string
+  try {
+    realRoot = realpathSync.native(root)
+  } catch {
+    return false
+  }
+  const real = realLocation(isAbsolute(path) ? path : `${root}${sep}${path}`)
+  return real !== undefined && inside(realRoot, real)
 }
 
 const ANSWER = 'Approved: the next run of this session makes exactly this call. Rejected, or unanswered when the request expires: the call is denied.'
 
 /**
  * Classify one tool call, conservatively; `{ refused }` for a call the gate does not classify,
- * which is denied without asking anyone:
+ * which is denied without asking anyone. Every classified tool's input may carry only the fields
+ * its SDK type declares, each of its type (an unknown field, or a wrong type, is refused), and a
+ * path is inside the workspace only where it really is, every symlink followed:
  * - `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`: `read`, when the path they name is inside the
- *   workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern that is absolute
- *   outside the workspace, or climbs with `..`, is refused;
+ *   workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal
+ *   leading directory is outside it, or that climbs with `..`, is refused;
  * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`: `workspace-write`, for a file inside the
  *   workspace; outside it is refused (the runtime refuses it too);
  * - `Bash`: `command`, its argv the command split on single spaces, exactly as the policy's
- *   exact-argv rule matches it (a word with a shell metacharacter is the policy's `forbid`);
- *   an input field beyond `command`, `description`, `timeout`, and `run_in_background` (one that
- *   would run it outside its sandbox, say) is refused;
+ *   exact-argv rule matches it; an empty word (a doubled, leading, or trailing space) or a word
+ *   with a shell metacharacter is refused here, before the policy is asked (which forbids the
+ *   latter too);
  * - `WebFetch`, `WebSearch`: `external-send`;
  * - any other tool, or an input that is not an object: refused.
  */
@@ -75,11 +174,18 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
   const { tool } = call
   const input = call.input
   if (!isObject(input)) return { refused: `the input of ${tool} is not an object` }
-  const read = READS[tool]
+  const fields = Object.hasOwn(FIELDS, tool) ? FIELDS[tool] : undefined
+  if (!fields) return { refused: `${tool} is not a tool the gate classifies` }
+  const unknown = unknownField(input, fields)
+  if (unknown) return { refused: `${tool} ${unknown}` }
+  const read = Object.hasOwn(READS, tool) ? READS[tool] : undefined
   if (read) {
     if (tool === 'Glob') {
       const pattern = input.pattern
-      if (typeof pattern !== 'string' || pattern.split(/[\\/]/).includes('..') || (pattern.startsWith('/') && !within(workspace, pattern.split(/[*?[{]/)[0]!))) {
+      const base = typeof input.path === 'string' ? input.path : undefined
+      const literal = typeof pattern === 'string' ? pattern.split(/[*?[{]/)[0]! : ''
+      const dir = pattern === undefined || isAbsolute(literal) ? literal : base === undefined ? literal || '.' : `${base}${sep}${literal}`
+      if (typeof pattern !== 'string' || pattern.split(/[\\/]/).includes('..') || !within(workspace, dir)) {
         return { refused: `the Glob pattern ${JSON.stringify(pattern)} reaches outside the workspace` }
       }
     }
@@ -88,7 +194,7 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
     if (typeof where !== 'string' || !within(workspace, where)) return { refused: `${tool} reads ${typeof where === 'string' ? where : 'no path'}, which is not inside the workspace` }
     return { class: 'read', summary: clamp(`${tool} ${where}`), consequences: `Reads ${where} inside the run's workspace. ${ANSWER}` }
   }
-  const write = WRITES[tool]
+  const write = Object.hasOwn(WRITES, tool) ? WRITES[tool] : undefined
   if (write) {
     const file = input[write]
     if (typeof file !== 'string' || !within(workspace, file)) return { refused: `${tool} changes ${typeof file === 'string' ? file : 'no file'}, which is not inside the workspace` }
@@ -97,11 +203,15 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
   if (tool === COMMAND) {
     const command = input.command
     if (typeof command !== 'string' || command === '') return { refused: `${tool} names no command` }
-    const extra = Object.keys(input).filter((key) => !COMMAND_FIELDS.has(key))
-    if (extra.length) return { refused: `${tool} carries ${extra.join(', ')}, which the gate does not classify` }
-    return { class: 'command', command: command.split(' '), summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
+    const argv = command.split(' ')
+    // Defence in depth: the policy forbids a metacharacter word too, but the gate never asks it about one.
+    const empty = argv.indexOf('')
+    if (empty >= 0) return { refused: `${tool}: argv word ${empty + 1} is empty (a doubled, leading, or trailing space); a command is words split on single spaces` }
+    const unsafe = argv.findIndex((word) => SHELL_METACHARACTER.test(word))
+    if (unsafe >= 0) return { refused: `${tool}: argv word ${unsafe + 1} holds a shell metacharacter; a command is never parsed by a shell` }
+    return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
   }
-  const send = SENDS[tool]
+  const send = Object.hasOwn(SENDS, tool) ? SENDS[tool] : undefined
   if (send) {
     const what = input[send]
     if (typeof what !== 'string' || what === '') return { refused: `${tool} names no ${send}` }
@@ -136,7 +246,7 @@ export interface RunGate {
   deferral(): Deferral | undefined
 }
 
-interface RequestRow { request_id: string; used_at: string | null }
+interface RequestRow { request_id: string; run_id: string; used_at: string | null }
 
 /**
  * The table of requests a gate opened, one row per request: the session and exact call it is for
@@ -150,6 +260,22 @@ export const GATE_MIGRATION = {
     created_at TEXT NOT NULL, used_at TEXT, used_by TEXT
   );
   CREATE INDEX agent_tool_requests_call ON agent_tool_requests (scope, tool, input_hash, created_at);`,
+}
+
+/**
+ * The first part of a stored request that is not the call the gate's row says it is for: its
+ * subject (`content`, the ref naming the run that opened it and the tool, the input's content id),
+ * its action class, and its requester (`worker`, that run, this session). Undefined when it is.
+ */
+function mismatch(request: ApprovalRequest, call: { ref: string; version: string; actionClass: ActionClass; runId: string; sessionId: string }): string | undefined {
+  if (request.subject.type !== 'content') return 'subject type'
+  if (request.subject.ref !== call.ref) return 'subject ref'
+  if (request.subject.version !== call.version) return 'subject version'
+  if (request.action.class !== call.actionClass) return 'action class'
+  if (request.requester.component !== 'worker') return 'requester component'
+  if (request.requester.runId !== call.runId) return 'requester run'
+  if (request.requester.sessionId !== call.sessionId) return 'requester session'
+  return undefined
 }
 
 const RULE = { type: 'rule', id: 'agent-workers.tool-gate', version: '1' } as const
@@ -221,13 +347,14 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     const scope = `session:${run.sessionId}`
     const inputHash = contentId(call.input)
     const db = ctx.store.db
-    const prior = db.prepare('SELECT request_id, used_at FROM agent_tool_requests WHERE scope = ? AND tool = ? AND input_hash = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+    const prior = db.prepare('SELECT request_id, run_id, used_at FROM agent_tool_requests WHERE scope = ? AND tool = ? AND input_hash = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
       .get(scope, call.tool, inputHash) as RequestRow | undefined
     if (prior) {
       const request: ApprovalRequest | undefined = await approvals.get(prior.request_id)
       if (!request) return refuse(call, `approval request ${prior.request_id} for this call cannot be read`, [verdict.decision])
-      // INV-5: the request is for exactly this call.
-      if (request.subject.version !== inputHash || request.action.class !== action.class) return refuse(call, `approval request ${request.requestId} is for another call than this one`, [verdict.decision])
+      // INV-5: the request is for exactly this call, asked by this session's Worker, as the row records it.
+      const other = mismatch(request, { ref: `agent-tool-call:${prior.run_id}:${call.tool}`, version: inputHash, actionClass: action.class, runId: prior.run_id, sessionId: run.sessionId })
+      if (other) return refuse(call, `approval request ${request.requestId} is for another call than this one (its ${other} differs), so its verdict is not used`, [verdict.decision])
       if (request.state === 'rejected') {
         const how = request.resolution?.cause === 'verdict' ? 'rejected by the operator' : request.resolution?.cause === 'expired' ? 'unanswered when it expired' : 'withdrawn'
         event('denied', call, request.resolution?.decision, { actionClass: action.class, requestId: request.requestId })
