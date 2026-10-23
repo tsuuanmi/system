@@ -214,6 +214,22 @@ export interface WorkerSource {
   cancel?(executionId: string): boolean
 }
 
+/**
+ * How a source answered the router's last read of its Workers (a route or `list`): it `described`
+ * them, was `silent` (no answer within the router's bound), or `failed` (its `describe` threw). A
+ * route at that moment saw none of a silent source's Workers.
+ */
+export interface WorkerSourceRead {
+  source: string
+  state: 'described' | 'silent' | 'failed'
+  /** When the read started (ISO 8601). */
+  at: string
+  /** The Workers it described; 0 unless `described`. */
+  workers: number
+  /** Why it is not `described`: the bound it missed, or its error's message, bounded. */
+  detail?: string
+}
+
 /** The admission checks, in the order the router applies them. */
 export type AdmissionCheck = 'restricted' | 'excluded' | 'diversity' | 'capability' | 'cooldown' | 'input' | 'locality' | 'state' | 'tier'
 
@@ -298,6 +314,13 @@ export abstract class Workers extends Service {
 
   /** Every registered Worker as its source describes it now, ordered by id. */
   abstract list(): Promise<CapabilityDescriptor[]>
+
+  /**
+   * Each registered source's last read, by a route or `list`, ordered by name; a source not read
+   * since it registered is absent. Optional: a provider that keeps none leaves a caller unable to
+   * tell a silent source from one with no Workers.
+   */
+  abstract sources?(): WorkerSourceRead[]
 
   /** A registered source by name. */
   abstract source(name: string): WorkerSource | undefined

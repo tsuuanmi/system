@@ -107,6 +107,41 @@ describe('ctx.workers: configured preferences', () => {
     }
   })
 
+  it('fails a read with the error of a source whose describe throws, as before, and keeps it as that source\'s last read', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      ctx.workers.register(source('broken', async () => {
+        throw new Error('the vault is locked')
+      }))
+      ctx.workers.register(source('live', [worker('w:a')]))
+      await expect(ctx.workers.list()).rejects.toThrow('the vault is locked')
+      await expect(ctx.workers.route(requirement())).rejects.toThrow('the vault is locked')
+      expect(ctx.workers.sources!().map((s) => [s.source, s.state, s.detail])).toEqual([['broken', 'failed', 'failed to describe its Workers: the vault is locked'], ['live', 'described', undefined]])
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('keeps the read that started last as a source\'s last read, whichever ends first', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      // The first read is slow and silent; the second, started later, answers at once.
+      let calls = 0
+      ctx.workers.register(source('slow', async () => {
+        calls++
+        if (calls === 1) await new Promise((resolve) => setTimeout(resolve, 5500))
+        return [worker('w:s')]
+      }))
+      const first = ctx.workers.list()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:s'])
+      expect(await first).toEqual([])
+      expect(ctx.workers.sources!()).toEqual([{ source: 'slow', state: 'described', at: expect.any(String), workers: 1 }])
+    } finally {
+      await dispose()
+    }
+  }, 20_000)
+
   it('refuses a source that describes an invalid or duplicate Worker', async () => {
     const { ctx, dispose } = await boot()
     try {

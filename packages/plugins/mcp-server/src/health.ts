@@ -31,6 +31,11 @@ export interface HealthSources {
   /** Groups of accounts signed in as one person (REQ-ACC-7): their Workers take no work. */
   duplicateAccounts?: () => Promise<string[][]>
   workers?: () => Promise<Array<{ worker: string; state: string }>>
+  /**
+   * How each Worker source answered its last read (`ctx.workers.sources()`), read after `workers`:
+   * a source that was silent or failed is not counted there, and a route then saw none of its Workers.
+   */
+  workerSources?: () => Array<{ source: string; state: 'described' | 'silent' | 'failed'; at: string; detail?: string }>
   /** Events of `type` committed since `sinceIso`. */
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
   /** Plugins of the composition that failed to activate or wait for a service no one supplies. */
@@ -161,13 +166,28 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   const listWorkers = sources.workers
   if (listWorkers) {
     checks.push(await guarded('workers', async () => {
-      const workers = await listWorkers()
+      // The read fails when a source's describe throws; the sources' last reads still name it.
+      const listed = await listWorkers().then((workers) => ({ workers }), (error: unknown) => ({ error }))
+      // A source that was silent or failed in its last read is counted nowhere, so a route then saw
+      // none of its Workers: never ok while one is (INV-2).
+      const unheard = (sources.workerSources?.() ?? []).filter((s) => s.state !== 'described')
+      const named = unheard.map((s) => `source ${s.source} ${s.detail ?? s.state} (at ${s.at})`).join('; ')
+      const runbook = '(docs/operations/runbooks.md#a-worker-source-does-not-answer)'
+      if ('error' in listed) {
+        if (!unheard.length) throw listed.error
+        return { name: 'workers', state: 'down', detail: `the Workers cannot be read, so no route is taken: ${named} ${runbook}` }
+      }
+      const unheardNote = unheard.length ? `${named}: routing sees none of ${unheard.length === 1 ? 'its' : 'their'} Workers until it answers ${runbook}` : ''
+      const { workers } = listed
       const waiting = workers.filter((w) => !AVAILABLE.has(w.state))
-      return workers.length && waiting.length === workers.length
-        ? { name: 'workers', state: 'down', detail: `no Worker can take work: ${waiting.map((w) => `${w.worker} (${w.state})`).join(', ')}` }
-        : waiting.length
-          ? { name: 'workers', state: 'degraded', detail: `cannot take work: ${waiting.map((w) => `${w.worker} (${w.state})`).join(', ')} (system explain shows why)` }
-          : ok('workers', `${workers.length} available`)
+      const cannot = waiting.map((w) => `${w.worker} (${w.state})`).join(', ')
+      if (waiting.length === workers.length && (workers.length || unheard.length)) {
+        return { name: 'workers', state: 'down', detail: `no Worker can take work: ${[cannot, unheardNote].filter(Boolean).join('; ')}` }
+      }
+      if (waiting.length || unheard.length) {
+        return { name: 'workers', state: 'degraded', detail: [...(waiting.length ? [`cannot take work: ${cannot} (system explain shows why)`] : [`${workers.length} available`]), ...(unheard.length ? [unheardNote] : [])].join('; ') }
+      }
+      return ok('workers', `${workers.length} available`)
     }))
   }
 

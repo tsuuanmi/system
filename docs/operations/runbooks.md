@@ -997,6 +997,24 @@ Rotate a scope's token when it may have leaked
    - an open web UI tab holds the old operator token: open the new link from
      `system ui`.
 
+## A Worker source does not answer
+
+`system health` shows `workers` degraded or down, naming a Worker source, for example
+`7 available; source agents did not describe its Workers within 5 s (at …): routing sees none of
+its Workers until it answers`.
+
+- **What it means.** The router gives each Worker source (`turns`, `agents`, `models`) 5 s to say
+  which Workers it has and what they prove now
+  ([sources that do not answer](../design/routing.md#sources-that-do-not-answer)). A source that
+  took longer was left out of that read: a step routed then saw none of its Workers, and its
+  decision names the source (`system explain <runId>`, a candidate `source agents`). A source that
+  `failed to describe its Workers` fails every route until it answers: no step is routed, and
+  health is down.
+- **Read health again.** A source that was only slow answers in the next read, and health no
+  longer names it. A step refused while it did not answer is run again with `system continue
+  <runId> <nodeId>` or a new run.
+- **If it stays,** the daemon's log has the source's own warning.
+
 ## Why a step's answer was rejected
 
 An acceptance contract refuses an answer with a short reason (`system explain <runId>`, on the
