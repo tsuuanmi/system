@@ -42,12 +42,12 @@ What Base must deliver, and its exit criteria, are in
 
 ## Feedback loop (PROP-0011)
 
-What each milestone delivers is in [PROP-0011](0011-feedback-loop.md#milestones); its order
-against Base is one of its open questions.
+What each milestone delivers is in [PROP-0011](0011-feedback-loop.md#milestones). The operator
+started F1 on 2026-10-23, in parallel with the Base pilot (B8).
 
 | Milestone | State | Delivers | Depends on |
 |---|---|---|---|
-| **F1** Specification | not started | schemas for `objective-contract`, `hypothesis`, `experiment`, `evaluation`, `lesson`; `decision@1.7` (`verdict`); the `promotion` action class; seams `experiments` and `evaluations` with protocols and conformance suites; ADRs for the new guarantee seams and the two invariant candidates | — |
+| **F1** Specification | built: the five records as bodies of existing artifact kinds, with examples and schema tests ([record semantics](../reference/schemas.md#objective-contract)); `decision@1.7` with `registration` and `verdict`; `promotion` always asks ([approvals](../design/approvals.md#the-autonomy-policy)); the seam definitions [`experiments-core`](../../packages/experiments-core/README.md) and [`evaluations-core`](../../packages/evaluations-core/README.md) at contract 1.0, their protocols ([experiments](../design/experiments.md), [evaluations](../design/evaluations.md)), and their suites passed by fakes; the exact identity, the fingerprint, the schedule, and the verdict rule as pure functions pinned by version; [ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md) and [ADR-0045](../decisions/adr/0045-evaluation-and-promotion-integrity.md), proposed. Open: the operator's acceptance of both ADRs (INV-16 and INV-17 join the invariants then); no provider, bundle row, or MCP tool (F3, F4); how a trial's run is fixed to its arm's Workers (Q2, an ADR of F4 or F5); the statistics (F2) | schemas for `objective-contract`, `hypothesis`, `experiment`, `evaluation`, `lesson`; `decision@1.7` (`verdict`); the `promotion` action class; seams `experiments` and `evaluations` with protocols and conformance suites; ADRs for the new guarantee seams and the two invariant candidates | — |
 | **F2** Statistics | not started | the statistics library from the research run, in the dependency register | the research run |
 | **F3** Experiment registry | not started | `experiments`: exact identity, fingerprints, the four registry answers, retry predicates, lessons | F1 |
 | **F4** Offline evaluation runner | not started | `evaluations`: pinned and sealed paired trials as board tasks, cost from the resource ledger, the verdict rule | F1, F2, F3 |

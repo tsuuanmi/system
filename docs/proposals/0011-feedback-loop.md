@@ -6,7 +6,7 @@ created: 2026-10-23
 summary: A feedback loop (research, hypothesis, experiment, evaluation, lesson) recorded in the ledger of record, judged by a deterministic core evaluation engine under versioned objective contracts and provider-family independence, so `system` and its applications improve on evidence and never redo an experiment blindly; first loop is worker agnosticism on the `review` template.
 owners: [operator]
 evidence: [validation/self-build, run_27a329a23f9e7bb8]
-related: [PROP-0008, PROP-0010, ADR-0027, ADR-0036, ADR-0037]
+related: [PROP-0008, PROP-0010, ADR-0027, ADR-0036, ADR-0037, ADR-0044, ADR-0045]
 implementation: []
 ---
 
@@ -115,7 +115,9 @@ revision that `supersedes` the old one.
 
 ### Records
 
-Each record is a new artifact kind with a JSON Schema in `schemas/`, versioned by the
+Each record is a new kind of artifact, the body of an existing envelope kind
+([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)), with a JSON Schema in
+`schemas/`, versioned by the
 [schema rules](../reference/schemas.md#versioning). The verdict is not a new record: it is a
 `decision` of the existing schema with a new decision type, so it is explained, linked, and
 retained like every other decision ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
@@ -146,7 +148,7 @@ measurement only changes how efficient the loop is, so it is a capability.
 
 | Part | Class | Component or family | Seam |
 |---|---|---|---|
-| the five records and the `verdict` decision | core | ledger of record | `artifacts` (new kinds; no new seam) |
+| the five records and the `verdict` decision | core | ledger of record | `artifacts` (new body schemas; no new seam) |
 | experiment registry: an experiment's states, exact identity, the four answers, retry predicates, lessons and their applicability | core | work state machine | **`experiments`** (new) |
 | evaluation engine: runs a pinned protocol, seals partitions, schedules paired trials, sums cost, applies the verdict rule; decides no promotion | core | gate | **`evaluations`** (new) |
 | cost of every trial and of the work that produced the candidate | core | resource ledger and metering | `resources` (read only) |
@@ -161,7 +163,8 @@ measurement only changes how efficient the loop is, so it is a capability.
 Both new seams follow [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md) from their
 first provider: the schemas above with valid examples; an abstract `Service` in a `*-core`
 package (`experiments-core`, `evaluations-core`); a design document with a state diagram and a
-transition table; a conformance suite passed by a fake and by the store-backed provider. Both are
+transition table; a conformance suite passed by a fake and by the store-backed provider (F1 wrote
+them: [experiments](../design/experiments.md), [evaluations](../design/evaluations.md)). Both are
 guarantee seams, so they fail closed
 ([INV-2](../architecture/invariants.md#inv-2-fail-closed)): with the registry unavailable no
 experiment is pre-registered; with the engine unavailable no evaluation or verdict is recorded and
@@ -173,7 +176,8 @@ Adding two guarantee seams, the `verdict` decision type, the `promotion` action 
 joins the classes that always ask, [autonomy policy](../design/approvals.md#the-autonomy-policy)),
 and any change to the `workflow` contract the controller or the arms need, changes the core:
 each needs an ADR, as [ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)
-recorded Base's changes.
+recorded Base's changes. F1 proposes [ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)
+for the seams, the decision types, and the action class.
 
 #### Protocol sketch: an experiment
 
@@ -373,7 +377,8 @@ from those whose `invalidatedBy` predicates fired: the latter are history, shown
 ### Invariant candidates
 
 Two rules apply [INV-5](../architecture/invariants.md#inv-5-exact-subject-binding) to
-self-improvement. Each would need an ADR to join the invariants:
+self-improvement. Each would need an ADR to join the invariants
+([ADR-0045](../decisions/adr/0045-evaluation-and-promotion-integrity.md), proposed):
 
 - **Evaluation integrity.** An evaluation is valid only for its pinned candidate, baseline, suite,
   objective contract, and environment. It never authorizes another candidate, a changed objective,
@@ -559,7 +564,8 @@ migration.
    built)? Website turns and agent tokens must be comparable for the first experiment.
 7. **Deliberate replication.** Always refused as `EXACT_REPEAT` (proposed), or allowed as a cited
    replication on the operator's approval?
-8. **Order against Base.** Start F1 now, or after the pilot (B8)?
+8. **Order against Base.** Answered by the operator (2026-10-23): start F1 now, in parallel with
+   the Base pilot (B8).
 9. **Experiments on the board.** Proposed: one project per application, a milestone per
    experiment funded by a round that is its maximum budget. Is that the right mapping?
 10. **Promotion enforcement.** Should the plugin host refuse a move to `default` that no approved
@@ -573,4 +579,5 @@ Pending the operator's review. On acceptance, F1 writes the ADRs named above.
 
 ## Implementation
 
-Not started. Milestones F1 to F7 in the [roadmap](roadmap.md#feedback-loop-prop-0011).
+F1 (specification) is built; its state and what remains open are in the
+[roadmap](roadmap.md#feedback-loop-prop-0011), with F2 to F7.
