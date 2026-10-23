@@ -436,7 +436,7 @@ function checkDecision(name: string, plugin: { rows: string[]; mounted: boolean 
     question: `Does plugin ${name} run as its manifest declares, on seams its providers satisfy?`,
     inputs: previous ? [previous.decision] : [],
     candidates: [
-      { option: 'pass', selected: !failed, reasons: [failed ? `not pass: the check found ${findings.length} thing(s) wrong` : passed] },
+      { option: 'pass', selected: !failed, reasons: [failed ? `not pass: the check found ${findings.length} finding(s), each a reason under fail` : passed] },
       { option: 'fail', selected: failed, reasons: failed ? bounded(findings.map((f) => f.reason)) : [`not fail: ${passed}`] },
     ],
     decider: { type: 'rule', id: 'plugin-host.manifest-check', version: '1', hash },
