@@ -47,7 +47,7 @@ What exists:
    (ADR-0024's list, proven by `proveConfinement`), and its Bash runs in the SDK's sandbox inside,
    with writes confined to the workspace and no network.
 
-## Decision (proposed)
+## Decision
 
 Option 4.
 
