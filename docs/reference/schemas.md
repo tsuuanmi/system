@@ -140,6 +140,12 @@ guesses.
   references the `tier` decision artifact.
 - `egressPolicy` must come from a trusted envelope (INV-6). A requirement built
   from model text alone is invalid.
+- `work-requirement@1.1` adds the optional `scope`: the kind of work this is, for capability
+  offers scoped to it ([scoped offers](../design/routing.md#scoped-offers),
+  [ADR-0045](../decisions/adr/0045-read-only-agent-workers-as-review-members.md)). The only value
+  is `review-member`, a step of a review team's member, set by the workflow engine from the
+  admitted spec. A record carrying it below `@1.1` is refused. Readers accept 1.0 and 1.1. Example:
+  [`work-requirement.review-member.json`](../../schemas/examples/work-requirement.review-member.json).
 
 ### `workflow-node`
 
@@ -201,8 +207,8 @@ guesses.
 ### `capability-descriptor`
 
 - `provider` is informational. Routing must not branch on it (INV-11). Only
-  `capabilities`, `tier`, `quotaClass`, `locality`, `state`, `family`,
-  `maxInputChars`, and `load` are routing inputs.
+  `capabilities` (with each offer's `scope`), `tier`, `quotaClass`, `locality`, `state`,
+  `family`, `maxInputChars`, `load`, and `cooldowns` are routing inputs.
 - `capability-descriptor@1.1` adds the optional `family`: an opaque provider
   family the Worker source sets, which routing only compares for inequality
   ([provider diversity](../design/routing.md#provider-diversity),
@@ -222,6 +228,12 @@ guesses.
   until `until`, a site's usage limit; work that needs one is not admitted there (admission check
   `cooldown`, [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)).
   Readers accept 1.0 to 1.3.
+- `capability-descriptor@1.4` adds the optional `scope` on a capability offer: the capability is
+  proven only for work whose requirement names that scope (`work-requirement@1.1`), never for
+  other work ([scoped offers](../design/routing.md#scoped-offers),
+  [ADR-0045](../decisions/adr/0045-read-only-agent-workers-as-review-members.md)). The only value
+  is `review-member`. A record carrying it below `@1.4` is refused. Readers accept 1.0 to 1.4.
+  Example: [`capability-descriptor.review-member.json`](../../schemas/examples/capability-descriptor.review-member.json).
 
 ### `plan`
 

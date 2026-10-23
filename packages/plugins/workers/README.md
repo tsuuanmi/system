@@ -14,14 +14,17 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   ([`models`](../models/README.md)).
   `describe()` runs on every route, so admission sees current states. Each
   descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with
-  `family`), or `@1.2` (with `maxInputChars`). A Worker id that
-  two sources describe is refused.
+  `family`), `@1.2` (with `maxInputChars`), `@1.3` (with `load` and `cooldowns`), or `@1.4` (an
+  offer's `scope`). A Worker id that two sources describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;
   - it is of none of the provider families the caller excludes, if any
     (`diversity`); a Worker that declares no family cannot differ, so it fails
     too ([provider diversity](../../../docs/design/routing.md#provider-diversity));
-  - it proves every required capability;
+  - it proves every required capability; an offer scoped to a kind of work
+    (`scope`, [ADR-0045](../../../docs/decisions/adr/0045-read-only-agent-workers-as-review-members.md))
+    counts only for a requirement that names that scope, and a refusal says so
+    (`does not prove reason (it proves reason only for review-member work)`);
   - it takes the input's length, when the caller gives one and the Worker
     declares a bound (`input`, [ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md));
   - it is local when the data is `local-private`;
@@ -40,7 +43,7 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   calls `release()` on the admitted Worker (idempotent), once the work is started or
   will not be.
 - **Decisions (INV-13).** The requirement is stored as an `objective` artifact
-  (`work-requirement@1.0`).
+  (`work-requirement@1.0`, or `@1.1` with a `scope`).
   - **Success:** a `tier` decision, and a `route` decision whose candidates are
     every Worker. A rejected Worker carries its failed checks. An admitted Worker
     that was not chosen says what put the winner first.

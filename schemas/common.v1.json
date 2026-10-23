@@ -33,6 +33,10 @@
       "description": "Quota class of a Worker (purpose P1).",
       "enum": ["subscription-chat", "agent-plan", "metered", "local"]
     },
+    "workScope": {
+      "description": "A kind of work a scoped capability offer is limited to (ADR-0045): review-member, a step of a review team's member.",
+      "enum": ["review-member"]
+    },
     "capability": {
       "description": "Named capability; 'connector:<name>' for website connectors.",
       "type": "string",

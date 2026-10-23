@@ -1,0 +1,43 @@
+{
+  "schema": "capability-descriptor@1.4",
+  "worker": "agent:runtime-b-review",
+  "provider": "runtime-b",
+  "family": "runtime-b",
+  "tier": "standard",
+  "quotaClass": "agent-plan",
+  "locality": "local",
+  "capabilities": [
+    {
+      "capability": "local-data",
+      "evidence": {
+        "kind": "probe",
+        "at": "2026-10-23T00:00:00Z"
+      }
+    },
+    {
+      "capability": "review",
+      "evidence": {
+        "kind": "probe",
+        "at": "2026-10-23T00:00:00Z"
+      }
+    },
+    {
+      "capability": "reason",
+      "evidence": {
+        "kind": "probe",
+        "at": "2026-10-23T00:00:00Z"
+      },
+      "scope": "review-member"
+    },
+    {
+      "capability": "persistent-conversation",
+      "evidence": {
+        "kind": "conformance",
+        "at": "2026-10-23T00:00:00Z"
+      },
+      "scope": "review-member"
+    }
+  ],
+  "state": "ready",
+  "observedAt": "2026-10-23T00:00:00Z"
+}
