@@ -91,7 +91,7 @@ A decision artifact records **one decision**
 | `escalation` | routing policy | the next tier after an acceptance rejection |
 | `egress` | egress policy | payload permitted or blocked, with the artifact refs checked |
 | `acceptance` | routing, engine | accepted or rejected against the acceptance contract; what a review's source step read (`workflow.source-snapshot`) |
-| `gate` | engine | exact-subject gate passed or failed |
+| `gate` | engine | exact-subject gate passed or failed; a step's instructions refused before any Worker starts (`workflow.instructions`, [briefs](workflow-engine.md#briefs)) |
 | `reconciliation` | provider runtime | WAIT, RECOVER, RESUBMIT, or AMBIGUOUS, with snapshot hashes |
 | `graph-growth` | engine | `plan` artifact accepted (nodes appended) or rejected; a team's debate appended |
 | `recovery` | engine | failure class and retry disposition |

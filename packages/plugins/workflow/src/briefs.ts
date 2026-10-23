@@ -5,13 +5,17 @@
  * (composed at promotion: the template's text, the caller's input, and every dependency's result
  * by content id), the board task it serves, how its result is accepted, and the Worker's
  * confinement as the Worker's source declares it. The Worker source renders it into its own prompt
- * at start, resolving the pointers there (INV-12).
+ * at start, resolving the pointers there (INV-12). No execution starts on instructions that leave a
+ * template's placeholder unfilled (`instructionsProblem`, INV-2).
  */
+import type { Lease } from '@tsuuanmi/system-leases'
 import { type Brief, type BriefBudgetLine, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
+import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import type { ArtifactRef, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
-import { clampText, type Instructions, literal, type ResolvedNode } from './spec.ts'
-import { type NodeRow, type RunRow, WorkflowFailure } from './types.ts'
+import { type Wording, wordingOf } from './review.ts'
+import { clampText, type Instructions, literal, type PlaceholderScope, type ResolvedNode, unfilledPlaceholders } from './spec.ts'
+import { type NodeRecord, type NodeRow, type RunRow, type WorkflowError, WorkflowFailure } from './types.ts'
 
 /**
  * What a run for a board task adds to every brief it writes, fixed when the run is admitted: the
@@ -107,6 +111,79 @@ export function recordBrief(e: Engine, run: RunRow, node: NodeRow, draft: Draft,
     kind: 'objective', bodySchema: body.schema, body, inputs: refs,
     classification: body.classification, producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id,
   }).id as ArtifactRef
+}
+
+/** What a node's template text may be filled from: its wording's results, a planner's steps, and a team step's prompt (spec.ts `compose`). */
+export function placeholderScope(spec: ResolvedNode, wording: Wording, nodes: readonly NodeRow[]): PlaceholderScope {
+  const planner = (id: string): boolean => {
+    const row = nodes.find((n) => n.node_id === id)
+    return !!row && !!(JSON.parse(row.spec) as ResolvedNode).grows
+  }
+  return { refs: wording.refs, grown: wording.grownOf.dependsOn.some(planner), team: spec.team?.role === 'ballot' || spec.team?.role === 'debate' }
+}
+
+/** Why a node's instructions are not sent. */
+export interface InstructionsProblem {
+  message: string
+  /** The placeholders the engine could not fill, as written. */
+  placeholders: string[]
+}
+
+/**
+ * The guard before a node's Worker execution starts (INV-2): its instructions must be what its
+ * wording composes to, every placeholder of a template filled. Refused when the node cannot be
+ * worded, when its template holds a placeholder the engine cannot fill for it, or when it was
+ * promoted by an earlier engine as text its wording composes (a re-review that engine marked
+ * literal): its stored instructions would carry the template's placeholders as they are. Text the
+ * engine never expands (the caller's input, a dependency's result, a plan step's model text, a
+ * fix's quoted findings, a diff) is data, and may hold `{{…}}`.
+ */
+export function instructionsProblem(spec: ResolvedNode, nodes: readonly NodeRow[]): InstructionsProblem | undefined {
+  const wording = wordingOf(spec, nodes)
+  if ('problem' in wording) return { message: `${wording.problem}; nothing was sent`, placeholders: [] }
+  if (!!spec.literal !== wording.literal) {
+    return { message: `node ${spec.nodeId}'s instructions were stored by an earlier engine as ${spec.literal ? 'its template\'s text as it is, never composed' : 'a composed template'}; nothing was sent: continue the run to compose them again`, placeholders: [] }
+  }
+  if (wording.literal) return undefined
+  const placeholders = unfilledPlaceholders(wording.prompt, placeholderScope(spec, wording, nodes))
+  return placeholders.length ? unfilledProblem(spec, placeholders) : undefined
+}
+
+/** The problem of a template whose placeholders the engine cannot fill (at most 16 named, INV-9). */
+export function unfilledProblem(spec: ResolvedNode, placeholders: string[]): InstructionsProblem {
+  const named = placeholders.slice(0, 16)
+  const more = placeholders.length > named.length ? ` and ${placeholders.length - named.length} more` : ''
+  return { message: `node ${spec.nodeId}'s template holds ${named.join(', ')}${more}, which the engine does not fill for it; nothing was sent: fix the template, then start the run again`, placeholders: named }
+}
+
+/**
+ * Fail a node whose instructions may not be sent, before anything is routed or sent: a `gate`
+ * decision (`workflow.instructions`) says why, first (INV-13), and the node fails as `config_error`
+ * without an input receipt, so `continue` composes its instructions again.
+ */
+export function refuseInstructions(e: Engine, run: RunRow, node: NodeRow, problem: InstructionsProblem, lease: () => Lease): void {
+  e.ctx.store.transaction(() => {
+    const decision = e.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `May node ${node.node_id} of run ${run.run_id} start a Worker with its instructions?`,
+      inputs: [],
+      candidates: [
+        { option: 'fail', selected: true, reasons: [clampText(problem.message, 300)] },
+        { option: 'start', selected: false, reasons: ['not start: a Worker never reads a placeholder the engine did not fill, nor instructions that are not what the node\'s template composes to (INV-2)'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.instructions', version: '1' },
+      outcome: { option: 'fail', detail: { placeholders: problem.placeholders } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    const error: WorkflowError = { kind: 'config_error', disposition: dispositionOf('config_error'), message: problem.message }
+    e.writeNode(node, { state: 'FAILED', error: JSON.stringify(error) }, (r) => {
+      const next: NodeRecord = { ...r, lastDecision: decision }
+      delete next.inputReceipt
+      delete next.execution
+      return next
+    }, lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { kind: error.kind, placeholders: problem.placeholders } })
+  })
 }
 
 /**

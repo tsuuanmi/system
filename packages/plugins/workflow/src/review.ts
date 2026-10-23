@@ -1,7 +1,8 @@
 /**
  * Exact-subject review (REQ-WF-5, REQ-TEAM-5) and remediation cycles: a review of an agent's
  * change binds to the working tree's subject, passes only while the tree is still that subject,
- * and blocking findings grow a fix and a re-review, bounded by `maxReviewCycles`.
+ * and blocking findings grow a fix and a re-review, bounded by `maxReviewCycles`. A re-review is
+ * worded as the review it re-runs (`wordingOf`).
  */
 import type { Lease } from '@tsuuanmi/system-leases'
 import { captureGitSubject, type GitSubject, subjectId } from '@tsuuanmi/system-libs'
@@ -9,9 +10,67 @@ import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { type Assessment, growthPrefix, parseAssessment, remediationPrompt, type ResolvedNode, subjectBlock } from './spec.ts'
-import type { NodeRow, RunRow } from './types.ts'
+import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
 export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
+
+/**
+ * What a node's instructions are composed from (docs/design/workflow-engine.md#briefs): a
+ * template's prompt, its `{{node:<id>}}` placeholders bound to results, or text used as it is
+ * (`literal`: a plan step's model text, a fix's engine-composed prompt), never expanded.
+ */
+export interface Wording {
+  prompt: string
+  literal: boolean
+  /** The result each `{{node:<id>}}` points at, by the id the prompt names. */
+  refs: Record<string, ArtifactRef>
+  /** Those results in dependency order: what the input hash binds, and where an exact subject is read. */
+  results: ArtifactRef[]
+  /** The node whose result an id the prompt names reads instead (a re-review's fix, in place of the step that wrote the change). */
+  readFrom: Record<string, string>
+  /** The node whose planners `{{grown}}` lists the steps of. */
+  grownOf: ResolvedNode
+}
+
+const writes = (spec: ResolvedNode | undefined): boolean => !!spec?.capabilities.includes('develop')
+
+/**
+ * A node's wording: its own prompt over its dependencies' results. A re-review is worded as the
+ * review its cycles started from (`reviewOf`, docs/design/workflow-engine.md#graph-growth): that
+ * review's prompt, composed again, so it reads the caller's input and every result that review read,
+ * but the step that wrote the change, whose place the fix that wrote the new subject takes; a plan
+ * step's review stays model text. This holds for a re-review an earlier engine grew too, whatever its
+ * own spec says. A problem when a result it is bound to is missing: nothing is composed on a guess.
+ */
+export function wordingOf(spec: ResolvedNode, nodes: readonly NodeRow[]): Wording | { problem: string } {
+  const specOf = (id: string): ResolvedNode | undefined => {
+    const row = nodes.find((n) => n.node_id === id)
+    return row ? JSON.parse(row.spec) as ResolvedNode : undefined
+  }
+  let source = spec
+  let bound: { from: string; to: string } | undefined
+  if (spec.reviewOf !== undefined) {
+    const reviewed = specOf(spec.reviewOf)
+    const producer = reviewed?.dependsOn.find((id) => writes(specOf(id)))
+    const fix = spec.dependsOn.find((id) => writes(specOf(id)))
+    if (!reviewed || !producer || !fix) {
+      return { problem: `re-review ${spec.nodeId} cannot be worded as review ${spec.reviewOf}: ${!reviewed ? 'that review is not in the run' : !producer ? 'no step that review depends on wrote the change' : 'no fix precedes it'}` }
+    }
+    source = reviewed
+    bound = { from: producer, to: fix }
+  }
+  const refs: Record<string, ArtifactRef> = {}
+  const results: ArtifactRef[] = []
+  for (const id of source.dependsOn) {
+    const read = id === bound?.from ? bound.to : id
+    const row = nodes.find((n) => n.node_id === read)
+    const result = row ? (JSON.parse(row.record) as NodeRecord).outputReceipt?.result : undefined
+    if (!result) return { problem: `node ${spec.nodeId} reads the result of ${read}, which has none` }
+    refs[id] = result
+    results.push(result)
+  }
+  return { prompt: source.prompt, literal: !!source.literal, refs, results, readFrom: bound ? { [bound.from]: bound.to } : {}, grownOf: source }
+}
 
 /**
  * The working tree a dependency's agent worked in, captured as it is now, with its verbatim change;
@@ -115,7 +174,9 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   // superseding an earlier fix then retires this cycle with the review it reran, and nothing it
   // grew stays live to collide with the next growth. After a re-plan, ids carry the new generation
   // (the base's for its own cycles, the reviewer's suffix for a later one).
-  const baseGeneration = (JSON.parse(nodes.find((n) => n.node_id === base)?.spec ?? '{}') as ResolvedNode).generation ?? 1
+  const baseRow = nodes.find((n) => n.node_id === base)
+  const reviewed = baseRow ? JSON.parse(baseRow.spec) as ResolvedNode : spec
+  const baseGeneration = reviewed.generation ?? 1
   const generation = spec.generation ?? 1
   const prefix = `${growthPrefix(base, baseGeneration)}${node.node_id !== base && generation > 1 ? `:r${generation}` : ''}`
   const gateId = `${prefix}:approve:${cycle}`
@@ -134,13 +195,16 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
     },
     classification: run.classification ?? e.ctx.egress.defaultClassification, producer: { type: 'node', ref: node.node_id }, inputs: [decision], runId: run.run_id, nodeId: node.node_id,
   }).id as ArtifactRef
-  const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy }
+  const step = { tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy }
+  // The re-review is worded as the review the cycles started from (wordingOf): its template's
+  // prompt, composed again at promotion, or a plan step's model text, used as it is.
   append(e, run, node, [
-    { ...step, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
+    { ...step, literal: true, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
       tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const, remediation: { subject } },
-    { ...step, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
+    { ...step, literal: true, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
       capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [gateId] },
-    { ...step, nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: spec.prompt,
+    { ...step, ...(reviewed.literal ? { literal: true } : {}), nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: reviewed.prompt,
+      ...(reviewed.resultSchema ? { resultSchema: reviewed.resultSchema } : {}),
       capabilities: spec.capabilities, tier: spec.tier, acceptance: spec.acceptance, dependsOn: [fixId], cycle: cycle + 1, reviewOf: base },
   ], [gateId, fixId, recheckId], lease)
   e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: [gateId, fixId, recheckId], plan, cycle: cycle + 1 } })

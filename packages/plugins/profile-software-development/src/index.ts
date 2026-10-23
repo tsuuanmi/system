@@ -32,9 +32,9 @@ const DEVELOP_PROMPT = [
 
 /**
  * The reviewer reads the task, its criteria, and the exact change only (PROP-0008: a reviewer gets
- * the diff and the criteria, never the maker's context). The engine appends the exact subject and
- * the assessment it asks for; a remediation cycle's re-review reads this text as it is, so it uses
- * no placeholder.
+ * the diff and the criteria, never the maker's context), so this text points at no step's result.
+ * The engine appends the exact subject, the request, and the assessment it asks for; a remediation
+ * cycle's re-review is given this text composed as the review's is.
  */
 const REVIEW_PROMPT = [
   'Review this change as an independent reviewer: you see the task, its acceptance criteria, and the exact change, never its developer\'s conversation.',

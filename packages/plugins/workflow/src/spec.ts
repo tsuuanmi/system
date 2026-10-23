@@ -10,7 +10,10 @@ export interface NodeTemplate {
   nodeId: string
   objective: string
   dependsOn?: string[]
-  /** `{{input}}` is the caller's text; `{{node:<id>}}` a dependency's result, verbatim. */
+  /**
+   * `{{input}}` is the caller's text; `{{node:<id>}}` a dependency's result, verbatim; `{{grown}}`
+   * a planner's steps. Any other `{{` is refused at preflight: the engine fills every placeholder.
+   */
   prompt: string
   /** Capabilities the node needs (docs/design/routing.md#capability-vocabulary); routing admits Workers by them. */
   capabilities: string[]
@@ -178,7 +181,11 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   repository?: RepositoryRequest
   /** The plan artifact a gate approves. */
   plan?: string
-  /** A plan step's prompt is model text: used as it is, never expanded as a template. */
+  /**
+   * Text used as it is, never expanded as a template: a plan step's prompt (model text), a
+   * remediation fix's engine-composed prompt, and a re-review of a plan step. A re-review of a
+   * template's review is composed as that review (review.ts `wordingOf`).
+   */
   literal?: boolean
   /**
    * On a planner: its next plan's gate needs the operator, never `autoApprovePlans`, because a
@@ -241,6 +248,68 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
 const NODE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 /** A `{{node:<id>}}` reference: an id as NODE_ID allows, bounded, so a long unclosed run cannot backtrack. */
 const REFERENCE = /\{\{node:([A-Za-z0-9._:/-]{1,200})\}\}/g
+/** The placeholders the engine fills, matched where a `{{` starts. */
+const PLACEHOLDER = /\{\{(input|grown|team|node:[A-Za-z0-9._:/-]{1,200})\}\}/y
+
+/** A `{{` in a template's text: the placeholder it opens (`key`), or none the engine fills (`key` absent). */
+interface Placeholder {
+  index: number
+  end: number
+  key?: string
+  /** As written, bounded, for a message. */
+  text: string
+}
+
+/**
+ * Every `{{` in a template's text. Each must open a placeholder the engine fills; one that opens
+ * none (an unknown name, a different spelling, no closing `}}`) is listed without a key, so it is
+ * refused, never passed to a Worker as it is.
+ */
+function placeholdersIn(prompt: string): Placeholder[] {
+  const found: Placeholder[] = []
+  for (let at = prompt.indexOf('{{'); at >= 0;) {
+    PLACEHOLDER.lastIndex = at
+    const match = PLACEHOLDER.exec(prompt)
+    if (match) {
+      found.push({ index: at, end: at + match[0].length, key: match[1]!, text: match[0] })
+      at = prompt.indexOf('{{', at + match[0].length)
+      continue
+    }
+    const close = prompt.indexOf('}}', at + 2)
+    found.push({ index: at, end: at + 2, text: close >= 0 && close - at <= 80 ? prompt.slice(at, close + 2) : `${prompt.slice(at, at + 40)}…` })
+    at = prompt.indexOf('{{', at + 2)
+  }
+  return found
+}
+
+/** What a node's template text may be filled from: its dependencies' results by id, a planner's steps, a team step's engine-composed prompt. */
+export interface PlaceholderScope {
+  refs: Readonly<Record<string, unknown>>
+  grown: boolean
+  team: boolean
+}
+
+/**
+ * The placeholders in a template's text that the engine cannot fill for a node with this scope,
+ * as written: a name it does not define, a dependency it has no result of, `{{grown}}` with no
+ * planner, `{{team}}` outside a team's ballot or debate. Text the engine never expands (the
+ * caller's input, a dependency's result, a plan step's model text) is never scanned.
+ */
+export function unfilledPlaceholders(prompt: string, scope: PlaceholderScope): string[] {
+  return [...new Set(placeholdersIn(prompt).filter((p) => !(
+    p.key === 'input'
+    || (p.key === 'grown' && scope.grown)
+    || (p.key === 'team' && scope.team)
+    || (p.key?.startsWith('node:') && scope.refs[p.key.slice(5)] !== undefined)
+  )).map((p) => p.text))]
+}
+
+/** A template's text holds placeholders the engine cannot fill: its instructions are never composed, and nothing is sent. */
+export class UnfilledPlaceholders extends Error {
+  constructor(readonly placeholders: string[]) {
+    super(`the template's text holds ${placeholders.join(', ')}, which the engine does not fill`)
+  }
+}
 
 /** Validate a template; returns node ids in a dependency order. Throws on any defect. */
 export function preflight(nodes: readonly NodeTemplate[]): string[] {
@@ -275,6 +344,12 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
     }
     if (node.prompt.includes('{{grown}}') && !(node.dependsOn ?? []).some((dep) => byId.get(dep)?.grows)) {
       throw new TypeError(`node ${node.nodeId} uses {{grown}} but depends on no planner`)
+    }
+    // Only a team's ballot, which the engine words itself, reads `{{team}}` (unrollTeams).
+    const ballot = (node as NodeTemplate & { teamRole?: TeamRole }).teamRole?.role === 'ballot'
+    const unknown = placeholdersIn(node.prompt).find((p) => !p.key || (p.key === 'team' && !ballot))
+    if (unknown) {
+      throw new TypeError(`node ${node.nodeId} uses ${unknown.text}, which is not a placeholder the engine fills: a prompt may use {{input}}, {{node:<id>}} of a node it depends on, and {{grown}} after a planner`)
     }
   }
   const order: string[] = []
@@ -475,6 +550,8 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
 export interface ComposeExtras {
   grown?: Array<{ objective: string; result?: ArtifactRef | undefined }>
   team?: string
+  /** The node whose result a `{{node:<id>}}` reads instead of `<id>`'s (a re-review's fix, in place of the step that wrote the change), for its pointer's note. */
+  readFrom?: Readonly<Record<string, string>>
 }
 
 /**
@@ -488,25 +565,28 @@ export interface Instructions {
   pointers: BriefPointer[]
 }
 
-/** Compose a template's prompt into instructions: `{{input}}` the caller's text, `{{node:<id>}}` a pointer to that dependency's result. */
+/**
+ * Compose a template's prompt into instructions: `{{input}}` the caller's text, `{{node:<id>}}` a
+ * pointer to that dependency's result, `{{grown}}` and `{{team}}` what the engine computed. Every
+ * placeholder is filled, or nothing is composed: one the engine cannot fill throws
+ * {@link UnfilledPlaceholders}, so a Worker never reads a placeholder as it is (INV-2).
+ */
 export function compose(prompt: string, input: string, results: Readonly<Record<string, ArtifactRef>>, extras: ComposeExtras = {}): Instructions {
+  const unfilled = unfilledPlaceholders(prompt, { refs: results, grown: extras.grown !== undefined, team: extras.team !== undefined })
+  if (unfilled.length) throw new UnfilledPlaceholders(unfilled)
   const out = instructions()
   let last = 0
-  for (const match of prompt.matchAll(/\{\{(input|grown|team|node:[A-Za-z0-9._:/-]{1,200})\}\}/g)) {
-    out.text(prompt.slice(last, match.index))
-    last = match.index + match[0].length
-    const key = match[1]!
+  for (const { index, end, key } of placeholdersIn(prompt)) {
+    out.text(prompt.slice(last, index))
+    last = end
     if (key === 'input') out.text(input)
-    else if (key === 'team') out.text(extras.team ?? '')
+    else if (key === 'team') out.text(extras.team!)
     else if (key === 'grown') {
-      ;(extras.grown ?? []).forEach((step, i) => {
+      extras.grown!.forEach((step, i) => {
         out.text(`${i ? '\n\n' : ''}### ${step.objective}\n`)
         if (step.result) out.pointer(step.result, 'input', `the result of step ${clampText(step.objective, 200)}`)
       })
-    } else {
-      const ref = results[key.slice(5)]
-      if (ref) out.pointer(ref, 'input', `the result of node ${key.slice(5)}`)
-    }
+    } else out.pointer(results[key!.slice(5)]!, 'input', `the result of node ${extras.readFrom?.[key!.slice(5)] ?? key!.slice(5)}`)
   }
   out.text(prompt.slice(last))
   return out.done()

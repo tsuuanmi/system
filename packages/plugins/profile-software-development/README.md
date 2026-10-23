@@ -16,8 +16,8 @@ holds no engine code and no rules of its own.
     the run's session, which the task's next attempt resumes;
   - `review:1` (`review`, `local-data`) reviews that exact change on a read-only
     Worker. It reads the task, its criteria, and the change, never the
-    developer's answer; its prompt holds no placeholder, so a remediation cycle's
-    re-review reads it as written;
+    developer's answer (its prompt points at no step's result); a remediation
+    cycle's re-review is given the same instructions, on the fixed subject;
   - `validate:1` (`validate`, `local-data`, economy at least) runs the tests and
     benchmarks the task's criteria name, in a one-shot conversation (no session),
     on a Worker whose commands are proven confined (`executes`). It comes last, so its report
@@ -45,3 +45,6 @@ holds no engine code and no rules of its own.
   scripted (it asks the tool gate before every call). One attempt with a fix
   through the queue, held for the operator with its digest; validation with no
   Worker proving `validate`; an unlisted validation command.
+  [`tests/agent-review.spec.ts`](tests/agent-review.spec.ts) runs `agent-review`'s
+  review node after an agent's change on the same pilot: its re-review is given
+  the caller's input composed in place of `{{input}}`, never the placeholder.
