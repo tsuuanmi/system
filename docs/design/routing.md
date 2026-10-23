@@ -51,7 +51,7 @@ each one with evidence from the sources shown below.
 | `web-search` | search the live web with citations | feature probe on the account |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
-| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers); the source's own replay (model Workers; for a review member's steps only, an agent Worker named a review member whose runtime cannot resume). A resume conformance test for agent runtimes is planned |
+| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers); the source's own replay (model Workers; for a review member's steps only, an agent Worker under the review-member profile whose runtime cannot resume: an exact, recorded replay). A resume conformance test for agent runtimes is planned |
 | `local-data` | can read local files and datasets in place | runs on this machine; sandbox policy allows the paths |
 | `develop`, `validate` | edit code, run tests in a workspace | agent-runtime probe + writable sandbox; `validate` also needs `executes` |
 | `review` | assess a provided subject against criteria | a read-only agent Worker (runtime probe + read-only sandbox) |

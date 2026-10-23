@@ -2,7 +2,8 @@
  * `review` team members on Workers whose offers are scoped to a review member's steps (ADR-0049):
  * the engine names that kind of work on every member step, and nothing else, so such a Worker is a
  * member of a review, single-round or with a debate, and never takes an ask or a brainstorm. The
- * Workers are scripted as an `agents` source describes a read-only agent named a review member.
+ * Workers are scripted as an `agents` source describes a read-only agent under the review-member
+ * profile.
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,7 +30,7 @@ afterEach(async () => {
 const AT = '2026-10-23T00:00:00Z'
 const MATERIAL = 'Review this change:\nfunction f() {\n  const lease = acquire()\n  work()\n}'
 
-/** An agent Worker named a review member: review and local-data for any work; reason, and its conversation, for a review member's steps only. */
+/** An agent Worker under the review-member profile: review and local-data for any work; reason, and its conversation, for a review member's steps only. */
 const member = (id: string, family: string): CapabilityDescriptor => worker(id, {
   schema: 'capability-descriptor@1.4', provider: family, family, quotaClass: 'agent-plan', locality: 'local',
   capabilities: [

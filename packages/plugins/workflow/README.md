@@ -270,9 +270,11 @@ second execution path (INV-1).
     tier of the same account, so an escalated step runs in the same
     conversation without joining again. Its Worker's source keeps that
     conversation natively, or by replaying it (a model Worker; an agent Worker
-    named a review member whose runtime cannot resume, for a review member's
-    steps only): the ballot and debate prompts rely on it holding the request,
-    the source, and the member's own earlier answers.
+    under the review-member profile whose runtime cannot resume, for a review
+    member's steps only, an exact replay recorded with its answer): the ballot
+    and debate prompts rely on it holding the request, the source, and the
+    member's own earlier answers. A member that cannot continue its
+    conversation fails its step; it is never given a fresh one.
   - Members route one at a time, each avoiding every account another member
     holds (REQ-TEAM-4). A member that finds no other provider family fails as
     `config_error`, naming how many families the team needs and how many are

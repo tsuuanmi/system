@@ -119,7 +119,7 @@ const ordinary = (overrides: Partial<WorkRequirement> = {}): WorkRequirement => 
 }
 
 describe('read-only agent Workers as review team members (ADR-0049)', () => {
-  it('offers reason only to a Worker named a review member, for a review member\'s steps only, and its conversation by replay when its runtime cannot resume', async () => {
+  it('offers reason only to a Worker under the review-member profile, for a review member\'s steps only, and its conversation by replay when its runtime cannot resume', async () => {
     const { ctx } = await boot([new Member('resumes', true), new Member('replays', false)], {
       workers: [member('codex', 'resumes'), member('agy', 'replays'), member('plain', 'replays', { reviewMember: false })],
     })
