@@ -61,6 +61,14 @@ export interface FakeOptions {
   chatTabBroken?: boolean
   /** A sent prompt gets its conversation id and then nothing more: the answer never comes (a stall). */
   holdAnswer?: boolean
+  /**
+   * The answer thinks this long before its text streams (0: at once), Stop shown and its
+   * `model-response` already there with no text, as a thinking model's long answer does (live
+   * 2026-10-23: a review member's answer past the five-minute stall deadline).
+   */
+  thinkMs?: number
+  /** While it thinks, the answer shows a thinking summary (`model-thoughts`) that changes every 400 ms (default true); false: nothing in it changes. */
+  thoughts?: boolean
   /** A prompt's bubble renders this long before its text does (0: at once), as a loaded page does. */
   promptLagMs?: number
   /** The composer rewrites a paste: it drops backticks (a readback test). */
@@ -365,6 +373,11 @@ async function send() {
         conversationId = event.conversationId
         history.pushState({}, '', '/app/' + conversationId)
       }
+      // A thinking summary above the answer's text, as a thinking model shows one before it answers.
+      if (event.thought !== undefined) {
+        if (!answer.querySelector('model-thoughts')) answer.insertAdjacentHTML('afterbegin', '<model-thoughts><button aria-label="Show thinking">Show thinking</button><span class="thoughts-title"></span></model-thoughts>')
+        answer.querySelector('.thoughts-title').textContent = event.thought
+      }
       if (event.delta !== undefined) {
         raw += event.delta
         answer.querySelector('.markdown').textContent = raw
@@ -471,7 +484,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, thinkMs: 0, thoughts: true, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, researchHidesLevels: false, planHangs: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, researchActivity: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
@@ -516,6 +529,11 @@ export class FakeGemini {
       if (id) res.write(`data: ${JSON.stringify({ conversationId: id })}\n\n`)
       if (this.options.holdAnswer) return
       await new Promise((resolve) => setTimeout(resolve, 300))
+      // Thinking before any text: a summary that changes, or nothing new at all.
+      for (let step = 1, until = Date.now() + this.options.thinkMs; Date.now() < until; step++) {
+        if (this.options.thoughts) res.write(`data: ${JSON.stringify({ thought: `Weighing the request, step ${step}` })}\n\n`)
+        await new Promise((resolve) => setTimeout(resolve, 400))
+      }
       if (sent.deepResearch && !this.options.clarify) {
         const plan = { role: 'plan' as const, title: 'HTTP/2 and HTTP/3 Comparison', started: false }
         turns.push(plan)

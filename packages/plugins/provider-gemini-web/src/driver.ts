@@ -8,6 +8,7 @@
  *   report is read from the report panel, with the sources it used.
  * A bound chat is deleted from its own menu, only once it opens as itself (PROP-0004 Phase 5).
  */
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
@@ -203,9 +204,11 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (options.conversation === 'temporary' && options.binding !== undefined) {
       throw new ProviderError('invalid_input', 'gemini-web: a temporary turn has no conversation to continue')
     }
-    // The site drops a paste over its input limit without an error: refused here, before anything is sent.
-    if (prompt.length > this.maxInputChars) {
-      throw new ProviderError('invalid_input', `gemini-web: the prompt has ${prompt.length} characters, over the ${this.maxInputChars} this site takes (maxPromptChars); nothing was sent`)
+    // The site drops a paste over its input limit without an error: refused here, before anything
+    // is sent. Counted in code points, as admission counts the input against the same bound (ADR-0032).
+    const chars = [...prompt].length
+    if (chars > this.maxInputChars) {
+      throw new ProviderError('invalid_input', `gemini-web: the prompt has ${chars} characters, over the ${this.maxInputChars} this site takes (maxPromptChars, the longest paste it was seen to keep); nothing was sent`)
     }
     const preset = this.preset(options.mode)
     await this.open(page, options.conversation, options.binding)
@@ -242,7 +245,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     await engine.act('composer.send').catch(async (error: unknown) => {
       // An emptied composer and no new prompt: the site dropped the text (too long, say), not a UI change.
       if (error instanceof ProviderError && error.kind === 'ui_drift' && (await engine.count('turn.user')) === asked && !(await engine.text('composer.input').catch(() => 'unknown')).trim()) {
-        throw new ProviderError('input_dropped', `gemini-web: the site emptied the composer and took no prompt (${prompt.length} characters); it was not answered`, { cause: error })
+        throw new ProviderError('input_dropped', `gemini-web: the site emptied the composer and took no prompt (${chars} characters); it was not answered: if it is near maxPromptChars (${this.maxInputChars}), the site's limit is lower, so lower that bound`, { cause: error })
       }
       throw error
     })
@@ -598,13 +601,17 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 
   private async waitForAnswer(page: Page, engine: UiEngine, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void, phase = 'answer'): Promise<string> {
     const reportBinding = bindingReporter(() => this.bindingOf(page), onBinding)
+    // What the whole answer shows, as a digest: its thinking too, which the site shows (and
+    // changes) before any answer text. A read that fails keeps the last one, so it never flickers.
+    let activity: string | undefined
     const completed = await waitForStableCompletion(async () => {
       reportBinding()
       if ((await engine.count('turn.assistant')) <= before) return { responsePresent: false, text: '', html: '', running: true }
       const text = await this.answerText(engine)
       const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
       const finished = (await engine.findIn('turn.assistant.done', answer)) !== undefined
-      return { responsePresent: text !== '', text, html: '', running: (await engine.state('turn.running')) || !finished }
+      activity = await answer.evaluate((a) => a.textContent ?? '').then((shown) => createHash('sha256').update(shown).digest('hex'), () => activity)
+      return { responsePresent: text !== '', text, html: '', running: (await engine.state('turn.running')) || !finished, ...(activity !== undefined ? { progress: activity } : {}) }
     }, completionOptions(this.timeouts, deadlines, signal)).catch(async (error: unknown) => {
       await this.stalled(engine, phase, error)
       throw error
