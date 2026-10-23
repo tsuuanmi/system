@@ -5,11 +5,11 @@ export const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>system: runs, approvals, and reviews</title>
+<title>system: runs, approvals, reviews, and policy</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header><h1><a href="/ui/" id="home">system</a></h1><span id="status" role="status"></span></header>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
 <main id="main"></main>
 <script src="/ui/app.js"></script>
 </body>
@@ -36,6 +36,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; min-width: 240px; }
 .muted { color: var(--muted); } code { font-size: 12px; } .answer { white-space: pre-wrap; }
 table.queue td:last-child { white-space: nowrap; }
+textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
+select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
+pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
+pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
 @media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } }
 `
 
@@ -69,6 +73,36 @@ export const APP_JS = `'use strict'
     if (!response.ok) throw Object.assign(new Error(value.error || response.statusText), { status: response.status })
     return value
   }
+  // A line diff of two texts (longest common subsequence), as lines prefixed '+ ', '- ', or '  '. Bounded by the policy body (128 KiB).
+  const lineDiff = (before, after) => {
+    const a = before.split('\\n'), b = after.split('\\n')
+    const n = a.length, m = b.length
+    const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1))
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
+    const out = []
+    let i = 0, j = 0
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { out.push(['same', a[i]]); i++; j++ }
+      else if (lcs[i + 1][j] >= lcs[i][j + 1]) out.push(['del', a[i++]])
+      else out.push(['add', b[j++]])
+    }
+    while (i < n) out.push(['del', a[i++]])
+    while (j < m) out.push(['add', b[j++]])
+    return out
+  }
+  const pretty = (value) => value === undefined ? '' : JSON.stringify(value, null, 2)
+  const diffView = (before, after) => el('pre', { class: 'diff' }, lineDiff(pretty(before), pretty(after)).map(([kind, line]) =>
+    el('span', kind === 'same' ? {} : { class: kind }, (kind === 'add' ? '+ ' : kind === 'del' ? '- ' : '  ') + line + '\\n')))
+  const effectView = (effect) => effect.length
+    ? el('ul', {}, effect.map((e) => el('li', {}, (e.projectId ? 'project ' + e.projectId : 'studio') + ': ' + e.actionClass + ' ', el('span', { class: 'state' }, e.from + ' → ' + e.to))))
+    : el('p', { class: 'muted' }, 'No effective mode moves: only expiry, batching, commands, or required checks change.')
+  const changeView = (change) => el('div', { class: 'panel' },
+    el('p', {}, el('strong', {}, change.policy.id + (change.previous ? ' version ' + change.previous.version + ' → ' + change.policy.version : ' (new, version ' + change.policy.version + ')')),
+      el('span', { class: 'muted' }, ' · ' + change.changeId + ' · request ' + change.requestId)),
+    change.note ? el('p', {}, change.note) : null,
+    el('p', { class: 'muted' }, 'Set ', el('code', {}, change.hash), ', proposed on ', el('code', {}, change.baseHash)),
+    effectView(change.effect),
+    diffView(change.previous, change.policy))
   // replaceChildren turns null into the text "null": absent sections are dropped first.
   const show = (...parts) => main.replaceChildren(...parts.filter((part) => part !== null && part !== undefined))
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
@@ -92,16 +126,27 @@ export const APP_JS = `'use strict'
         const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note for ' + (batch.batchId || 'unbatched requests') })
         const one = (r, verdict) => decide([{ requestId: r.requestId, subject: r.subject, verdict }], note)
         const all = (verdict) => decide(batch.requests.map((r) => ({ requestId: r.requestId, subject: r.subject, verdict })), note, batch.batchId)
+        // A policy change shows what it changes: its effective modes and the record's diff (INV-5: the subject is its set's hash).
+        const shown = el('div', {})
+        const showChange = (r) => async () => {
+          try {
+            const { changes } = await api('policy')
+            const change = (changes || []).find((c) => c.requestId === r.requestId)
+            shown.replaceChildren(change ? changeView(change) : el('p', { class: 'muted' }, 'The change of ' + r.requestId + ' is not among the latest.'))
+          } catch (error) { status.textContent = error.message }
+        }
         return el('div', { class: 'panel' },
           el('h3', {}, batch.batchId ? 'Batch ' + batch.batchId : 'Not yet batched'),
           table(['Class', 'Subject', 'Summary', 'Consequences', 'Expires', 'Verdict'], batch.requests.map((r) => el('tr', {},
-            el('td', {}, r.action.class),
+            el('td', {}, r.action.class, r.action.class === 'policy-change' && r.requester.policyChangeId
+              ? el('div', {}, el('button', { onclick: showChange(r), 'aria-label': 'Show the change of ' + r.requestId }, 'Show change')) : null),
             el('td', {}, el('code', {}, subject(r.subject))),
             el('td', {}, r.action.summary),
             el('td', {}, r.action.consequences || '-'),
             el('td', { class: 'muted' }, new Date(r.expiresAt).toLocaleString()),
             el('td', {}, el('button', { onclick: one(r, 'approved'), 'aria-label': 'Approve ' + r.requestId }, 'Approve'), el('button', { onclick: one(r, 'rejected'), 'aria-label': 'Deny ' + r.requestId }, 'Deny')),
           )), 'queue'),
+          shown,
           note,
           batch.batchId ? el('button', { class: 'primary', onclick: all('approved') }, 'Approve batch') : null,
           batch.batchId ? el('button', { onclick: all('rejected') }, 'Deny batch') : null)
@@ -189,18 +234,101 @@ export const APP_JS = `'use strict'
     )
   }
 
+  // The autonomy policy in force, its history, and a proposed change with its diff. A proposal is
+  // asked in the approval queue as a policy-change request; only the operator's approval there applies it.
+  async function policyView() {
+    let value
+    try { value = await api('policy') } catch (error) {
+      show(el('h2', {}, 'Autonomy policy'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The approval queue is not running.' : error.message))
+      return
+    }
+    const { set, policies, effective, changes, proposals } = value
+    const columns = effective.map((e) => e.projectId ? 'project ' + e.projectId : 'studio')
+    const classes = effective[0].effective.map((e) => e.actionClass)
+    const editor = el('textarea', { 'aria-label': 'Proposed policy record (JSON)', spellcheck: 'false' })
+    const note = el('input', { placeholder: 'why (optional)', 'aria-label': 'Note for the proposed change' })
+    const preview = el('div', {})
+    const NEW = '(a new project policy)'
+    const pick = el('select', { 'aria-label': 'Policy to change' }, policies.map((p) => el('option', { value: p.id }, p.id)), el('option', { value: NEW }, NEW))
+    const selected = () => policies.find((p) => p.id === pick.value)
+    const fill = () => {
+      const p = selected()
+      const draft = p ? Object.assign({}, p, { version: p.version + 1 })
+        : { schema: 'autonomy-policy@1.0', id: 'project-id.policy', version: 1, scope: 'project', projectId: 'project-id', narrows: policies[0].id, rules: [{ actionClass: 'merge', mode: 'ask' }], default: 'ask', expiry: { defaultSeconds: 86400, maxSeconds: 1209600 } }
+      editor.value = pretty(draft)
+      preview.replaceChildren()
+    }
+    pick.addEventListener('change', fill)
+    const parsed = () => {
+      try { return JSON.parse(editor.value) } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, 'Not JSON: ' + error.message)); return undefined }
+    }
+    const showDiff = () => {
+      const draft = parsed()
+      if (draft !== undefined) preview.replaceChildren(el('p', { class: 'muted' }, selected() ? 'Changes to ' + selected().id + ' version ' + selected().version + ':' : 'A new policy:'), diffView(selected(), draft))
+    }
+    const propose = async () => {
+      const draft = parsed()
+      if (draft === undefined) return
+      try {
+        const { change, request } = await api('policy/propose', { policy: draft, note: note.value })
+        status.textContent = 'proposed ' + change.changeId + ': decide request ' + request.requestId + ' in the approval queue'
+        await policyView()
+      } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, error.message)) }
+    }
+    const when = (t) => t ? new Date(t).toLocaleString() : '-'
+    show(
+      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
+      el('h2', {}, 'Autonomy policy'),
+      set ? el('p', {}, 'In force: ', el('code', {}, set.hash), set.source === 'store'
+        ? ' — the change ' + set.changeId + ' the operator approved, kept while the configuration it came from is unchanged (' + set.configHash + ').'
+        : ' — the configuration.') : null,
+      table(['Action class'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => el('td', {}, (e.effective.find((x) => x.actionClass === c) || {}).mode || '-')))), 'queue'),
+      el('h3', {}, 'Policies'),
+      table(['Policy', 'Scope', 'Version'], policies.map((p) => el('tr', {}, el('td', {}, el('code', {}, p.id)), el('td', {}, p.scope + (p.projectId ? ' ' + p.projectId : '')), el('td', {}, String(p.version))))),
+      proposals ? el('div', { class: 'panel' },
+        el('h3', {}, 'Propose a change'),
+        el('p', { class: 'muted' }, 'Raise the version. The whole set must load as a configuration would; the change is asked in the approval queue on its exact hash, and applies only when you approve it there.'),
+        el('p', {}, pick),
+        editor, el('p', {}, note),
+        el('button', { onclick: showDiff }, 'Show diff'),
+        el('button', { class: 'primary', onclick: propose }, 'Propose'),
+        preview) : el('p', { class: 'muted' }, 'This approval queue changes its policy by configuration and a restart only.'),
+      changes ? el('h3', {}, 'History') : null,
+      changes && !changes.length ? el('p', { class: 'muted' }, 'No change was proposed yet.') : null,
+      changes && changes.length ? table(['Change', 'Policy', 'State', 'Proposed', 'In force from', 'Effect'], changes.map((c) => el('tr', {},
+        el('td', {}, el('code', {}, c.changeId)),
+        el('td', {}, c.policy.id + ' ' + (c.previous ? c.previous.version + ' → ' : '') + c.policy.version),
+        el('td', { class: 'state' }, c.state + (c.declined ? ' (' + c.declined.cause + ')' : '')),
+        el('td', { class: 'muted' }, when(c.proposedAt)),
+        el('td', { class: 'muted' }, c.applied ? when(c.applied.at) + (c.retired ? ' until ' + when(c.retired.at) : '') : '-'),
+        el('td', {}, c.effect.length ? c.effect.map((e) => (e.projectId || 'studio') + ' ' + e.actionClass + ' ' + e.from + '→' + e.to).join('; ') : '-'),
+      ))) : null,
+      changes && changes.length ? el('details', {}, el('summary', {}, 'Diffs'), changes.map(changeView)) : null)
+    fill()
+  }
+
   let current = new URLSearchParams(location.search).get('run')
+  let view = new URLSearchParams(location.search).get('view')
   function go(runId) {
     current = runId || null
+    view = null
     history.pushState(null, '', runId ? '?run=' + encodeURIComponent(runId) : '/ui/')
     refresh()
   }
-  window.addEventListener('popstate', () => { current = new URLSearchParams(location.search).get('run'); refresh() })
+  document.getElementById('policy-link').addEventListener('click', (e) => {
+    e.preventDefault()
+    current = null
+    view = 'policy'
+    history.pushState(null, '', '?view=policy')
+    refresh()
+  })
+  window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); refresh() })
   async function refresh() {
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
-    try { await (current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
+    try { await (view === 'policy' ? policyView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
   }
   refresh()
-  setInterval(() => { if (!document.hidden && !main.contains(document.activeElement)) refresh() }, 5000)
+  // The policy page holds an edit in progress: it is refreshed on demand only.
+  setInterval(() => { if (view !== 'policy' && !document.hidden && !main.contains(document.activeElement)) refresh() }, 5000)
 })()
 `
