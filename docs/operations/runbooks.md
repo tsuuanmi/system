@@ -842,16 +842,39 @@ loaded, every call is denied, reads included.
 
 ## Change the autonomy policy
 
-The policy is configuration: the studio policy and any project policies sit in the `approvals`
-row. A change takes effect by editing the profile patch and restarting; there is no
-`policy-change` approval for it yet, and no Worker can write the patch (the DSH home is hidden
-from agents).
+Two ways, both the operator's alone ([a policy change](../design/approvals.md#a-policy-change)):
+**on `/ui`, through a `policy-change` approval**, with no restart, or **by configuration and a
+restart**. No Worker can do either: the proposal routes take the operator's token or scope only,
+and the DSH home is hidden from agents.
 
-1. **Read what is loaded:** MCP `approvals_policy` (a `projectId` adds that project's policy)
-   gives the policies and the effective mode of each action class.
+1. **Read what is in force:** the **Autonomy policy** page on `/ui` (`system ui` prints the link),
+   or MCP `approvals_policy` (a `projectId` adds that project's policy). It shows the set's hash,
+   whether it is the configuration or a change you approved (`source: store`), and the effective
+   mode of each action class.
 2. **Settle the queue first** if you can: decide what waits on `/ui`, and see which tasks wait on
    a request (`board_tasks`, `states: ["waiting-for-approval"]`). A verdict cannot be given on a
    request a change withdraws.
+
+**Through the queue (no restart):**
+
+3. On the policy page, pick the policy (or *a new project policy*), edit the record in the editor
+   (it starts at the next version: a change must raise it), and press **Show diff** to compare it
+   with the record in force. Add why in the note, then **Propose**. MCP `approvals_policy_propose`
+   (operator scope) does the same with `{policy, note?}`.
+   A proposal the configuration's rules would refuse is refused at once and nothing is stored
+   (`400`, naming each problem); so is one when the policy forbids `policy-change` (`409`).
+4. **Approve it in the approval queue.** The `policy-change` request (on the exact hash of the
+   whole set) shows its consequences; **Show change** lists the effective modes it moves and the
+   record's diff. Approve it there (or deny it: nothing changes). It applies at once, recorded as a
+   `policy-change` decision with the old and new hashes; open requests are judged again at once,
+   and the board puts its waiting tasks to the new policy on its next sweep. A second proposal on
+   the same set is withdrawn once the first comes into force: propose it again on the new set.
+5. **Verify:** the policy page shows the new set, `source: store`, and the change `applied` in its
+   history. The applied set is kept in the store: a restart keeps it while the configuration is
+   unchanged.
+
+**By configuration and a restart:**
+
 3. **Edit `~/.dsh/profiles/system/cordis.patch.yml`.** A patch that targets a row replaces its whole
    config, so write the whole `policies` list: copy the `approvals` row of the
    [bundle](../../packages/system-bundle/cordis.patch.yml), then change the rule.
@@ -870,6 +893,7 @@ from agents).
            default: ask
            expiry: { defaultSeconds: 86400, maxSeconds: 1209600 }
            batch: { maxSize: 10, maxWaitSeconds: 3600 }
+       # supersedes: 'sha256:…'    # only if you applied a change on /ui: see below
    ```
 
    Exactly one studio policy; a project policy has `scope: project`, its `projectId`, and
@@ -877,21 +901,30 @@ from agents).
    ([example](../../schemas/examples/autonomy-policy.project.json)). The classes that always ask
    (`external-send`, `deploy`, `delete-data`, `spend`, `charter`, `funding`, `remediation`,
    `policy-change`) cannot be given `auto` or `notify`.
+
+   **If a change you approved on `/ui` is in force** (`source: store`), a changed configuration
+   does not replace it silently: at start the queue is refused, and its log names the stored
+   set's hash and the configuration's. Either keep the configuration the change was derived from,
+   or let the new configuration replace the stored set by naming that set's exact hash in
+   `supersedes` (the hash the policy page shows as in force): at start the change is retired,
+   recorded as a `policy-change` decision, and the configuration is in force. Copying the stored
+   set itself into the patch also agrees with it.
 4. **Check it before stopping anything:** `system check`. It loads every row against the code and
    names each problem of the policy set (a rule twice, an expiry above its maximum, a batch wait
    not under the shortest expiry, a listed command with a shell metacharacter); fix the patch until
-   it says `ok`. A set that fails at start refuses the plugin: no queue, `/ui` answers `503` for
-   it, the board is not mounted, nothing that needs a person runs, and every Worker tool call is
-   denied.
+   it says `ok`. It cannot see the store, so it does not report a mismatch with a stored set. A set
+   that fails at start, or a stored set that no longer matches the configuration with no
+   `supersedes` naming it, refuses the plugin: no queue, `/ui` answers `503` for it, the board is
+   not mounted, nothing that needs a person runs, and every Worker tool call is denied.
 5. **Restart:** `system shutdown`, then `system start`. At start the queue rejects expired requests
    and withdraws the open ones the loaded policies no longer ask for.
-6. **Verify:** `approvals_policy` shows the new effective modes.
+6. **Verify:** `approvals_policy` shows the new effective modes and `source: configuration`.
 
 What happens to what is open:
 
 | The change | Open requests |
 |---|---|
-| a policy's `version` raised, or its `id` gone | every unexpired open request made under the old version is withdrawn at start: cause `withdrawn`, rule `approvals.policy`, the reason names the change |
+| a policy's `version` raised, or its `id` gone | every unexpired open request made under the old version is withdrawn, at start or at once when the change is approved on `/ui`: cause `withdrawn`, rule `approvals.policy`, the reason names the change |
 | a class that asked now says `auto`, `notify`, or `forbid` (same version) | its open requests are withdrawn: `it now gives <class> <mode>` |
 | a class still asking, same version | they stay, and a verdict still counts. Their expiry never changes |
 | a class that did not ask now asks | nothing to withdraw. The board asks the policy when a task becomes ready and before each further attempt, not at claim or start, so a task already `ready` or `claimed` is not asked again. A Worker's gate asks on every tool call, so its next calls follow the new policy |
