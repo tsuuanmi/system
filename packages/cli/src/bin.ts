@@ -18,8 +18,11 @@ const USAGE = `Usage: system <command>
                             decide a question as a team: proposals, sealed ballots, a debate on a split, a tie to you
   review [--repo <url> [--ref <r>] [--focus <glob>]...] [--classification <c>] (<criteria...> | -)
                             review as a team: text, or a public repository at one pinned commit; quotes are checked
-  run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
-                            start any workflow template (ask, brainstorm, review, research, ...)
+  run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>]
+      [--task <taskId> [--holder <owner> --generation <n>]] (<input...> | -)
+                            start any workflow template (ask, brainstorm, review, research, ...); --task: the run
+                            serves one attempt of that board task (it claims the ready task, or takes the claim
+                            board_claim gave --holder at --generation)
   approve <runId> [--plan <id>] [--reject] [note...]
                             approve (or reject) the plan a run is waiting on, bound to that exact plan
                             (name it with --plan when several wait)
@@ -163,12 +166,12 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'ask': {
       const request = await parseAsk(rest, readAllStdin)
-      if (!request || request.deep || request.variant) break
+      if (!request || request.deep || request.variant || request.task) break
       return awaitRun(await callTool('ask', { ...request }))
     }
     case 'research': {
       const request = await parseAsk(rest, readAllStdin)
-      if (!request || request.persist || request.tier || request.sessionId || request.variant) break
+      if (!request || request.persist || request.tier || request.sessionId || request.variant || request.task) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('research', { question: prompt, ...options }))
     }
@@ -187,7 +190,7 @@ async function main(argv: string[]): Promise<number> {
       if (command === 'brainstorm' && (url || ref || focus.length)) break
       if (!url && (ref || focus.length)) break
       const request = await parseAsk(args, readAllStdin)
-      if (!request || request.persist || request.tier || request.sessionId || request.variant || request.deep) break
+      if (!request || request.persist || request.tier || request.sessionId || request.variant || request.deep || request.task) break
       const { prompt, ...options } = request
       const repository = url ? { repository: { url, ...(ref ? { ref } : {}) }, ...(focus.length ? { focus } : {}) } : {}
       return awaitRun(await callTool(command, { [command === 'review' ? 'material' : 'question']: prompt, ...options, ...repository }))

@@ -467,7 +467,8 @@ operator approves that request, the engine continues the session by itself, once
 ## Board tasks
 
 A run may serve one attempt of one [board task](board.md): the start names the task, and the
-claim a lead hands over (holder and generation). The engine is that run's owner on `ctx.board`,
+claim a lead hands over (holder and generation): MCP `run`'s `task`, or `system run --task <taskId>
+[--holder <owner> --generation <n>]` ([CLI](../reference/cli.md#work)). The engine is that run's owner on `ctx.board`,
 an optional seam it reaches through the abstract `Board` only; without a board, a run for a task
 is refused (`config_error`), and every other run is unaffected.
 

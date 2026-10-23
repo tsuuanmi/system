@@ -646,12 +646,22 @@ export interface AskRequest {
   deep?: true
   /** `run --variant <v>`: a variant the template defines. */
   variant?: string
+  /**
+   * `run --task <taskId> [--holder <h> --generation <n>]`: the board task the run serves, one
+   * attempt of it, as the MCP `run` tool's `task` takes it; a lead's claim handed over by its holder
+   * and generation, both or neither.
+   */
+  task?: { taskId: string; holder?: string; generation?: number }
 }
 
-/** `system ask [--persist] [--session <id>] [--tier <tier>] (<prompt...> | -)`; `-` reads stdin. Each command refuses the flags it does not take. */
+/**
+ * `system ask [--persist] [--session <id>] [--tier <tier>] (<prompt...> | -)`; `-` reads stdin. `run` also
+ * takes `--variant` and `--task` (with `--holder` and `--generation`). Each command refuses the flags it does not take.
+ */
 export async function parseAsk(args: readonly string[], readStdin: () => Promise<string>): Promise<AskRequest | undefined> {
   const rest = [...args]
   const request: Partial<AskRequest> = {}
+  const claim: { taskId?: string; holder?: string; generation?: number } = {}
   while (rest[0]?.startsWith('--')) {
     const flag = rest.shift()
     if (flag === '--persist') request.persist = true
@@ -660,8 +670,15 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
     else if (flag === '--classification' && rest[0]) request.classification = rest.shift()!
     else if (flag === '--deep') request.deep = true
     else if (flag === '--variant' && rest[0]) request.variant = rest.shift()!
+    else if (flag === '--task' && rest[0] && claim.taskId === undefined) claim.taskId = rest.shift()!
+    else if (flag === '--holder' && rest[0] && claim.holder === undefined) claim.holder = rest.shift()!
+    else if (flag === '--generation' && /^[1-9]\d{0,8}$/.test(rest[0] ?? '') && claim.generation === undefined) claim.generation = Number(rest.shift())
     else return undefined
   }
+  // A claim is handed over whole, with its task: its holder and generation, both or neither.
+  if ((claim.holder !== undefined || claim.generation !== undefined) && claim.taskId === undefined) return undefined
+  if ((claim.holder === undefined) !== (claim.generation === undefined)) return undefined
+  if (claim.taskId !== undefined) request.task = { taskId: claim.taskId, ...(claim.holder !== undefined ? { holder: claim.holder, generation: claim.generation! } : {}) }
   const prompt = (rest.length === 1 && rest[0] === '-' ? await readStdin() : rest.join(' ')).trim()
   return prompt ? { prompt, ...request } : undefined
 }

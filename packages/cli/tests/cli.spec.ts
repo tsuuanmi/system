@@ -149,6 +149,18 @@ describe('system ask arguments', () => {
     expect(await parseAsk(['--variant', 'deep', 'q'], async () => '')).toEqual({ prompt: 'q', variant: 'deep' })
     expect(await parseAsk(['--variant'], async () => '')).toBeUndefined()
   })
+
+  it('takes the board task a run serves as MCP run\'s task does: the task alone, or with the claim a lead hands over, holder and generation both or neither', async () => {
+    expect(await parseAsk(['--task', 'task-1', 'go'], async () => '')).toEqual({ prompt: 'go', task: { taskId: 'task-1' } })
+    expect(await parseAsk(['--task', 'task-1', '--holder', 'lead', '--generation', '3', '-'], async () => 'the input\n')).toEqual({ prompt: 'the input', task: { taskId: 'task-1', holder: 'lead', generation: 3 } })
+    expect(await parseAsk(['--holder', 'lead', '--generation', '3', '--task', 'task-1', '--variant', 'v', 'go'], async () => '')).toEqual({ prompt: 'go', variant: 'v', task: { taskId: 'task-1', holder: 'lead', generation: 3 } })
+    // Half a claim, a claim without its task, a generation that is not a positive whole number, or a flag given twice: refused.
+    for (const args of [
+      ['--task', 'task-1', '--holder', 'lead', 'go'], ['--task', 'task-1', '--generation', '3', 'go'], ['--holder', 'lead', '--generation', '3', 'go'],
+      ['--task', 'task-1', '--holder', 'lead', '--generation', '0', 'go'], ['--task', 'task-1', '--holder', 'lead', '--generation', '1.5', 'go'],
+      ['--task', 'task-1', '--holder', 'lead', '--generation', 'x', 'go'], ['--task', 'a', '--task', 'b', 'go'], ['--task'],
+    ]) expect(await parseAsk(args, async () => ''), args.join(' ')).toBeUndefined()
+  })
 })
 
 describe('system usage and explain output', () => {
