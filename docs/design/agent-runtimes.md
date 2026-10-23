@@ -337,6 +337,20 @@ because of its name. A Worker whose runtime is missing, cannot enforce the confi
 sandbox, or does not report `readsConfined` and `gatesToolCalls`, is `unavailable`; so is a `worktreePerRun` Worker
 whose workspace cannot hold a worktree per run (`config_error`).
 
+A probe can take longer than the 5 s the router gives a whole Worker source to describe its
+Workers ([sources that do not answer](routing.md#sources-that-do-not-answer)), so the `agents`
+source never waits for a re-probe in a describe:
+
+- **Bounded staleness.** A probe result stands for `probeTtlMs` (5 min) from when its probe
+  started, never longer: past it, the result admits nothing and the Worker is `unavailable` until
+  the next probe finishes. A describe waits only for a runtime's first probe.
+- **Refreshed in the background.** Once a result is half that old, the next probe starts in the
+  background, whether or not anything reads, one at a time per runtime, so a fresh result
+  normally replaces it before it expires.
+- **The latest result wins.** A probe that throws, or proves less, replaces an older success at
+  once: no Worker is admitted on evidence a later probe contradicts (INV-2).
+- **A run's own check** before the agent starts waits for a result within `probeTtlMs`.
+
 | Capability | Offered when |
 |---|---|
 | `local-data` | the Worker is ready (it runs on this machine, in its workspace) |

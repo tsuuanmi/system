@@ -159,6 +159,9 @@ stays admissible: it only orders it later.
   source's read goes with the source. Health reads it after listing the Workers, names every
   source silent or failed in it, and is degraded while one is, down when no Worker answered or the
   read failed ([runbook](../operations/runbooks.md#a-worker-source-does-not-answer)).
+- **A source keeps its own describe fast.** The `agents` source refreshes its runtimes' probes in
+  the background and, once a runtime's first probe has finished, never waits for one in a
+  describe ([admission evidence](agent-runtimes.md#admission-evidence)).
 
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified

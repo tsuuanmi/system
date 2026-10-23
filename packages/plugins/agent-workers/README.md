@@ -31,7 +31,19 @@ The **`agents` Worker source**: agent runtimes as Workers
   reviews. Optional: `reviewMember` (default false; see **Review members**
   below), refused at load (`config_error`) unless the sandbox is `read-only`
   (a writer never reviews), `family` is set, and `worktreePerRun` is off.
-- **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
+- **Capabilities are what `probe()` proves now** ([`src/probes.ts`](src/probes.ts)). A
+  runtime's probe result stands for `probeTtlMs` (default 5 min) from when its probe started,
+  never longer. Once it is half that old, the next probe starts in the background, one at a time
+  per runtime, so a describe never waits for a re-probe (the router gives the whole source 5 s):
+  - a describe waits only for a runtime's first probe; a result past `probeTtlMs` admits nothing
+    (the Worker is `unavailable`) until the probe in the background finishes;
+  - the latest result wins, failed or not: a probe that throws, or proves less, makes the Worker
+    `unavailable` at once, never outlived by an older success;
+  - a probe slower than half of `probeTtlMs` is logged once, and the next starts at once;
+  - a run's own check before the agent starts waits for a result within `probeTtlMs`;
+  - `probeTtlMs: 0` keeps none: every read waits for a probe.
+
+  The capabilities:
   - `local-data`;
   - `review` only for a read-only sandbox: a review is independent of the
     change (INV-15);
