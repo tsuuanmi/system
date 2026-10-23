@@ -1071,7 +1071,7 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
 })
 
 describe('ctx.board (store-backed): the TASKS.md projection', () => {
-  it('renders one project\'s board deterministically: ids, titles, states, acceptance checkboxes, dependencies, holders, and why a task waits', async () => {
+  it('renders one project\'s board deterministically: ids, titles, states, acceptance checkboxes, dependencies, holders, and why a task waits, with its questions or the funding it asks for', async () => {
     const b = await boot()
     const { ctx } = b
     await active(ctx)
@@ -1087,6 +1087,10 @@ describe('ctx.board (store-backed): the TASKS.md projection', () => {
     const g = (await ctx.board.claim(asks.taskId, 'lead', 600_000, at(4))).generation
     await ctx.board.start(asks.taskId, g, { runId: 'run-2' }, at(4))
     await ctx.board.block(asks.taskId, g, { reason: 'question', questions: ['Band width 64?'] }, at(4))
+    const spent = await ready(ctx, task('p2', 'Spent', { budget: [{ pool: 'max.programmatic', unit: 'usd', amount: 10 }, { pool: 'max.programmatic', unit: 'tokens', amount: 1000 }] }), at(4))
+    const s = (await ctx.board.claim(spent.taskId, 'lead', 600_000, at(4))).generation
+    await ctx.board.start(spent.taskId, s, { runId: 'run-3' }, at(4))
+    await ctx.board.block(spent.taskId, s, { reason: 'budget-spent', funding: [{ pool: 'max.programmatic', unit: 'usd', amount: 4 }, { pool: 'max.programmatic', unit: 'tokens', amount: 500 }] }, at(4))
     const merge = await ctx.board.propose(task('p2', 'Merge', { actionClass: 'merge' }), at(4))
     await ctx.board.sweep(at(4))
 
@@ -1096,7 +1100,7 @@ describe('ctx.board (store-backed): the TASKS.md projection', () => {
     expect(await b.board().tasksMarkdown('p2')).toBe(md)
     expect(md).toMatch(/^<!-- TASKS\.md for project p2: a projection/)
     expect(md).toContain('# project p2')
-    for (const t of [done, held, asks, merge]) expect(md).toContain(`- id: \`${t.taskId}\``)
+    for (const t of [done, held, asks, spent, merge]) expect(md).toContain(`- id: \`${t.taskId}\``)
     expect(md.indexOf('## In progress')).toBeLessThan(md.indexOf('## Waiting'))
     expect(md.indexOf('## Waiting')).toBeLessThan(md.indexOf('## Done'))
     expect(md).toContain('- state: claimed')
@@ -1106,6 +1110,8 @@ describe('ctx.board (store-backed): the TASKS.md projection', () => {
     expect(md).toContain('- [x] a1: tests pass (tests)')
     expect(md).toMatch(/- waiting: for input \(question\) since [^\n]+\n {2}1\. Band width 64\?/)
     expect(md).toMatch(/- waiting: for approval \(approval-needed, request `apr-[^`]+`\)/)
+    // A spent budget's ask: the exact lines its request would add.
+    expect(md).toMatch(/- waiting: for approval \(budget-spent, request `apr-[^`]+`\) since [^\n]+\n {2}- funding asked: \+4 usd of max\.programmatic, \+500 tokens of max\.programmatic\n/)
     expect(md).toContain('> ## Not a heading of the board')
     expect(md).not.toMatch(/^## Not a heading/m)
   })

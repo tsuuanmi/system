@@ -1,8 +1,9 @@
 /**
  * The `TASKS.md` projection of one project's board, for native agents without MCP, in the spirit of
  * Backlog.md's task format: per task its id, title, state, acceptance criteria as checkboxes,
- * dependencies, holder, and why it waits. A pure function of the stored records, so the same board
- * renders the same text; it is never read back (the store is the source of truth).
+ * dependencies, holder, and why it waits (its questions, or the funding a spent budget asks for).
+ * A pure function of the stored records, so the same board renders the same text; it is never read
+ * back (the store is the source of truth).
  */
 import type { BoardTask, Project, TaskState } from './index.ts'
 
@@ -31,6 +32,8 @@ function task(t: BoardTask): string[] {
     const what = t.state === 'waiting-for-approval' ? `for approval (${t.waiting.reason}, request \`${t.waiting.approvalRequest}\`)` : `for input (${t.waiting.reason})`
     lines.push(`- waiting: ${what} since ${t.waiting.since}, until ${t.waiting.expiresAt}`)
     for (const [i, q] of (t.waiting.questions ?? []).entries()) lines.push(`  ${i + 1}. ${inline(q)}`)
+    // A spent budget's ask (board-task@1.1): the exact lines its request would add, as the queue shows them.
+    if (t.waiting.funding?.length) lines.push(`  - funding asked: ${t.waiting.funding.map((l) => `+${l.amount} ${l.unit} of ${inline(l.pool)}`).join(', ')}`)
   }
   if (t.result) {
     const subject = `${t.result.subject.type} \`${inline(t.result.subject.ref)}\`${t.result.subject.version ? ` at \`${inline(t.result.subject.version)}\`` : ''}`
