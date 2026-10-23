@@ -113,6 +113,16 @@ guesses.
   `from` (`null` the first time), `renamedFrom` when it took a former name's record, and the
   `manifestDigest` (the sha256 of the manifest's canonical JSON; not an artifact). Example:
   [`decision.lifecycle.json`](../../schemas/examples/decision.lifecycle.json).
+- The plugin host's manifest check (contract 1.1) records a `gate` decision, so it stays
+  `@1.0`: decider rule `plugin-host.manifest-check` version 1, its `hash` the sha256 of what the
+  check read (the rows, each manifest's digest or why there is none, and the packages allowed
+  without one); candidates `pass` and `fail`, `fail` giving each finding's reason (at most 32,
+  the last counting the rest); its input the plugin's previous check decision; `detail` names the
+  `plugin`, its `rows`, its `findings` (each `kind` `no-manifest`, with `manifest` `absent` or
+  `refused`, or `unsatisfied`, with the `seam`, `range`, `provider` when a manifest declares it,
+  and `version`; each with its `reason`), the outcome it comes `from` (`null` the first time), and
+  for a valid manifest its `version` and `manifestDigest` ([plugin host](../design/plugin-host.md#the-manifest-check)).
+  Example: [`decision.manifest-check.json`](../../schemas/examples/decision.manifest-check.json).
 - `decision@1.6` adds the decision type `policy-change`: which autonomy policy set is in force
   ([approvals](../design/approvals.md#a-policy-change)). A `policy-change` decision must be `@1.6`;
   every other decision keeps its version. Its two candidates are the old and the new set's
@@ -699,10 +709,17 @@ guesses.
   plugin passed.
 - A `core` plugin fails closed and a `family` plugin fails open
   ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
-- A `sensitive` configuration key holds a secret: the host keeps it in `ctx.credentials`, and
-  the plugin's configuration holds only its reference.
+- `config` lists the plugin's configuration keys, from its `Config` schema. A `sensitive` key
+  holds a secret (its schema is marked `.role('secret')`): the host keeps it in `ctx.credentials`,
+  and the plugin's configuration holds only its reference. No `system` plugin declares one.
+- `egress` is the strictest classification the plugin may send off the machine under the default
+  egress policy: a plugin that sends no Worker's content off the machine declares none. The
+  operator's policy can widen a Worker class; the egress check runs on the actual payload
+  (INV-12). `cacheStable` belongs to a context plugin only.
 - A consumed seam's `range` is a caret range (`^1.3.0`): the plugin works with that contract
-  version and every later minor of its major.
+  version and every later minor of its major. At start the plugin host checks each plugin a row
+  mounts against it: a range its mounted provider's manifest does not satisfy, or one the host
+  cannot read, is a finding ([the manifest check](../design/plugin-host.md#the-manifest-check)).
 - `plugin-manifest@1.1` adds `defines`: the seams whose abstract definition a definition package
   (a `*-core` package) owns, each at its conformance suite's contract. A manifest that names it
   must be `@1.1`; every other stays `@1.0`. Example:

@@ -617,7 +617,7 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest and its recorded lifecycle state.
+Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.
 
 Scope: `client`
 

@@ -25,8 +25,8 @@ contract needs an ADR ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capab
   - leases with generations, and fencing of writes by a stale owner;
   - the encrypted credential vault behind DSH `ctx.credentials`;
   - the plugin host's record: every plugin of the composition with the manifest its package
-    declares, and each plugin's lifecycle state, every change a decision
-    ([plugin host](../design/plugin-host.md));
+    declares, each plugin's lifecycle state, and what its manifest check found in each plugin a
+    row mounts, every change a decision ([plugin host](../design/plugin-host.md));
   - the libraries: canonical JSON hashing, the schema registry, durable owner-only files.
 - **Does not own:** domain semantics. The kernel stores receipts and decisions, but it does not
   know what a workflow, a turn, or a Worker is.
@@ -264,7 +264,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   plugin `Config` at startup, isolates failures per plugin, and runs disposers on shutdown
   ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). Every plugin package ships a
   manifest, generated from its code and checked against it in CI; the kernel's plugin host
-  records each plugin's lifecycle state ([plugin host](../design/plugin-host.md)).
+  records each plugin's lifecycle state, and checks each plugin a row mounts against its manifest
+  at start ([plugin host](../design/plugin-host.md)).
 - **Does not own:** business logic. The host never wires layers by hand; dependencies are
   resolved through `inject`.
 - **Packages:** [system-bundle](../../packages/system-bundle/README.md),

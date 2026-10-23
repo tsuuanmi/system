@@ -76,7 +76,7 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 | `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start); with no workflow engine running, stop it directly once `/proc` proves it is this home's host |
 | `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem |
 | `system health [--json]` | each health check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, UI drift) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
-| `system plugins [--json]` | every plugin of the composition: its recorded lifecycle state (`default`, `candidate`, `retired`), whether a row runs it, its version and class, its rows, and why its manifest is absent or refused ([plugin host](../design/plugin-host.md)) |
+| `system plugins [--json]` | every plugin of the composition: its recorded lifecycle state (`default`, `candidate`, `retired`), whether a row runs it, its version and class, its rows, why its manifest is absent or refused, and each finding of the manifest check with the decision that recorded it ([plugin host](../design/plugin-host.md#the-manifest-check)) |
 | `system ui` | print the web UI link (runs, steps, decisions; approve, stop, continue; the approval queue's verdicts; accept or reject the reviews of board tasks; pause, resume, or close a board project) |
 
 ## Clients

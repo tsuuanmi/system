@@ -334,22 +334,41 @@ plugin `default` once its row is on and `candidate` once it is off, and `system 
 its lifecycle decision (`system plugins --json`) shows the state it left
 ([plugin host](../design/plugin-host.md)). A start with the same rows records nothing.
 
-## A plugin's manifest is refused
+## The manifest check found a plugin
 
-`system health` shows `manifests` degraded, naming the plugin and why: the plugin host refused
-the `plugin-manifest.json` its package ships (it declares `_meta`, is not a valid
-`plugin-manifest@1.x`, names another package, or is larger than 64 KiB). The plugin still runs
-as composed, but its lifecycle is not recorded until its package ships a valid manifest; its
-last recorded state stays.
+`system health` shows `manifests` **down**, naming each plugin and what the plugin host's
+manifest check found in it at start
+([the manifest check](../design/plugin-host.md#the-manifest-check)):
 
-1. `system plugins` shows the plugin, its rows, and why its manifest was refused.
-2. A `@tsuuanmi` package's manifest is generated and checked with the code: reinstall the
-   release (`system init` from it), which ships valid ones.
-3. A third party's plugin: fix its manifest, or ask its publisher to; the host never repairs one.
-4. Restart. The start records the plugin's state if it differs from its last record.
+- **it runs with no manifest**: a row mounts a package that ships no `plugin-manifest.json` (or
+  cannot be found), and the `plugin-host` row's `allowWithoutManifest` does not name it;
+- **it runs with a manifest the host refused**: it declares `_meta`, is not a valid
+  `plugin-manifest@1.x`, names another package, or is larger than 64 KiB;
+- **it consumes a seam in a range its provider does not satisfy**: the provider's manifest
+  declares a version the range does not accept (a row of another release, a third party's plugin),
+  or no mounted plugin declares a seam it requires and contract 1.0 does not satisfy it.
 
-A row whose package ships no manifest (the DSH rows) is noted, not degraded: its lifecycle is
-not recorded.
+The host cannot keep the row from running
+([ADR-0045](../decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)): treat the
+plugin as unchecked until the finding is cleared.
+
+1. `system plugins` shows each finding under its plugin, and the `gate` decision that recorded it
+   (`system artifact <id>`).
+2. If the plugin need not run, turn its row off in your profile patch (`disabled: true`).
+3. A `@tsuuanmi` package's manifest is generated and checked with the code: reinstall the
+   release (`system init` from it), which ships valid manifests and matching versions. Rows of two
+   releases in one profile are what an unsatisfied range usually means.
+4. A third party's plugin: fix its manifest, or ask its publisher to; the host never repairs one.
+   A package that ships no manifest by design (as the DSH rows) runs only when you allow it: add
+   it to the `plugin-host` row's `allowWithoutManifest` in your patch. That patch replaces the
+   row's whole config, so copy the bundle's list (the four DSH rows) into it too, or each of them
+   becomes a finding.
+5. Restart. The start records each cleared finding once as `pass`; the same finding is never
+   recorded twice.
+
+A refused manifest in a row that is off makes `manifests` degraded instead: the plugin does not
+run, but its lifecycle is not recorded until its package ships a valid manifest. The DSH rows the
+bundle allows are noted, not found.
 
 ## Remove the free ChatGPT account
 
