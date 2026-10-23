@@ -55,7 +55,7 @@ each field, which a schema cannot fully express, is documented in
 | [evaluation.v1.json](evaluation.v1.json) | body of an `evidence` artifact: the trials, measurements, analysis, cost, and integrity checks of one evaluation of one experiment |
 | [lesson.v1.json](lesson.v1.json) | body of a `finding` artifact: knowledge drawn from verdicts, with the envelope it was observed in and the predicates that make it stale |
 | [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools; `mcp-board` 1.1 adds the operator's `board_pause`, `board_resume`, and `board_close` |
-| [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period |
+| [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period; 1.1 adds what a cap counts as 0 (records without a figure, runs whose usage the ledger could not count) |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, …), the input and output of the MCP tools built before Base, and the

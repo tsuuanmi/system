@@ -6,6 +6,7 @@
  */
 import type { ActionClass, ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask, Project, TaskState } from '@tsuuanmi/system-board-core'
+import type { UsageUnknown } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 
 export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
@@ -53,6 +54,12 @@ export interface DecisionRead { createdAt: string; decisionType: string; decider
 export interface DigestRead { kept?: number; dropped?: number; escalated: boolean }
 
 /**
+ * A `usage.unknown` entry as the report reads it: when it was recorded, the workflow run it names,
+ * its record, and whether the ledger has counted a record of its run in its pool since (reconciled).
+ */
+export interface UnknownRead { at: string; runId?: string; fact: UsageUnknown; reconciled: boolean }
+
+/**
  * What the report reads, already narrowed to its scope (one project, or every one): projects and
  * their tasks as the board holds them now, the queue's requests, the ledger's records observed in
  * the period, and the event-log entries of the period by type; the decisions those name, and the
@@ -69,6 +76,8 @@ export interface Sources {
   decisions: ReadonlyMap<string, DecisionRead>
   /** By request id; absent when no digest provider is loaded. */
   digests?: ReadonlyMap<string, DigestRead>
+  /** The runs whose usage the ledger could not count (`usage.unknown`), recorded in the period; none when absent. */
+  unknowns?: UnknownRead[]
   /** What could not be counted, found while reading. */
   notes: string[]
 }
@@ -95,6 +104,9 @@ export const within = {
     || (r.requester.taskId !== undefined && scope.tasks.has(r.requester.taskId)) || (r.requester.runId !== undefined && scope.runs.has(r.requester.runId)),
   usage: (scope: Scope, u: UsageRecord): boolean => scope.projectId === undefined || u.projectId === scope.projectId
     || (u.taskId !== undefined && scope.tasks.has(u.taskId)) || (u.runId !== undefined && scope.runs.has(u.runId)),
+  /** A run whose usage is unknown, as its record would be scoped, or by the workflow run its entry names. */
+  unknown: (scope: Scope, u: Pick<UnknownRead, 'runId' | 'fact'>): boolean => scope.projectId === undefined || u.fact.projectId === scope.projectId
+    || (u.fact.taskId !== undefined && scope.tasks.has(u.fact.taskId)) || scope.runs.has(u.fact.runId) || (u.runId !== undefined && scope.runs.has(u.runId)),
   /** A task's event by its task; a run's by its run; a batch by the scope's requests it holds. */
   event: (scope: Scope, e: Recorded, requests: ReadonlySet<string>): boolean => {
     if (scope.projectId === undefined) return true
@@ -105,7 +117,17 @@ export const within = {
 }
 
 type Counts = Record<TaskState, number>
-interface UsageTotals { records: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; turns: number; costUsd: number }
+/**
+ * Counted usage, and what a cap counts as 0 (D25), each only when there is any: records without
+ * token counts, a cost, or turns, and the runs whose usage the ledger could not count and has not
+ * counted since (`unknownRuns`).
+ */
+interface UsageTotals {
+  records: number; inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; turns: number; costUsd: number
+  withoutTokens?: number; withoutCost?: number; withoutTurns?: number; unknownRuns?: number
+}
+/** The runs of the period whose usage the ledger could not count: each once, by the kind of its first entry, and those it has counted a record of since. */
+interface UnknownUsage { runs: number; reconciled: number; notReported: number; interrupted: number; refused: number; failed: number }
 interface ClassCounts { actionClass: ActionClass; asked: number; approved: number; rejected: number; expired: number; withdrawn: number }
 interface Day { date: string; interruptions: number; batches: number; over?: true }
 interface Attention { maxBatchesPerDay?: number; maxInterruptionsPerDay?: number }
@@ -122,7 +144,7 @@ export interface Report {
   remediation: { cycles: number; fixesOpened: number; fixesClosed: number }
   approvals: { asked: number; approved: number; rejected: number; expired: number; withdrawn: number; openNow: number; byClass: ClassCounts[]; wait?: { answered: number; medianSeconds: number; p90Seconds: number; maxSeconds: number } }
   attention: { interruptions: number; batches: number; days: Day[]; threshold?: Attention; daysOver?: number }
-  usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number } }
+  usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number }; unknown?: UnknownUsage }
   digests: { attached: number; bypassed: number; claimsKept?: number; claimsDropped?: number; escalated?: number }
   baseline: { acceptedResults: number; interruptions: number; attempts: number; perAcceptedResult?: { tokens: number; costUsd: number; turns: number; interruptions: number; attempts: number } }
   notes: string[]
@@ -141,6 +163,8 @@ const counts = (tasks: readonly BoardTask[]): Counts => {
   return out
 }
 const emptyUsage = (): UsageTotals => ({ records: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, turns: 0, costUsd: 0 })
+/** The report's name of each kind of unknown usage (`usage-unknown@1.0`). */
+const KINDS = { 'not-reported': 'notReported', interrupted: 'interrupted', refused: 'refused', failed: 'failed' } as const satisfies Record<UsageUnknown['kind'], keyof UnknownUsage>
 /** The nearest-rank percentile `q` of ascending `sorted`. */
 const percentile = (sorted: readonly number[], q: number): number => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))]!
 
@@ -261,9 +285,13 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
   const total = emptyUsage()
   const pools = new Map<string, UsageTotals & { pool: string }>()
   const byOutcome = { completed: 0, failed: 0, aborted: 0, unknown: 0 }
-  let untokened = 0
+  const poolOf = (id: string): UsageTotals & { pool: string } => pools.get(id) ?? pools.set(id, { pool: id, ...emptyUsage() }).get(id)!
+  /** A cap counts what a record or run does not carry as 0 (D25): counted where there is any. */
+  const missing = (sums: UsageTotals[], key: 'withoutTokens' | 'withoutCost' | 'withoutTurns' | 'unknownRuns'): void => {
+    for (const sum of sums) sum[key] = (sum[key] ?? 0) + 1
+  }
   for (const u of records) {
-    const pool = pools.get(u.pool) ?? pools.set(u.pool, { pool: u.pool, ...emptyUsage() }).get(u.pool)!
+    const pool = poolOf(u.pool)
     for (const sum of [total, pool]) {
       sum.records += 1
       sum.inputTokens += u.usage?.inputTokens ?? 0
@@ -274,11 +302,36 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
       sum.costUsd += u.cost?.amount ?? 0
     }
     byOutcome[u.outcome ?? 'unknown'] += 1
-    if (!u.usage) untokened += 1
+    if (!u.usage) missing([total, pool], 'withoutTokens')
+    if (!u.cost) missing([total, pool], 'withoutCost')
+    if (u.turns === undefined) missing([total, pool], 'withoutTurns')
+  }
+  // Runs whose usage the ledger could not count, recorded in the period: each once per pool, by its
+  // first entry; one the ledger has counted a record of since is reconciled.
+  const facts = (sources.unknowns ?? []).filter((u) => inPeriod(u.at))
+    .sort((a, b) => ms(a.at) - ms(b.at) || byKey<UnknownRead>((u) => `${u.fact.pool}\0${u.fact.runId}\0${u.fact.kind}`)(a, b))
+  const seen = new Set<string>()
+  let unknown: UnknownUsage | undefined
+  for (const u of facts) {
+    const key = `${u.fact.pool}\0${u.fact.runId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unknown ??= { runs: 0, reconciled: 0, notReported: 0, interrupted: 0, refused: 0, failed: 0 }
+    unknown.runs += 1
+    unknown[KINDS[u.fact.kind]] += 1
+    if (u.reconciled) unknown.reconciled += 1
+    else missing([total, poolOf(u.fact.pool)], 'unknownRuns')
   }
   if (pools.size > MAX_POOLS) throw new ReportError('overloaded', `the period's records name ${pools.size} pools, more than ${MAX_POOLS}: report a shorter period`)
   for (const sum of [total, ...pools.values()]) sum.costUsd = round(sum.costUsd, 6)
-  if (untokened) notes.push(`${untokened} usage record(s) carry no token counts (the runtime reported none): tokens count the others only`)
+  if (total.withoutTokens) notes.push(`${total.withoutTokens} usage record(s) carry no token counts (the runtime reported none): tokens count the others only`)
+  if (total.withoutCost) notes.push(`${total.withoutCost} usage record(s) carry no cost (the runtime reported none): cost counts the others only`)
+  if (total.withoutTurns) notes.push(`${total.withoutTurns} usage record(s) carry no turn count: turns count the others only`)
+  if (total.unknownRuns && unknown) {
+    const kinds = (Object.entries(KINDS) as Array<[UsageUnknown['kind'], keyof UnknownUsage]>).filter(([, key]) => unknown[key]).map(([kind, key]) => `${unknown[key]} ${kind}`).join(', ')
+    notes.push(`${total.unknownRuns} run(s) whose usage the ledger could not count, and has not counted since: no figure counts them, and a cap counts them as 0 `
+      + `(${unknown.runs} recorded in the period: ${kinds}${unknown.reconciled ? `, ${unknown.reconciled} of them counted since` : ''}; system events --type usage.unknown)`)
+  }
 
   // Digests of task results: attached or bypassed, and how the attached ones fared.
   const settled = ofType('workflow.task.digest')
@@ -312,7 +365,7 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
     period, ...(projectId !== undefined ? { projectId } : {}), asOf: sources.asOf,
     projects: listed, ...(projects.length > MAX_PROJECTS ? { projectsOmitted: projects.length - MAX_PROJECTS } : {}),
     tasks, attempts, remediation, approvals, attention,
-    usage: { total, pools: [...pools.values()].sort(byKey((p) => p.pool)), byOutcome },
+    usage: { total, pools: [...pools.values()].sort(byKey((p) => p.pool)), byOutcome, ...(unknown ? { unknown } : {}) },
     digests, baseline, notes: notes.slice(0, 16),
   }
 }

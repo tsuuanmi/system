@@ -388,6 +388,20 @@ describe('MCP tool calls', () => {
     expect(call('mcp-report', { ...week, output: { ...week.output, summary: 'written by a model' } })).toBe(false)
   })
 
+  it('1.1 says what a cap counts as 0, as counts only: the runs whose usage is unknown, by kind, and the records without a figure (D25)', () => {
+    const week = example('mcp-report.week')
+    const usage = week.output.usage
+    const withUsage = (changed: Json): Json => ({ ...week, output: { ...week.output, usage: { ...usage, ...changed } } })
+    expect(call('mcp-report', withUsage({ unknown: { ...usage.unknown, estimatedTokens: 1000 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ unknown: { runs: 1 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ total: { ...usage.total, withoutTokens: -1 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ pools: [{ ...usage.pools[0], withoutCost: 2, withoutTurns: 1 }] }))).toBe(true)
+    // A report of 1.0, with none of them, stays valid.
+    const { unknown: _, ...before } = usage
+    const { unknownRuns: __, ...total } = usage.total
+    expect(call('mcp-report', { ...week, output: { ...week.output, usage: { ...before, total, pools: [total].map((t) => ({ pool: usage.pools[0].pool, ...t })) } } })).toBe(true)
+  })
+
   it('checks a call against its own tool, not another', () => {
     const claim = example('mcp-board.claim')
     expect(call('mcp-board', { ...claim, tool: 'board_cancel' })).toBe(false)

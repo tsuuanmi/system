@@ -766,6 +766,11 @@ guesses.
 - What each figure counts, and from which records, is in [reports](../design/reports.md#what-it-counts).
   `asOf` is when the board and the queue were read: the `now` counts are as of then. Two calls on
   the same records and period differ in `asOf` only.
+- `mcp-report` 1.1 adds what a cap counts as 0, each only when there is any: `withoutTokens`,
+  `withoutCost`, `withoutTurns`, and `unknownRuns` per pool and in all, and `usage.unknown`, the
+  runs whose usage the ledger could not count by kind and how many were reconciled
+  ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)). A 1.0
+  report has none of them and stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:
