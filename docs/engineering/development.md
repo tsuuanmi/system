@@ -72,6 +72,14 @@ pnpm version-packages   # apply the changesets and seed the release's upgrade fi
 pnpm release:artifacts  # tarballs, SBOMs, SHA256SUMS, and notes in dist/release/
 ```
 
+A root script that runs pnpm again (`check`, `build`, `test:e2e`, `test:crash`,
+`audit:deps`) calls it as `"$npm_execpath"`, the pnpm that is running the script,
+never a `pnpm` looked up on `PATH`. So every step of `pnpm check` runs on the same
+pnpm, and on a host whose pnpm comes from corepack alone `corepack pnpm check`
+works with no `pnpm` on `PATH`. A new root script that runs pnpm does the same.
+Run the scripts through pnpm: started any other way, `npm_execpath` does not
+name pnpm and the script fails.
+
 Run it locally on Linux:
 
 ```sh
