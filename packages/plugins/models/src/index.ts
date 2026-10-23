@@ -11,8 +11,8 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { z as zod } from 'zod'
-import { type CatalogEntry, LlmModels } from './llm.ts'
-import { ModelWorkers } from './workers.ts'
+import { type CatalogEntry, DEFAULT_IDLE_TIMEOUT_MS, LlmModels } from './llm.ts'
+import { DEFAULT_CALL_TIMEOUT_MS, ModelWorkers } from './workers.ts'
 
 export { LlmModels, type CatalogEntry } from './llm.ts'
 export { ModelWorkers } from './workers.ts'
@@ -26,8 +26,10 @@ export interface Config {
   maxRetries?: number
   /** Calls in flight at once, over every model Worker (default 4). */
   maxConcurrentCalls?: number
-  /** Hard deadline per call (default 5 min). */
+  /** Hard ceiling per call, over every attempt (default 15 min). */
   callTimeoutMs?: number
+  /** The longest an attempt's answer stream may stay silent before it is stopped as a stall (default 5 min). */
+  idleTimeoutMs?: number
   /** Days a finished call and its prompt are kept (default 30). */
   retainDays?: number
   /** A session's turns, at most, unless an entry sets its own (default 100; ADR-0031). */
@@ -55,7 +57,8 @@ export const Config: z<Config> = z.object({
   })).default([]).description('The model catalog (REQ-WRK-10); names no key: a key is stored with the operator tool model_key'),
   maxRetries: z.natural().max(5).default(2).description('Re-attempts of a transiently failed call'),
   maxConcurrentCalls: z.natural().min(1).max(64).default(4).description('Model calls in flight at once'),
-  callTimeoutMs: z.natural().min(1).default(5 * 60_000).description('Hard deadline per call'),
+  callTimeoutMs: z.natural().min(1).default(DEFAULT_CALL_TIMEOUT_MS).description('Hard ceiling per call, over every attempt and back-off'),
+  idleTimeoutMs: z.natural().min(1).max(2_147_483_647).default(DEFAULT_IDLE_TIMEOUT_MS).description('The longest an attempt\'s answer stream may stay silent: past it the attempt is stopped as timeout (a stalled connection) and re-attempted as the route\'s retry policy allows; a slow answer that keeps streaming is not stopped'),
   retainDays: z.natural().min(1).default(30).description('Days a finished call and its prompt are kept'),
   maxSessionTurns: z.natural().min(1).max(10_000).default(100).description('A session\'s turns, at most, unless an entry sets its own (ADR-0031; default: the session layer\'s turn budget)'),
   maxHistoryChars: z.natural().min(1).max(2_000_000).default(320_000).description('Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer\'s compaction point)'),
@@ -68,7 +71,11 @@ export function apply(ctx: Context, config: Config): void {
     if (ids.has(entry.id)) throw new Error(`duplicate model ${entry.id}`)
     ids.add(entry.id)
   }
-  ctx.plugin(LlmModels, { models: config.models ?? [], ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}) })
+  ctx.plugin(LlmModels, {
+    models: config.models ?? [],
+    ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+    ...(config.idleTimeoutMs !== undefined ? { idleTimeoutMs: config.idleTimeoutMs } : {}),
+  })
   ctx.plugin(ModelWorkers, {
     ...(config.maxConcurrentCalls !== undefined ? { maxConcurrentCalls: config.maxConcurrentCalls } : {}),
     ...(config.callTimeoutMs !== undefined ? { callTimeoutMs: config.callTimeoutMs } : {}),

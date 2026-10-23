@@ -19,7 +19,16 @@ export interface LlmModelsConfig {
   models: CatalogEntry[]
   /** Re-attempts of a failed call that the route's retry policy calls transient (default 2). */
   maxRetries?: number
+  /**
+   * The longest an attempt's answer stream may stay silent (default 5 min). Past it the stream is
+   * stopped and the attempt fails as `TIMEOUT`: a stalled connection, which the route's retry
+   * policy may re-attempt. A slow answer that keeps streaming is never stopped by it.
+   */
+  idleTimeoutMs?: number
 }
+
+/** The default silence bound: the old per-call deadline, so no call that answered under it is stopped by a stall now. */
+export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000
 
 /** DSH's provider-neutral failure codes, mapped onto the seam's vocabulary. */
 const FAILURES: Record<string, ModelFailure> = {
@@ -82,31 +91,54 @@ export class LlmModels extends Models {
     }
   }
 
-  /** One provider request: the visible text, usage, and how it finished. */
+  /**
+   * One provider request: the visible text, usage, and how it finished. Any stream event is
+   * progress; an attempt silent for `idleTimeoutMs` is stopped and fails as `TIMEOUT`, saying how
+   * far it got, so a stalled connection is told apart from a slow answer.
+   */
   private async attempt(entry: CatalogEntry, prompt: string, history: readonly ModelTurn[], maxTokens: number, signal: AbortSignal | undefined): Promise<Attempt> {
     const texts: string[] = []
     let usage = { inputTokens: 0, outputTokens: 0 }
-    const stream = this.ctx.llm.stream({
-      provider: entry.route, model: entry.model, maxTokens,
-      // A session's earlier turns, then the prompt (ADR-0031).
-      messages: [
-        ...history.map((turn) => (turn.role === 'user'
-          ? { role: 'user' as const, content: [{ type: 'text' as const, text: turn.text }] }
-          : createAssistantMessage({ content: [{ type: 'text', text: turn.text }], source: { provider: entry.route, model: entry.model } }))),
-        { role: 'user', content: [{ type: 'text', text: prompt }] },
-      ],
-      ...(signal ? { signal } : {}),
-    })
-    for await (const chunk of stream as AsyncIterable<StreamChunk>) {
-      if (chunk.type === 'block-end' && chunk.block.type === 'text') texts.push(chunk.block.text)
-      else if (chunk.type === 'usage') usage = { inputTokens: chunk.usage.inputTokens, outputTokens: chunk.usage.outputTokens }
-      else if (chunk.type === 'finish') {
-        const reason = chunk.reason
-        if (reason.kind === 'error' || reason.kind === 'aborted') return { ok: false, failure: reason.failure }
-        return { ok: true, completion: { text: texts.join(''), usage, finish: reason.kind === 'max-tokens' ? 'max-tokens' : 'stop' } }
+    const idleMs = this.config.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+    const stall = new AbortController()
+    const timer = setTimeout(() => stall.abort(), idleMs)
+    let events = 0
+    let chars = 0
+    const stalled = (): Attempt => ({ ok: false, failure: { code: 'TIMEOUT', message: `no progress for ${idleMs} ms (idleTimeoutMs) after ${events} stream event(s) and ${chars} characters of answer; the stream was stopped` } })
+    const stopped = (): boolean => stall.signal.aborted && !signal?.aborted
+    try {
+      const stream = this.ctx.llm.stream({
+        provider: entry.route, model: entry.model, maxTokens,
+        // A session's earlier turns, then the prompt (ADR-0031).
+        messages: [
+          ...history.map((turn) => (turn.role === 'user'
+            ? { role: 'user' as const, content: [{ type: 'text' as const, text: turn.text }] }
+            : createAssistantMessage({ content: [{ type: 'text', text: turn.text }], source: { provider: entry.route, model: entry.model } }))),
+          { role: 'user', content: [{ type: 'text', text: prompt }] },
+        ],
+        signal: signal ? AbortSignal.any([signal, stall.signal]) : stall.signal,
+      })
+      for await (const chunk of stream as AsyncIterable<StreamChunk>) {
+        if (stopped()) return stalled()
+        timer.refresh()
+        events++
+        if (chunk.type === 'text-delta') chars += chunk.text.length
+        else if (chunk.type === 'block-end' && chunk.block.type === 'text') texts.push(chunk.block.text)
+        else if (chunk.type === 'usage') usage = { inputTokens: chunk.usage.inputTokens, outputTokens: chunk.usage.outputTokens }
+        else if (chunk.type === 'finish') {
+          const reason = chunk.reason
+          if (reason.kind === 'error' || reason.kind === 'aborted') return stopped() ? stalled() : { ok: false, failure: reason.failure }
+          return { ok: true, completion: { text: texts.join(''), usage, finish: reason.kind === 'max-tokens' ? 'max-tokens' : 'stop' } }
+        }
       }
+      if (stopped()) return stalled()
+      return { ok: false, failure: { code: 'TRANSPORT', message: 'the stream ended without a finish' } }
+    } catch (error) {
+      if (stopped()) return stalled()
+      throw error
+    } finally {
+      clearTimeout(timer)
     }
-    return { ok: false, failure: { code: 'TRANSPORT', message: 'the stream ended without a finish' } }
   }
 }
 

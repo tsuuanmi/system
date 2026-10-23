@@ -108,11 +108,22 @@ locality is what admits `local-private` work to it
    decision joins the call's decision chain. A denial fails the call as `egress_denied`, never sent.
 3. **Bounds** ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)): at most
    `maxConcurrentCalls` calls in flight; output tokens at most the entry's `maxTokens` and the
-   requirement's `budget.maxTokens`; a hard deadline `callTimeoutMs` (failure `timeout`).
+   requirement's `budget.maxTokens`; and two time bounds, both failing as `timeout`:
+   - **Silence** (`idleTimeoutMs`, default 5 min), per attempt: any event of the answer stream is
+     progress. An attempt silent that long is a stalled connection: its stream is stopped, and it
+     fails as DSH `TIMEOUT` with how far it got (`no progress for … after N stream event(s) and M
+     characters of answer`). A slow answer that keeps streaming is never stopped by it.
+   - **Ceiling** (`callTimeoutMs`, default 15 min), per call, over every attempt and back-off
+     (`did not finish within …`). Its default holds three silent attempts, the first send and its
+     two default re-attempts.
+
+   A route adapter may bound silence too (`llm-pi-ai`'s `streamIdleTimeoutMs`, default 5 min);
+   the shorter bound stops the stream first, and either fails the attempt as `TIMEOUT`.
 4. **Re-attempts:** a failure the route's retry policy calls transient (DSH codes such as
-   `RATE_LIMIT`, `SERVER`, `TIMEOUT`) is sent again with its backoff, at most `maxRetries` times
-   (default 2), whatever the route policy allows; a refused credential, a spent quota, or an invalid
-   request is never re-attempted, whatever the policy. Each request may be billed.
+   `RATE_LIMIT`, `SERVER`, `TIMEOUT`, so a stalled stream too) is sent again with its backoff, at
+   most `maxRetries` times (default 2), whatever the route policy allows; a refused credential, a
+   spent quota, or an invalid request is never re-attempted, whatever the policy. Each request may
+   be billed.
 5. **Result:** a `report` artifact `model-answer@1.0` with the catalog id, the prompt's hash, the
    finish (`max-tokens` when cut at the bound), the bound, the sends and attempts, and the token
    usage of the request that answered. At worst a call is billed `sends × attempts` times: six

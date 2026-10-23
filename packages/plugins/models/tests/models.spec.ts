@@ -102,10 +102,15 @@ modelsConformance('llm (DSH llm + llm-pi-ai, against a fake OpenAI-compatible se
 })
 
 describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', () => {
-  const boot = async (maxRetries: number, retryPolicy?: RetryPolicyConfig) => {
+  const boot = async (maxRetries: number, retryPolicy?: RetryPolicyConfig, idleTimeoutMs?: number) => {
     const server = await fakeOpenAi()
     const { ctx, fibers } = await llmRows(server, retryPolicy)
-    await ctx.plugin(LlmModels, { models: routed(CATALOG), maxRetries })
+    if (idleTimeoutMs) {
+      // The route's first request loads its client, silently: not a stall these tests measure.
+      for await (const chunk of ctx.llm.stream({ provider: 'fake', model: 'm1', messages: [{ role: 'user', content: [{ type: 'text', text: 'warm' }] }] })) void chunk
+      server.requests.length = 0
+    }
+    await ctx.plugin(LlmModels, { models: routed(CATALOG), maxRetries, ...(idleTimeoutMs ? { idleTimeoutMs } : {}) })
     cleanups.push(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       await server.close()
@@ -143,6 +148,37 @@ describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', 
     const refused = await ctx.models.complete({ model: 'echo', prompt: 'z' }).catch((error: unknown) => error) as ModelError
     expect(server.requests).toHaveLength(4)
     expect(refused.message).toMatch(/refused the credential, or none is stored/)
+  })
+
+  it('stops a stream silent past idleTimeoutMs as a timeout, saying how far it got, and re-attempts it as the route allows', async () => {
+    const { ctx, server } = await boot(1, undefined, 1_000)
+    // A stall, then an answer: the stalled request is stopped and the re-attempt answers.
+    server.script.push({ holdMs: 30_000 })
+    expect(await ctx.models.complete({ model: 'echo', prompt: 'x' })).toMatchObject({ text: 'echo: x', attempts: 2 })
+    expect(server.requests).toHaveLength(2)
+    // Stalled on every attempt: a timeout that says it was a stall, not a slow answer.
+    server.script.push({ holdMs: 30_000 }, { holdMs: 30_000 })
+    const stalled = await ctx.models.complete({ model: 'echo', prompt: 'y' }).catch((error: unknown) => error) as ModelError
+    expect(stalled).toMatchObject({ failure: 'timeout' })
+    expect(stalled.message).toMatch(/^echo: TIMEOUT: no progress for 1000 ms \(idleTimeoutMs\) after \d+ stream event\(s\) and 0 characters of answer; the stream was stopped$/)
+    expect(server.requests).toHaveLength(4)
+  })
+
+  it('never stops a slow answer that keeps streaming, however long it takes in all', async () => {
+    const { ctx, server } = await boot(0, undefined, 1_000)
+    // Ten parts, one every 350 ms: about 3.5 s in all, more than three times the silence bound.
+    server.script.push({ drip: ['one ', 'two ', 'three ', 'four ', 'five ', 'six ', 'seven ', 'eight ', 'nine ', 'ten'], everyMs: 350 })
+    expect(await ctx.models.complete({ model: 'echo', prompt: 'slow' })).toMatchObject({ text: 'one two three four five six seven eight nine ten', finish: 'stop', attempts: 1 })
+    expect(server.requests).toHaveLength(1)
+  })
+
+  it('stops a stalled stream at the caller\'s abort as aborted, not as a stall', async () => {
+    const { ctx, server } = await boot(2, undefined, 5_000)
+    server.script.push({ holdMs: 5_000 })
+    const caller = new AbortController()
+    setTimeout(() => caller.abort(), 100)
+    await expect(ctx.models.complete({ model: 'echo', prompt: 'z' }, caller.signal)).rejects.toMatchObject({ failure: 'aborted' })
+    expect(server.requests).toHaveLength(1)
   })
 
   it('reports an answer cut at the bound as max-tokens', async () => {
@@ -416,7 +452,9 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(fake.calls[0]).toMatchObject({ model: 'fast', maxTokens: 16 })
     expect(ctx.artifacts.get(short.result!)!.body).toMatchObject({ maxTokens: 16 })
     fake.script.holdMs = 1_000
-    expect(await settle(ctx, source.start({ key: 'b-2', worker: 'model:fast', prompt: 'slow', requirement: requirement(), decisions: DECISIONS }))).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'timeout' } })
+    const slow = await settle(ctx, source.start({ key: 'b-2', worker: 'model:fast', prompt: 'slow', requirement: requirement(), decisions: DECISIONS }))
+    expect(slow).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'timeout' } })
+    expect(slow.error!.message).toBe('model:fast did not finish within 50 ms (callTimeoutMs, the ceiling over every attempt); the call was stopped')
   })
 
   it('maps a failure to its class: a refused key needs the operator, a rate limit backs off', async () => {
@@ -518,5 +556,27 @@ describe('the models row', () => {
     })
     await expect.poll(async () => empty.get('models') !== undefined).toBe(true)
     expect(await empty.workers.list()).toEqual([])
+  })
+
+  it('bounds a call twice: a silence bound per attempt for a stalled stream, and a ceiling over every attempt (INV-9)', async () => {
+    // The defaults: a call that answered under the old five-minute deadline was never silent longer.
+    expect(Models.Config({ models: [] })).toMatchObject({ idleTimeoutMs: 300_000, callTimeoutMs: 900_000, maxRetries: 2 })
+    expect(() => Models.Config({ models: [], idleTimeoutMs: 0 })).toThrow()
+    // The row hands its silence bound to ctx.models.
+    const server = await fakeOpenAi()
+    const { ctx, fibers } = await llmRows(server)
+    const dir = temp('system-models-idle-')
+    fibers.push(
+      ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}), ctx.plugin(WorkerRouter, {}),
+      ctx.plugin(Models, { models: [{ id: 'fast', route: 'fake', model: 'm1', tier: 'economy', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }], maxRetries: 0, idleTimeoutMs: 100 }),
+    )
+    await Promise.all(fibers)
+    cleanups.push(async () => {
+      for (const fiber of [...fibers].reverse()) await fiber.dispose()
+      await server.close()
+    })
+    await expect.poll(async () => ctx.get('models') !== undefined).toBe(true)
+    server.script.push({ holdMs: 5_000 })
+    await expect(ctx.models.complete({ model: 'fast', prompt: 'x' })).rejects.toThrow(/no progress for 100 ms \(idleTimeoutMs\)/)
   })
 })

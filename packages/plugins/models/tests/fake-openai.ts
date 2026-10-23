@@ -1,7 +1,8 @@
 /**
  * A minimal OpenAI-compatible chat-completions server on 127.0.0.1 for tests: it streams
  * `echo: <last user text>` (with ` (after N messages)` for N earlier messages) as server-sent events with a usage chunk, and records each request.
- * Each response can be scripted: fail with a status, or hold the stream open.
+ * Each response can be scripted: fail with a status, hold the stream open (silent after its first
+ * event), or drip an answer in parts, one event every `everyMs` (slow, but never silent that long).
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -12,7 +13,7 @@ export interface FakeRequest {
   body: { model: string; messages: Array<{ role: string; content: unknown }>; max_tokens?: number; max_completion_tokens?: number; stream?: boolean }
 }
 
-export type FakeStep = { status: number } | { holdMs: number } | { text: string; finish?: 'stop' | 'length' }
+export type FakeStep = { status: number } | { holdMs: number } | { text: string; finish?: 'stop' | 'length' } | { drip: string[]; everyMs: number }
 
 export interface FakeOpenAi {
   baseURL: string
@@ -48,7 +49,7 @@ export async function fakeOpenAi(): Promise<FakeOpenAi> {
       const last = [...body.messages].reverse().find((m) => m.role === 'user')
       // The messages before the last prompt: a history the model was given (ADR-0031).
       const earlier = body.messages.length - 1
-      const answer = step && 'text' in step ? step.text : `echo: ${text(last?.content)}${earlier > 0 ? ` (after ${earlier} messages)` : ''}`
+      const answer = step && 'text' in step ? step.text : step && 'drip' in step ? '' : `echo: ${text(last?.content)}${earlier > 0 ? ` (after ${earlier} messages)` : ''}`
       const id = `chatcmpl-${requests.length}`
       const chunk = (delta: Record<string, unknown>, finish: string | null): string =>
         `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
@@ -64,7 +65,16 @@ export async function fakeOpenAi(): Promise<FakeOpenAi> {
         res.end('data: [DONE]\n\n')
       }
       if (step && 'holdMs' in step) setTimeout(finish, step.holdMs).unref()
-      else finish()
+      else if (step && 'drip' in step) {
+        const parts = [...step.drip]
+        const next = (): void => {
+          if (res.writableEnded || res.destroyed) return
+          if (!parts.length) return finish()
+          res.write(chunk({ content: parts.shift()! }, null))
+          setTimeout(next, step.everyMs).unref()
+        }
+        setTimeout(next, step.everyMs).unref()
+      } else finish()
     })
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
