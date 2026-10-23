@@ -40,8 +40,8 @@ export interface Config {
 export const CREDENTIAL_STORES: readonly string[] = [
   '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.Xauthority', '.netrc', '.git-credentials', '.npmrc', '.pypirc',
   join('.config', 'gh'), join('.config', 'gcloud'), join('.docker', 'config.json'), join('.cargo', 'credentials.toml'),
-  // coding agents' logins and settings
-  '.claude', '.claude.json', '.codex', '.gemini', '.cursor', join('.config', 'github-copilot'), join('.config', 'opencode'), join('.local', 'share', 'opencode'),
+  // coding agents' logins and settings (the Antigravity CLI keeps its plugins' secrets in ~/.config/antigravity, beside ~/.gemini)
+  '.claude', '.claude.json', '.codex', '.gemini', join('.config', 'antigravity'), '.cursor', join('.config', 'github-copilot'), join('.config', 'opencode'), join('.local', 'share', 'opencode'),
 ]
 
 function alwaysHidden(): string[] {

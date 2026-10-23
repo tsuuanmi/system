@@ -17,7 +17,8 @@
   `~/.Xauthority`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`,
   `~/.config/gh`, `~/.config/gcloud`, `~/.docker/config.json`,
   `~/.cargo/credentials.toml`) and every coding agent's own login (`~/.claude`,
-  `~/.claude.json`, `~/.codex`, `~/.gemini`, `~/.cursor`, `~/.config/github-copilot`,
+  `~/.claude.json`, `~/.codex`, `~/.gemini`, `~/.config/antigravity` (the
+  Antigravity CLI's plugin secrets), `~/.cursor`, `~/.config/github-copilot`,
   `~/.config/opencode`, `~/.local/share/opencode`): an agent runs in a home of its
   own, so it never reads another agent's credentials or the operator's; and every
   registered secret path (`secretPaths()`), plus the configured `hide` paths

@@ -39,7 +39,7 @@ describe('the read confinement of agent children (ADR-0024, INV-8)', () => {
   it('hides every coding agent\'s login and the operator\'s credential stores from every agent child, whichever agent runs (INV-8)', async () => {
     const ctx = await boot()
     const hide = ctx.agentRuntimes.confinement().hide
-    for (const login of ['.claude', '.claude.json', '.codex', '.gemini', '.cursor', '.ssh', '.netrc', '.git-credentials', '.npmrc']) expect(CREDENTIAL_STORES, login).toContain(login)
+    for (const login of ['.claude', '.claude.json', '.codex', '.gemini', join('.config', 'antigravity'), '.cursor', '.ssh', '.netrc', '.git-credentials', '.npmrc']) expect(CREDENTIAL_STORES, login).toContain(login)
     // Each is hidden when present on this host.
     for (const store of CREDENTIAL_STORES) if (existsSync(join(homedir(), store))) expect(hide, store).toContain(join(homedir(), store))
   })
