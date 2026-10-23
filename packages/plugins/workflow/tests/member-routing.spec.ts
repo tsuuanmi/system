@@ -98,7 +98,9 @@ function failing(ctx: Context): { broken: boolean } {
       throw new Error('it has no Worker to start')
     },
     get: () => undefined,
-    wait: async () => undefined,
+    wait: async () => {
+      throw new Error('it has no execution to wait on')
+    },
   })
   return state
 }
