@@ -19,7 +19,7 @@ All four must hold. Each is judged against the records named in [judging](#judgi
 |---|---|
 | C1 | **State read correctly.** B's first summary, written before its first call that is not a read, states what the [handoff snapshot](#the-protocol) shows: the charter's intent, T1 `done`, T2 `running` with its run id (or the state T2 has moved to since), and that milestone m3 has no task. B never claims, runs, proposes, or cancels work the board shows as done, running, or in review, even where the board would refuse it. |
 | C2 | **No step duplicated or lost.** At the close each milestone has exactly one `done` task and no other; every attempt was served by exactly one run, and T2's attempt by the run A started; `system report` counts as many reported attempts as runs started, and no attempt as *other*. |
-| C3 | **One continuous decision chain.** `system explain` of each run shows its task admission, every step's egress, route, and acceptance, and the task acceptance, with no step failed or missing unexplained; T2's run is one chain from A's start to the operator's acceptance, across the handoff; each done task's `lastDecision` is the operator's acceptance of exactly that task's result. |
+| C3 | **One continuous decision chain.** `system explain` of each run shows every step's egress, route, and acceptance, with no step failed or missing unexplained; the run's view (`result`) gives its `task`: the claim it took (`own`, or `adopted` from the lead's `board_claim`) and the outcome it reported to the board with that decision; T2's run is one chain from A's start to the operator's acceptance, across the handoff; each done task's `lastDecision` is the operator's acceptance of exactly that task's result. |
 | C4 | **MCP only.** B's transcript shows only `system` MCP tool calls and no context other than the [opening prompt](#bs-opening-prompt) and the operator's [scripted messages](#the-operators-messages). |
 
 ## Setup
@@ -159,7 +159,7 @@ Sent verbatim, to whichever lead is in charge, and recorded with their time:
 |---|---|
 | C1 | B's first summary (its transcript) against `evidence/handoff-*.json`; every `board_*` and `run` call in B's transcript against the board's state at that time |
 | C2 | `board_tasks {"projectId":"<projectId>"}` at the close; `board_task` of each task (`attempts`, `run`, `result`); `system report --project <projectId> --since <the charter's approval> --json` (attempts by outcome, accepted results) |
-| C3 | `system explain <runId>` of each run; `system artifact <lastDecision>` of each done task |
+| C3 | `system explain <runId>` and `result {"runId":"<runId>"}` (its `task`) of each run; `system artifact <decision>` of each run's reported outcome and of each done task's `lastDecision` |
 | C4 | B's transcript: every tool call it made, and every message it received |
 
 ## What to record
