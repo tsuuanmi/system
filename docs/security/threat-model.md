@@ -207,10 +207,10 @@
     ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
     Claude Code starts under the read confinement below, like Codex and ACP
     agents;
-  - Codex and ACP agents cannot ask a tool gate before each tool call
-    (`gatesToolCalls: false`), so they refuse a gated run and the `agents`
-    source admits none of their Workers; the policies below hold for them
-    still;
+  - Codex, ACP agents, and the Antigravity CLI cannot ask a tool gate before
+    each tool call yet (`gatesToolCalls: false`), so they refuse a gated run and
+    the `agents` source admits none of their Workers; the policies below hold
+    for them still;
   - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
     `workspace-write` confined to the workspace) and working directory,
     approvals `never`, network access and web search off. It runs in its own
@@ -229,10 +229,26 @@
     ignores the cancel gets SIGTERM, then SIGKILL; under the confinement the
     signal ends its whole PID namespace, children included, so it cannot hang a
     run or keep writing after it.
+  - The Antigravity CLI (`runtime-antigravity-cli`): agy has no per-tool
+    allow-list a headless run can be held to, so every tool call passes its
+    PreToolUse hook, bridged to the run over a unix socket in an owner-only
+    directory bound read-only into that run's confinement only, with a per-run
+    token; any failure on the way is a deny. The runtime's own rules decide first
+    (the sandbox's reading and file-editing tools only, no command, web, browser,
+    subagent, or MCP tool; every location in a call inside the workspace, on
+    disk; no customization root written), then the run's gate. It runs in its
+    own home (`HOME`), never the operator's `~/.gemini` or
+    `~/.config/antigravity`, with its auto-update off; a home or workspace that
+    configures hooks, MCP servers, or plugins, which agy would run outside every
+    gate, is refused. Not covered, so nothing runs yet: that agy runs the hook
+    before each tool call takes a model turn to show, so until a version is
+    verified live it offers no sandbox; and the token is no secret from the
+    agent's own processes, which share the run's user and namespaces (they can
+    reach only the gate's questions, never run a call).
 
   **Read confinement** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md),
   [ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)):
-  every agent (Claude Code, Codex, ACP agents) starts under bubblewrap, in its own PID
+  every agent (Claude Code, Codex, ACP agents, the Antigravity CLI) starts under bubblewrap, in its own PID
   namespace and session. It hides the DSH home (vault, key, tokens, store, login profiles,
   DSH's own credentials); the session's runtime directory, so the user's message
   bus (which can start commands outside any sandbox) and key agents are out of

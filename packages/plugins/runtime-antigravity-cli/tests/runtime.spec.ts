@@ -163,7 +163,7 @@ describe('antigravity-cli: a run, exactly as configured, or refused before anyth
     expect(readdirSync(RUN_ROOT)).toEqual([])
   })
 
-  it('refuses what agy cannot hold exactly, before it starts: tools outside the sandbox, a turn limit, a conversation to continue, a gate it cannot classify, an oversized prompt', async () => {
+  it('refuses what agy cannot hold exactly, before it starts: tools outside the sandbox, a turn limit, a conversation to continue, a gate it cannot classify, an oversized prompt (REQ-WRK-6)', async () => {
     const s = scenario()
     const go = (spec: Partial<Parameters<AntigravityRuntime['run']>[0]>) => runtime({ env: s.env }).run({ prompt: 'x', workspace, sandbox: 'read-only', ...spec }, new AbortController().signal)
     await expect(go({ tools: ['view_file', 'code_action'] })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('refusing code_action') })
@@ -226,7 +226,7 @@ describe('antigravity-cli: every tool call passes the hook: the runtime\'s rules
   symlinkSync(outside, join(workspace, 'escape'))
   const answers = (log: Array<Record<string, unknown>>) => prints(log)[0]!.calls.map((c) => [c.name, c.answer.decision, c.answer.reason ?? ''])
 
-  it('lets a read-only run read inside its workspace only, and nothing else: no write, no command, no other tool', async () => {
+  it('lets a read-only run read inside its workspace only, and nothing else: no write, no command, no other tool (REQ-WRK-6)', async () => {
     const s = scenario({
       calls: [
         { name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts'), StartLine: 1, EndLine: 5 } },

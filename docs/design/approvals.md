@@ -212,6 +212,14 @@ flowchart LR
   pre-approvals, so the runtime's own policy still decides, and a call outside the workspace
   stays refused. A gate that throws, answers with an unknown verdict, or takes longer than 30 s
   is a deny.
+- **On the Antigravity CLI** the hook is a command agy runs before each tool call, which the
+  runtime bridges to the run (a socket in an owner-only directory, a per-run token; any failure
+  on the way is a deny). The runtime's own rules come first, since agy has no workspace-scoped
+  permission of its own; then the gate, bounded the same way. `allow` is the hook's allow (the
+  rules already held the call to the workspace); `deny` its deny; `defer` is a deny too (agy
+  cannot wait on a call), and the run ends there as above. Its tools are not in the table below,
+  so the runtime refuses a gated run (`gatesToolCalls: false`) until they are
+  ([its README](../../packages/plugins/runtime-antigravity-cli/README.md)).
 
 ### How a call is classified
 
