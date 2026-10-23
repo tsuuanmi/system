@@ -7,6 +7,8 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   route, acceptance, recovery);
 - the answer;
 - the operator's **Approve / Reject plan**, **Vote** on a team's tie, **Stop run**, and **Continue run**;
+  a remediation fix whose plan is on the approval queue shows its request instead of the plan
+  buttons, and is decided in the queue;
 - when `ctx.approvals` is present, the **approval queue**
   ([approvals](../../../docs/design/approvals.md)) above the runs: open requests by batch, each
   with its class, exact subject, summary, consequences, and expiry, and the operator's

@@ -667,12 +667,13 @@ What happened to the waiting work, by the request's subject:
 |---|---|
 | a charter, `project:<id>:charter:<n>` | a first charter: the project is closed `abandoned`, and its open tasks are cancelled (`project-closed`). An amendment: dropped, and the approved charter stays |
 | a task's attempt, `board-task:<id>:attempt:<n>` (version `approval-needed`, `budget-spent`, or `reconciliation-failed`) | the task waits for input, `waiting.reason: rejected`, and nothing starts. Left alone, it is cancelled (`input-expired`) after `inputExpirySeconds` (7 days) |
-| a Worker's tool call, `agent-tool-call:<agent run>:<tool>` | the call is denied. The run that asked already failed (`config_error`); a later run of that session making the same exact call is denied too, and nothing new is queued |
+| a Worker's tool call, `agent-tool-call:<agent run>:<tool>` | the call is denied. The run that asked already failed (`config_error`) and is not continued; a later run of that session making the same exact call is denied too, and nothing new is queued |
+| a remediation fix, `artifact <plan id> @ git:<HEAD>:<hash>` | the gate closes, the fix never runs, and the run fails as `gate_timeout`. `system continue <runId>` asks again on a new request |
 
 The board moves a task on its own sweep (every `sweepSeconds`, 60), so the new state shows within
 about a minute. It also applies the expiry itself, at the task's `waiting.expiresAt`, when the
-queue did not resolve the request or no longer knows it. A plan gate (`system approve <runId>`)
-is not on this queue.
+queue did not resolve the request or no longer knows it. A planner's plan gate (`system approve
+<runId>`) is not on this queue; a remediation fix's is ([below](#a-remediation-fix-waits-on-the-queue)).
 
 To ask again or plan again:
 
@@ -760,6 +761,37 @@ rejected by the engine as another attempt, also without you.
    - **No verdict:** at `yours until` the task waits for input (`review-expired`) and the row
      leaves the list. The wait is the policy's for the class: a day in the bundle's studio policy.
 
+## A remediation fix waits on the queue
+
+When an exact-subject review of an agent's change asks for changes with blocking findings, the
+run grows a fix and a re-review, and the fix waits for you: it writes, so it never runs on a
+policy alone ([remediation on the queue](../design/workflow-engine.md#remediation-on-the-approval-queue)).
+
+Where it shows:
+
+- The run waits (`system result <runId>` returns at once): its `blocked` gate names the plan and
+  `approvalRequest`, and the CLI prints `waiting on approval request apr-… for plan sha256:…`. The
+  run's page on `/ui` says the same, with no plan buttons: `system approve` refuses this gate.
+- The request is in the queue on `/ui`: class `remediation`, subject `artifact <plan id> @
+  git:<HEAD>:<hash>` (the plan, and the subject the review read), a summary naming the fix step,
+  and the plan among its refs (`system artifact <plan id>` shows the fix's prompt, which quotes the
+  findings).
+
+To decide:
+
+1. Read the review's findings (`system explain <runId>`, the review step's assessment) and the
+   change in the run's worktree ([worktree](#a-runs-worktree)).
+2. **Approve:** within `approvalPollSeconds` (15 s) the gate opens, the fix runs once, and a review
+   of the changed subject follows. **Deny:** the run fails as `plan_rejected`, and the fix never
+   runs. **No answer** by the request's expiry (a day under the bundle's studio policy): the run
+   fails as `gate_timeout`.
+3. To ask again after a deny or an expiry, `system continue <runId>`: the gate puts the plan to the
+   queue on a new request. A policy change that withdrew the request closes the gate too
+   (`plan_rejected`, "withdrawn"); continue asks under the policy now.
+
+With no approval queue loaded, the fix waits on the run's plan gate instead: `system approve
+<runId> --plan <plan id>` within `gateTimeoutHours` (24).
+
 ## A Worker's tool call is deferred on an approval
 
 Every tool call of an agent run passes the run's gate. A call the policy asks about is deferred:
@@ -790,12 +822,16 @@ To approve:
 2. Press **Approve** (or **Deny**), for the request or its batch. One approval is one call: it runs
    once, and the same call later asks again. Deny, or no answer before the request expires: the
    call is denied in that session from then on.
-3. **Nothing reruns the call for you yet.** The workers seam has no waiting status, so the run is
-   over, and no component starts the later run of its session once the request is approved. Start
-   it yourself, in the same session, so the gate meets the same call:
-   - a run outside a board task: `system continue <runId>`, or **Continue run** on its page,
-     reopens the failed step as a new attempt in its session. Before the verdict it defers again on
-     the same request and queues nothing new; once approved, the call runs;
+3. **What runs the call.** The workers seam has no waiting status, so the run is over; what
+   continues its session once you approve depends on who owns the run:
+   - a run outside a board task continues by itself: within `approvalPollSeconds` (15 s) of your
+     approval the engine reopens the failed step as a new attempt in its session, with a line
+     saying the call was approved, and the call runs once. It is a `recovery` decision (rule
+     `workflow.approved-call`, `system explain <runId>`) and a `workflow.run.continued` event naming
+     the request; one approval continues the run once. A deny or an expiry continues nothing, and
+     nor does an approval for a run you already continued, stopped, or deleted. To go on without
+     the call, `system continue <runId>` reopens the step yourself (before a verdict it defers again
+     on the same request, queuing nothing new);
    - a run for a board task is not continued: its failure is reported to the board as an attempt,
      the task goes through the gate again, and the Lead starts the next attempt with `run` and
      `task`, naming the earlier `sessionId` (the event shows it) to continue that session.

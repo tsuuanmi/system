@@ -19,6 +19,8 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { ClaudeAgentRuntime, type QueryFn } from '@tsuuanmi/system-runtime-claude-agent-sdk'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
+import WorkerSessions from '@tsuuanmi/system-worker-sessions'
+import Workflow from '@tsuuanmi/system-workflow'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
@@ -529,5 +531,79 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
+  })
+})
+
+// A deferred call's continuation (docs/design/workflow-engine.md#a-deferred-tool-call): the workflow
+// engine continues the session that stopped at the call, once, when the operator approves it.
+describe('the continuation of a deferred call by the workflow engine', { timeout: 60_000 }, () => {
+  const CHANGE = [{ nodeId: 'change', objective: 'Change the code', prompt: '{{input}}', capabilities: ['develop', 'local-data'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer' }]
+
+  async function bootFlow(agent: AgentRuntimeProvider) {
+    const dir = mkdtempSync(join(tmpdir(), 'system-gate-flow-'))
+    const ctx = new Context()
+    const fibers = [
+      ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+      ctx.plugin(StoreApprovals, { policies: [policy()], sweepSeconds: 3600 }), ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(WorkerSessions, {}),
+      ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard' }] }),
+      ctx.plugin(Workflow, { retryDelayMs: 50, approvalPollSeconds: 1, templates: { change: CHANGE } }),
+    ]
+    await Promise.all(fibers)
+    ctx.agentRuntimes.register(agent)
+    cleanups.push(async () => {
+      for (const fiber of [...fibers].reverse()) await fiber.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    })
+    return ctx
+  }
+
+  const settledRun = async (ctx: Context, runId: string, status: 'completed' | 'failed') => {
+    const deadline = Date.now() + 30_000
+    for (;;) {
+      const view = ctx.workflow.get(runId)!
+      if (view.status === status) return view
+      if (Date.now() > deadline) throw new Error(`run ${runId} is ${view.status}, not ${status}`)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  it('continues the session once the operator approves the call it stopped at: one more attempt, whose brief says so, and the call runs once', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const ctx = await bootFlow(agent)
+    const run = ctx.workflow.start({ template: 'change', input: 'Make the tests pass', classification: 'operator-shared' })
+    const failed = await settledRun(ctx, run.runId, 'failed')
+    expect(failed.error).toMatchObject({ kind: 'config_error' })
+    const [request] = await ctx.approvals.list()
+    expect(request).toMatchObject({ action: { class: 'command' }, requester: { component: 'worker', sessionId: run.sessionId } })
+    // Nothing continues before the verdict.
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(agent.runs).toHaveLength(1)
+    await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'approved' }])
+    const done = await settledRun(ctx, run.runId, 'completed')
+    expect(done.nodes).toEqual([expect.objectContaining({ nodeId: 'change', state: 'COMPLETED', attempt: 2 })])
+    // The same session, resumed, told the call was approved; the approved call ran.
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.resume).toBe(agent.runs[0]!.resume ?? 'h-1')
+    expect(agent.runs[1]!.prompt).toContain(`The operator approved the tool call you stopped at (approval request ${request!.requestId})`)
+    expect(agent.verdicts[1]).toEqual([{ decision: 'allow' }])
+    const continued = ctx.artifacts.list({ kind: 'decision', runId: run.runId }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail?: Record<string, unknown> } })
+      .filter((d) => d.decider.id === 'workflow.approved-call')
+    expect(continued).toEqual([expect.objectContaining({ decisionType: 'recovery', outcome: expect.objectContaining({ option: 'continue', detail: expect.objectContaining({ approvalRequest: request!.requestId }) }) })])
+    // At most once per approval: later sweeps continue nothing more.
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    expect(agent.runs).toHaveLength(2)
+  })
+
+  it('continues nothing when the operator rejects the call: the run stays failed for the operator', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const ctx = await bootFlow(agent)
+    const run = ctx.workflow.start({ template: 'change', input: 'Make the tests pass', classification: 'operator-shared' })
+    await settledRun(ctx, run.runId, 'failed')
+    const [request] = await ctx.approvals.list()
+    await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'rejected' }])
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    expect(ctx.workflow.get(run.runId)!.status).toBe('failed')
+    expect(agent.runs).toHaveLength(1)
+    expect(ctx.store.db.prepare('SELECT outcome FROM workflow_deferrals WHERE request_id = ?').get(request!.requestId)).toEqual({ outcome: 'rejected' })
   })
 })

@@ -26,7 +26,8 @@ export type ActionClass =
   | 'charter' | 'funding' | 'remediation' | 'policy-change'
 /**
  * Classes that always ask, even unattended: irreversible effects, the investor's own decisions, and
- * remediation (the workflow's remediation already waits on an operator gate). A provider gives
+ * remediation (a fix that writes, or a lost run going on: the workflow's remediation gate and the
+ * board ask the queue about it). A provider gives
  * them at least `ask` whatever a rule says, and a policy that gives one `auto` or `notify` is
  * refused when loaded.
  */

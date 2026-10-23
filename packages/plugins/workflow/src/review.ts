@@ -123,8 +123,9 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   const recheckId = `${prefix}:review:${cycle + 1}`
   const grownBy = { node: node.node_id, generation }
   const prompt = remediationPrompt(run.input, subject, blocking)
-  // The fix writes, so it waits for the operator's approval of exactly this plan (ADR-0028, INV-15):
-  // never approved by policy, until the approval queue (B5) decides by the autonomy policy.
+  // The fix writes, so it waits for a person's approval of exactly this plan (ADR-0028, INV-15), never
+  // for a policy's: the gate puts it to the approval queue as a `remediation` action, which always
+  // asks (./queue.ts), or, with no queue loaded, waits for the operator's `approve`.
   const plan = e.ctx.artifacts.put({
     kind: 'plan', bodySchema: 'plan@1.0',
     body: {
@@ -136,7 +137,7 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy }
   append(e, run, node, [
     { ...step, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
-      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const },
+      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const, remediation: { subject } },
     { ...step, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
       capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [gateId] },
     { ...step, nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: spec.prompt,

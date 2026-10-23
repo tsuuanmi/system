@@ -97,11 +97,15 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   The bundle row carries the default studio policy; a patch that targets the row replaces its
   whole config, so it carries the policies too.
 - **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional.
-- **Consumers:** the board; the web UI's queue; and the `agents` Worker source, whose
+- **Consumers:** the board; the web UI's queue; the `agents` Worker source, whose
   per-run tool gate calls `check`, `request`, and `get` for every tool call of an agent run
-  ([a Worker's tool calls](../../../docs/design/approvals.md#a-workers-tool-calls)).
-- **Not yet:** remediation still uses the workflow's plan gate (`approval@1.0`). A new policy
-  version takes effect by configuration and a restart, not through a `policy-change` approval.
+  ([a Worker's tool calls](../../../docs/design/approvals.md#a-workers-tool-calls)); and the
+  workflow engine, whose remediation gates ask the queue (`remediation`), which continues a
+  deferred call's session once its request is approved, and which records the checks a plain
+  run that wrote leaves pending (`check`, `request`, `list`, `get`, `withdraw`;
+  [workflow engine](../../../docs/design/workflow-engine.md#remediation-on-the-approval-queue)).
+- **Not yet:** a new policy version takes effect by configuration and a restart, not through a
+  `policy-change` approval.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`approvals-core/conformance/approvals.ts`](../../approvals-core/conformance/approvals.ts), at
   contract 1.0 with no known failure; [`tests/board.spec.ts`](tests/board.spec.ts) runs the

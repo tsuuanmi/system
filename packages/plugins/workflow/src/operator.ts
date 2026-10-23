@@ -7,6 +7,7 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { decideGate, grewFrom, grow } from './growth.ts'
+import { queueOwns, withdrawUnheld } from './queue.ts'
 import { DEFAULT_GROWTH, parsePlan, recordExecutor, type ResolvedNode } from './spec.ts'
 import { isRemovedTeamStep } from './teams.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type WorkflowError, WorkflowFailure } from './types.ts'
@@ -21,7 +22,7 @@ export async function stop(e: Engine, runId: string, reason = 'stopped by the op
   if (!run || run.status !== 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is not running`)
   e.runAborts.get(runId)?.abort()
   await e.running.get(runId)?.catch(() => undefined)
-  return asOperator(e, runId, (lease) => {
+  asOperator(e, runId, (lease) => {
     const decision = operatorDecision(e, run, 'stop', ['stop', 'keep'], reason, 'not keep: the operator asked to stop the run, which cancels its running executions')
     const error: WorkflowError = { kind: 'stopped', disposition: 'NONE', message: reason }
     for (const node of e.nodeRows(runId)) {
@@ -31,6 +32,9 @@ export async function stop(e: Engine, runId: string, reason = 'stopped by the op
     }
     e.finish(e.runRow(runId)!, 'failed', { error: JSON.stringify(error) }, lease)
   })
+  // A remediation request nothing waits on now is withdrawn, so a later approval opens nothing unseen.
+  await withdrawUnheld(e, runId)
+  return e.get(runId)!
 }
 
 /**
@@ -61,7 +65,8 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
       // A Worker step with its input bound runs again as it was; a gate, tally, or team decision is
       // promoted again, so it decides afresh (a tie blocks again, with a new deadline).
       const ready = recordExecutor(spec) === 'worker' && record.inputReceipt !== undefined
-      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null, excluded: null }, (r) => {
+      // A remediation gate reopened asks the queue again: its old request was resolved, or is withdrawn.
+      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null, excluded: null, approval_request: null }, (r) => {
         const next: NodeRecord = { ...r, lastDecision: decision }
         delete next.execution
         return next
@@ -336,6 +341,9 @@ export function approve(e: Engine, runId: string, input: { verdict: 'approved' |
       }
       throw new WorkflowFailure('invalid_input', `run ${runId} is not waiting for approval${input.plan ? ` of plan ${input.plan}` : ''}`)
     }
+    // A remediation fix's plan on the approval queue is decided there, never here (one channel per verdict).
+    const queued = queueOwns(e, gate)
+    if (queued) throw new WorkflowFailure('invalid_input', queued)
     // A re-plan replaced the plan the operator may have read: the verdict must name the new one.
     const replaced = e.ctx.artifacts.get(planOf(gate))?.lineage.supersedes ?? []
     if (!input.plan && replaced.length) {

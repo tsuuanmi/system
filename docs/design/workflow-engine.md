@@ -11,7 +11,8 @@
 > a scheduler exception fails the run as `internal` (`CODE_FIX`) instead of blocking it;
 > handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
 > planned. A board task's `run.brief` is not set: each execution names its own
-> [brief](#briefs).
+> [brief](#briefs). Only a remediation fix's gate asks the [approval queue](#remediation-on-the-approval-queue);
+> a planner's plan gate is still the operator's `approve`.
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -257,10 +258,11 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
   ([teams](teams.md#tally-and-debate)). The other rule is **remediation**: when a node that requires the `review` capability is bound to an exact
   subject, its assessment requests changes with blocking findings, and a step it depends on
   wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
-  a re-review bound to the new subject. The fix writes, so it waits behind a gate for the
-  operator's approval of exactly that fix (a `plan` artifact), never approved by policy
-  ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md), INV-15); the approval
-  queue takes this over in B5. Each cycle is grown by the review that asked for it, so
+  a re-review bound to the new subject. The fix writes, so it waits behind a gate for a person's
+  approval of exactly that fix (a `plan` artifact), never approved by policy
+  ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md), INV-15): through the
+  approval queue ([below](#remediation-on-the-approval-queue)), or, with none loaded, the
+  operator's plan gate. Each cycle is grown by the review that asked for it, so
   superseding an earlier fix retires the later cycles with the review that runs again.
   Whatever waited for the review waits for all three. Cycles are bounded by the engine
   configuration `maxReviewCycles` (default 3, the first review included).
@@ -294,6 +296,42 @@ flowchart LR
 - A verdict names the plan the operator read. With several plans waiting, a
   verdict that names none is refused and lists them, so a plan that arrived later
   is never approved unseen. The gate is read and decided under the run's lease.
+
+### Remediation on the approval queue
+
+A remediation fix's gate is the one gate the [approval queue](approvals.md) decides: the
+remediation is a `remediation` action, which always asks (`ALWAYS_ASK`). A planner's plan gate
+stays the operator's (`approve`).
+
+```mermaid
+stateDiagram-v2
+  [*] --> waiting: gate promoted (BLOCKED)
+  waiting --> requested: check says ask, one request opened (or one a crash left adopted)
+  waiting --> closed: check says forbid (plan_rejected)
+  requested --> opened: the operator approves the request, bound to exactly this plan and subject
+  requested --> closed: rejected or withdrawn (plan_rejected), expired (gate_timeout)
+  opened --> [*]: the fix runs, once
+  closed --> waiting: operator continue (a new request)
+```
+
+| Step | Records | On failure |
+|---|---|---|
+| put to the queue | `approvals.check({ class: 'remediation' })` (the run's project for a board task's run), then one `approvals.request` on the exact subject `{ type: artifact, ref: <plan content id>, version: <the reviewed subject, git:<HEAD>:<hash>> }` (that subject's content id when it is longer than 128 characters), requester `workflow` with the run and the gate; a `gate` decision `wait` (rule `workflow.remediation-approval`) naming the request; the request id on the gate's row; `workflow.gate.requested`. The gate then waits until the request's `expiresAt`, the policy's wait for `remediation` | the queue unreadable: the gate waits, logged, until its deadline closes it (`gate_timeout`); any mode but `ask`: the gate closes (`plan_rejected`), and nothing is asked |
+| a crash before the request id is stored | on restart, the gate adopts its own open or approved request on the same subject (requester, run, gate, class) instead of opening a second one (INV-4) | — |
+| approved | a `gate` decision `open` naming the request and the operator's `approval@1.0`, which becomes the gate's result; `workflow.gate.opened` (`by: queue`) | a request that does not bind this gate's plan, subject, run, and node closes the gate (`plan_rejected`, INV-5) |
+| rejected (verdict, withdrawal) or expired | a `gate` decision `closed`; the run fails as `plan_rejected`, or `gate_timeout` for an expiry; `workflow.gate.closed` (`by: queue`) | — |
+| no verdict by the deadline | the gate closes (`gate_timeout`) even if the queue's own sweep has not yet expired the request, and withdraws it | a withdrawal that fails leaves the request to expire on its own |
+
+- The engine reads the queue while the run waits, every `approvalPollSeconds` (default 15,
+  INV-9), under the run's lease. Nothing runs on a request that is not approved.
+- The gate's view (`blocked`) names `approvalRequest`, and the operator decides it in the queue
+  (`/ui`, MCP `approvals_decide`). The engine's `approve` refuses such a gate, so a verdict has
+  one channel.
+- `continue` on the closed gate reopens it, and it asks again on a new request; `stop` withdraws
+  the request nothing waits on any more.
+- **Without `ctx.approvals`** the gate is the operator's plan gate below, waiting for `approve`
+  until `gateTimeoutHours`: it is never approved by policy, even under `autoApprovePlans` (INV-2).
+  The choice is made each time the gate waits, so a queue loaded later takes the gate over.
 
 ### Re-planning
 
@@ -389,6 +427,33 @@ by its own state or cooldown, and the node fails with that kind. A node never fa
 
 A bare `ask` outside a run has no recovery and fails as before.
 
+### A deferred tool call
+
+A Worker whose tool gate deferred a call on an approval request stops there, and its execution
+fails as `config_error` naming the request: the workers seam has no waiting status
+([approvals](approvals.md#a-deferred-call)). Its node fails, and so does the run. When the
+operator approves that request, the engine continues the session by itself, once:
+
+- **Noted when the node fails.** In the transaction that fails the node, the engine reads which
+  request the execution deferred on from the Worker gate's own record of it (the
+  `agent-workers.tool.deferred` event: the execution and the request id) and keeps it
+  (`workflow_deferrals`). Only a sent execution that failed as `config_error`, on a node with a
+  session, of a run that serves no board task (the board decides a task's next attempt).
+- **Read from the queue** every `approvalPollSeconds` (default 15, INV-9), and once at start,
+  through `ctx.approvals.get` only. Open, it waits; rejected (a verdict, an expiry, a
+  withdrawal), nothing is continued; with no queue loaded, it waits.
+- **Approved**, and the request is exactly that call's (requester `worker`, the deferred
+  execution as its run, the node's session, an operator verdict): under the run's lease, in one
+  transaction, the deferral is settled, a `recovery` decision `continue` (rule
+  `workflow.approved-call`) names the request and the approval, and the node is reopened as a
+  new attempt on the same session. Its instructions end with a line saying the operator approved
+  the call it stopped at (the request id), so the input hash, the execution key, and the brief
+  are new; the Worker resumes its native session and makes the call, which its gate lets run
+  once. `workflow.run.continued` (`by: rule`) names the request.
+- **At most once per approval:** a settled deferral continues nothing again, here or in another
+  process. A run that moved on first (the operator continued, stopped, or deleted it, or another
+  node failed beside it) is settled with nothing run; the operator decides it as before.
+
 ## Board tasks
 
 A run may serve one attempt of one [board task](board.md): the start names the task, and the
@@ -437,6 +502,26 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+
+## A plain run's acceptance
+
+A run that serves no board task applies nothing: its result is not accepted onto a task, merged,
+or deployed. When such a run wrote (a `develop` step completed), the engine records, before the
+run completes, an `acceptance` decision (rule `workflow.run-acceptance`, under the final step,
+so `explain` shows it) naming the autonomy policy's required checks it did not pass:
+
+- the policy is asked about `workspace-write` with the checks the run ran on its result, as the
+  board's acceptance names them (`schema`, `review` on the subject its writing left); its
+  `failedChecks` are recorded as pending (`pendingChecks`), with the policy's `autonomy`
+  decision. Under the bundle's studio policy these are `tests` and `lint`, which a Worker's tool
+  calls left pending ([approvals](approvals.md#a-verdict-is-not-yet-a-permission));
+- they never block the run, and the run is never held for them: they bind where its result is
+  applied, as a [board task's acceptance](board.md#required-checks-bind-at-acceptance) binds
+  them;
+- with no `ctx.approvals` loaded, or one that cannot be read, the decision says the pending
+  checks are not known (`pendingChecks: unknown`), and the run completes all the same.
+
+A run that wrote nothing gets no such decision.
 
 ## Convergence
 

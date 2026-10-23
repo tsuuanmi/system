@@ -192,6 +192,12 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   grownBy?: { node: string; generation: number }
   /** How many times this node's growth was retired and grown again (default 1); later growth gets `:g<n>` ids. */
   generation?: number
+  /**
+   * On a remediation fix's gate: the exact subject the review that asked for the fix was bound to
+   * (`git:<HEAD>:<hash>`). Such a gate puts its plan to the approval queue (`ctx.approvals`, class
+   * `remediation`) when one is loaded, and is the operator's plan gate otherwise.
+   */
+  remediation?: { subject: string }
   /** A re-review's cycle (the first review is cycle 1), and the review node the cycles started from. */
   cycle?: number
   reviewOf?: string

@@ -44,6 +44,21 @@ second execution path (INV-1).
     - Cycles stop at the engine config `maxReviewCycles` reviews (default 3,
       the first included). Each choice, the bound included, is a
       `graph-growth` decision (`workflow.remediation`).
+    - **The fix waits on the approval queue** (`ctx.approvals`, optional;
+      [design](../../../docs/design/workflow-engine.md#remediation-on-the-approval-queue)):
+      its gate asks the policy about `remediation` (always `ask`), opens one
+      request on the exact subject (the plan's content id at the reviewed
+      subject `git:<HEAD>:<hash>`; requester `workflow`, the run, the gate),
+      stores its id on the gate, and waits until it expires, reading it every
+      `approvalPollSeconds` (default 15). An operator approval bound to that
+      plan and subject opens the gate (its result is the `approval@1.0`); a
+      rejection or withdrawal closes it as `plan_rejected`, an expiry as
+      `gate_timeout`; `forbid` closes it without asking. Each is a `gate`
+      decision (`workflow.remediation-approval`). A restart reads the request
+      again, and adopts one whose id a crash lost, never asking twice.
+      `approve` refuses such a gate (the queue decides it); `continue` asks
+      again on a new request; `stop` withdraws it. With no queue loaded, the
+      gate is the operator's plan gate below.
   - **Structured results (REQ-ART-5).** A node with `resultSchema: <tag>`:
     - the engine checks at load that the registry holds the schema;
     - the schema goes into the work requirement
@@ -138,7 +153,9 @@ second execution path (INV-1).
 - **Approval gate (REQ-WF-11).**
   - Steps that need a capability in `approvalRequired` (default `develop`) run
     behind a `gate` node, which waits `BLOCKED`. The run is parked, not failed,
-    and its view shows `blocked { kind: 'gate', nodeId, plan, until }`.
+    and its view shows `blocked { kind: 'gate', nodeId, plan, until }`, with
+    `approvalRequest` when a remediation fix's plan is on the approval queue
+    (above).
   - The wait is bounded (INV-9): after `gateTimeoutHours` (default 24, at most
     720) with no verdict, the gate closes by rule (a `gate` decision by
     `workflow.gate-timeout`), and the run fails as `gate_timeout`, saying when
@@ -289,6 +306,24 @@ second execution path (INV-1).
     2. The Worker source resets the native conversation (`workers.reset`), and
        the session's generation advances.
     3. The next wake opens a fresh conversation that starts from the handoff.
+- **A deferred tool call's continuation
+  ([design](../../../docs/design/workflow-engine.md#a-deferred-tool-call)).** A node that
+  fails for good on an execution its Worker's tool gate deferred (sent, `config_error`, on a
+  session, in a run that serves no board task) keeps the request it waits on, read from the
+  gate's `agent-workers.tool.deferred` event (`workflow_deferrals`). Every
+  `approvalPollSeconds`, and at start, the engine reads those requests through
+  `ctx.approvals`: one the operator approved, for exactly that execution and session, continues
+  the session once, under the run's lease and in one transaction: a `recovery` decision
+  (`workflow.approved-call`), the node reopened as a new attempt whose instructions end with the
+  approval, and `workflow.run.continued` (`by: rule`). A rejected request, or a run that moved on
+  (continued, stopped, deleted, or failed elsewhere), continues nothing.
+- **A plain run's acceptance
+  ([design](../../../docs/design/workflow-engine.md#a-plain-runs-acceptance)).** A run that
+  serves no board task and wrote (a `develop` step completed) records, before it completes, an
+  `acceptance` decision (`workflow.run-acceptance`, under its final step) with the checks it ran
+  (`schema`, `review`) and the policy's required checks for `workspace-write` it did not pass,
+  pending (`ctx.approvals.check`; `unknown` with none loaded). They never block it: a plain run
+  applies nothing.
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -317,7 +352,7 @@ second execution path (INV-1).
     loops.
 - **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
   `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
-  `workflow.graph.grown|retired`, `workflow.gate.opened|closed`,
+  `workflow.graph.grown|retired`, `workflow.gate.requested|opened|closed`,
   `workflow.team.tallied|decided`, and `workflow.task.lost|reported`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
@@ -339,7 +374,8 @@ second execution path (INV-1).
   - `run { template, input, variant?, task?, … }` starts any template, and waits like `ask`;
     with `task`, for one attempt of that board task (above);
   - `approve { runId, verdict, note?, plan? }` gives the operator's verdict on a
-    waiting plan (`plan` is required when several plans wait);
+    waiting plan (`plan` is required when several plans wait), never on a remediation
+    fix's plan on the approval queue, which is decided there;
   - `stop`, `continue`, `delete`, and `supersede` are the operator controls above;
   - `drain` admits no new run (a new one is refused as `overloaded`) and
     reports the runs still executing; call it again to poll. `resume` admits
@@ -429,14 +465,22 @@ second execution path (INV-1).
     blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional;
-  it reads `resources` when present (a task's budget for its briefs).
+  it reads `resources` when present (a task's budget for its briefs), and `approvals` (the
+  abstract `Approvals` of `approvals-core`) when present: remediation gates, deferred calls'
+  continuations, a plain run's acceptance.
 - **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
   the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
   reported, a restart with the holder lost (reconciled, nothing new started) and one whose work
   finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
   of a required check (held by the board, past the run's lease), a result off the written
-  subject, and the refusals with no board.
+  subject, and the refusals with no board. [`tests/remediation.spec.ts`](tests/remediation.spec.ts)
+  runs remediation over the store-backed queue and a git working tree: one request on the exact
+  subject and the fix only once it is approved (`approve` refused), a rejection and `continue`, an
+  expiry, `forbid`, `stop` withdrawing, a restart that applies a verdict given meanwhile and adopts
+  a request whose id was lost, the plan gate with no queue, and a plain run's acceptance with its
+  pending checks. The continuation of a deferred call runs end to end with a gating agent runtime
+  in [`agent-workers`' gate tests](../agent-workers/tests/gate.spec.ts).
 
 ## Source layout
 
@@ -454,6 +498,9 @@ in `engine.ts`:
 | `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
 | `growth.ts` | graph growth and approval gates |
 | `review.ts` | exact-subject review and remediation cycles |
+| `queue.ts` | a remediation fix's gate on the approval queue: the request on its exact subject, its verdict, adoption after a crash |
+| `continuations.ts` | a deferred tool call's continuation: the request noted when its node fails, read from the queue, the session continued once when approved |
+| `acceptance.ts` | a plain run's acceptance: the policy's required checks it did not pass, recorded as pending |
 | `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members |
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |
 | `sessions.ts` | wake-on-message, checkpoints, compaction |

@@ -16,7 +16,7 @@ Every route is under `/ui/api` and passes the shared request guard first
 |---|---|---|
 | `GET runs` | — | `{runs}`: the latest 100 runs |
 | `GET runs/<runId>` | — | `{run, explain}`; `404` for an unknown run |
-| `POST runs/<runId>/approve` | `{verdict: approved \| rejected, note?, plan?}`: `plan` the `sha256:` id of the plan the page shows (INV-5) | `{run}` |
+| `POST runs/<runId>/approve` | `{verdict: approved \| rejected, note?, plan?}`: `plan` the `sha256:` id of the plan the page shows (INV-5). A remediation fix's plan on the approval queue (the run's `blocked.approvalRequest`) is refused (`409`): decide its request in the queue | `{run}` |
 | `POST runs/<runId>/vote` | `{decision, option, rationale}`: the tie decision the page shows, an option or `inconclusive` | `{run}`; the vote is the operator's |
 | `POST runs/<runId>/stop` | `{reason?}` | `{run}` |
 | `POST runs/<runId>/continue` | `{nodeId?}` | `{run}` |

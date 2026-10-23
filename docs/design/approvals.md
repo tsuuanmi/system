@@ -13,13 +13,18 @@
 > ([`web-ui`](../../packages/plugins/web-ui/README.md), [API](../reference/web-ui.md)); a
 > Worker's tool calls pass the gate of [`agent-workers`](../../packages/plugins/agent-workers/README.md),
 > which [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md)
-> compiles to a PreToolUse hook. Differs from target: remediation still uses the plan gate
-> (`approval@1.0`); a new policy version takes effect by configuration and a restart, not through
-> a `policy-change` approval; a Worker's tool calls are judged under the studio policy only, since no
-> trusted envelope names an agent run's project yet; a deferred run fails as `config_error`,
-> since the workers seam has no waiting status, and nothing yet starts the later run of its
-> session once its request is approved; the workflow engine's acceptance does not yet bind a
-> rule's required checks, which a Worker's calls leave pending
+> compiles to a PreToolUse hook. The [workflow engine](workflow-engine.md) consumes it too: a
+> remediation fix's gate asks it ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)),
+> an approved deferred call's session is continued
+> ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), and a plain run that wrote
+> records the checks still pending ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)).
+> Differs from target: with no queue loaded, remediation falls back to the operator's plan gate
+> (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a new policy
+> version takes effect by configuration and a restart, not through a `policy-change` approval; a
+> Worker's tool calls are judged under the studio policy only, since no trusted envelope names an
+> agent run's project yet; a deferred run fails as `config_error`, since the workers seam has no
+> waiting status, and only the workflow engine continues its session once approved (a board
+> task's next attempt is the board's)
 > ([below](#where-a-workers-gate-leaves-room)).
 
 Every action that needs a person goes through one queue, in batches, and nothing else asks the
@@ -59,8 +64,9 @@ request that never expires (INV-9).
   only the classes it names. A class no rule names takes the stricter `default`, which is `ask`
   or `forbid`.
 - Irreversible effects (`external-send`, `deploy`, `delete-data`, `spend`), the investor's
-  decisions (`charter`, `funding`, `policy-change`), and `remediation` (the workflow's
-  remediation already waits on an operator gate) are never `auto` or `notify` (`ALWAYS_ASK`).
+  decisions (`charter`, `funding`, `policy-change`), and `remediation` (a fix that writes, or a
+  lost run going on, waits for a person: the workflow's remediation gate and the board ask the
+  queue about it) are never `auto` or `notify` (`ALWAYS_ASK`).
   The schema refuses a policy that says so (for `remediation`, which the schema predates, a
   load-time rule does), and the provider raises each of them to at least `ask` whatever a rule
   says.
@@ -144,7 +150,11 @@ verdict and puts the action to the new policy again:
   amendment is dropped) when no request can be opened. A request the board withdrew itself
   changes nothing there.
 - A Worker's deferred call is denied when its session runs it again, as for any withdrawn
-  request, and nothing new is queued for that call ([below](#a-deferred-call)).
+  request, and nothing new is queued for that call ([below](#a-deferred-call)); the workflow
+  engine continues nothing for it.
+- A workflow run's remediation gate closes (`plan_rejected`), and the fix does not run;
+  `continue` puts the plan to the policy loaded now on a new request
+  ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)).
 
 ### Where the tables leave room
 
@@ -249,7 +259,9 @@ ids, never the call's input.
   run, which fails as `config_error` naming the request, whatever the runtime reported: a
   deferred run never completes, and `config_error` is never retried. On Claude Code a `defer`
   ends the headless query with the call kept in the session's transcript.
-- **Resume.** The same session continues in a later run (by its native handle), and the hook
+- **Resume.** The same session continues in a later run (by its native handle): for a workflow
+  run that serves no board task, the engine starts it by itself once the request is approved,
+  once per approval ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). The hook
   runs again on the deferred call. The gate finds the request opened for that exact call in
   that session, and checks it in full before using it: subject type `content`, ref
   `agent-tool-call:<the agent run that opened it>:<tool>`, version the input's content id, the
@@ -275,13 +287,21 @@ ids, never the call's input.
 - **Waiting.** The workers seam's statuses are `queued`, `running`, `completed`, and `failed`;
   a run that waits on the operator is `failed` (`config_error`, the request in its message). A
   waiting status would change that guarantee seam's contract.
-- **The later run.** Whoever owns the work (the board's `blocked` → `ready` on the verdict, the
-  lead) starts the run that continues the session; the gate does not.
+- **The later run.** Whoever owns the work starts the run that continues the session; the gate
+  does not. For a workflow run that serves no board task the engine does, once the request is
+  approved: it reopens the node that deferred as a new attempt on the same session, at most once
+  per approval, with a `recovery` decision
+  ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). A board task's run is the
+  board's: its next attempt resumes the session from a brief. The engine finds the request from
+  the gate's `agent-workers.tool.deferred` event and checks it through `ctx.approvals`, so
+  `WorkerStart` and the workers seam stay as they are.
 - **Where pending checks bind.** The bundle's studio policy gives `workspace-write` `auto` with
   `tests` and `lint` required, so a Claude Code Worker reads and writes inside its workspace,
-  those checks pending. They bind at the board's acceptance of the task's result. The workflow
-  engine's acceptance does not consult the policy yet, so for a run outside the board they are
-  recorded (the decision, the event) and not yet enforced when its result is accepted.
+  those checks pending. They bind at the board's acceptance of the task's result. A run outside
+  the board applies nothing, so they never block it: when it wrote, its completion records them
+  as pending on an `acceptance` decision (rule `workflow.run-acceptance`) for the operator to see
+  ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)), and they bind
+  wherever its result is applied.
 
 ## Fail-closed rules
 

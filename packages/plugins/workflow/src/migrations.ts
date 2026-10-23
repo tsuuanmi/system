@@ -61,4 +61,19 @@ export const MIGRATIONS = [{
   version: 11,
   sql: `ALTER TABLE workflow_nodes ADD COLUMN brief_parts TEXT;
   ALTER TABLE workflow_tasks ADD COLUMN frame TEXT;`,
+}, {
+  // A remediation fix's gate on the approval queue (docs/design/workflow-engine.md#remediation-on-the-approval-queue):
+  // the request it waits on.
+  version: 12,
+  sql: 'ALTER TABLE workflow_nodes ADD COLUMN approval_request TEXT;',
+}, {
+  // A deferred tool call (docs/design/workflow-engine.md#a-deferred-tool-call): the request each one
+  // waits on, and how it was settled; an approved one continues its session at most once.
+  version: 13,
+  sql: `CREATE TABLE workflow_deferrals (
+    request_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, node_id TEXT NOT NULL, execution_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL, settled_at TEXT, outcome TEXT, decision TEXT
+  );
+  CREATE INDEX workflow_deferrals_open ON workflow_deferrals (created_at) WHERE settled_at IS NULL;
+  CREATE INDEX workflow_deferrals_run ON workflow_deferrals (run_id);`,
 }]

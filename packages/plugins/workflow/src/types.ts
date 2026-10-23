@@ -69,10 +69,11 @@ export interface RunView {
   answer?: string
   nodes: NodeView[]
   /**
-   * What the run waits for: a `gate`, the operator's approval of `plan` (`approve`); or a team's
+   * What the run waits for: a `gate`, the operator's approval of `plan` (`approve`), or, for a
+   * remediation fix put to the approval queue, the verdict on `approvalRequest` there; or a team's
    * `tie`, a deciding `vote` on `decision` (one of `options`) until `until`.
    */
-  blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef; until?: string } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
+  blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef; until?: string; approvalRequest?: string } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
   error?: WorkflowError
   /** The board task the run serves (one attempt of it), when it serves one. */
   task?: TaskView
@@ -189,6 +190,11 @@ export interface Config {
   /** Hours a plan's gate waits for the operator's verdict, then closes and fails the run by rule (default 24; INV-9). */
   gateTimeoutHours?: number
   /**
+   * Seconds between the engine's reads of the approval queue (default 15; INV-9): a remediation
+   * fix's request while its run waits on it, and the requests a Worker's deferred tool call waits on.
+   */
+  approvalPollSeconds?: number
+  /**
    * Runs one session may serve when a board task's next attempt, or the next task of a chain,
    * resumes the session of the work before it (default 5; INV-9): past it, the run starts fresh.
    */
@@ -237,6 +243,8 @@ export interface NodeRow {
   escalations: number
   /** JSON array of the Workers this node failed over from, unsent (ADR-0034); its routes leave them out. */
   excluded?: string | null
+  /** A remediation gate's approval request in `ctx.approvals`, once its plan was put to the queue. */
+  approval_request?: string | null
   error: string | null
   updated_at: string
 }
