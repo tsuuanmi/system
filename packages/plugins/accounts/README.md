@@ -31,7 +31,10 @@
     saved state signs in again as the same identity is ready, verified now,
     with its state unchanged.
   - `markChallenge` keeps the state.
-  - `duplicateIdentities` flags accounts that share an identity (REQ-TEAM-4).
+  - `duplicateIdentities` lists the groups of accounts that share an identity
+    (REQ-ACC-7, REQ-TEAM-4). The website runtime takes every Worker of such an
+    account out of work, and health names them
+    ([turns](../turns/README.md)).
 - **How a provider's accounts are used** (`providers`, ADR-0052): each website
   provider is `assigned` (the default, and the only one for personal
   subscriptions: a limit on one account never moves its work to another account

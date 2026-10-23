@@ -132,7 +132,16 @@ guesses.
   `supersedes` replaced it at a start), its `hash` the new set's. `detail` names the `cause`
   (`approved` or `configuration`), the `changeId`, the `requestId` when approved, `from` and `to`,
   the `configHash`, and the proposed `policy` by id and version. Example:
-  [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json).
+  [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json). A third
+  decider rule, `approvals.repeated-approvals`, records the queue's own proposal
+  ([approvals](../design/approvals.md#the-queue-proposes-a-policy-change)): the question is which
+  set the queue proposes, the proposed set's hash selected and the set in force kept until the
+  operator approves; its inputs the `autonomy` decision that said ask and the operator's approvals
+  it counted (the newest 100); `detail` names the `cause` (`repeated-approvals`), the `changeId`,
+  the `requestId`, `from` and `to`, the `configHash`, the `policy`, the `shape`
+  (`{actionClass: command, command}`), the approvals counted (`approved`), the `threshold`, the
+  `windowSeconds`, and the counted `requests`. Example:
+  [`decision.policy-change-proposed.json`](../../schemas/examples/decision.policy-change-proposed.json).
 - `decision@1.7` adds the feedback loop's two decision types
   ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). A decision of either must be
   `@1.7`; every other decision keeps its version.
@@ -239,6 +248,13 @@ guesses.
   and changes nothing.
 - `mailboxSeq` is the last delivered inbound sequence number. Redelivery after a
   crash resumes at `mailboxSeq + 1`.
+- `binding.runtime` is metadata, never a routing input: the kind of the runtime that serves the
+  session (`website` for a website Worker, else the agent runtime's kind; a kind the vocabulary
+  does not name is recorded as `local-tool`).
+- `worker-session@1.1` adds the runtime `antigravity-cli`, which `@1.0` recorded as `local-tool`.
+  A writer writes `@1.1` only for that runtime, and `@1.0` otherwise; a `@1.0` record naming it is
+  refused. Readers accept 1.0 and 1.1. Example:
+  [`worker-session.antigravity-member.json`](../../schemas/examples/worker-session.antigravity-member.json).
 - `policy.writes` names the subject the session writes under a board task's authority. Write
   authority itself is the board's: at most one open task writes a subject
   ([board](../design/board.md), INV-15); a session never claims it on its own.
@@ -522,6 +538,29 @@ guesses.
   when prices change. Examples:
   [`usage-record.agent-run.json`](../../schemas/examples/usage-record.agent-run.json),
   [`usage-record.api-call.json`](../../schemas/examples/usage-record.api-call.json).
+- A cap counts a record's figure for its unit (`tokens`: input plus output, `usd`: `cost`,
+  `turns`, `minutes`: `durationMs`), and a figure the record does not carry counts 0. A unit with no
+  counted record counts 0 as well; the Worker source records each such unit as a
+  [`usage-unknown`](#usage-unknown) fact ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)).
+
+### `usage-unknown`
+
+- The data of a `usage.unknown` event: one accounting unit whose usage the ledger could not count,
+  appended by the Worker source that meters it (today the `agents` source). The event's own
+  `runId` is the workflow run the unit belongs to, if any; the record's `runId` is the unit itself,
+  as a usage record of it would name it.
+- `kind`: `not-reported` (the unit ended, and its runtime reported neither tokens nor turns, so no
+  record can be written), `interrupted` (the host stopped while it ran, so no result came),
+  `refused` (the ledger refused its record: `failure` is the ledger's, and `record` the refused
+  record kept as an `evidence` artifact when it is a valid `usage-record@1.0`), or `failed`
+  (recording it failed otherwise). `failure` and `record` belong to `refused` only.
+- It never carries a number for the unit's usage, and nothing estimates one. A cap counts the unit
+  as 0. The unit is **reconciled** once the ledger counts a usage record of the same `runId` in
+  the same `pool` (later a `transcript` record): from then on the report counts it as reconciled,
+  and health no longer counts it. A reader validates the data and skips an entry that is not a
+  valid record. Examples:
+  [`usage-unknown.not-reported.json`](../../schemas/examples/usage-unknown.not-reported.json),
+  [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json).
 
 ### `limit-state`
 
@@ -572,7 +611,8 @@ guesses.
   that apply to its class (the studio's and the project's), else the stricter
   `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.
 - A `policy-change` is never made by a Worker. While `system` runs, a new policy version takes
-  effect only through the operator's approval of a `policy-change` request
+  effect only through the operator's approval of a `policy-change` request (proposed by the
+  operator, or by the queue itself from repeated identical approvals)
   ([`policy-change`](#policy-change)), so the safety layer never changes itself; at a start, the
   configured set applies unless an applied change derived from that same configuration is
   kept in the store. Examples:
@@ -604,7 +644,7 @@ guesses.
   class no longer asks (checked at load and on every sweep; the decision's decider is the rule
   `approvals.policy` and its reason says what changed).
 - `approval-request@1.1` adds the queue's own requests: a `policy-change` the operator proposed,
-  requested by `approvals` and naming its `policyChangeId`. Such a request must be `@1.1`, of
+  or the queue proposed itself, requested by `approvals` and naming its `policyChangeId`. Such a request must be `@1.1`, of
   class `policy-change`; every other request stays `@1.0`. Only the queue writes one: `request`
   refuses the requester `approvals` (`invalid`). Its subject is
   `{type: content, ref: autonomy-policy-set, version: <the proposed set's hash>}`.
@@ -630,6 +670,14 @@ guesses.
   is the configured set's hash, else the configured set
   ([approvals](../design/approvals.md#the-configuration-and-the-stored-set)).
   Example: [`policy-change.applied.json`](../../schemas/examples/policy-change.applied.json).
+- `policy-change@1.1` adds the optional `origin`: the queue proposed the change itself
+  ([approvals](../design/approvals.md#the-queue-proposes-a-policy-change)). It names the rule
+  (`approvals.repeated-approvals`), the `shape` (`{actionClass: command, command}`: the exact argv
+  as the one commands line the change adds), the operator's approvals counted (`approved`), the
+  `windowSeconds`, and the `decision` that recorded the proposal. A change with an `origin` must be
+  `@1.1`; the operator's own changes stay `@1.0`. It carries no authority: only the operator's
+  approval of its request applies it. Example:
+  [`policy-change.queue-proposed.json`](../../schemas/examples/policy-change.queue-proposed.json).
 
 ### `project`
 
@@ -791,6 +839,11 @@ guesses.
 - What each figure counts, and from which records, is in [reports](../design/reports.md#what-it-counts).
   `asOf` is when the board and the queue were read: the `now` counts are as of then. Two calls on
   the same records and period differ in `asOf` only.
+- `mcp-report` 1.1 adds what a cap counts as 0, each only when there is any: `withoutTokens`,
+  `withoutCost`, `withoutTurns`, and `unknownRuns` per pool and in all, and `usage.unknown`, the
+  runs whose usage the ledger could not count by kind and how many were reconciled
+  ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)). A 1.0
+  report has none of them and stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:
@@ -890,7 +943,8 @@ guesses.
 - `protocol` declares the interval `confidence`, `minCases`, `repetitions`, the evidence
   `partitions` (never `development`), and one method per metric: `sign-flip`, `bootstrap` (with
   its `resamples`), or `bayesian` (with its `prior`). An experiment's protocol may only be
-  stricter ([experiments](../design/experiments.md#a-registration)).
+  stricter ([experiments](../design/experiments.md#a-registration)). Each method is the pinned
+  statistics library's ([statistics](../design/statistics.md)).
 - The registry also refuses a contract whose primary or a guardrail has no method or no metric, whose
   ratio reads an undefined metric or a ratio, or that guards the primary or one metric twice
   (`contractProblems` in [`experiments-core`](../../packages/experiments-core/README.md)). Example:

@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "sessionId", "worker", "role", "state", "binding", "policy", "budgets", "mailboxSeq", "createdAt", "revision"],
   "properties": {
-    "schema": { "const": "worker-session@1.0" },
+    "schema": { "enum": ["worker-session@1.0", "worker-session@1.1"] },
     "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "group": { "description": "Session group (team) id, if any.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -19,7 +19,7 @@
       "type": "object",
       "required": ["runtime", "generation"],
       "properties": {
-        "runtime": { "enum": ["website", "claude-agent-sdk", "codex-sdk", "acp", "a2a", "local-tool", "model-api"] },
+        "runtime": { "enum": ["website", "claude-agent-sdk", "codex-sdk", "antigravity-cli", "acp", "a2a", "local-tool", "model-api"] },
         "nativeHandle": { "description": "Conversation URL, SDK session/thread id, ACP sessionId or A2A contextId; absent until first activation.", "type": "string", "maxLength": 512 },
         "generation": { "type": "integer", "minimum": 0 },
         "activationLease": {
@@ -74,6 +74,7 @@
     "revision": { "type": "integer", "minimum": 0 }
   },
   "allOf": [
+    { "if": { "properties": { "binding": { "type": "object", "properties": { "runtime": { "const": "antigravity-cli" } }, "required": ["runtime"] } }, "required": ["binding"] }, "then": { "properties": { "schema": { "const": "worker-session@1.1" } } } },
     { "if": { "properties": { "state": { "enum": ["ACTIVE", "INPUT_REQUIRED"] } } }, "then": { "properties": { "binding": { "type": "object", "required": ["nativeHandle"], "properties": { "nativeHandle": true } } } } }
   ],
   "additionalProperties": false

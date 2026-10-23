@@ -14,16 +14,24 @@ decides nothing, and no model takes part.
 - **What it reads**, through the definitions only: `ctx.board` (projects and their tasks now),
   `ctx.approvals` (every request, `list`), `ctx.resources` (the counted usage records observed in
   the period, `usage`), `ctx.eventLog` (`workflow.task.reported`, `workflow.task.digest`,
-  `workflow.graph.grown`, `workflow.gate.opened|closed`, `approvals.batched`, and, for a project,
-  `workflow.node.started`), `ctx.artifacts` (the decisions those name), and `ctx.digests` when
-  loaded (the claims of the digests attached, and which runs wrote them).
+  `workflow.graph.grown`, `workflow.gate.opened|closed`, `approvals.batched`, `usage.unknown`, and,
+  for a project, `workflow.node.started`), `ctx.artifacts` (the decisions those name), and
+  `ctx.digests` when loaded (the claims of the digests attached, and which runs wrote them).
+- **What a cap counts as 0** (D25, `mcp-report` 1.1,
+  [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)): per pool and in all,
+  the records without token counts, a cost, or turns, and the runs recorded in the period whose
+  usage the ledger could not count (`usage.unknown`, read back as `usage-unknown@1.0` records) and
+  has not counted a record of since (`resources.usage` by run and pool); and those runs in all, by
+  kind, with how many were reconciled. Each field only when there is any; the rendering says them
+  per pool and in a line of their own.
 - **Fails closed** (INV-2): with the board, the queue, or the ledger not loaded, it makes no report
   (`unavailable`), never a partial one; an unknown project is `unknown-project`. Bounded (INV-9): at
   most 100 000 entries of one event type, the ledger's own bound on the records of a period
   (`maxRecords`), 64 pools, 100 projects listed (the rest counted); past a bound it refuses (`overloaded`),
   never truncates. What it could not count (an event log trimmed by retention within the period, no
-  digest provider to read the digests' claims or runs, records with no token counts) is listed in
-  `notes`.
+  digest provider to read the digests' claims or runs, records with no token counts, cost, or
+  turns, runs whose usage the ledger could not count, a `usage.unknown` entry that is not a valid
+  record) is listed in `notes`.
 - **Deterministic:** [`src/report.ts`](src/report.ts) computes the report from what was read, and
   [`src/render.ts`](src/render.ts) renders it; both are pure, sort before they count or sum, and
   write numbers without a locale. The same records and period give the same report; only `asOf`,

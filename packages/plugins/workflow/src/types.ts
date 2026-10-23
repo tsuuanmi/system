@@ -56,6 +56,12 @@ export interface NodeView {
   usage?: { inputTokens: number; outputTokens: number }
   /** It waits until then for an assigned account's limit to reset, sending nothing meanwhile (ADR-0052). */
   waitingUntil?: string
+  /**
+   * In the usage report only: the resource ledger could not count its execution's usage when it
+   * ended (`usage.unknown`), for this reason; a cap counts it as 0. The report and health say
+   * whether a record of it was counted since.
+   */
+  usageUnknown?: 'not-reported' | 'interrupted' | 'refused' | 'failed'
   error?: WorkflowError
 }
 
@@ -146,14 +152,17 @@ export interface TaskQuestion {
 }
 
 /**
- * Where a task run's reservation stands: `due` until the run is recorded on the board; `reserved`
- * (the ledger holds it while the run lives) and then `released`; or `refused`, `spent` when a line
- * of the task's budget is reached, which blocks the task (`budget-spent`) unless the run was its
- * last attempt, and otherwise because a pool cannot be drawn on, which fails the run.
+ * Where a task run's reservations stand. The run reserves before each Worker execution of it (a
+ * step), not once (ADR-0047, step 1): `due` while no step holds a reservation (before the first, and
+ * between steps); `reserved` while a step's reservation is held (the ledger holds it while that
+ * execution may draw), each released once its step is no longer in flight; `released` once the run
+ * finished and every reservation was released; or `refused`, after which no new step starts:
+ * `spent` when a line of the task's budget is reached, which blocks the task (`budget-spent`) unless
+ * the run was its last attempt, and otherwise because a pool cannot be drawn on, which fails the run.
  */
 export interface TaskBudgetView {
   state: 'due' | 'reserved' | 'refused' | 'released'
-  /** The ledger's `budget` decision. */
+  /** The ledger's `budget` decision on the latest step's reservation (the refusal, once refused). */
   decision?: ArtifactRef
   spent?: boolean
   /** The task was blocked (`budget-spent`) on this run's refusal. */
@@ -168,9 +177,25 @@ export interface TaskBudgetView {
   lastAttempt?: ArtifactRef
 }
 
-/** A task run's budget as its row keeps it (`workflow_tasks.budget`): the task's lines (the caps), and its reservation. */
+/**
+ * One step's reservation, recorded on the run's row before its execution starts: `step` is the
+ * execution's node, attempt, and escalation (`<nodeId>:<attempt>:<escalations>`, as its start key
+ * names them), so a hold whose step is not in flight is known and released.
+ */
+export interface StepHold {
+  step: string
+  nodeId: string
+  reservationId: string
+  /** The ledger's `budget` decision that reserved it. */
+  decision: ArtifactRef
+}
+
+/** A task run's budget as its row keeps it (`workflow_tasks.budget`): the task's lines (the caps), and its steps' reservations. */
 export interface TaskBudget extends TaskBudgetView {
   caps: Array<{ pool: string; unit: 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'; amount: number }>
+  /** The reservations of the run's steps not yet released. */
+  holds?: StepHold[]
+  /** The run's one reservation, as an engine before ADR-0047 step 1 kept it: read as a hold no step owns, released at once. */
   reservationId?: string
   reasons?: string[]
   /** Why the board did not take the block, when it refused it. */

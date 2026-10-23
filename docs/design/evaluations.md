@@ -11,9 +11,10 @@
 >
 > Defined in [`evaluations-core`](../../packages/evaluations-core/README.md), contract 1.0, its
 > suite passed by the fake `FakeEvaluations` over the experiments fake. Differs from target: no
-> store-backed provider and no bundle row yet (F4); no statistics library (F2, pending its research
-> run), so no method is built; no collector (F5); how a trial's run is fixed to its arm's Workers
-> is open ([where the tables leave room](#where-the-tables-leave-room)).
+> store-backed provider and no bundle row yet (F4); the statistics library
+> ([statistics](statistics.md)) has one method, `sign-flip`, so a protocol naming `bootstrap` or
+> `bayesian` cannot start; no collector (F5); how a trial's run is fixed to its arm's Workers is
+> open ([where the tables leave room](#where-the-tables-leave-room)).
 
 The evaluation engine is the loop's judge. It runs a pre-registered experiment offline, under the
 pins and seals the experiment froze, as paired trials whose order is drawn from the experiment's

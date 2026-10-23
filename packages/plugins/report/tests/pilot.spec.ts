@@ -10,6 +10,7 @@ import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gate
 import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import StoreResources from '@tsuuanmi/system-resources'
+import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { attempt, bootPilot, charter, decide, operatorAccepts, type Pilot, POLICY, propose, queued, reported, until } from '../../profile-software-development/tests/pilot.ts'
@@ -127,12 +128,12 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
 
 describe('the report tool without its sources', () => {
   /** The kernel, the queue, the ledger, and the board as `rows` says, with the report and an MCP registry. */
-  async function boot(rows: { board?: boolean; retainDays?: number } = {}): Promise<Context> {
+  async function boot(rows: { board?: boolean; retainDays?: number; pools?: PoolConfig[] } = {}): Promise<Context> {
     const dir = mkdtempSync(join(tmpdir(), 'system-report-'))
     const ctx = new Context()
     const fibers: Fiber[] = [
       ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, { retainDays: rows.retainDays ?? 0 }), ctx.plugin(Leases, {}),
-      ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreResources, { pools: [] }),
+      ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreResources, { pools: rows.pools ?? [] }),
       ...(rows.board === false ? [] : [ctx.plugin(StoreBoard, { sweepSeconds: 0 })]), ctx.plugin(RecordingMcp), ctx.plugin(Report),
     ]
     await Promise.all(fibers)
@@ -158,5 +159,23 @@ describe('the report tool without its sources', () => {
     const { report } = await call(ctx, {})
     expect(report!.notes).toEqual([expect.stringMatching(/^the event log keeps entries from .* on \(retention\): attempts, remediation, batches, and digests before then are not counted$/)])
     expect(report!.projects).toEqual([])
+  })
+
+  it('counts the runs whose usage the ledger could not count, and those it has counted a record of since, from the event log and the ledger (D25)', async () => {
+    const pool: PoolConfig = { pool: 'max.agents', account: 'max', kind: 'programmatic', unknown: 'available', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }] }
+    const ctx = await boot({ pools: [pool] })
+    const observedAt = new Date().toISOString()
+    const fact = (runId: string, kind: string, extra: Record<string, unknown> = {}) => ({ schema: 'usage-unknown@1.0', runId, kind, account: 'max', pool: 'max.agents', observedAt, reason: 'why', ...extra })
+    ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: fact('arun_1', 'not-reported') })
+    ctx.eventLog.append({ type: 'usage.unknown', data: fact('arun_2', 'refused', { failure: 'invalid' }) })
+    ctx.eventLog.append({ type: 'usage.unknown', data: { kind: 'not-reported', pool: 'max.agents' } })
+    // A transcript record of the second counts it since: reconciled.
+    await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_2', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_2', turns: 2 })
+    const { report, text, isError } = await call(ctx, {})
+    expect(isError).toBeUndefined()
+    expect(report!.usage.unknown).toEqual({ runs: 2, reconciled: 1, notReported: 1, interrupted: 0, refused: 1, failed: 0 })
+    expect(report!.usage.pools).toMatchObject([{ pool: 'max.agents', records: 1, turns: 2, unknownRuns: 1, withoutTokens: 1, withoutCost: 1 }])
+    expect(report!.notes).toContain('1 usage.unknown entry is not a valid usage-unknown@1.0 record: not counted')
+    expect(text).toContain('- Usage the ledger could not count: 2 runs (1 not reported, 1 refused by the ledger), 1 of them counted since; a cap counts the others as 0.')
   })
 })

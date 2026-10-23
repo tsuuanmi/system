@@ -171,7 +171,9 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
 A task that waits for input, an expired request, or a run that failed each have a runbook:
 [a waiting task](runbooks.md#a-board-task-is-blocked-or-waiting-for-input),
 [an expired request](runbooks.md#an-approval-request-expired),
-[a limited pool](runbooks.md#a-resource-pool-is-limited).
+[a limited pool](runbooks.md#a-resource-pool-is-limited), and usage the ledger could not count
+(the report's `Not counted` lines, `system health`'s `usage`):
+[usage the ledger could not count](runbooks.md#usage-the-ledger-could-not-count).
 
 ## A restart
 
@@ -180,7 +182,9 @@ Exit criterion 3 asks for at least one restart during the pilot. Do it with work
 started is never run again (`reconciliation_failed`), and its task's next attempt goes through the
 gate; a request answered while the host was down still applies. Then check that nothing ran twice:
 `system explain <runId>` for the runs in flight, the queue on `/ui`, and the day's report (an
-attempt reported once, one usage record per agent run).
+attempt reported once, one usage record per agent run; an agent run the restart stopped before its
+runtime reported anything has none, and is counted once as a run whose usage the ledger could not
+count).
 
 ## Five working days, then close
 

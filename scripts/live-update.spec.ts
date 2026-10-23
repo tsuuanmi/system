@@ -4,7 +4,7 @@
 // refusal comes before anything is written. --apply itself is rehearsed by hand on a throwaway
 // worktree and home (the runbook says how), since it builds and starts a real profile.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,15 +73,21 @@ function run(f: Fixture, target: string, ...args: string[]): { status: number | 
   return { status: result.status, output: `${result.stdout}${result.stderr}` }
 }
 
-/** Every file under `dir` (but a repository's own .git) with its content. */
+/**
+ * Every entry under `dir` (but a repository's own .git): a file with its content, a symbolic link
+ * with its target, anything else by its kind. Entry kinds come from the directory listing itself,
+ * so nothing is stat'ed before it is read.
+ */
 function snapshot(dir: string): Record<string, string> {
   const files: Record<string, string> = {}
   const walk = (path: string): void => {
-    for (const name of readdirSync(path)) {
-      if (name === '.git') continue
-      const full = join(path, name)
-      if (statSync(full).isDirectory()) walk(full)
-      else files[full] = readFileSync(full, 'utf8')
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (entry.name === '.git') continue
+      const full = join(path, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.isFile()) files[full] = readFileSync(full, 'utf8')
+      else if (entry.isSymbolicLink()) files[full] = `symlink -> ${readlinkSync(full)}`
+      else files[full] = 'not a file, directory, or symbolic link'
     }
   }
   walk(dir)

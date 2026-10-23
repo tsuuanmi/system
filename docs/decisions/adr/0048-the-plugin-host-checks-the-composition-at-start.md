@@ -1,7 +1,7 @@
 # ADR-0048: The plugin host checks the composition at start, and a finding makes health down
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0018](0018-build-on-dsh-core.md),
   [ADR-0019](0019-explicit-minimal-dsh-core.md),
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),

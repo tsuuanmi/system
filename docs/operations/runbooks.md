@@ -153,6 +153,11 @@ default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
   egress row's `workerClasses` with `local-private` added to `agent`. List
   `website`, `model`, and `model-local` too: the setting replaces the whole
   default.
+- **Renaming an agent Worker:** change its `id` in the `agent-workers` row of the
+  profile patch, `system check`, and restart the daemon. The Worker is `agent:<new id>`
+  from then on. Recorded runs, decisions, and usage keep the old id, since records never
+  change. A session bound to the old Worker stays on it, so a new run starts a new session.
+  Its home (`home`) and its account do not change.
 
 ### Codex Workers
 
@@ -672,6 +677,20 @@ A turn that fails with `reauth_required` or `challenge` (disposition
 
 Then continue the failed run: `system continue <runId>`.
 
+## Two accounts sign in as one person
+
+Two catalog entries of one provider whose saved sign-ins are the same person are one account, not
+two (REQ-ACC-7): counting them as two would let a team's members, or a failover, share it. So
+none of them takes work. `system health` shows `accounts` degraded, naming them (`chatgpt-main and
+chatgpt-2 are signed in as the same person`), and their Workers are `unavailable`; a turn already
+routed to one fails `reauth_required` before anything is sent.
+
+1. Decide which entry keeps that sign-in.
+2. Sign each other entry in as a different person: `system account login <id>` and Save. Or remove
+   it from the `accounts` row's catalog and restart.
+3. `system health` shows `accounts` ok again once no two entries share a sign-in, and the Workers
+   take work at once. Then `system continue <runId>` for a run that failed on it.
+
 ## Backup and restore
 
 State lives in `~/.dsh/system`:
@@ -1155,7 +1174,7 @@ projects with their open tasks per state (the **Board** page), not each task.
 | `retries-spent` | every attempt is used (`attempts.count` equals `max`, the board's `maxAttempts`, 3): a review rejected the last one, a run failed with none left (also a last attempt whose budget was spent: its run failed as `budget_spent` and asked you for no funding, since no approval could start another attempt), or an approval to go on or an answered question had none left to start | nothing revives it. The last result stays on the task, to read or to take. For a spent budget, see what was spent with MCP `resources_usage` (`taskId`) and propose the work again with larger lines or more attempts |
 | `review-expired` | no accepting decision came: the reviewer's lease lapsed, or the review held for you reached its expiry | nothing revives it. The work is still on its run's branch ([worktree](#a-runs-worktree)) |
 | `operator-review` (in `review`) | the result waits for your acceptance: the checks its class requires have not passed, or the policy forbids the class | Accept or Reject on `/ui` ([review](#accept-or-reject-a-review)) until `expiresAt`; then `review-expired` |
-| `budget-spent` (waiting for approval) | a line of the task's `budget` is reached: the ledger refused the reservation of its next run (failed as `budget_spent`, nothing of it run, outcome `blocked`; [a task's budget](../design/workflow-engine.md#a-tasks-budget)): a `funding` request, which always asks. On the task's last attempt there is none: the task waits for input (`retries-spent`). The request names the lines it would add (its summary, and `waiting.funding` on `board_task`): for each spent line, what the task overdrew plus one attempt's share of the line, from the ledger's count | see what was spent with MCP `resources_usage` (`taskId`), and read the request's summary and consequences on `/ui`. Approve: the board adds exactly those lines to the task's `budget` (recorded in its `funding`, with your approval), and the next attempt goes through the gate. Deny or expiry: `rejected`, the budget unchanged. A request with no lines (the ledger could not count the task's usage) only lets it go on, and the ledger refuses the next run again while a line is reached: propose the work again with larger lines. An ask past the board's `fundingMaxPercent` (default 100% of the lines the task declared, over all its raises) opens no request: the task waits for input (`rejected`, see below); raise `fundingMaxPercent` in the `board` row for later tasks, or propose the work again |
+| `budget-spent` (waiting for approval) | a line of the task's `budget` is reached: the ledger refused the reservation of the next step of its run (failed as `budget_spent`, no step started after the refusal, outcome `blocked`; the steps that ran before it keep their results, and the next attempt's brief points at them; [a task's budget](../design/workflow-engine.md#a-tasks-budget)): a `funding` request, which always asks. On the task's last attempt there is none: the task waits for input (`retries-spent`). The request names the lines it would add (its summary, and `waiting.funding` on `board_task`): for each spent line, what the task overdrew plus one attempt's share of the line, from the ledger's count | see what was spent with MCP `resources_usage` (`taskId`), and read the request's summary and consequences on `/ui`. Approve: the board adds exactly those lines to the task's `budget` (recorded in its `funding`, with your approval), and the next attempt goes through the gate. Deny or expiry: `rejected`, the budget unchanged. A request with no lines (the ledger could not count the task's usage) only lets it go on, and the ledger refuses the next run again while a line is reached: propose the work again with larger lines. An ask past the board's `fundingMaxPercent` (default 100% of the lines the task declared, over all its raises) opens no request: the task waits for input (`rejected`, see below); raise `fundingMaxPercent` in the `board` row for later tasks, or propose the work again |
 | `reconciliation-failed` (waiting for approval) | the run's holder was lost mid-run and its outcome is not known: a `remediation` request, which always asks | look at the run first (`run.runId`, then `system explain <runId>`). When the engine can report the run's outcome it does, and withdraws the request itself. Approve: another attempt, through the gate; the old run is never started again. Deny or expiry: `rejected` |
 
 **When nothing revives a wait.** Only a question wait takes input. `rejected`, `retries-spent`,
@@ -1327,7 +1346,9 @@ loaded, every call is denied, reads included.
 Two ways, both the operator's alone ([a policy change](../design/approvals.md#a-policy-change)):
 **on `/ui`, through a `policy-change` approval**, with no restart, or **by configuration and a
 restart**. No Worker can do either: the proposal routes take the operator's token or scope only,
-and the DSH home is hidden from agents.
+and the DSH home is hidden from agents. Once enabled, the queue may propose a change itself from
+your repeated approvals; it still applies only on your approval
+([below](#the-queue-proposes-a-policy-change)).
 
 1. **Read what is in force:** the **Autonomy policy** page on `/ui` (`system ui` prints the link),
    or MCP `approvals_policy` (a `projectId` adds that project's policy). It shows the set's hash,
@@ -1420,6 +1441,48 @@ asks again or waits for input; a charter is asked about again, or refused. A Wor
 the same call again in that session (it reads the withdrawn request as the answer): run the work
 again to have the new policy judge it.
 
+## The queue proposes a policy change
+
+When you keep approving the same exact command, the queue can propose listing it, so that it runs
+without asking ([the queue proposes a policy change](../design/approvals.md#the-queue-proposes-a-policy-change),
+[ADR-0050](../decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md)).
+It only proposes: nothing changes until you approve its request, like any
+[policy change](#change-the-autonomy-policy). It is off by default.
+
+1. **Turn it on** in `~/.dsh/profiles/system/cordis.patch.yml`. A patch that targets the
+   `approvals` row replaces its whole config, so carry the `policies` too (copy the bundle's row):
+
+   ```yaml
+   - id: approvals
+     config:
+       policies: [...]               # the whole list, as in the bundle or your change
+       repeatedApprovals:
+         enabled: true
+         approvals: 5                # 3 to 100: approvals of one exact command
+         windowSeconds: 604800       # 3600 to 7776000: among the requests of the last week
+   ```
+
+   `system check` names a value out of bounds; then `system shutdown` and `system start`.
+2. **What it proposes.** Only a Worker's command judged under the studio policy, by its exact argv
+   (for example `pnpm lint`, never `pnpm lint --fix`), approved at least `approvals` times among
+   the requests made in the window, none of them rejected or expired. Never a project's command, a
+   `local-private` one, another class, or a class that always asks; never while another policy
+   change waits for you.
+3. **Decide it in the approval queue.** Its summary starts *The queue proposes: list the command
+   …*, and **Show change** says *Proposed by the queue, not by you*, how many times you approved
+   it, and the diff: the studio policy at its next version with that one line added to `commands`.
+   - **Approve** to apply it: that argv, and nothing longer, then runs as `workspace-write` (under
+     the bundle's policy `auto`, its `tests` and `lint` pending until the result is accepted). The
+     studio policy's version rises, so open requests made under the old one are withdrawn and
+     asked again, as for any change.
+   - **Deny**, or let it expire: nothing changes, and the queue never proposes that command again.
+     You can still propose it yourself on the policy page.
+4. **Audit:** the policy page's history marks the change *(proposed by the queue)*; its `origin`
+   names the `policy-change` decision (rule `approvals.repeated-approvals`) that lists the
+   approvals it counted (`system explain <decision>`, MCP `artifact`).
+5. **Turn it off:** remove `repeatedApprovals` (or set `enabled: false`) and restart. A proposal
+   already waiting stays in the queue until you decide it or it expires.
+
 ## A resource pool is limited
 
 Only a Worker with a `pool` is metered ([agent Workers](../../packages/plugins/agent-workers/README.md)).
@@ -1465,12 +1528,21 @@ Reading a limit:
   (`USER_ACTION`) before the agent starts, with a `budget` decision whose reasons name the pool and
   `until` (`system explain <runId>`). A run that hit the limit while working fails the same way and
   is never retried on that pool.
+- A runtime that reports no limit observation (Codex, the Antigravity CLI) still fails the run
+  `quota_exhausted` when it hits one: every window of the pool then reads `limited` (source
+  `limit-notice`) for the Worker's `limitCooldownSeconds`.
+- **A Worker with no pool** is not metered, but a limit it hits cools down every Worker of its
+  runtime (they share one sign-in): `system health` lists them `quota-exhausted`, a run on one
+  fails `quota_exhausted` before the agent starts, and event `agent-workers.cooldown`
+  (`system events --type agent-workers.cooldown`) names the runtime, the run, and `until`: the
+  reset time the runtime named, else `limitCooldownSeconds`, at most seven days. It survives a
+  restart and ends only at `until`.
 
 What to do:
 
-1. **Wait.** The pool opens by itself at `until`. No command ends a limit early (website
-   accounts have `system account clear-cooldown`; the ledger has no counterpart), and a limited
-   pool admits no run that could read it open again.
+1. **Wait.** The pool, or a runtime's cooldown, opens by itself at `until`. No command ends a
+   limit early (website accounts have `system account clear-cooldown`; the ledger and agent
+   runtimes have no counterpart), and a limited pool admits no run that could read it open again.
 2. **Or add capacity:** configure another pool and account for a second Worker, which routing then
    picks; or point the Worker's `pool` and `account` at another pool and restart.
 3. Then `system continue <runId>` for a run that failed on the limit.
@@ -1481,6 +1553,43 @@ Usage: MCP `resources_usage` lists the counted usage records, oldest first, a pa
 page. A record comes from the runtime's own result message, never the model's report, so a run
 that reported no numbers has no record, and a crashed run has none until a transcript is read
 (not built yet). `system usage` lists runs, not the ledger.
+
+## Usage the ledger could not count
+
+Seen as `system health` showing `usage  degraded  max.agents: 2 run(s) in its current window (the
+last 7d) whose usage the ledger could not count (1 not-reported, 1 refused)…`, as `usage unknown
+(<why>)` on a step in `system usage`, or in the report's resources and `Not counted` lines.
+
+The ledger counted no usage record for those runs, so every cap (a board task's budget lines)
+counts them as 0, and the tokens and cost the report gives are lower bounds. They are not refused:
+you chose to count them as 0 and see them (D25); failing closed for metered pools waits for
+transcript reconciliation ([resources](../design/resources.md#usage-the-ledger-cannot-count)). A
+pool's availability is unaffected: it comes from limit readings, not records.
+
+1. **Read them.** `system events --type usage.unknown`: each entry's `data` names the run
+   (`runId`), Worker, pool, account, board task, how it ended, `kind`, and `reason`; the entry's own
+   `runId` is the workflow run (`system explain <it>`).
+2. **Act on the kind:**
+   - `not-reported`: the runtime gave neither tokens nor turns. A runtime that reports none (the
+     Codex and ACP runtimes today, [metering](../design/agent-runtimes.md#metering)) makes every run
+     of its Worker one: give its tasks `runs` budget lines rather than `tokens` or `usd`.
+   - `interrupted`: the host stopped while the run ran. Its usage comes from its transcript once
+     transcript reconciliation exists.
+   - `refused` with `failure: unknown-pool`: the Worker's `account` is not the account the
+     `resources` row gives its `pool`. Correct the Worker's `pool` and `account` and restart:
+     until then every run of it is uncounted. With `failure: invalid`: the runtime reported numbers
+     the ledger refuses (cached input above the input); `system artifact <data.record>` shows the
+     refused record with its numbers. Report it with the runtime's version.
+   - `failed`: the ledger could not record it; check the `store` check of `system health` and the
+     daemon's log.
+3. **Until it clears,** read the provider's own usage for that account (its status line or usage
+   page) before funding a task of that pool, since its budget counted those runs as nothing.
+
+The check clears once the runs fall out of the pool's longest window, or once the ledger counts a
+record of each. A pool with a window of no length (a credit balance) keeps them until the event
+log's retention removes the entries. A fact that could not be recorded at all is only in the
+daemon's log (`the usage of <run> on <Worker> (pool <pool>) is unknown (…), and that could not be
+recorded`).
 
 ## A run's worktree
 

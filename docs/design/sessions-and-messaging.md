@@ -33,6 +33,7 @@ collaboration identity, and it is chosen through admission once, at formation
 | ChatGPT / Gemini Web | canonical conversation URL plus the last receipt | open the URL in a fresh context (a session-bound account: a page of its login profile); reconcile the receipt ([provider turns](provider-turns.md)) |
 | Claude Agent SDK | SDK session id | SDK resume |
 | Codex SDK | thread id | resume thread |
+| Antigravity CLI | conversation id | none: `resume` is not proven, so it serves a continued session only as a review member, by replay (the row below; its [README](../../packages/plugins/runtime-antigravity-cli/README.md)) |
 | ACP agent | ACP `sessionId` | `session/resume` (v2) or `session/load` (v1) |
 | An agent runtime that cannot resume (the Antigravity CLI), as a review member only | none | a replay, not a resume: the `agents` source sends the session's earlier turns, exactly as recorded, before each new one, and records them with the answer ([review members](agent-runtimes.md#review-members)) |
 | Model Worker | none | the `models` source replays the session's transcript ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)) |

@@ -17,7 +17,9 @@
 > one by lines it computes from the ledger's count of the task's usage
 > ([funding a spent task](workflow-engine.md#funding-a-spent-task)). Differs from target: no
 > other Worker source reports yet, no transcript is reconciled, the engine reserves only for a
-> task that declares a budget, and the bundle configures no pool.
+> task that declares a budget, the bundle configures no pool, and usage the ledger cannot count
+> counts as 0 against a cap: it is recorded and shown, and no cap fails closed on it yet
+> ([usage the ledger cannot count](#usage-the-ledger-cannot-count)).
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage
@@ -96,13 +98,61 @@ first reading comes from the runtime's result. Every reading field is optional.
   the task and of the executions they started, each record once
   ([usage spent on a task](workflow-engine.md#a-board-tasks-brief)); a cap does not.
 
+## Usage the ledger cannot count
+
+Some usage reaches no counted figure, and a cap counts it as 0:
+
+| Case | Counts against a cap |
+|---|---|
+| a counted record without the figure of a cap's unit (no token counts, no `cost`, no `turns`, no `durationMs`) | 0 of that unit; the record's other figures, and `runs` 1 |
+| a run whose runtime reported neither tokens nor turns, so no record can be written | nothing |
+| a run the host stopped while it ran: no result came | nothing |
+| a record the ledger refused (`unknown-pool`, `invalid`), or a `record()` that failed | nothing |
+
+The operator decided (D25, 2026-10-23) to keep counting these as 0, so this seam's cap semantics
+and its contract do not change, and to make each one visible and durable instead:
+
+- **A record without a figure** is its own fact: it names its run, Worker, pool, and task, and the
+  figure it lacks is missing from it. The [report](reports.md) counts the records without token
+  counts, a cost, or turns per pool (an agent Worker's record always carries its duration).
+- **A run with no counted record** is recorded by the Worker source that meters it, as a
+  `usage.unknown` event, its data a
+  [`usage-unknown@1.0`](../reference/schemas.md#usage-unknown) record: the run, Worker, pool,
+  account, session, board task and project, how it ended, and its kind (`not-reported`,
+  `interrupted`, `refused`, `failed`) with why; the event names the workflow run, whose view maps
+  the run to its step. Nothing estimates its usage. A run may get two (a stop aborted it before it
+  reported anything, then the restart found it interrupted): readers count it once, by its first.
+- **A failed `record()` is never lost silently.** What can be recorded is: a record refused as
+  `invalid` with a per-model split is offered again with its totals alone, which are what a cap
+  counts. Still refused, the record is kept as an `evidence` artifact (when it is a valid
+  `usage-record@1.0`) that the fact names, with the ledger's failure. A fact that cannot be
+  appended either (no event log, or the store failing) is logged.
+- **Reconciled:** a unit is reconciled once the ledger counts a usage record of its run in its
+  pool, which is what transcript reconciliation will write (`source: transcript`; a crashed run's
+  record written before the crash counts too).
+- **Shown** in the [report](reports.md#what-it-counts) (per pool: the runs whose usage is unknown
+  and not reconciled, the records without a figure; in all: each kind, and how many were
+  reconciled since), per step in `system usage` (MCP `usage`), and in health: the `usage` check is
+  degraded while a configured pool has a run whose usage is unknown and not reconciled in its
+  current window, naming the pool and the count. A pool's current window is its longest
+  configured window, back from now; a pool with a window of no length (a credit balance) never
+  resets, so every such run counts until it is reconciled or the event log's retention removes it
+  ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
+
+**Deferred: failing closed for metered pools** (D25's third option). A cap could refuse its
+scope's next reservation while a run of a pool whose kind requires counted usage (a metered pool)
+is unreconciled, keeping 0 for subscription pools with windows. That changes this guarantee seam's
+cap semantics, so it needs its own ADR (ADR-0036), and it waits until transcript reconciliation
+exists: before then, nothing could reconcile such a run, and its scope would stay refused for good.
+
 ## Fail-closed rules
 
 1. No run starts without a reservation; with `ctx.resources` unavailable, none is made and no
    run starts (INV-2).
 2. A limited pool admits no new work until its window resets, and a limit hit is never retried
    on the same pool (PROP-0008: switch account or wait).
-3. Usage is never estimated from a model's own report. A missing number stays missing.
+3. Usage is never estimated from a model's own report. A missing number stays missing: a cap
+   counts it as 0, and it is recorded and shown ([above](#usage-the-ledger-cannot-count)).
 4. Every cap is enforced before the run, never after, and every hold expires (INV-9).
 
 ## Conformance

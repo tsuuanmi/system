@@ -59,6 +59,7 @@ export default defineConfig({
       '@tsuuanmi/system-plugin-host': src('./packages/plugins/plugin-host/src/index.ts'),
       '@tsuuanmi/system-experiments-core': src('./packages/experiments-core/src/index.ts'),
       '@tsuuanmi/system-evaluations-core': src('./packages/evaluations-core/src/index.ts'),
+      '@tsuuanmi/system-statistics': src('./packages/statistics/src/index.ts'),
     },
   },
   test: {

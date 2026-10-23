@@ -51,7 +51,7 @@
 | `workers[].account` | string |  | The account the pool belongs to; required with pool |
 | `workers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the pool's window ids, for example five_hour: five-hour |
 | `workers[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId> |
-| `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed |
+| `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down |
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
 | `providers` | object[] | `[]` | How each agent runtime's accounts are used; a runtime not listed is assigned (ADR-0052) |
@@ -73,6 +73,10 @@
 | `policies` (required) | any[] | `[]` | autonomy-policy@1.x records: exactly one studio policy, and project policies that narrow it. Checked at load against the schema and its load-time rules (one rule per action class; no auto or notify for a class that always asks; expiry.defaultSeconds and every rule's expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy; at most 101 policies); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2) |
 | `sweepSeconds` | number (1…3600) | `60` | Seconds between the queue's own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9) |
 | `supersedes` | string |  | The sha256:… hash of the applied policy set in the store that this configuration replaces. Read only at a start where that set no longer matches the configuration it was derived from: then the configuration takes over and the stored change is retired, recorded; without it the plugin is refused, so nothing that needs a person runs (INV-2) |
+| `repeatedApprovals` | object | `{}` | Off unless enabled. The queue proposes, never applies, a policy change adding one exact studio command (its argv, nothing more) to the studio policy's commands list, once the operator approved it often enough in the window and rejected or let expire none; never for a class that always asks, never again for a command whose proposal was rejected or expired, at most one proposal open |
+| `repeatedApprovals.enabled` | boolean | `false` | Whether the queue proposes such a change at all; off by default |
+| `repeatedApprovals.approvals` | number (3…100) | `5` | Approvals of one exact studio command, among the requests made in the window, before the queue proposes listing it |
+| `repeatedApprovals.windowSeconds` | number (3600…7776000) | `604800` | The window in seconds: the requests made in it count, and none of the shape may have been rejected or have expired |
 
 ## `artifacts`
 

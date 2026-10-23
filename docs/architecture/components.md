@@ -113,7 +113,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
   A Worker configured with a resource pool is metered through `ctx.resources`: it reserves
   before a run, records one usage record from the runtime's own numbers after it, and records
-  the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)).
+  the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)); a
+  run the ledger counts nothing of is recorded as a `usage.unknown` fact in the event log
+  ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)).
   A Worker configured with `worktreePerRun` works, per workflow run, in that run's own git
   worktree of its repository, and the source removes the worktree, its changes committed on
   the run's branch, once the run has been idle past a retention
@@ -249,6 +251,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   horizon, and classified by the deterministic verdict rule as a `verdict` decision; it decides no
   promotion, which always asks the operator ([evaluations](../design/evaluations.md)). No provider
   yet: its suite runs against a fake.
+- **Statistics** (library): the intervals the verdict rule reads, pinned by version in each
+  experiment; inference only, holding no threshold: the exact paired sign-flip test and the
+  interval that inverts it, golden-tested against SciPy ([statistics](../design/statistics.md)).
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, for the agent Workers, its row off by default) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
@@ -268,7 +273,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   [board-core](../../packages/board-core/README.md), [board](../../packages/plugins/board/README.md),
   [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md),
   [experiments-core](../../packages/experiments-core/README.md),
-  [evaluations-core](../../packages/evaluations-core/README.md).
+  [evaluations-core](../../packages/evaluations-core/README.md),
+  [statistics](../../packages/statistics/README.md).
 
 ## Host
 
@@ -291,7 +297,9 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **MCP server** (`ctx.mcp`): Streamable HTTP at `/mcp` behind the operator and client
   tokens. Plugins contribute tools for their lifetime, each declaring the scope that may call
   it ([MCP tools](../reference/mcp-tools.md),
-  [ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)).
+  [ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)). Its `status` tool gives the
+  host's health, read from the mounted services, the resource ledger and the event log among them
+  ([mcp-server](../../packages/plugins/mcp-server/README.md)).
 - **Request guard** (in `gateway-core`): one set of transport checks for every client endpoint
   (MCP, both protocol gateways, the web UI): a loopback `Host`, no browser `Origin`, the bearer
   token in constant time, which decides the caller's scope, bounded JSON bodies, and no route on

@@ -82,8 +82,9 @@ feedback, remembers what was tried, and has an explicit evaluation module and ob
   (candidate → shadow → canary → default → retired), and the guardrails (the safety layer never
   self-modifies; several cross-checking metrics; spot checks; every step pays for itself).
 - **Reusable statistics and experiment tooling:** a research run through `system` (GrowthBook's
-  statistics engine, MLflow tracking, Optuna, and others) precedes building any statistic. Its
-  result is [pending](#statistics-library-pending).
+  statistics engine, MLflow tracking, Optuna, and others) preceded building any statistic
+  ([research](../research/statistics-tooling-2026-10-23.md)); its result is the
+  [statistics library](#statistics-library).
 
 ## Proposed design
 
@@ -333,15 +334,17 @@ the forward figure (without the sunk experiment cost) and the full one, so the l
 whether it pays for itself. Net benefit informs the operator's promotion decision; it does not
 change the verdict.
 
-#### Statistics library (pending)
+#### Statistics library
 
-> **Pending:** the research run on reusable statistics and experiment tooling (GrowthBook's
-> statistics engine, MLflow tracking, Optuna, and others), run through `system`, is in progress.
-> Its result chooses what F2 adopts and is recorded in the
-> [dependency register](../engineering/dependencies.md). Until then no statistic is built. The
-> rules above constrain the choice: paired, case-level methods; recorded priors; deterministic
-> output for the same inputs and seed; a version that can be pinned; no data leaving the machine
-> ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
+The research run on reusable statistics and experiment tooling (GrowthBook's statistics engine,
+MLflow tracking, Optuna, and others), run through `system`, chose what F2 adopts
+([research](../research/statistics-tooling-2026-10-23.md)), recorded in the
+[dependency register](../engineering/dependencies.md): SciPy as the reference, and one exact test
+built in TypeScript, the paired sign-flip test and its interval, golden-tested against SciPy
+([statistics](../design/statistics.md)). The rules above constrained the choice: paired, case-level
+methods; recorded priors; deterministic output for the same inputs and seed; a version that can be
+pinned; no data leaving the machine
+([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
 
 ### Never redo blindly
 
@@ -545,7 +548,8 @@ migration.
 
 ## Open questions
 
-1. **Statistics library:** pending the research run ([above](#statistics-library-pending)).
+1. **Statistics library:** answered by the research run (2026-10-23): SciPy as the reference and an
+   exact sign-flip test in TypeScript ([above](#statistics-library)).
 2. **How an arm fixes its Workers.** Routing already has a restriction to named Workers
    ([algorithm](../design/routing.md#algorithm)); carrying it from a trial's trusted envelope into
    a run changes the `workflow` contract (an ADR). The alternative, one composition per arm, needs

@@ -149,7 +149,16 @@ The **`agents` Worker source**: agent runtimes as Workers
     submission to the end), `cost` with basis `runtime-estimate`, and
     `outcome`). Numbers the runtime did not report stay missing; a run that
     reported neither tokens nor turns gets no record. A ledger refusal is
-    logged and never changes the run's own outcome;
+    logged and never changes the run's own outcome. A record refused as
+    `invalid` with `models` is offered again without them (the totals are what
+    a cap counts). Usage the ledger could not count is recorded
+    ([usage the ledger cannot count](../../../docs/design/resources.md#usage-the-ledger-cannot-count)):
+    one `usage.unknown` event (with `ctx.eventLog`; the workflow run as its
+    `runId`), its data `usage-unknown@1.0`: `not-reported` for a run that
+    reported neither tokens nor turns, `refused` (the ledger's `failure`, and
+    the refused record kept as an `evidence` artifact when it is a valid
+    record) or `failed` for one it did not take, and `interrupted` below. A
+    fact that cannot be appended is logged. A cap counts such a run as 0;
   - **observe** each rate-limit observation the runtime reported as a
     `limit-state` reading (source `runtime-result`) of the window `windows`
     maps it to: `limited` with `resetsAt` when `rejected`, `limited` until
@@ -157,11 +166,25 @@ The **`agents` Worker source**: agent runtimes as Workers
     `rejected` without a reset time, never `unknown`, `ok` otherwise. A
     `rejected` limit on a window `windows` does not map closes every window
     of the pool, so it is never retried there unseen (INV-2); any other
-    unmapped window is logged and skipped;
+    unmapped window is logged and skipped. A run that fails `quota_exhausted`
+    and left no `limited` reading (Codex and the Antigravity CLI report no
+    limit observation) closes every window of the pool with a `limited`
+    reading (source `limit-notice`) for `limitCooldownSeconds`; a later
+    reading of a window says otherwise;
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 
   Without a `pool`, runs are not metered, whether a ledger is loaded or not.
+- **A usage limit with no ledger reading** (PROP-0012 phase C, INV-2): a run
+  that fails `quota_exhausted` on a Worker with no `pool`, or whose ledger did
+  not take the readings above, cools its **runtime** down (table
+  `agent_cooldowns`): its Workers share the runtime's one home, so its one
+  sign-in. Every Worker of that runtime is `quota-exhausted`, and a run queued
+  on one fails `quota_exhausted` before the agent starts, until the latest
+  reset time a `rejected` observation of the run named, else for the failing
+  Worker's `limitCooldownSeconds`, never more than seven days (INV-9). It
+  survives a restart and ends only at that time. Event `agent-workers.cooldown`
+  (`runtime`, `worker`, `agentRun`, `until`, and the failure's message).
 - **Briefs** ([briefs](../../../docs/design/workflow-engine.md#briefs)): a run started with a
   `brief@1.x` renders its prompt from it at start (the default text rendering, each pointer
   replaced by its artifact's text); one that cannot be rendered is refused as `invalid_input`.
@@ -251,7 +274,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   (`USER_ACTION`) and names its native session. Its reservation is released,
   and its usage is not invented: no result message means no `runtime-result`
   record; its usage comes from transcript reconciliation (`source:
-  transcript`), later (not built yet).
+  transcript`), later (not built yet). Until then a metered one is recorded
+  as `usage.unknown` of kind `interrupted`, under the pool its reservation drew
+  on while its Worker still names it (else logged).
 - **Never stranded:** a run whose `agent-run:<id>` lease another process holds
   is looked at again once that lease would expire (it finishes the run, or it
   crashed). A run whose lease was lost is looked at again after the lease

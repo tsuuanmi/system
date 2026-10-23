@@ -1,6 +1,6 @@
 /** What callers see of runs: views (never the input text), the usage report, and the decision chain. */
 import type { Decision } from '@tsuuanmi/system-artifacts'
-import type { ContentId } from '@tsuuanmi/system-libs'
+import { type ContentId, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknownOf } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
@@ -72,10 +72,25 @@ function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
   }
 }
 
-/** Recent runs and, per node, which Worker, tier, and quota class served it (usage report). */
+/** Recent runs and, per node, which Worker, tier, and quota class served it (usage report), and whether its usage could be counted. */
 export function usage(e: Engine, limit: number): RunView[] {
   const rows = e.ctx.store.db.prepare('SELECT * FROM workflow_runs ORDER BY created_at DESC LIMIT ?').all(Math.min(Math.max(1, limit), 500)) as unknown as RunRow[]
-  return rows.map((r) => view(e, r))
+  return rows.map((r) => withUnknownUsage(e, view(e, r)))
+}
+
+/**
+ * Each node whose execution's usage the resource ledger could not count when it ended, with the kind
+ * its Worker source recorded first (`usage.unknown`, docs/design/resources.md#usage-the-ledger-cannot-count).
+ * An entry that is not a valid `usage-unknown@1.0` record is skipped.
+ */
+function withUnknownUsage(e: Engine, run: RunView): RunView {
+  const kinds = new Map<string, UsageUnknownKind>()
+  for (const entry of e.ctx.eventLog.query({ type: USAGE_UNKNOWN_EVENT, runId: run.runId, limit: 1000 })) {
+    const fact = usageUnknownOf(entry.data)
+    if (fact && !kinds.has(fact.runId)) kinds.set(fact.runId, fact.kind)
+  }
+  if (!kinds.size) return run
+  return { ...run, nodes: run.nodes.map((n) => (n.executionId !== undefined && kinds.has(n.executionId) ? { ...n, usageUnknown: kinds.get(n.executionId)! } : n)) }
 }
 
 /** The decision chain of a run, per node: egress, tier, route (or admission), acceptance (REQ-ART-3). */

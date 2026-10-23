@@ -8,7 +8,7 @@ changes only by an ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.evaluations` | abstract `Evaluations` with `collector(collector)`, `start(experimentId, at?)`, `sweep(at)`, `get(evaluationId)`, and `list(filter?)`; `Evaluation`, `EvaluationEntry`, `Trial`, `TrialSpec`, `Route`, `Collector`, `CollectedTrial`, `Collection`, `AnalysisMethod`, `AnalysisInput`, `EvaluationsError`; `EVALUATIONS_CONTRACT` (1.0), `CHECKS` | none yet: the store-backed provider is F4 of [PROP-0011](../../docs/proposals/0011-feedback-loop.md#milestones), and its statistics library F2; the fake `FakeEvaluations` |
+| `ctx.evaluations` | abstract `Evaluations` with `collector(collector)`, `start(experimentId, at?)`, `sweep(at)`, `get(evaluationId)`, and `list(filter?)`; `Evaluation`, `EvaluationEntry`, `Trial`, `TrialSpec`, `Route`, `Collector`, `CollectedTrial`, `Collection`, `AnalysisMethod`, `AnalysisInput`, `EvaluationsError`; `EVALUATIONS_CONTRACT` (1.0), `CHECKS` | none yet: the store-backed provider is F4 of [PROP-0011](../../docs/proposals/0011-feedback-loop.md#milestones); the fake `FakeEvaluations`. The pinned statistics library is [`statistics`](../statistics/README.md) (F2) |
 
 - The types mirror `evaluation@1.0` and the `verdict` decision of `decision@1.7`; the schemas in
   `schemas/` are canonical. It depends on Cordis, the libraries, and the experiment registry's

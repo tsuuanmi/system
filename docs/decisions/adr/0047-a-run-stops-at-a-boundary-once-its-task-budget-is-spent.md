@@ -1,7 +1,8 @@
 # ADR-0047: A board task's run stops at its next boundary once the ledger's recorded usage passes the task's lines
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted for step 1 (option 2); step 2 (option 3) deferred until the live install
+  shows real overdraws
+- **Date:** 2026-10-23 (step 1 accepted 2026-10-23, by the operator; step 2 deferred the same day)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0044](0044-funding-raises-a-spent-task-budget.md),
   [PROP-0010](../../proposals/0010-base-version.md),
@@ -80,25 +81,34 @@ rules, so it needs an ADR (ADR-0036).
    usage is never estimated from a model's report (resources rule 3, and the metering guarantee in
    ADR-0036).
 
-## Decision (proposed)
+## Decision
 
-Do option 2 first, then option 3 for runtimes that report progress. Each lands as its own change.
+Proposed: option 2 first (step 1), then option 3 for runtimes that report progress (step 2), each
+as its own change.
+
+**Accepted for step 1 only (2026-10-23, by the operator).** Option 2, the per-step reservation in
+the engine, is accepted, with rule 4 and every seam unchanged; it is built
+([implementation note](#implementation-note-2026-10-23-option-2)). Option 3 is **deferred** until
+the live install shows real overdraws: this record does not accept it. It comes back for the
+operator's decision with that evidence, and with the seam changes listed above, before any of them
+is made.
 
 - **Option 2 changes only the engine.** Rule 4 is unchanged. Where each execution's reservation
   stands goes on the run's row. The ledger's `budget` decision is recorded before any effect
   (INV-13). Each reservation is released when its execution finishes, and a hold that a crash
   leaves behind expires (INV-9). A restart reserves again, never twice (INV-4), and the crash
   suite covers it. A brief still states what the task has left.
-- **Option 3 follows** once an agent runtime reports progress. It goes through the seam changes
-  listed above, each with its conformance scenarios and fakes, and rule 4 is amended in that change.
+- **Option 3, once accepted** (deferred, above), needs an agent runtime that reports progress. It
+  goes through the seam changes listed above, each with its conformance scenarios and fakes, and
+  rule 4 is amended in that change.
 - **Both options** count recorded usage only, never an estimate. Neither stops a tool mid-call.
   Each records every stop as a decision before its effect.
 
 ## Consequences
 
-- Until this is accepted and built, rule 4 stays "before, never after": a run can overdraw its
-  task's last lines. The overdraw is recorded, and then it is either funded (ADR-0044) or the task
-  ends.
+- Rule 4 stays "before, never after", now before each step: while step 2 is deferred, a step in
+  flight can overdraw its task's last lines. The overdraw is recorded, and then it is either funded
+  (ADR-0044) or the task ends.
 - Option 2 limits an overdraw to the steps in flight. One long agent step can still overdraw, up to
   its own `maxTurns`.
 - A run stopped between steps leaves the results of the steps it completed. The next attempt's
@@ -107,3 +117,26 @@ Do option 2 first, then option 3 for runtimes that report progress. Each lands a
   (`agentRuntimes`). A runtime without progress reports gets only option 2.
 - Revisit this if the workflow contract should state its budget behaviour. That would add a
   conformance scenario, which changes the workflow contract and needs an ADR (roadmap B4).
+
+## Implementation note (2026-10-23): option 2
+
+Option 2 is built in the workflow engine alone, while this ADR is proposed; no seam changes, and
+rule 4 is unchanged ([a task's budget](../../design/workflow-engine.md#a-tasks-budget)). Where the
+decision left room, the engine:
+
+- counts as a step each Worker execution of a run, so each attempt, retry, and escalation of a node
+  reserves; a step that draws no Worker (a gate, a team's tally or decision, a review's source)
+  reserves nothing;
+- reserves after the step's brief is drafted and before it is routed, so a refused step records no
+  route and sends nothing;
+- keeps each hold on the run's row under its step (node, attempt, escalations), and releases it at
+  the run's next turn once the step is no longer in flight. A hold whose step never started (a
+  crash between the two) is released, and the step reserves again, so a restart never holds two;
+- keeps the first refusal, and does not start a step whose reservation was granted beside a refused
+  one;
+- lets a step in flight that fails for good, or asks questions, decide the run as it would without
+  the refusal; the next attempt's first step is then refused on the spent line;
+- points the next attempt's brief at the results of the steps a stopped attempt completed (role
+  `prior`). A failed attempt has no result on the board, so the engine reads them from the stopped
+  run;
+- still briefs each step with what the task had left when the run was admitted.

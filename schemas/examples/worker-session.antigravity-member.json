@@ -1,0 +1,18 @@
+{
+  "schema": "worker-session@1.1",
+  "sessionId": "session:team-b:member-2",
+  "group": "team-b",
+  "runId": "run-2026-10-23-004",
+  "nodeId": "review:team-b",
+  "worker": "agent:agy-review",
+  "role": "m2",
+  "formation": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "state": "IDLE",
+  "binding": { "runtime": "antigravity-cli", "nativeHandle": "00000000-0000-4000-8000-000000000000", "generation": 1 },
+  "policy": { "mayMessage": ["team-b"] },
+  "budgets": { "maxTurns": 40, "maxMessages": 60, "maxLifetimeMinutes": 720, "maxIdleMinutes": 120, "checkpointEveryTurns": 5, "compactAtTokens": 60000 },
+  "usage": { "turns": 1, "messagesSent": 1, "estimatedTokens": 5200 },
+  "mailboxSeq": 2,
+  "createdAt": "2026-10-23T09:00:00Z",
+  "revision": 4
+}

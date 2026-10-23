@@ -77,7 +77,7 @@ describe('approval-request@1.0', () => {
   })
 })
 
-describe('approval-request@1.1 and policy-change@1.0', () => {
+describe('approval-request@1.1 and policy-change@1.x', () => {
   const asked = example('approval-request.policy-change')
   const change = example('policy-change.applied')
 
@@ -109,6 +109,20 @@ describe('approval-request@1.1 and policy-change@1.0', () => {
     const decision = example('decision.policy-change')
     expect(valid('decision@1.6', decision)).toBe(true)
     expect(valid('decision@1.6', { ...decision, schema: 'decision@1.5' })).toBe(false)
+    expect(valid('decision@1.6', example('decision.policy-change-proposed'))).toBe(true)
+  })
+
+  it('names, from @1.1, the origin of a change the queue proposed itself: one exact command line, its approvals, and its decision (INV-13)', () => {
+    const proposed = example('policy-change.queue-proposed')
+    expect(valid('policy-change@1.1', proposed)).toBe(true)
+    expect(valid('policy-change@1.1', { ...proposed, schema: 'policy-change@1.0' })).toBe(false)
+    // The operator's own change is valid at either tag.
+    expect(valid('policy-change@1.1', { ...change, schema: 'policy-change@1.1' })).toBe(true)
+    const { decision: _, ...unrecorded } = proposed.origin
+    expect(valid('policy-change@1.1', { ...proposed, origin: unrecorded })).toBe(false)
+    expect(valid('policy-change@1.1', { ...proposed, origin: { ...proposed.origin, rule: 'operator' } })).toBe(false)
+    expect(valid('policy-change@1.1', { ...proposed, origin: { ...proposed.origin, shape: { actionClass: 'merge', command: 'pnpm lint' } } })).toBe(false)
+    expect(valid('policy-change@1.1', { ...proposed, origin: { ...proposed.origin, shape: { actionClass: 'command', command: 'x'.repeat(201) } } })).toBe(false)
   })
 })
 
@@ -219,6 +233,31 @@ describe('usage-record@1.0 and limit-state@1.0', () => {
     expect(valid('limit-state@1.0', bare)).toBe(true)
     expect(valid('limit-state@1.0', { ...bare, state: 'limited' })).toBe(false)
     expect(valid('limit-state@1.0', { ...bare, state: 'limited', resetsAt: '2026-10-22T13:00:00Z' })).toBe(true)
+  })
+})
+
+describe('usage-unknown@1.0', () => {
+  const silent = example('usage-unknown.not-reported')
+  const refused = example('usage-unknown.refused')
+
+  it('names the unit, its pool, and why its usage is unknown, never a number for it (design/resources.md)', () => {
+    for (const key of ['runId', 'kind', 'account', 'pool', 'observedAt', 'reason']) {
+      const { [key]: _, ...without } = silent
+      expect(valid('usage-unknown@1.0', without), key).toBe(false)
+    }
+    expect(valid('usage-unknown@1.0', { ...silent, kind: 'estimated' })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, usage: { inputTokens: 1, outputTokens: 1 } })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, reason: 'x'.repeat(501) })).toBe(false)
+  })
+
+  it('carries the ledger\'s refusal and the refused record for a refused record only', () => {
+    const { failure: _, ...unexplained } = refused
+    expect(valid('usage-unknown@1.0', unexplained)).toBe(false)
+    const { record: __, ...unkept } = refused
+    expect(valid('usage-unknown@1.0', unkept)).toBe(true)
+    expect(valid('usage-unknown@1.0', { ...refused, failure: 'unknown-reservation' })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, failure: 'invalid' })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, record: refused.record })).toBe(false)
   })
 })
 
@@ -361,6 +400,20 @@ describe('MCP tool calls', () => {
     expect(call('mcp-report', { ...week, input: { since: 'last week' } })).toBe(false)
     expect(call('mcp-report', { ...week, output: { ...week.output, tasks: { ...week.output.tasks, done: -1 } } })).toBe(false)
     expect(call('mcp-report', { ...week, output: { ...week.output, summary: 'written by a model' } })).toBe(false)
+  })
+
+  it('1.1 says what a cap counts as 0, as counts only: the runs whose usage is unknown, by kind, and the records without a figure (D25)', () => {
+    const week = example('mcp-report.week')
+    const usage = week.output.usage
+    const withUsage = (changed: Json): Json => ({ ...week, output: { ...week.output, usage: { ...usage, ...changed } } })
+    expect(call('mcp-report', withUsage({ unknown: { ...usage.unknown, estimatedTokens: 1000 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ unknown: { runs: 1 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ total: { ...usage.total, withoutTokens: -1 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ pools: [{ ...usage.pools[0], withoutCost: 2, withoutTurns: 1 }] }))).toBe(true)
+    // A report of 1.0, with none of them, stays valid.
+    const { unknown: _, ...before } = usage
+    const { unknownRuns: __, ...total } = usage.total
+    expect(call('mcp-report', { ...week, output: { ...week.output, usage: { ...before, total, pools: [total].map((t) => ({ pool: usage.pools[0].pool, ...t })) } } })).toBe(true)
   })
 
   it('checks a call against its own tool, not another', () => {

@@ -44,8 +44,8 @@
 - **REQ-ACC-7** The account vault is provider-agnostic and supports any number of
   accounts per provider. Each account's state is saved, isolated (own browser
   process, scheduler, and bindings), and survives restarts. Accounts that resolve
-  to the same identity are quarantined: they take no work until the operator
-  resolves it.
+  to the same identity are quarantined: they are flagged, and none of them takes
+  work until the operator resolves it.
 - **REQ-ACC-8** An account may opt in to credential login with email, password,
   and TOTP. It runs only after positive sign-out evidence. TOTP codes are
   computed locally and never obtained from a third party. Anything it cannot
@@ -251,9 +251,11 @@
 - **REQ-HOST-5** No deployment-varying value is hardcoded. Each one is a
   validated plugin configuration field.
 - **REQ-HOST-6** The host reports its health: each check (runtime, store, disk,
-  vault key custody, accounts, Workers, provider UI drift) as ok, degraded, or
-  down with what to do, and the worst of them. Health is degraded while a
-  provider UI change was seen recently.
+  vault key custody, accounts, Workers, provider UI drift, usage the resource
+  ledger could not count) as ok, degraded, or down with what to do, and the
+  worst of them. Health is degraded while a provider UI change was seen
+  recently, and while a resource pool has a run whose usage the ledger could
+  not count, and has not counted since, in its current window.
 - **REQ-HOST-7** Every plugin package and seam definition ships a manifest
   (`plugin-manifest@1.x`) that agrees with its code: the seams it provides,
   consumes, and defines, at their contract versions, and its core component or

@@ -741,7 +741,9 @@ export class Turns extends Service {
   /**
    * The website Workers: one per account and tier its catalog maps to a mode preset. They
    * prove what the account's driver declares; a missing driver, or a tier mapped to a preset the
-   * driver does not have (an account left on a removed preset), makes them unavailable.
+   * driver does not have (an account left on a removed preset), makes them unavailable. So does an
+   * account signed in as the same person as another catalog entry (REQ-ACC-7): both are, since
+   * neither is a distinct account (health names them).
    */
   private async describeWorkers(): Promise<CapabilityDescriptor[]> {
     const providers = new Set(this.ctx.providers.list())
@@ -755,6 +757,7 @@ export class Turns extends Service {
       counts.set(row.account, count)
     }
     const cooled = this.cooldowns()
+    const duplicated = new Set((await this.ctx.accounts.duplicateIdentities()).flat())
     return (await this.ctx.accounts.list()).flatMap((account) => {
       const driver = providers.has(account.provider) ? this.ctx.providers.get(account.provider) : undefined
       const load = { ...(counts.get(account.id) ?? { running: 0, queued: 0 }), pending: this.pending.get(account.id) ?? 0, slots }
@@ -777,7 +780,7 @@ export class Turns extends Service {
           // An account feature counts only once a probe on this account proved it (REQ-PRV-7).
           ...(account.features?.names ?? []).filter((f) => driver?.features?.includes(f)).map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: account.features!.provedAt } })),
         ],
-        state: driver && (!driver.modes || driver.modes.includes(account.tiers[tier]!)) ? state ?? WORKER_STATE[account.status] : 'unavailable',
+        state: driver && (!driver.modes || driver.modes.includes(account.tiers[tier]!)) && !duplicated.has(account.id) ? state ?? WORKER_STATE[account.status] : 'unavailable',
         observedAt,
       }))
     })
@@ -904,6 +907,18 @@ export class Turns extends Service {
     return names
   }
 
+  /**
+   * Throws unless no other catalog entry is signed in as the same person as this account
+   * (REQ-ACC-7): two entries of one identity are one account, so neither takes work until the
+   * operator signs one of them in as someone else or removes it from the catalog. Nothing was sent.
+   */
+  private async distinct(accountId: string): Promise<void> {
+    const group = (await this.ctx.accounts.duplicateIdentities()).find((ids) => ids.includes(accountId))
+    if (!group) return
+    const others = group.filter((id) => id !== accountId).join(', ')
+    throw new ProviderError('reauth_required', `${accountId} is signed in as the same person as ${others}: neither takes work until one is signed in as another person (system account login <id>) or removed from the catalog; nothing was sent`)
+  }
+
   /** Throws unless the account is still ready: checked again once a background operation has its slot. */
   private async stillReady(accountId: string): Promise<void> {
     const now = await this.ctx.accounts.get(accountId)
@@ -968,6 +983,8 @@ export class Turns extends Service {
   private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease, relogged = false): Promise<void> {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)
+    // Admitted before another entry signed in as the same person: nothing is sent on either (REQ-ACC-7).
+    await this.distinct(accountId)
     const driver = this.ctx.providers.get(view.provider)
     const state = driver.sessionBound ? undefined : await this.ctx.accounts.portableState(accountId)
     const session = row.session_id ? this.session(row.session_id) : undefined

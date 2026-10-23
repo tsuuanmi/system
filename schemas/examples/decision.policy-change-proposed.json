@@ -1,0 +1,65 @@
+{
+  "schema": "decision@1.6",
+  "decisionType": "policy-change",
+  "question": "Which autonomy policy set does the queue propose to the operator?",
+  "inputs": [
+    "sha256:1b4e7a0d3c6f9b2e5a8d1c4f7b0e3a6d9c2f5b8e1a4d7c0f3b6e9a2d5c8f1b4e",
+    "sha256:2c5f8b1e4d7a0c3f6b9e2d5a8c1f4b7e0d3a6c9f2b5e8d1a4c7f0b3e6d9a2c5f",
+    "sha256:3d6a9c2f5e8b1d4a7c0f3e6b9d2a5c8f1e4b7d0a3c6f9e2b5d8a1c4f7e0b3d6a",
+    "sha256:4e7b0d3a6f9c2e5b8d1a4f7c0e3b6d9a2f5c8e1b4d7a0f3c6e9b2d5a8f1c4e7b",
+    "sha256:5f8c1e4b7a0d3f6c9e2b5a8d1f4c7e0b3a6d9f2c5e8b1a4d7f0c3e6b9a2d5f8c",
+    "sha256:6a9d2f5c8b1e4a7d0f3c6b9e2a5d8f1c4b7e0a3d6f9c2b5e8a1d4f7c0b3e6a9d"
+  ],
+  "candidates": [
+    {
+      "option": "sha256:cf48c7c3feaed8bb46baa540179feeff1cfc7d6e658cc5b390b76b439614805d",
+      "selected": true,
+      "reasons": [
+        "the operator approved `pnpm lint` 5 times among the requests of the last 7 days (at least 5), and rejected none and let none expire; proposed, never applied: only the operator's approval of request apr-8b2d4f6a0c1e3a57 applies it"
+      ]
+    },
+    {
+      "option": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e",
+      "selected": false,
+      "reasons": [
+        "the set in force stays in force until the operator approves the proposal"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "approvals.repeated-approvals",
+    "version": "1",
+    "hash": "sha256:cf48c7c3feaed8bb46baa540179feeff1cfc7d6e658cc5b390b76b439614805d"
+  },
+  "outcome": {
+    "option": "sha256:cf48c7c3feaed8bb46baa540179feeff1cfc7d6e658cc5b390b76b439614805d",
+    "detail": {
+      "cause": "repeated-approvals",
+      "changeId": "pch-3a9c1e5b7d2f4086",
+      "requestId": "apr-8b2d4f6a0c1e3a57",
+      "from": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e",
+      "to": "sha256:cf48c7c3feaed8bb46baa540179feeff1cfc7d6e658cc5b390b76b439614805d",
+      "configHash": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51",
+      "policy": {
+        "id": "studio-default",
+        "version": 3
+      },
+      "shape": {
+        "actionClass": "command",
+        "command": "pnpm lint"
+      },
+      "approved": 5,
+      "threshold": 5,
+      "windowSeconds": 604800,
+      "requests": [
+        "apr-1c3e5a7b9d0f2e41",
+        "apr-2d4f6b8c0e1a3f52",
+        "apr-3e5a7c9d1f2b4a63",
+        "apr-4f6b8d0e2a3c5b74",
+        "apr-5a7c9e1f3b4d6c85"
+      ]
+    }
+  },
+  "deterministic": true
+}

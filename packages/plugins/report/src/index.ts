@@ -14,14 +14,14 @@ import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type { ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
 import { renderReport } from './render.ts'
-import { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, within } from './report.ts'
+import { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
 export { duration, renderReport, whole } from './render.ts'
-export { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, within } from './report.ts'
+export { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, type UnknownRead, within } from './report.ts'
 
 export const name = 'report'
 export const inject = ['artifacts', 'eventLog']
@@ -140,6 +140,25 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
     if (error instanceof ResourcesError) throw new ReportError('overloaded', `the resource ledger refused the period's records (${error.message}): report a shorter period`)
     throw error
   }
+  // The runs whose usage the ledger could not count (D25), recorded in the period, and whether it
+  // has counted a record of each in its pool since. An entry that is not a valid record is not counted.
+  const until = Date.parse(period.until)
+  const unknowns: UnknownRead[] = []
+  const reconciled = new Map<string, boolean>()
+  let invalid = 0
+  for (const e of readEvents(ctx, { type: USAGE_UNKNOWN_EVENT, since: period.since })) {
+    if (Date.parse(e.at) >= until) continue
+    const fact = usageUnknownOf(e.data)
+    if (!fact) {
+      invalid += 1
+      continue
+    }
+    if (!within.unknown(scope, { ...(e.runId !== undefined ? { runId: e.runId } : {}), fact })) continue
+    const key = `${fact.pool}\0${fact.runId}`
+    if (!reconciled.has(key)) reconciled.set(key, (await resources.usage({ runId: fact.runId, pool: fact.pool })).records.length > 0)
+    unknowns.push({ at: e.at, ...(e.runId !== undefined ? { runId: e.runId } : {}), fact, reconciled: reconciled.get(key)! })
+  }
+  if (invalid) notes.push(`${invalid} ${USAGE_UNKNOWN_EVENT} entr${invalid === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record: not counted`)
   const since = Date.parse(period.since)
   const events = [
     ...[...reportedAll, ...digestedAll].filter((e) => Date.parse(e.at) >= since),
@@ -169,7 +188,7 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
   const [first] = ctx.eventLog.query({ limit: 1 })
   if (first && first.seq > 1 && Date.parse(first.at) > since) notes.push(`the event log keeps entries from ${first.at} on (retention): attempts, remediation, batches, and digests before then are not counted`)
 
-  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), notes }, projectId)
+  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, notes }, projectId)
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
@@ -187,7 +206,7 @@ const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as 
 export function registerTool(ctx: Context): void {
   ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
     try {
-      schemas.assertDef('mcp-report@1.0', 'report-input', args)
+      schemas.assertDef('mcp-report@1.1', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
@@ -198,7 +217,7 @@ export function registerTool(ctx: Context): void {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-report@1.0', 'report-output', made)
+      schemas.assertDef('mcp-report@1.1', 'report-output', made)
     } catch (error) {
       return refused(`report: the report made an output its schema refuses (a defect): ${(error as Error).message}`)
     }

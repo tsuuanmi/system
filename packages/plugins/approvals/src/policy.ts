@@ -70,7 +70,7 @@ function batchOf(policies: readonly AutonomyPolicy[]): { rule: { maxSize: number
 }
 
 /** The problems of one commands-list entry: a word that is empty (a leading, trailing, or doubled space) or holds a shell metacharacter. */
-function commandProblems(line: string): string[] {
+export function commandProblems(line: string): string[] {
   const words = line.split(' ')
   const problems: string[] = []
   if (words.some((w) => w === '')) problems.push(`the commands entry ${JSON.stringify(line)} has an empty word (a leading, trailing, or doubled space)`)

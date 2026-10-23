@@ -70,11 +70,12 @@
       "daysOver": 0
     },
     "usage": {
-      "total": { "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184 },
+      "total": { "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184, "unknownRuns": 1 },
       "pools": [
-        { "pool": "claude-max-main.programmatic", "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184 }
+        { "pool": "claude-max-main.programmatic", "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184, "unknownRuns": 1 }
       ],
-      "byOutcome": { "completed": 36, "failed": 1, "aborted": 0, "unknown": 1 }
+      "byOutcome": { "completed": 36, "failed": 1, "aborted": 0, "unknown": 1 },
+      "unknown": { "runs": 1, "reconciled": 0, "notReported": 0, "interrupted": 1, "refused": 0, "failed": 0 }
     },
     "digests": { "attached": 6, "bypassed": 1, "claimsKept": 31, "claimsDropped": 3, "escalated": 1 },
     "baseline": {
@@ -83,6 +84,8 @@
       "attempts": 7,
       "perAcceptedResult": { "tokens": 2432805.5, "costUsd": 4.6046, "turns": 152.75, "interruptions": 2, "attempts": 1.75 }
     },
-    "notes": []
+    "notes": [
+      "1 run(s) whose usage the ledger could not count, and has not counted since: no figure counts them, and a cap counts them as 0 (1 recorded in the period: 1 interrupted; system events --type usage.unknown)"
+    ]
   }
 }

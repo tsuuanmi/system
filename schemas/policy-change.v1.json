@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:policy-change:v1",
   "title": "Policy change",
-  "description": "Durable state of one change of the autonomy policy set (ctx.approvals, design/approvals.md#a-policy-change): the operator proposes one autonomy-policy record, the queue asks the operator through a `policy-change` approval request on the proposed set's hash, and applies the whole set only on the operator's approval. The set it applies is kept, so a restart keeps it while the configuration it derives from is unchanged.",
+  "description": "Durable state of one change of the autonomy policy set (ctx.approvals, design/approvals.md#a-policy-change): the operator proposes one autonomy-policy record, the queue asks the operator through a `policy-change` approval request on the proposed set's hash, and applies the whole set only on the operator's approval. The set it applies is kept, so a restart keeps it while the configuration it derives from is unchanged. @1.1 adds the optional `origin`: the queue proposed the change itself, from approvals the operator gave one exact shape again and again (design/approvals.md#the-queue-proposes-a-policy-change); only the operator's approval applies it.",
   "type": "object",
   "required": ["schema", "changeId", "state", "policy", "policies", "hash", "baseHash", "configHash", "effect", "requestId", "proposedAt", "revision"],
   "properties": {
-    "schema": { "const": "policy-change@1.0" },
+    "schema": { "enum": ["policy-change@1.0", "policy-change@1.1"] },
     "changeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "state": {
       "description": "asked: its request waits for the operator; applied: approved, and its set came into force (it stays applied when a later change replaces it); declined: rejected, expired, or withdrawn, nothing changed; retired: applied, then replaced by a configuration that names its hash in `supersedes`.",
@@ -64,6 +64,27 @@
       "type": "string",
       "maxLength": 2000
     },
+    "origin": {
+      "description": "@1.1: the queue proposed this change itself, because the operator approved one exact shape again and again within a window and rejected none (a studio command's exact argv, added as one commands-list line); absent when the operator proposed it. It carries no authority: only the operator's approval of its request applies it.",
+      "type": "object",
+      "required": ["rule", "shape", "approved", "windowSeconds", "decision"],
+      "properties": {
+        "rule": { "const": "approvals.repeated-approvals" },
+        "shape": {
+          "type": "object",
+          "required": ["actionClass", "command"],
+          "properties": {
+            "actionClass": { "const": "command" },
+            "command": { "description": "The exact argv, its words joined by single spaces: the commands-list line the change adds.", "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          "additionalProperties": false
+        },
+        "approved": { "description": "The operator's approvals of the shape counted in the window.", "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "windowSeconds": { "type": "integer", "minimum": 1, "maximum": 31536000 },
+        "decision": { "description": "The `policy-change` decision (decider rule approvals.repeated-approvals) that recorded the proposal and the approvals it counted (INV-13).", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    },
     "proposedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
     "applied": {
       "description": "When the set came into force, and the `policy-change` decision that records the old and new hashes (INV-13).",
@@ -87,6 +108,11 @@
     "revision": { "type": "integer", "minimum": 0, "maximum": 1000000000 }
   },
   "allOf": [
+    {
+      "description": "@1.1: a change the queue proposed itself (its origin) is refused on @1.0.",
+      "if": { "properties": { "origin": { "type": "object" } }, "required": ["origin"] },
+      "then": { "properties": { "schema": { "const": "policy-change@1.1" } } }
+    },
     {
       "if": { "properties": { "state": { "const": "asked" } } },
       "then": { "properties": { "applied": false, "declined": false, "retired": false } }

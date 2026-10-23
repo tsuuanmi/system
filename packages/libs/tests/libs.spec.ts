@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { SchemaError, SchemaRegistry, canonicalJson, contentId, dshHome, readOrCreateSecretFile } from '../src/index.ts'
+import { MAX_UNKNOWN_REASON, SchemaError, SchemaRegistry, canonicalJson, contentId, dshHome, readOrCreateSecretFile, USAGE_UNKNOWN_EVENT, usageUnknown, usageUnknownOf } from '../src/index.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'system-libs-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -65,6 +65,28 @@ describe('SchemaRegistry', () => {
     expect(() => registry.assertDef('mcp-board@1.0', 'no-such-tool', {})).toThrow(/no definition/)
     expect(() => registry.assertDef('mcp-board@1.0', '../x', {})).toThrow(/malformed definition/)
     expect(() => registry.assertDef('mcp-board@9.0', 'board-claim-input', {})).toThrow(/unsupported major/)
+  })
+})
+
+describe('usage the ledger could not count (usage-unknown@1.0)', () => {
+  const fields = { runId: 'arun_1', kind: 'not-reported' as const, account: 'max', pool: 'max.agents', observedAt: '2026-10-23T14:00:00Z', reason: 'its runtime reported neither tokens nor turns' }
+
+  it('builds a valid record, its reason cut to its bound on whole characters, and refuses one that is still invalid', () => {
+    expect(USAGE_UNKNOWN_EVENT).toBe('usage.unknown')
+    expect(usageUnknown(fields)).toEqual({ schema: 'usage-unknown@1.0', ...fields })
+    const long = usageUnknown({ ...fields, reason: '🙂'.repeat(MAX_UNKNOWN_REASON + 10) })
+    expect([...long.reason]).toHaveLength(MAX_UNKNOWN_REASON)
+    expect(long.reason.endsWith('…')).toBe(true)
+    expect(() => usageUnknown({ ...fields, pool: 'not an id' })).toThrow(SchemaError)
+    expect(() => usageUnknown({ ...fields, failure: 'invalid' })).toThrow(SchemaError)
+  })
+
+  it('reads an entry\'s data back only when it is a valid record, never guessing (INV-14)', () => {
+    const record = usageUnknown(fields)
+    expect(usageUnknownOf(record)).toEqual(record)
+    for (const data of [undefined, {}, { ...record, schema: 'usage-unknown@2.0' }, { ...record, kind: 'estimated' }, { ...record, usage: { inputTokens: 1, outputTokens: 1 } }]) {
+      expect(usageUnknownOf(data)).toBeUndefined()
+    }
   })
 })
 

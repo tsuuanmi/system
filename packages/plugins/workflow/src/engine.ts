@@ -328,6 +328,8 @@ export class Engine {
           if (!run || run.status !== 'running') return
           // Retired nodes (a re-plan's history) never run and never decide the run's outcome.
           const nodes = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
+          // A board task's step holds its reservation only while it is in flight (ADR-0047, step 1).
+          await this.tasks.releaseSteps(runId, nodes)
           const failed = nodes.find((n) => n.state === 'FAILED')
           if (failed) {
             // A step that asked questions instead of answering: the board takes the question wait before the run ends.
@@ -349,11 +351,15 @@ export class Engine {
           // A run that lost its board task's holder starts nothing new: it reconciles what is in
           // flight, then fails what is left (INV-4, INV-15).
           const holderLost = this.tasks.lost(runId)
+          // A run whose task's budget refused a step starts nothing new either: the steps in flight
+          // finish and their results are taken, then the run blocks its task or fails (ADR-0047).
+          const budgetStopped = !holderLost && this.tasks.budgetStopped(runId)
+          const windingDown = holderLost || budgetStopped
           // A node that must differ from others is promoted with or after them, never before: it then
           // waits for their Workers while they run beside it (ADR-0027).
           const promoted = new Set(nodes.filter((n) => n.state !== 'WAITING').map((n) => n.node_id))
           // Until nothing more can be promoted, so the order nodes are listed in never serializes branches.
-          for (let more = !holderLost; more;) {
+          for (let more = !windingDown; more;) {
             more = false
             for (const node of nodes) {
               const differs = (JSON.parse(node.spec) as ResolvedNode).differentFrom ?? []
@@ -372,11 +378,15 @@ export class Engine {
           // A node that must differ from a peer with no Worker yet runs only beside that peer, so
           // it can wait for the peer's routing; otherwise it is parked until the peer is routed.
           const ids = new Set(runnable.map((n) => n.node_id))
-          const active = holderLost ? runnable.filter((n) => n.state === 'RUNNING' && n.execution_id) : runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
+          const active = windingDown ? runnable.filter((n) => n.state === 'RUNNING' && n.execution_id) : runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
             const row = current_.find((r) => r.node_id === peer)
             return !row?.worker && row?.state !== 'FAILED' && !ids.has(peer)
           }))
           if (!active.length && holderLost) return this.tasks.windDown(run, current_, current)
+          if (!active.length && budgetStopped) {
+            if (await this.tasks.budgetEnd(runId) === 'wait') this.retryLater(runId, TASK_WAIT_MS)
+            return
+          }
           if (!active.length) {
             // A tie waits a bounded time for a deciding vote, and a plan's gate for its verdict (INV-9):
             // a tie then completes inconclusive, a gate closes and fails the run.
@@ -424,6 +434,11 @@ export class Engine {
               this.executing.delete(keys[i]!)
             }
           }))
+          // A step waits to reserve its task's budget (no ledger, or one that did not answer): look again later.
+          if (outcomes.includes('wait')) {
+            this.retryLater(runId, TASK_WAIT_MS)
+            return
+          }
           // Every node deferred to a peer that is not running (it backs off): look again shortly.
           if (outcomes.every((o) => o === 'deferred') && !(await sleep(250, signal))) return
         }
@@ -552,7 +567,7 @@ export class Engine {
    * Run one node to a terminal state, or until the engine stops: route it by its requirement
    * (`ctx.workers`), start it on the admitted Worker's own runtime, then wait and accept.
    */
-  private async execute(run: RunRow, initial: NodeRow, lease: () => Lease, signal: AbortSignal): Promise<void | 'deferred'> {
+  private async execute(run: RunRow, initial: NodeRow, lease: () => Lease, signal: AbortSignal): Promise<void | 'deferred' | 'wait'> {
     let node = initial
     const spec = JSON.parse(node.spec) as ResolvedNode
     if (!node.execution_id) {
@@ -577,6 +592,11 @@ export class Engine {
       } catch (error) {
         return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [] }, lease)
       }
+      // A board task's step reserves its task's budget before it is routed or sent (ADR-0047, step 1):
+      // refused, it stays as it is and the run starts nothing new.
+      const budget = await this.tasks.reserveStep(run, node, attempt)
+      if (budget === 'wait') return 'wait'
+      if (budget === 'stop' || signal.aborted) return
       // Members of one team route one at a time, so each sees which accounts the others hold.
       const release = await this.routingTurn(run.run_id)
       const exclude = differs ? await this.families(run, spec) : undefined
@@ -647,8 +667,9 @@ export class Engine {
         done()
         return
       }
-      // A run that lost its board task's holder while this node routed starts nothing (INV-15).
-      if (this.tasks.lost(run.run_id)) {
+      // A run that lost its board task's holder while this node routed starts nothing (INV-15), nor
+      // one whose task's budget refused a step beside it (ADR-0047).
+      if (this.tasks.lost(run.run_id) || this.tasks.budgetStopped(run.run_id)) {
         done()
         return
       }

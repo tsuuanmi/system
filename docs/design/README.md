@@ -24,6 +24,7 @@ verified live.
 | [plugin-host.md](plugin-host.md) | plugin manifests generated from the code and checked against it; the composition's plugins and their lifecycle states, every change a decision | kernel (plugin host) |
 | [experiments.md](experiments.md) | the experiment registry: exact identity and structured fingerprint, the four registry answers and retry predicates, an experiment's states, manual links, lessons and their applicability | orchestration (work state machine) |
 | [evaluations.md](evaluations.md) | the evaluation engine: pins, seals, the judge guarded, paired trials drawn from a seed, collectors, cost, restart by reconciliation, the deterministic verdict rule | orchestration (gate) |
+| [statistics.md](statistics.md) | the evaluation engine's statistics: the exact paired sign-flip test, the interval that inverts it, its conventions for ties, zeros, and float tolerance, the analysis method, golden tests against SciPy | orchestration (library) |
 | [resources.md](resources.md) | configured pools, limit readings, reservations before a run, deduplicated usage after it | routing (resource ledger) |
 | [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
 | [teams.md](teams.md) | the `team` option on a workflow node: Model A members, independent proposals, sealed ballots, tally, bounded debate, tie votes | orchestration |

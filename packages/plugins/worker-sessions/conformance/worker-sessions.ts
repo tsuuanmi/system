@@ -1,6 +1,6 @@
 /**
  * Conformance suite for `ctx.workerSessions` (docs/design/sessions-and-messaging.md, ADR-0015,
- * REQ-SES-1..7; `worker-session@1.0` and `message@1.0` in docs/reference/schemas.md). It holds
+ * REQ-SES-1..7; `worker-session@1.x` and `message@1.0` in docs/reference/schemas.md). It holds
  * any provider to the documented contract through `ctx.workerSessions` and the records it keeps in
  * `ctx.artifacts`: a SessionId bound once to its Worker, a binding generation that fences stale
  * activations, an ordered mailbox with redelivery from `mailboxSeq + 1` and deduplication on
@@ -65,8 +65,8 @@ const refused = (ctx: Context, result: SendResult): void => {
   expect(body).toMatchObject({ decisionType: 'gate', outcome: { option: 'refuse' } })
 }
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>): Scenario<Boot> => ({
-  id: `workerSessions.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+  id: `workerSessions.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
     try {
@@ -79,7 +79,8 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const workerSessionsSuite = defineSuite<Boot>({
   seam: 'workerSessions',
-  contract: '1.0',
+  // 1.1 adds the binding runtime antigravity-cli (worker-session@1.1).
+  contract: '1.1',
   scenarios: [
     scenario('session-id-stable', 'binds a SessionId to its Worker once, at formation, and never changes it or the Worker across activations and compaction; a rejoin with another Worker or group is refused (REQ-SES-1)', async (ctx) => {
       team(ctx)
@@ -236,5 +237,14 @@ export const workerSessionsSuite = defineSuite<Boot>({
         .filter((o) => o.detail?.budget).map((o) => [o.option, o.detail!.budget])
       expect(budgets.sort()).toEqual([['refuse', 'lifetime'], ['refuse', 'turns']])
     }),
+    scenario('binding-runtime-recorded', 'records the runtime a member joins with as its binding\'s runtime: an Antigravity CLI member as antigravity-cli in a worker-session@1.1 record, any other as @1.0 (metadata, never routing)', async (ctx) => {
+      team(ctx)
+      ctx.workerSessions.join(G, member('ses_d', 'agent:d', { runtime: 'antigravity-cli' }))
+      expect(record(ctx, 'ses_d')).toMatchObject({ schema: 'worker-session@1.1', worker: 'agent:d', binding: { runtime: 'antigravity-cli', generation: 0 } })
+      expect(record(ctx, 'ses_c')).toMatchObject({ schema: 'worker-session@1.0', binding: { runtime: 'claude-agent-sdk' } })
+      // It stays as it was recorded across an activation.
+      ctx.workerSessions.settle('ses_d', generationOf(ctx.workerSessions.activate('ses_d', 'conv-d')))
+      expect(record(ctx, 'ses_d')).toMatchObject({ schema: 'worker-session@1.1', binding: { runtime: 'antigravity-cli', nativeHandle: 'conv-d' } })
+    }, '1.1'),
   ],
 })

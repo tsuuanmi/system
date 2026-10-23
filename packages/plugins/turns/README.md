@@ -8,7 +8,11 @@ invoked by the [workflow engine](../workflow/README.md)
   - **Describe:** one Worker `worker:<account>/<tier>` per account and per tier
     its catalog maps to a mode preset. It proves what the account's driver
     declares, in a state taken from the account's status. A tier mapped to a
-    preset the driver does not have (the driver's `modes`) is `unavailable`. Its
+    preset the driver does not have (the driver's `modes`) is `unavailable`, and so
+    is every Worker of an account signed in as the same person as another catalog
+    entry (`ctx.accounts.duplicateIdentities()`, REQ-ACC-7): both entries, since
+    neither is a distinct account; a turn routed before that fails
+    `reauth_required` before anything is sent, and health names them. Its
     provider family (`capability-descriptor@1.1`) is the account's provider. Its
     `load` (`@1.3`, ADR-0033) is the account's turns running and queued, its
     routes not started yet (`reserve`), and `maxConcurrentTurnsPerAccount` as its

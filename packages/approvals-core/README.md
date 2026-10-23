@@ -7,10 +7,12 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.approvals` | abstract `Approvals` with `policy(projectId?)`, `check(action)`, `request(request, at?)`, `get`, `list(filter?)`, `batch(at?)`, `decide(verdicts, at?)`, `withdraw(requestId, at?)`, `sweep(at)`, and at contract 1.1 the optional `proposePolicy(proposal, at?)` and `policyChanges(filter?)` and `policy()`'s `set`; `AutonomyPolicy`, `Action`, `AutonomyVerdict`, `ApprovalRequest`, `NewRequest`, `Verdict`, `VerdictResult`, `PolicyChange`, `PolicySetInForce`, `ModeChange`, `ContentHash`, `ApprovalsError`; `ALWAYS_ASK`, `MODES`, `SHELL_METACHARACTER`, `POLICY_SET_REF`, `APPROVALS_CONTRACT` (1.1); the pure `applyingPolicies` and `waitSeconds` (how long a wait for a person on a class lasts) | [`approvals`](../plugins/approvals/README.md) (store-backed), the fake `FakeApprovals` |
+| `ctx.approvals` | abstract `Approvals` with `policy(projectId?)`, `check(action)`, `request(request, at?)`, `get`, `list(filter?)`, `batch(at?)`, `decide(verdicts, at?)`, `withdraw(requestId, at?)`, `sweep(at)`, and at contract 1.1 the optional `proposePolicy(proposal, at?)` and `policyChanges(filter?)` and `policy()`'s `set`; `AutonomyPolicy`, `Action`, `AutonomyVerdict`, `ApprovalRequest`, `NewRequest`, `Verdict`, `VerdictResult`, `PolicyChange`, `PolicyChangeOrigin`, `PolicySetInForce`, `ModeChange`, `ContentHash`, `ApprovalsError`; `ALWAYS_ASK`, `MODES`, `SHELL_METACHARACTER`, `POLICY_SET_REF`, `APPROVALS_CONTRACT` (1.1); the pure `applyingPolicies` and `waitSeconds` (how long a wait for a person on a class lasts) | [`approvals`](../plugins/approvals/README.md) (store-backed), the fake `FakeApprovals` |
 
-- The types mirror `autonomy-policy@1.0`, `approval-request@1.1`, and `policy-change@1.0`; the
-  schemas in `schemas/` are canonical. It depends on nothing but Cordis.
+- The types mirror `autonomy-policy@1.0`, `approval-request@1.1`, and `policy-change@1.1` (its
+  optional `origin`: a change the store-backed queue proposed itself from repeated approvals,
+  [ADR-0050](../../docs/decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md);
+  no method changes, so the contract stays 1.1); the schemas in `schemas/` are canonical. It depends on nothing but Cordis.
 - Contract 1.1 adds a policy change through the queue
   ([approvals](../../docs/design/approvals.md#a-policy-change), ADR-0041): `proposePolicy` takes one
   policy record from the operator's channel only (INV-6), and asks one `policy-change` request on

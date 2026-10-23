@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:usage-unknown:v1",
+  "title": "Unknown usage",
+  "description": "The data of a `usage.unknown` event: one accounting unit (an agent run, a model call, a website turn) whose usage the resource ledger could not count, recorded by the Worker source that meters it (design/resources.md, usage the ledger cannot count). A cap counts the unit as 0 until the ledger counts a usage record of its run in its pool: then it is reconciled. Never an estimate of the usage.",
+  "type": "object",
+  "required": ["schema", "runId", "kind", "account", "pool", "observedAt", "reason"],
+  "properties": {
+    "schema": { "const": "usage-unknown@1.0" },
+    "runId": {
+      "description": "The unit, as a usage record of it names its `runId` (an agent Worker's run). The unit is reconciled once the ledger counts a record of this run in `pool`.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "kind": {
+      "description": "not-reported: the unit ended and its runtime reported neither tokens nor turns; interrupted: the host stopped while it ran, so no result came; refused: the ledger refused its usage record (`failure`); failed: recording it failed otherwise (the ledger threw).",
+      "enum": ["not-reported", "interrupted", "refused", "failed"]
+    },
+    "account": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "pool": {
+      "description": "The pool the unit drew on, as the Worker's configuration names it.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "outcome": {
+      "description": "How the unit ended.",
+      "enum": ["completed", "failed", "aborted"]
+    },
+    "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "reason": {
+      "description": "Why its usage is unknown: what the runtime reported, or the ledger's own message.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "failure": {
+      "description": "Why the ledger refused the record (`ResourcesError`), for `refused`.",
+      "enum": ["unknown-pool", "invalid"]
+    },
+    "record": {
+      "description": "For `refused`: the usage record the ledger refused, kept as an `evidence` artifact (`usage-record@1.0`), so its numbers are not lost; absent when it is not a valid record.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    }
+  },
+  "if": { "properties": { "kind": { "const": "refused" } } },
+  "then": { "required": ["failure"], "properties": { "failure": true } },
+  "else": {
+    "not": {
+      "anyOf": [
+        { "required": ["failure"], "properties": { "failure": true } },
+        { "required": ["record"], "properties": { "record": true } }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

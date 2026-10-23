@@ -45,6 +45,7 @@ each field, which a schema cannot fully express, is documented in
 | [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); still `@1.0`: `remediation` always asks by a load-time rule, and `promotion` by the schema as well |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
+| [usage-unknown.v1.json](usage-unknown.v1.json) | data of a `usage.unknown` event: one run whose usage the resource ledger could not count, and why (not reported, interrupted, the record refused, recording failed), until a record of it is counted |
 | [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content; 1.1 adds `instructions`, text and pointers in order; 1.2 adds `ask`, the Worker's bounded way to answer with questions instead, and `files` for the run's own workspace |
 | [board-projection.v1.json](board-projection.v1.json) | body of an `evidence` artifact: one project's board as its `TASKS.md` projection, for a board task run's worktree |
 | [digest.v1.json](digest.v1.json) | body of a `report` artifact: a cited summary of raw artifacts, every claim with a verbatim quote |
@@ -55,7 +56,7 @@ each field, which a schema cannot fully express, is documented in
 | [evaluation.v1.json](evaluation.v1.json) | body of an `evidence` artifact: the trials, measurements, analysis, cost, and integrity checks of one evaluation of one experiment |
 | [lesson.v1.json](lesson.v1.json) | body of a `finding` artifact: knowledge drawn from verdicts, with the envelope it was observed in and the predicates that make it stale |
 | [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools; `mcp-board` 1.1 adds the operator's `board_pause`, `board_resume`, and `board_close` |
-| [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period |
+| [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period; 1.1 adds what a cap counts as 0 (records without a figure, runs whose usage the ledger could not count) |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, …), the input and output of the MCP tools built before Base, and the

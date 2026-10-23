@@ -8,8 +8,10 @@
   - `group(id, { barrier })` creates a group.
   - `join(group, member)` forms a member's session once its Worker is chosen
     (Model A: by its first admission, for the session's lifetime). The
-    `worker-session@1.0` record is bound to that Worker, runtime, and
-    formation decision. A rejoin with another Worker is refused.
+    `worker-session@1.x` record is bound to that Worker, runtime, and
+    formation decision (`@1.1` for the `antigravity-cli` runtime, which
+    `@1.0` does not name; `@1.0` otherwise). A rejoin with another Worker is
+    refused.
 - **Messages.**
   - `send(message)` is checked against the policy first:
     - the sender is a member, or a sender that is not a session (`EXTERNAL_SENDERS`:
@@ -57,8 +59,9 @@
     checkpoints and compaction.
 - **Injects:** `store`, `artifacts`; `mcp` is optional.
 - The conformance suite is [`conformance/worker-sessions.ts`](conformance/worker-sessions.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.0
-  against this plugin with `SESSIONS_CONFIG`:
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.1
+  against this plugin with `SESSIONS_CONFIG` (1.1 adds the binding runtime `antigravity-cli`,
+  recorded in a `worker-session@1.1`; [ADR-0015](../../../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md#amendment-2026-10-23-contract-11-names-the-antigravity-cli-runtime)):
   - a SessionId bound once to its Worker, unchanged across activations and compaction;
   - a binding generation that advances on every activation, which `settle` presents, so a
     stale activation's write is refused;
@@ -68,4 +71,6 @@
   - a body is data, never authority (INV-6);
   - a message at least as strict as its `refs`, so the receiver's turn carries their
     classification to its egress check (write authority over a subject is the board's);
-  - activation needs a conversation and fits the turn and lifetime budgets.
+  - activation needs a conversation and fits the turn and lifetime budgets;
+  - the binding records the runtime a member joins with, an Antigravity CLI member's as
+    `antigravity-cli` (contract 1.1).

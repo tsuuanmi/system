@@ -96,10 +96,15 @@ export const APP_JS = `'use strict'
   const effectView = (effect) => effect.length
     ? el('ul', {}, effect.map((e) => el('li', {}, (e.projectId ? 'project ' + e.projectId : 'studio') + ': ' + e.actionClass + ' ', el('span', { class: 'state' }, e.from + ' → ' + e.to))))
     : el('p', { class: 'muted' }, 'No effective mode moves: only expiry, batching, commands, or required checks change.')
+  const windowText = (seconds) => seconds % 86400 === 0 ? seconds / 86400 + (seconds === 86400 ? ' day' : ' days')
+    : seconds % 3600 === 0 ? seconds / 3600 + (seconds === 3600 ? ' hour' : ' hours') : seconds + ' seconds'
   const changeView = (change) => el('div', { class: 'panel' },
     el('p', {}, el('strong', {}, change.policy.id + (change.previous ? ' version ' + change.previous.version + ' → ' + change.policy.version : ' (new, version ' + change.policy.version + ')')),
       el('span', { class: 'muted' }, ' · ' + change.changeId + ' · request ' + change.requestId)),
     change.note ? el('p', {}, change.note) : null,
+    // A change the queue proposed itself says so, and why: never the operator's own proposal (INV-6).
+    change.origin ? el('p', {}, el('strong', {}, 'Proposed by the queue, not by you: '), 'you approved ', el('code', {}, change.origin.shape.command),
+      ' ' + change.origin.approved + ' times among the requests of the last ' + windowText(change.origin.windowSeconds) + ', and rejected none; decision ', el('code', {}, change.origin.decision)) : null,
     el('p', { class: 'muted' }, 'Set ', el('code', {}, change.hash), ', proposed on ', el('code', {}, change.baseHash)),
     effectView(change.effect),
     diffView(change.previous, change.policy))
@@ -363,7 +368,7 @@ export const APP_JS = `'use strict'
       changes && !changes.length ? el('p', { class: 'muted' }, 'No change was proposed yet.') : null,
       changes && changes.length ? table(['Change', 'Policy', 'State', 'Proposed', 'In force from', 'Effect'], changes.map((c) => el('tr', {},
         el('td', {}, el('code', {}, c.changeId)),
-        el('td', {}, c.policy.id + ' ' + (c.previous ? c.previous.version + ' → ' : '') + c.policy.version),
+        el('td', {}, c.policy.id + ' ' + (c.previous ? c.previous.version + ' → ' : '') + c.policy.version + (c.origin ? ' (proposed by the queue)' : '')),
         el('td', { class: 'state' }, c.state + (c.declined ? ' (' + c.declined.cause + ')' : '')),
         el('td', { class: 'muted' }, when(c.proposedAt)),
         el('td', { class: 'muted' }, c.applied ? when(c.applied.at) + (c.retired ? ' until ' + when(c.retired.at) : '') : '-'),

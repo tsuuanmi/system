@@ -1,0 +1,13 @@
+{
+  "schema": "usage-unknown@1.0",
+  "runId": "arun_9d27e04c6a1f3b88",
+  "kind": "refused",
+  "account": "claude-max-main",
+  "pool": "claude-max-main.programmatic",
+  "worker": "agent:developer",
+  "outcome": "completed",
+  "observedAt": "2026-10-23T15:40:52Z",
+  "reason": "cached input exceeds the input it is part of",
+  "failure": "invalid",
+  "record": "sha256:4f1d8c2b6a9e03d7c5b1e8f2a4d6c9b0e3f7a1c5d8b2e6f9a0c3d7e1b5f8a2c4"
+}
