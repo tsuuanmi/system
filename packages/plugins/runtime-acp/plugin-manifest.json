@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-runtime-acp",
+  "version": "0.0.0",
+  "description": "Agent runtime providers acp:<name>: any Agent Client Protocol agent as a Worker, through the official ACP SDK, with the client side enforcing the policy",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "agentRuntimes",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

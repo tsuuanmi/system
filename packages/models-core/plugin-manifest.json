@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-models-core",
+  "version": "0.0.0",
+  "description": "Capability seam definition: ctx.models, provider-neutral completions from the operator's model catalog, with its conformance suite",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "models",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-runtime-claude-agent-sdk",
+  "version": "0.0.0",
+  "description": "Agent runtime provider claude-agent-sdk: Claude Code as a Worker through the official Claude Agent SDK, held to the configured policy",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "agentRuntimes",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

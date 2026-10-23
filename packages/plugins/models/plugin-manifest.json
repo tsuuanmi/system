@@ -1,0 +1,62 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-models",
+  "version": "0.0.0",
+  "description": "The `models` Worker source: API and local models from an operator catalog, over the DSH llm service, as routed, egress-checked, bounded Workers",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "models",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "llm",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "leases",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "egress",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "models",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "credentials",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

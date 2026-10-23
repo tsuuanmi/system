@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-workers",
+  "version": "0.0.0",
+  "description": "ctx.workers: Worker registry, fail-closed admission, and the deterministic router; every outcome is a decision artifact",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [
+    {
+      "seam": "workers",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

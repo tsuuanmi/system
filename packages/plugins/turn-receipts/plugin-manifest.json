@@ -1,0 +1,27 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-turn-receipts",
+  "version": "0.0.0",
+  "description": "ctx.turnReceipts: durable provider turn receipts persisted before submission; reconciliation recorded as decision artifacts",
+  "class": {
+    "kind": "core",
+    "component": "runner"
+  },
+  "provides": [
+    {
+      "seam": "turnReceipts",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

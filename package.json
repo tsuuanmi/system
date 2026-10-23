@@ -7,7 +7,7 @@
     "node": "^24.18.1 || >=26.5.1"
   },
   "scripts": {
-    "check": "pnpm check:docs && pnpm check:secrets && pnpm check:schemas && pnpm check:reference && pnpm check:packages && pnpm check:traceability && pnpm lint && pnpm typecheck",
+    "check": "pnpm check:docs && pnpm check:secrets && pnpm check:schemas && pnpm check:reference && pnpm check:packages && pnpm check:manifests && pnpm check:traceability && pnpm lint && pnpm typecheck",
     "check:docs": "tsx scripts/check-docs.ts",
     "check:secrets": "tsx scripts/check-secrets.ts",
     "check:schemas": "tsx scripts/check-schemas.ts",
@@ -21,6 +21,8 @@
     "check:reference": "tsx scripts/gen-reference.ts --check",
     "gen:packages": "tsx scripts/gen-packages.ts",
     "check:packages": "tsx scripts/gen-packages.ts --check",
+    "gen:manifests": "tsx scripts/gen-manifests.ts",
+    "check:manifests": "tsx scripts/gen-manifests.ts --check",
     "gen:traceability": "tsx scripts/gen-traceability.ts",
     "check:traceability": "tsx scripts/gen-traceability.ts --check",
     "gen:upgrade-fixture": "tsx packages/cli/tests/upgrade/generate.ts",

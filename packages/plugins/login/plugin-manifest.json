@@ -1,0 +1,36 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-login",
+  "version": "0.0.0",
+  "description": "ctx.login: per-account login profiles and the Save flow (capture invisibly, verify in a fresh context, store encrypted with a hashed identity)",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "login",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "accounts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "browser",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "providers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

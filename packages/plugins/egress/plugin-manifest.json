@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-egress",
+  "version": "0.0.0",
+  "description": "ctx.egress: explicit data egress (INV-12): classification policy per remote Worker class plus a secret scan of the actual outgoing payload, each check an egress decision",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [
+    {
+      "seam": "egress",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

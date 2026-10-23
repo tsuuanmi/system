@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-gateway-core",
+  "version": "0.0.0",
+  "description": "Gateway definitions: ctx.mcp (the MCP tool registry plugins contribute tools to) and the request guard every client endpoint shares",
+  "class": {
+    "kind": "family",
+    "family": "surface"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "mcp",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-providers",
+  "version": "0.0.0",
+  "description": "ctx.providers: the provider driver registry; drivers register for their plugin's lifetime (ADR-0005)",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "providers",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [],
+  "license": "UNLICENSED"
+}

@@ -14,7 +14,8 @@
   },
   "files": [
     "lib",
-    "chrome.lock.json"
+    "chrome.lock.json",
+    "plugin-manifest.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json"

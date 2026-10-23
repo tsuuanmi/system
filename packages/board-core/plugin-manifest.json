@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-board-core",
+  "version": "0.0.0",
+  "description": "Work state machine seam definition: ctx.board, projects with charters and board tasks across runs, with its conformance suite",
+  "class": {
+    "kind": "core",
+    "component": "work-state-machine"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "board",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

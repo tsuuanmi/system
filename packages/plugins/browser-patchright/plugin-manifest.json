@@ -1,0 +1,28 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-browser-patchright",
+  "version": "0.0.0",
+  "description": "ctx.browser: one headed system Chrome per account on the invisible ctx.display, driven by patchright-core; fresh context per turn from portable state",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "browser",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "display",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

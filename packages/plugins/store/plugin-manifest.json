@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-store",
+  "version": "0.0.0",
+  "description": "ctx.store: system-owned durable records on node:sqlite (WAL, IMMEDIATE transactions, revisions, migrations)",
+  "class": {
+    "kind": "core",
+    "component": "ledger-of-record"
+  },
+  "provides": [
+    {
+      "seam": "store",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [],
+  "license": "UNLICENSED"
+}

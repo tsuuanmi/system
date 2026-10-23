@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-credentials-vault",
+  "version": "0.0.0",
+  "description": "ctx.credentials provider that encrypts at rest (AES-256-GCM); passwords and TOTP secrets never touch disk in plaintext (ADR-0017)",
+  "class": {
+    "kind": "core",
+    "component": "ledger-of-record"
+  },
+  "provides": [
+    {
+      "seam": "credentials",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [],
+  "license": "UNLICENSED"
+}

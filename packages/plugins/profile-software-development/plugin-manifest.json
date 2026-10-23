@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-profile-software-development",
+  "version": "0.0.0",
+  "description": "The software-development profile: plan, approval, local agents implement, an exact-subject review, remediation, a report (a template contributed to the workflow engine)",
+  "class": {
+    "kind": "family",
+    "family": "workflow"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "workflow",
+      "range": "^1.3.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

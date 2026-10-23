@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-agent-runtime-core",
+  "version": "0.0.0",
+  "description": "Capability seam definition: ctx.agentRuntimes, external coding agents (Claude Code, Codex, ACP agents) run as Workers, with conformance suites",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "agentRuntimes",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

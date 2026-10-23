@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-workers-core",
+  "version": "0.0.0",
+  "description": "Routing seam definition: ctx.workers, the Worker registry and deterministic router, with its conformance suite",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "workers",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

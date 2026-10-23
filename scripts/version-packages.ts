@@ -1,7 +1,8 @@
 /**
  * Versions a release (ADR-0026): `changeset version` bumps the lockstep group and writes each
  * CHANGELOG. The bundle's presets are layers inside the bundle package, not workspace packages, so
- * their manifests get the version here. Then this release's code seeds its store fixture for the
+ * their manifests get the version here, and every plugin manifest takes its package's new version
+ * (`gen:manifests`). Then this release's code seeds its store fixture for the
  * upgrade suite (`gen:upgrade-fixture v<version>`, never edited afterwards). Commit the result, then tag
  * `v<version>` on main ([releasing](../docs/engineering/releasing.md)).
  *
@@ -28,5 +29,6 @@ for (const preset of readdirSync(presets)) {
   const manifest = JSON.parse(readFileSync(file, 'utf8')) as { version: string }
   writeFileSync(file, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`)
 }
+run(['gen:manifests'])
 run(['gen:upgrade-fixture', `v${version}`])
 console.log(`versioned ${before} → ${version}; seeded the v${version} upgrade fixture`)

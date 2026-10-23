@@ -1,0 +1,45 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-digest",
+  "version": "0.0.0",
+  "description": "ctx.digests: cited digest@1.0 summaries of raw artifacts, written by a read-only Worker on the economy tier through ctx.workers and quote-checked; fails open; MCP digests_request and digests_get",
+  "class": {
+    "kind": "family",
+    "family": "digest"
+  },
+  "provides": [
+    {
+      "seam": "digests",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "leases",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

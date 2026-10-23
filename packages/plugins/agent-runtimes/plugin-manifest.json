@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-agent-runtimes",
+  "version": "0.0.0",
+  "description": "ctx.agentRuntimes: the agent runtime provider registry; providers register for their plugin's lifetime",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "agentRuntimes",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [],
+  "license": "UNLICENSED"
+}

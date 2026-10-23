@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-approvals-core",
+  "version": "0.0.0",
+  "description": "Gate seam definition: ctx.approvals, the autonomy policy and the batched approval queue, with its conformance suite",
+  "class": {
+    "kind": "core",
+    "component": "gate"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "approvals",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

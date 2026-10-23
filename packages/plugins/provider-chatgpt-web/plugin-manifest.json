@@ -1,0 +1,28 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-provider-chatgpt-web",
+  "version": "0.0.0",
+  "description": "ChatGPT Web provider driver: procedures over the ui-ops engine; every UI detail lives in ui/chatgpt-web.ui.yaml (ADR-0021)",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "providers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

@@ -14,7 +14,8 @@
   },
   "files": [
     "lib",
-    "ui"
+    "ui",
+    "plugin-manifest.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json"

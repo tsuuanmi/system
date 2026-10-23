@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-display-virtual",
+  "version": "0.0.0",
+  "description": "ctx.display on Linux: headed browsers draw on one plugin-owned, health-monitored Xvfb (invisible, never headless); ported from tsuuanmi/internet",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "display",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [],
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-runtime-codex-sdk",
+  "version": "0.0.0",
+  "description": "Agent runtime codex-sdk: Codex as a Worker through the official Codex TypeScript SDK, on the operator's installed codex, held to its own sandbox (REQ-WRK-5)",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "agentRuntimes",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

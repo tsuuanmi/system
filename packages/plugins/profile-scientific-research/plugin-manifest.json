@@ -1,0 +1,30 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-profile-scientific-research",
+  "version": "0.0.0",
+  "description": "The scientific-research profile: hypotheses, a cited literature review, an evidence table, an independent critique, conclusions per hypothesis (templates contributed to the workflow engine, typed artifacts)",
+  "class": {
+    "kind": "family",
+    "family": "workflow"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "workflow",
+      "range": "^1.3.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

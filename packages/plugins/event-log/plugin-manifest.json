@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-event-log",
+  "version": "0.0.0",
+  "description": "ctx.eventLog: append-only, schema-validated observability events with live notification (QA-7)",
+  "class": {
+    "kind": "core",
+    "component": "ledger-of-record"
+  },
+  "provides": [
+    {
+      "seam": "eventLog",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

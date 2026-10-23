@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-artifacts",
+  "version": "0.0.0",
+  "description": "ctx.artifacts: immutable, content-addressed, schema-validated artifacts and decision records (INV-13)",
+  "class": {
+    "kind": "core",
+    "component": "ledger-of-record"
+  },
+  "provides": [
+    {
+      "seam": "artifacts",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

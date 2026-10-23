@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-digest-core",
+  "version": "0.0.0",
+  "description": "Digest seam definition: ctx.digests, cited digest@1.0 summaries of raw artifacts, quote-checked, failing open; with its conformance suite and a fake provider",
+  "class": {
+    "kind": "family",
+    "family": "digest"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "digests",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

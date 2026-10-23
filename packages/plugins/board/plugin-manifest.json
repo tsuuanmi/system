@@ -1,0 +1,40 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-board",
+  "version": "0.0.0",
+  "description": "ctx.board: projects with charters and board tasks across runs, in the store, with leases, expiring waits, approvals through ctx.approvals, board_* MCP tools, and a TASKS.md projection",
+  "class": {
+    "kind": "core",
+    "component": "work-state-machine"
+  },
+  "provides": [
+    {
+      "seam": "board",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "leases",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "approvals",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-resources-core",
+  "version": "0.0.0",
+  "description": "Resource ledger seam definition: ctx.resources, configured pools, limit readings, reservations, and usage records, with its conformance suite",
+  "class": {
+    "kind": "core",
+    "component": "resource-ledger"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "resources",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

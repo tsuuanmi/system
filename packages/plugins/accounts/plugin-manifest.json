@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-accounts",
+  "version": "0.0.0",
+  "description": "ctx.accounts: provider-agnostic multi-account vault on ctx.credentials (encrypted); upper layers see secret-free views only (INV-8)",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "accounts",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "credentials",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

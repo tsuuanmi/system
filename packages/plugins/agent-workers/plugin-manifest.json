@@ -1,0 +1,58 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-agent-workers",
+  "version": "0.0.0",
+  "description": "The `agents` Worker source: configured agent-runtime Workers (Claude Code, Codex, ACP agents) with probe-proven capabilities, durable runs, and sessions",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "agentWorkers",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "leases",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "agentRuntimes",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "egress",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "approvals",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "resources",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

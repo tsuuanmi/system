@@ -1,0 +1,26 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-gateway-anthropic",
+  "version": "0.0.0",
+  "description": "Anthropic Messages gateway: Claude Code uses a website model as its model, each request a workflow run, the client's tools through a text protocol (ADR-0022)",
+  "class": {
+    "kind": "family",
+    "family": "surface"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "webServer",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workflow",
+      "range": "^1.3.0"
+    },
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

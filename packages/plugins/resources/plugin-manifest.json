@@ -1,0 +1,32 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-resources",
+  "version": "0.0.0",
+  "description": "ctx.resources: the resource ledger on ctx.store: configured pools, limit readings, reservations before a run, deduplicated usage records; MCP resources_pools and resources_usage",
+  "class": {
+    "kind": "core",
+    "component": "resource-ledger"
+  },
+  "provides": [
+    {
+      "seam": "resources",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

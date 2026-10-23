@@ -1,0 +1,70 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-turns",
+  "version": "0.0.0",
+  "description": "ctx.turns: the website turn runtime (ask): durable turns, first-ready routing with decision artifacts, per-account scheduling, receipts before send, answers as artifacts, MCP ask/result",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [
+    {
+      "seam": "turns",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "leases",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "egress",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "turnReceipts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "accounts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "browser",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "providers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "login",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

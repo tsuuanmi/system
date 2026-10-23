@@ -1,0 +1,23 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-leases",
+  "version": "0.0.0",
+  "description": "ctx.leases: token leases with monotonic generations used as commit fences (INV-4)",
+  "class": {
+    "kind": "core",
+    "component": "work-state-machine"
+  },
+  "provides": [
+    {
+      "seam": "leases",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

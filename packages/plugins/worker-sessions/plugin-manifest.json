@@ -1,0 +1,32 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-worker-sessions",
+  "version": "0.0.0",
+  "description": "ctx.workerSessions: durable Worker sessions, groups, and mailboxes with direct peer messaging under a group policy and barriers (ADR-0015)",
+  "class": {
+    "kind": "core",
+    "component": "work-state-machine"
+  },
+  "provides": [
+    {
+      "seam": "workerSessions",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-provider-gemini-web",
+  "version": "0.0.0",
+  "description": "Gemini Web provider driver: Temporary-chat and persistent turns on the Chat tab, with the model and thinking level read back, and Deep research",
+  "class": {
+    "kind": "family",
+    "family": "worker"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "providers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}
