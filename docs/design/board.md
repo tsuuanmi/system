@@ -80,8 +80,33 @@ An amendment (a pivot) does not change the project's state: the new charter wait
 | proposed → active | `sweep`, on an approved request | the request's `approval` decision; `charter.approval` names the verdict | none: until approved nothing starts |
 | proposed → proposed / closed, amendment kept / dropped | `sweep`, on a request the queue withdrew on a policy change (decider rule `approvals.policy`): the charter is put to the policy again, as `charter` did | a `board` decision naming the withdrawal and the `autonomy` decision; on `ask`, a new request on the same charter version (an open one adopted), which the project now waits on; on any other verdict no request can be opened, so nothing can approve it: a first charter is abandoned (its open tasks cancelled, `project-closed`), an amendment dropped | the charter keeps waiting until its new request is resolved or expires |
 | proposed → closed | `sweep`, on a rejected or expired request; at the request's expiry the board applies it itself when the queue has not resolved it, the board withdrew it, or the queue no longer knows it | `closure: abandoned` with the request's `approval` decision, or the board's own (`board`, cause `expired`); its open tasks are cancelled (`project-closed`) in the same transaction, which frees the subjects they would write | — |
-| active ↔ paused | `pause`, `resume` | a `board` decision | other states refused (`invalid-transition`) |
-| active or paused → closed | `close` | a `board` decision and `closure`; open tasks are cancelled (`project-closed`) in the same transaction, and the requests they and a pending amendment waited on are withdrawn after it | refused while a task runs or is in review |
+| active ↔ paused | `pause`, `resume`, by the operator | a `board` decision | other states refused (`invalid-transition`) |
+| active or paused → closed | `close`, by the operator | a `board` decision and `closure`; open tasks are cancelled (`project-closed`) in the same transaction, and the requests they and a pending amendment waited on are withdrawn after it | refused while a task runs or is in review |
+
+### The operator's project moves
+
+`pause`, `resume`, and `close` are the operator's: no lead or Worker moves a project
+([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)). The
+operator makes them with the MCP tools `board_pause`, `board_resume`, and `board_close`, which
+the host serves to the operator token only and which refuse any other caller themselves. Each
+records a `board` decision whose candidates say why
+([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+
+- **Pause** (active → paused): until it is resumed, no task of the project is claimed or started
+  (rule 1, also one claimed before the pause) and no proposed task is put to the policy. A running
+  attempt goes on to its outcome: its run renews, submits, and reports as usual, and a next
+  attempt goes through the gate as usual, then waits, unclaimed. Every wait keeps its expiry, and a
+  request answered meanwhile still applies. An amendment may still be asked about.
+- **Resume** (paused → active): the approved charter still holds. The next sweep puts the proposed
+  tasks whose dependencies are done to the policy, and ready tasks may be claimed again; a task
+  already ready is not asked about again.
+- **Close** (active or paused → closed, as `achieved` or `stopped`): refused while a task runs or
+  is in review, since its run's outcome or its acceptance would be lost. Stop the run first
+  (`system stop`: its owner reports it failed, and the task waits or is ready again) or decide the
+  review. Otherwise, in one transaction, every open task is cancelled (`project-closed`), a claimed
+  one's lease released; once that commits, the requests those tasks and a pending amendment
+  waited on are withdrawn, so the queue no longer shows them. A closed project takes no task and
+  no amendment.
 
 ## Task
 

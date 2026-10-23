@@ -792,7 +792,7 @@ const caller = (b: Booted): Call => async (tool, args, scope = 'client') => {
   expect(registered, tool).toBeDefined()
   const reply = await registered!.handler(args, { scope }) as Awaited<ReturnType<Call>>
   // Every structured output is checked against its definition in schemas/mcp-board.v1.json, with Ajv.
-  if (!reply.isError) schemas.assertDef('mcp-board@1.0', `${tool.replaceAll('_', '-')}-output`, reply.structuredContent)
+  if (!reply.isError) schemas.assertDef('mcp-board@1.1', `${tool.replaceAll('_', '-')}-output`, reply.structuredContent)
   return reply
 }
 const ok = async (reply: ReturnType<Call>): Promise<Record<string, any>> => {
@@ -803,15 +803,17 @@ const ok = async (reply: ReturnType<Call>): Promise<Record<string, any>> => {
 const example = (name: string): Record<string, any> => JSON.parse(readFileSync(fileURLToPath(new URL(`../../../../schemas/examples/${name}.json`, import.meta.url)), 'utf8')) as Record<string, any>
 
 describe('ctx.board (store-backed): board_* MCP tools', () => {
-  it('contributes the ten board tools at client scope, each input shape taking what its schema definition takes', async () => {
+  it('contributes the lead\'s board tools at client scope and the operator\'s project moves at operator scope, each input shape taking what its schema definition takes (INV-6)', async () => {
     const b = await boot()
     expect([...b.mcp().tools.keys()].sort()).toEqual([...BOARD_TOOLS].sort())
-    for (const name of BOARD_TOOLS) expect(b.mcp().tools.get(name)!.spec.scope, name).toBe('client')
-    for (const name of ['mcp-board.charter', 'mcp-board.claim', 'mcp-board.brief', 'mcp-board.task']) {
+    const operator = ['board_pause', 'board_resume', 'board_close']
+    for (const name of BOARD_TOOLS) expect(b.mcp().tools.get(name)!.spec.scope, name).toBe(operator.includes(name) ? 'operator' : 'client')
+    for (const name of ['mcp-board.charter', 'mcp-board.claim', 'mcp-board.brief', 'mcp-board.task', 'mcp-board.close']) {
       const { tool, input } = example(name) as { tool: typeof BOARD_TOOLS[number]; input: unknown }
       expect(zod.object(INPUTS[tool]).safeParse(input).success, name).toBe(true)
-      schemas.assertDef('mcp-board@1.0', `${tool.replaceAll('_', '-')}-input`, input)
+      schemas.assertDef('mcp-board@1.1', `${tool.replaceAll('_', '-')}-input`, input)
     }
+    expect(zod.object(INPUTS.board_close).safeParse({ projectId: 'p2', outcome: 'abandoned' }).success).toBe(false)
     expect(zod.object(INPUTS.board_claim).safeParse({ taskId: 'task-1', owner: 'lead', ttlSeconds: 5 }).success).toBe(false)
     expect(zod.object(INPUTS.board_charter).safeParse({ ...example('mcp-board.charter').input, charter: { ...CHARTER, approval: `sha256:${'1'.repeat(64)}` } }).success).toBe(false)
   })
@@ -900,6 +902,66 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect((await call('board_task', { taskId: 'task-nope' })).content[0]?.text).toMatch(/^unknown-task/)
     expect((await call('board_tasks', { projectId: 'nope' })).content[0]?.text).toMatch(/^unknown-project/)
     expect(await ctx.board.tasks({ projectId: 'p2' })).toEqual(before)
+  })
+
+  it('pauses, resumes, and closes a project for the operator only: a client\'s call moves nothing, each move names its board decision, and a close cancels the open tasks, releases their leases, and withdraws what they and a pending amendment waited on (INV-6, INV-13)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    await active(ctx)
+    const idle = await ready(ctx, task('p2', 'idle'))
+    const held = await ready(ctx, task('p2', 'held'))
+    await ctx.board.claim(held.taskId, 'lead', 600_000)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }))
+    await ctx.board.sweep(new Date())
+    const waitedOn = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+    const { approvalRequest: amendment } = await ctx.board.charter({ projectId: 'p2', title: 'project p2', charter: { ...CHARTER, version: 2 } })
+    const project = (await ctx.board.project('p2'))!
+
+    // A client is refused by the handler too, whatever reached it; nothing moves.
+    for (const [tool, args, move] of [['board_pause', { projectId: 'p2' }, 'pauses'], ['board_resume', { projectId: 'p2' }, 'resumes'], ['board_close', { projectId: 'p2', outcome: 'stopped' }, 'closes']] as const) {
+      const refused = await call(tool, args, 'client')
+      expect([refused.isError, refused.content[0]?.text], tool).toEqual([true, `invalid: only the operator ${move} a project`])
+    }
+    expect(await ctx.board.project('p2')).toEqual(project)
+    expect(await ctx.board.task(idle.taskId)).toMatchObject({ state: 'ready' })
+
+    const paused = await ok(call('board_pause', { projectId: 'p2' }, 'operator'))
+    const stored = (await ctx.board.project('p2'))!
+    expect(paused).toEqual({ projectId: 'p2', state: 'paused', revision: stored.revision, decision: stored.lastDecision })
+    expect(ctx.artifacts.get(paused.decision)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'paused' } })
+    expect((await call('board_pause', { projectId: 'p2' }, 'operator')).content[0]?.text).toMatch(/^invalid-transition: p2 is paused, not active/)
+    expect(await failureOf(ctx.board.claim(idle.taskId, 'lead', 600_000))).toBe('invalid-transition')
+    const resumed = await ok(call('board_resume', { projectId: 'p2' }, 'operator'))
+    expect(resumed).toMatchObject({ projectId: 'p2', state: 'active', revision: stored.revision + 1 })
+    expect(ctx.artifacts.get(resumed.decision)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'active' } })
+
+    // Refused while a task runs, with nothing moved.
+    const runs = await ready(ctx, task('p2', 'runs'), new Date())
+    const { generation } = await ctx.board.claim(runs.taskId, 'lead', 600_000)
+    await ctx.board.start(runs.taskId, generation, { runId: 'run-1' })
+    const before = await ctx.board.tasks({ projectId: 'p2' })
+    expect((await call('board_close', { projectId: 'p2', outcome: 'stopped' }, 'operator')).content[0]?.text).toMatch(/^invalid-transition: p2 has a task running or in review/)
+    expect(await ctx.board.tasks({ projectId: 'p2' })).toEqual(before)
+    const r = result(ctx, 'last')
+    await ctx.board.submit(runs.taskId, generation, { artifacts: [r], subject: HEAD })
+    await ctx.board.accept(runs.taskId, acceptance(ctx, 'accept', runs.taskId, r))
+    expect((await call('board_close', { projectId: 'p2', outcome: 'abandoned' }, 'operator')).content[0]?.text).toMatch(/^invalid input, nothing done/)
+
+    const closed = await ok(call('board_close', { projectId: 'p2', outcome: 'stopped' }, 'operator'))
+    const after = (await ctx.board.project('p2'))!
+    expect(closed).toEqual({ projectId: 'p2', state: 'closed', outcome: 'stopped', revision: after.revision, decision: after.closure!.decision, cancelled: 3 })
+    expect(ctx.artifacts.get(closed.decision)?.body).toMatchObject({
+      decisionType: 'board', outcome: { option: 'closed', detail: { outcome: 'stopped', cancelled: 3 } },
+      candidates: [{ option: 'closed', selected: true, reasons: ['closed as stopped'] }, { option: 'active', selected: false, reasons: ['not kept active: the operator closed it; 3 open task(s) cancelled'] }],
+    })
+    for (const t of [idle, held, merge]) expect(await ctx.board.task(t.taskId), t.title).toMatchObject({ state: 'cancelled', cancellation: { reason: 'project-closed' } })
+    expect(await ctx.board.task(runs.taskId)).toMatchObject({ state: 'done' })
+    expect(ctx.leases.current(`board-task:${held.taskId}`)).toBeUndefined()
+    for (const requestId of [waitedOn, amendment]) expect((await ctx.approvals.get(requestId))?.resolution?.cause, requestId).toBe('withdrawn')
+    expect(await open(ctx, 'p2')).toEqual([])
+    expect((await call('board_close', { projectId: 'p2', outcome: 'stopped' }, 'operator')).content[0]?.text).toMatch(/^invalid-transition/)
+    expect((await call('board_resume', { projectId: 'nope' }, 'operator')).content[0]?.text).toMatch(/^unknown-project/)
   })
 
   it('pages board_tasks and board_projects: 20 by default, never more than the page bound, with a cursor it refuses when forged (INV-9)', async () => {

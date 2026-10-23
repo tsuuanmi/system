@@ -84,12 +84,12 @@ one scope another's rights).
 | Scope | Token file | Reaches | Handed out by |
 |---|---|---|---|
 | `operator` | `operator.token` | every MCP tool, and `/ui` | the `system` CLI's own tool calls, `system ui` |
-| `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `result`, `status`, `explain`, `usage`, `session_send`, `session_inbox`, `resources_pools`, `resources_usage`, the `board_*` tools, and `approvals_list`, `approvals_get`, `approvals_policy` | `system mcp-headers` (an HTTP client's headers, such as Claude Code's `headersHelper`), `system mcp-stdio` (a stdio client, such as Codex) |
+| `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `result`, `status`, `explain`, `usage`, `session_send`, `session_inbox`, `resources_pools`, `resources_usage`, the `board_*` tools except `board_pause`, `board_resume`, and `board_close`, and `approvals_list`, `approvals_get`, `approvals_policy` | `system mcp-headers` (an HTTP client's headers, such as Claude Code's `headersHelper`), `system mcp-stdio` (a stdio client, such as Codex) |
 | `model` | `model.token` | `/anthropic` and `/openai` only; `/mcp` and `/ui` answer `401` | `system claude-env`, `system codex-env`, `system mcp-token --scope model` (a Codex Worker on the Responses gateway); each refuses while its gateway row is off ([runbook](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)) |
 
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its
   `ToolSpec`. A tool that declares none is the operator's (fail closed), so
-  `approve`, `approvals_decide`, `approvals_policy_propose`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,
+  `approve`, `approvals_decide`, `approvals_policy_propose`, `board_pause`, `board_resume`, `board_close`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,
   `events`, `artifact`, `evidence`, `conversation_list`, `conversation_inspect`, `model_key`, and
   every `account_*` tool, `account_probe` included, are operator-only.
 - **Listing:** `tools/list` returns only the tools the caller's scope may use,

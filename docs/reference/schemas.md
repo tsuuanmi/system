@@ -719,6 +719,8 @@ guesses.
 | `board_claim` | client | take a ready task's lease; MCP `run` with the task and this claim starts the attempt, and that run submits and accepts its own result |
 | `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
 | `board_cancel` | client | cancel a task that is not running or in review |
+| `board_pause`, `board_resume` | operator | pause an active project (nothing of it is claimed, started, or gated until it is resumed; running attempts and waits go on), or resume a paused one |
+| `board_close` | operator | close an active or paused project as `achieved` or `stopped`, refused while one of its tasks runs or is in review; its open tasks are cancelled and the requests they and a pending amendment waited on withdrawn |
 | `approvals_list`, `approvals_get` | client | read the queue |
 | `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |
 | `approvals_policy` | client | the studio and project policies, the effective mode per action class, and the set in force (`set`: its hash, whether it comes from the configuration or the store, and the projects with a policy) |
@@ -730,12 +732,18 @@ guesses.
 - No `board_*` tool starts, submits, accepts, blocks, or reconciles a task: the workflow run that
   serves an attempt does, as its owner, so one attempt has one writer
   ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
+- `board_pause`, `board_resume`, and `board_close` are the operator's project moves
+  ([board](../design/board.md#the-operators-project-moves)): the host serves them to the operator
+  token only, and each handler refuses any other caller (`invalid`). Each output names the
+  `board` decision that records the move; `board_close` also counts the open tasks it cancelled.
+  `mcp-board` 1.1 adds them.
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
   other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`; 1.2 adds
   `approvals_policy_propose` and `set`.
 - Examples: [`mcp-board.claim.json`](../../schemas/examples/mcp-board.claim.json),
   [`mcp-board.charter.json`](../../schemas/examples/mcp-board.charter.json),
+  [`mcp-board.close.json`](../../schemas/examples/mcp-board.close.json),
   [`mcp-approvals.decide.json`](../../schemas/examples/mcp-approvals.decide.json),
   [`mcp-approvals.policy-propose.json`](../../schemas/examples/mcp-approvals.policy-propose.json),
   [`mcp-resources.usage.json`](../../schemas/examples/mcp-resources.usage.json).

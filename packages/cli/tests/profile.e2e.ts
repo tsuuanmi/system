@@ -168,14 +168,14 @@ describe('system profile (e2e through dsh)', () => {
     const week = await reporter.callTool({ name: 'report', arguments: {} }).finally(() => reporter.close())
     expect(week.structuredContent).toMatchObject({ projects: [], approvals: { asked: 0 }, usage: { total: { records: 0 } }, baseline: { acceptedResults: 0 } })
     expect((week.content as Array<{ text: string }>)[0]!.text).toMatch(/^# Report: every project\n/)
-    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'approvals_decide', 'approvals_policy_propose', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
+    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'approvals_decide', 'approvals_policy_propose', 'board_pause', 'board_resume', 'board_close', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {
       method: body ? 'POST' : 'GET', ...(body ? { body: JSON.stringify(body) } : {}),
       headers: { authorization: `Bearer ${tokenOf(scope)}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     })
     const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
-    for (const tool of ['approve', 'approvals_decide', 'approvals_policy_propose', 'account_set_credentials', 'model_key']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
+    for (const tool of ['approve', 'approvals_decide', 'approvals_policy_propose', 'board_pause', 'board_resume', 'board_close', 'account_set_credentials', 'model_key']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
     expect((await send('/mcp', 'model', call('status'))).status).toBe(401)
     // The model gateways are off in this composition (PROP-0004): no route answers, whatever the token.
     for (const gateway of ['/anthropic/v1/models', '/openai/v1/models']) expect((await send(gateway, 'model')).status).toBe(404)

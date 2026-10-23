@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-board:v1",
   "title": "MCP board tools",
-  "description": "Input and output of the `board_*` MCP tools (design/board.md). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "description": "Input and output of the `board_*` MCP tools (design/board.md). `board_pause`, `board_resume`, and `board_close` are operator scope: a project is paused, resumed, or closed only from the operator's channel (INV-6). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. 1.1 adds `board_pause`, `board_resume`, and `board_close`.",
   "type": "object",
   "required": [
     "tool",
@@ -20,7 +20,10 @@
         "board_propose",
         "board_claim",
         "board_update",
-        "board_cancel"
+        "board_cancel",
+        "board_pause",
+        "board_resume",
+        "board_close"
       ]
     },
     "input": {
@@ -198,6 +201,63 @@
           },
           "output": {
             "$ref": "#/$defs/board-cancel-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_pause"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-pause-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-pause-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_resume"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-resume-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-resume-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_close"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-close-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-close-output"
           }
         }
       }
@@ -1223,6 +1283,142 @@
         "revision": {
           "type": "integer",
           "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-pause-input": {
+      "type": "object",
+      "required": [
+        "projectId"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-pause-output": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "state",
+        "revision",
+        "decision"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "const": "paused"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "description": "The `board` decision that records the move (INV-13).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-resume-input": {
+      "type": "object",
+      "required": [
+        "projectId"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-resume-output": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "state",
+        "revision",
+        "decision"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "const": "active"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "description": "The `board` decision that records the move (INV-13).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-close-input": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "outcome"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "outcome": {
+          "description": "achieved: its criteria are met; stopped: it ends without them.",
+          "enum": [
+            "achieved",
+            "stopped"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-close-output": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "state",
+        "outcome",
+        "revision",
+        "decision",
+        "cancelled"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "const": "closed"
+        },
+        "outcome": {
+          "enum": [
+            "achieved",
+            "stopped"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "description": "The `board` decision that records the move (INV-13), also the closure's.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "cancelled": {
+          "description": "Open tasks the close cancelled (`project-closed`).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
         }
       },
       "additionalProperties": false

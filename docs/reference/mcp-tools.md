@@ -251,6 +251,27 @@ Scope: `client`
 | `owner` | string | yes | Who works on it, e.g. the lead's session id |
 | `ttlSeconds` | integer |  | Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update |
 
+## `board_close`
+
+Operator only: close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
+| `outcome` | "achieved" \| "stopped" | yes | achieved: its criteria are met; stopped: it ends without them |
+
+## `board_pause`
+
+Operator only: pause an active project. Until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
+
 ## `board_projects`
 
 List projects on the board, with their tasks per state; a page at a time.
@@ -282,6 +303,16 @@ Scope: `client`
 | `writes` | object |  |  |
 | `budget` | array |  |  |
 | `clientRequestId` | string |  | Retry-safe request key |
+
+## `board_resume`
+
+Operator only: resume a paused project. Its proposed tasks go through the gate on the board's next sweep, and its ready tasks may be claimed again. Recorded as a board decision.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
 
 ## `board_task`
 

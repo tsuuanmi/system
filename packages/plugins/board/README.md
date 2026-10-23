@@ -68,6 +68,11 @@ charters, and their tasks.
 - **Reads beyond the seam:** `projectPage` and `taskPage` (20 items by default, never more than
   `pageBound`, with an opaque cursor), `counts`, `latest`, and `tasksMarkdown`. `projects` and
   `tasks`, the seam's own reads, return every match.
+- **The operator's project moves** (`pause`, `resume`, `close`) record `board` decisions that
+  name the operator and say what the move means
+  ([board](../../../docs/design/board.md#the-operators-project-moves)). A close reads every
+  request its waiting tasks and a pending amendment are on before it moves (rule 7), commits, then
+  withdraws them.
 - **`TASKS.md`:** `tasksMarkdown(projectId)` renders one project's board with the definition's
   `renderTasks` ([`board-core`](../../board-core/README.md)), as Markdown in Backlog.md's spirit, for native agents without MCP: per task its id, title, state, action
   class, attempts, dependencies, holder, run, why it waits (with its questions), result (with
@@ -78,10 +83,12 @@ charters, and their tasks.
   the board's structure, and is never read back; the caller writes it where an agent reads it
   (the workflow engine renders the same projection into a task run's worktree,
   [TASKS.md in a run's workspace](../../../docs/design/workflow-engine.md#tasksmd-in-a-runs-workspace)).
-- **MCP** (when `ctx.mcp` is present, client scope): `board_projects`, `board_charter`,
-  `board_brief`, `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`,
-  `board_cancel`. Each input and structured output is validated against
-  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) `$defs/<tool>-input` and
+- **MCP** (when `ctx.mcp` is present): `board_projects`, `board_charter`, `board_brief`,
+  `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`, and `board_cancel`
+  at client scope, the lead's; `board_pause`, `board_resume`, and `board_close` at operator scope
+  ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
+  Each input and structured output is validated against
+  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) (1.1) `$defs/<tool>-input` and
   `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`.
   - `board_charter` and `board_propose` are retry-safe under `clientRequestId`, recorded in the
     same transaction as the write (the table is never pruned: M5, open); a `board_charter` retry
@@ -103,6 +110,11 @@ charters, and their tasks.
     attempt left
     ([what ends an input wait](../../../docs/design/board.md#what-ends-an-input-wait));
   - `board_cancel` cancels as `operator` for an operator token and as `lead` for a client one;
+  - `board_pause`, `board_resume`, and `board_close` move the project for the operator only: the
+    host serves them to the operator token, and each handler refuses any other caller (`invalid`)
+    with nothing moved, as `approvals_decide` does. Each output names the move's `board` decision;
+    `board_close` (`outcome`: `achieved` or `stopped`) also counts the open tasks it cancelled
+    (`closeProject`, beyond the seam);
   - `board_projects` and `board_brief` give no `budget`: use comes from the resource ledger
     (`ctx.resources`), which the board does not read yet, and the engine reserves nothing per
     task;
@@ -127,5 +139,6 @@ charters, and their tasks.
   that does not ask, the gate before every attempt, the checks an acceptance reports, results
   on the written subject, a paused project (its running attempt reaches its outcome and its waits
   their expiry, nothing new is claimed or gated, and resuming gates its proposed tasks), paging
-  bounds, invalid records refused, the tools' outputs against their schema definitions, and the
-  projection.
+  bounds, invalid records refused, the tools' outputs against their schema definitions, the
+  operator's project tools refused to a client and closing a project with waits, a lease, and an
+  amendment, and the projection.

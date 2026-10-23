@@ -227,7 +227,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   the `board_*` MCP tools, and projects a project's board to `TASKS.md`
   ([board](../design/board.md)). Its bundle row is on; it is mounted only with `ctx.approvals`.
   Its holder and run-owner moves are made by the workflow run that serves an attempt, never by a
-  `board_*` tool.
+  `board_*` tool; its project moves (pause, resume, close) are the operator's, by the
+  operator-scope tools.
 - **Digests** (`ctx.digests`, the digest family): a cited `digest@1.0` of raw artifacts, on
   request (MCP `digests_request`), written by a read-only Worker on the economy tier that
   `ctx.workers` routes to, and quote-checked before it is stored: a claim whose quote is not
@@ -245,7 +246,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
   `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`;
   `board.charter / propose / claim / renew / start / submit / accept / reconcileRun / block / answer /
-  cancel / sweep / attachDigest`; MCP `board_*`, and `run` with `task`; `digests.request / get / wait`, MCP
+  cancel / pause / resume / close / sweep / attachDigest`; MCP `board_*`, and `run` with `task`; `digests.request / get / wait`, MCP
   `digests_request`, `digests_get`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),
   [worker-sessions](../../packages/plugins/worker-sessions/README.md),

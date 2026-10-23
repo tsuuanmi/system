@@ -1,19 +1,27 @@
 /**
- * The `board_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_), client
- * scope. Each call's input and structured output are validated against
- * `schemas/mcp-board.v1.json` `$defs/<tool>-input` and `-output`; a refused input executes nothing.
- * No tool starts, submits, accepts, blocks, or reconciles a task: the workflow run that serves an
- * attempt does, as its owner (MCP `run` with `task`), so one attempt has one writer (INV-15).
+ * The `board_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_). The
+ * lead's are client scope; `board_pause`, `board_resume`, and `board_close` are operator scope,
+ * because a project's state moves only from the operator's channel (INV-6). Each call's input and
+ * structured output are validated against `schemas/mcp-board.v1.json` (1.1) `$defs/<tool>-input`
+ * and `-output`; a refused input executes nothing. No tool starts, submits, accepts, blocks, or
+ * reconciles a task: the workflow run that serves an attempt does, as its owner (MCP `run` with
+ * `task`), so one attempt has one writer (INV-15).
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { BoardError, type BoardTask, type CharterInput, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
-import type { ToolContext, ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
+import type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { StoreBoard } from './index.ts'
 
-export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel'] as const
+export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close'] as const
 export type BoardTool = typeof BOARD_TOOLS[number]
+
+/** Who may call each tool: pausing, resuming, and closing a project are the operator's moves (INV-6). */
+export const SCOPES: Record<BoardTool, ToolScope> = {
+  board_projects: 'client', board_charter: 'client', board_brief: 'client', board_tasks: 'client', board_task: 'client', board_propose: 'client', board_claim: 'client',
+  board_update: 'client', board_cancel: 'client', board_pause: 'operator', board_resume: 'operator', board_close: 'operator',
+}
 
 const schemas = new SchemaRegistry()
 /** The `$defs` name of a tool's input or output: underscores written as hyphens. */
@@ -75,6 +83,9 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
       .describe('Answers to a waiting-for-input task\'s questions, by index; answering every one makes it ready again'),
   },
   board_cancel: { taskId: id(), note: shortText().optional() },
+  board_pause: { projectId: id() },
+  board_resume: { projectId: id() },
+  board_close: { projectId: id(), outcome: zod.enum(['achieved', 'stopped']).describe('achieved: its criteria are met; stopped: it ends without them') },
 }
 
 const DESCRIPTIONS: Record<BoardTool, string> = {
@@ -87,6 +98,9 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_claim: 'Take a ready task\'s lease (ready to claimed), capped by leases.maxTtlMs; the output gives its real expiry and the generation. Then start its attempt with the `run` tool, naming the task with this owner as holder and this generation: the run records itself on the board before any step runs, keeps the lease, and submits and accepts its own result. A claim no run starts lapses back to ready.',
   board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index). Once a run serves the task, the run renews the lease itself. Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.',
   board_cancel: 'Cancel a task that is not running or in review; a pending approval request is withdrawn and the tasks that depend on it are cancelled.',
+  board_pause: 'Operator only: pause an active project. Until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.',
+  board_resume: 'Operator only: resume a paused project. Its proposed tasks go through the gate on the board\'s next sweep, and its ready tasks may be claimed again. Recorded as a board decision.',
+  board_close: 'Operator only: close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.',
 }
 
 const summary = (t: BoardTask) => ({
@@ -97,6 +111,10 @@ const summary = (t: BoardTask) => ({
 const currentMilestone = (p: Project) => (p.milestones.find((m) => m.state === 'funded') ?? p.milestones.find((m) => m.state === 'planned'))?.id
 const clamp = (text: string, max: number): string => ([...text].length <= max ? text : `${[...text].slice(0, max - 1).join('')}…`)
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
+/** The host lists and serves an operator tool to the operator only; a project move from any other caller is never taken (INV-6). */
+const operatorOnly = (scope: ToolScope, move: string): void => {
+  if (scope !== 'operator') throw new BoardError('invalid', `only the operator ${move} a project`)
+}
 
 type Args = Record<string, unknown>
 type Handler = (args: Args, context: ToolContext) => Promise<object>
@@ -179,6 +197,21 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
       const task = await board.cancel(String(args.taskId), scope === 'operator' ? 'operator' : 'lead', typeof args.note === 'string' ? args.note : undefined)
       return { taskId: task.taskId, state: 'cancelled', revision: task.revision }
     },
+    board_pause: async (args, { scope }) => {
+      operatorOnly(scope, 'pauses')
+      const project = await board.pause(String(args.projectId))
+      return { projectId: project.projectId, state: 'paused', revision: project.revision, decision: project.lastDecision }
+    },
+    board_resume: async (args, { scope }) => {
+      operatorOnly(scope, 'resumes')
+      const project = await board.resume(String(args.projectId))
+      return { projectId: project.projectId, state: 'active', revision: project.revision, decision: project.lastDecision }
+    },
+    board_close: async (args, { scope }) => {
+      operatorOnly(scope, 'closes')
+      const { project, cancelled } = await board.closeProject(String(args.projectId), args.outcome as 'achieved' | 'stopped')
+      return { projectId: project.projectId, state: 'closed', outcome: project.closure!.outcome, revision: project.revision, decision: project.closure!.decision, cancelled }
+    },
   }
 
   function pageOf(args: Args): { limit?: number; after?: string } {
@@ -195,7 +228,7 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
 export function tool(name: BoardTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
-      schemas.assertDef('mcp-board@1.0', defOf(name, 'input'), args)
+      schemas.assertDef('mcp-board@1.1', defOf(name, 'input'), args)
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
@@ -206,7 +239,7 @@ export function tool(name: BoardTool, handler: Handler): ToolHandler {
       return refused(error instanceof BoardError ? `${error.failure}: ${error.message}` : `board: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-board@1.0', defOf(name, 'output'), output)
+      schemas.assertDef('mcp-board@1.1', defOf(name, 'output'), output)
     } catch (error) {
       return refused(`board: ${name} made an output its schema refuses (a defect; the move itself is recorded): ${(error as Error).message}`)
     }
@@ -217,5 +250,5 @@ export function tool(name: BoardTool, handler: Handler): ToolHandler {
 /** Contribute the tools to `ctx.mcp` for the board's lifetime. */
 export function registerTools(ctx: Context, board: StoreBoard, options: { leaseTtlSeconds: number }): void {
   const behavior = handlers(board, options)
-  for (const name of BOARD_TOOLS) ctx.mcp.tool(name, { scope: 'client', description: DESCRIPTIONS[name], inputSchema: INPUTS[name] }, tool(name, behavior[name]))
+  for (const name of BOARD_TOOLS) ctx.mcp.tool(name, { scope: SCOPES[name], description: DESCRIPTIONS[name], inputSchema: INPUTS[name] }, tool(name, behavior[name]))
 }
