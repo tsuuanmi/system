@@ -14,7 +14,7 @@ each field, which a schema cannot fully express, is documented in
 |---|---|
 | [common.v1.json](common.v1.json) | shared value types: content address, ids, classification, tier, quota class, capability, subject |
 | [artifact-envelope.v1.json](artifact-envelope.v1.json) | immutable envelope of every artifact |
-| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle`; 1.6 adds `policy-change` |
+| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle`; 1.6 adds `policy-change`; 1.7 adds `registration` and `verdict` |
 | [work-requirement.v1.json](work-requirement.v1.json) | input to routing |
 | [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node; 1.1 adds `RETIRED`; 1.2 adds the brief its execution was started with |
@@ -41,13 +41,18 @@ each field, which a schema cannot fully express, is documented in
 | [board-task.v1.json](board-task.v1.json) | durable state of a board task, work that outlives a run, with its lease, run, result, and expiring waits |
 | [approval-request.v1.json](approval-request.v1.json) | durable state of a request in the approval queue, bound to its exact subject; expiry rejects it; 1.1 adds the queue's own `policy-change` requests |
 | [policy-change.v1.json](policy-change.v1.json) | durable state of one change of the autonomy policy set: the proposed record, the whole set it makes, its hash, base, and configuration hashes, and whether the operator's approval applied it |
-| [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); 1.1 adds `remediation` to the classes that always ask |
+| [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); still `@1.0`: `remediation` always asks by a load-time rule, and `promotion` by the schema as well |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
 | [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content; 1.1 adds `instructions`, text and pointers in order; 1.2 adds `ask`, the Worker's bounded way to answer with questions instead, and `files` for the run's own workspace |
 | [board-projection.v1.json](board-projection.v1.json) | body of an `evidence` artifact: one project's board as its `TASKS.md` projection, for a board task run's worktree |
 | [digest.v1.json](digest.v1.json) | body of a `report` artifact: a cited summary of raw artifacts, every claim with a verbatim quote |
 | [plugin-manifest.v1.json](plugin-manifest.v1.json) | what a plugin declares (name and renames, seams provided and consumed, class, config keys with a sensitive flag), with the host-owned lifecycle state under `_meta`; 1.1 adds the seams a definition package `defines` |
+| [objective-contract.v1.json](objective-contract.v1.json) | body of a `criteria` artifact: what "better" means for one application, versioned: hard constraints, guardrails with a margin or a floor, one primary metric, cost, and the analysis protocol; compared by constrained dominance, with no weights |
+| [hypothesis.v1.json](hypothesis.v1.json) | body of a `criteria` artifact: one falsifiable claim about one target, with the fingerprint the experiment registry computes |
+| [experiment.v1.json](experiment.v1.json) | body of a `plan` artifact: an immutable, pre-registered trial specification with its pins, its budget, the registry's answer, and its exact identity |
+| [evaluation.v1.json](evaluation.v1.json) | body of an `evidence` artifact: the trials, measurements, analysis, cost, and integrity checks of one evaluation of one experiment |
+| [lesson.v1.json](lesson.v1.json) | body of a `finding` artifact: knowledge drawn from verdicts, with the envelope it was observed in and the predicates that make it stale |
 | [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools |
 | [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period |
 

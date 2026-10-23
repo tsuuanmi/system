@@ -1,0 +1,147 @@
+{
+  "schema": "decision@1.7",
+  "decisionType": "verdict",
+  "question": "What is the verdict of evaluation review-worker-agnostic-1:r1 of experiment review-worker-agnostic-1 revision 1?",
+  "inputs": [
+    "sha256:fab44fb64d1bda3203b1cac412d40ecd5e515bef8c930cfe4879f9f22bdb9802",
+    "sha256:107ceccbb012e9f95796d9ea5e938ebbdf184110b0ab99de8159e59a41d0842a",
+    "sha256:8997a60ada0770c95f02234fd4bed1e9db7f1198dba0fba8a9f3c4c08ead0254"
+  ],
+  "candidates": [
+    {
+      "option": "supported",
+      "selected": false,
+      "reasons": [
+        "not every interval clears its threshold: defects-per-cost [-1.2, 0.9] against its non-inferiority-margin 0.5; blocking-recall [0.5, 1] against its floor 0.75; false-positives [-1.5, 1] against its non-inferiority-margin 1"
+      ]
+    },
+    {
+      "option": "refuted",
+      "selected": false,
+      "reasons": [
+        "no hard constraint broke, and no interval is wholly past its threshold"
+      ]
+    },
+    {
+      "option": "inconclusive",
+      "selected": true,
+      "reasons": [
+        "defects-per-cost [-1.2, 0.9] against its non-inferiority-margin 0.5 neither clears nor excludes it",
+        "blocking-recall [0.5, 1] against its floor 0.75 neither clears nor excludes it",
+        "false-positives [-1.5, 1] against its non-inferiority-margin 1 neither clears nor excludes it"
+      ]
+    },
+    {
+      "option": "invalid",
+      "selected": false,
+      "reasons": [
+        "every integrity check passed (pins, seal, arms, families, metrics, judge, trials) and every needed result is recorded"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "evaluations.verdict",
+    "version": "1",
+    "hash": "sha256:68f681176d048fa660768db603015c829d12ad465fd7bb775b694002e9b1d436"
+  },
+  "outcome": {
+    "option": "inconclusive",
+    "detail": {
+      "experimentId": "review-worker-agnostic-1",
+      "revision": 1,
+      "evaluationId": "review-worker-agnostic-1:r1",
+      "identity": "sha256:555cbafe58fbebcf61026293cbd984fa2d5c4baf7f7859c30dec52dd067d0849",
+      "comparison": {
+        "type": "non-inferiority",
+        "margin": 0.5
+      },
+      "horizonReached": true,
+      "ended": "horizon",
+      "metrics": [
+        {
+          "metric": "defects-per-cost",
+          "role": "primary",
+          "direction": "increase",
+          "estimate": -0.6,
+          "lower": -1.2,
+          "upper": 0.9,
+          "threshold": {
+            "kind": "non-inferiority-margin",
+            "value": 0.5
+          },
+          "result": "undecided"
+        },
+        {
+          "metric": "blocking-recall",
+          "role": "guardrail",
+          "direction": "increase",
+          "estimate": 0.75,
+          "lower": 0.5,
+          "upper": 1,
+          "threshold": {
+            "kind": "floor",
+            "value": 0.75
+          },
+          "result": "undecided"
+        },
+        {
+          "metric": "false-positives",
+          "role": "guardrail",
+          "direction": "decrease",
+          "estimate": -1,
+          "lower": -1.5,
+          "upper": 1,
+          "threshold": {
+            "kind": "non-inferiority-margin",
+            "value": 1
+          },
+          "result": "undecided"
+        },
+        {
+          "metric": "quote-validity",
+          "role": "guardrail",
+          "direction": "increase",
+          "estimate": 0,
+          "lower": -0.05,
+          "upper": 0.05,
+          "threshold": {
+            "kind": "non-inferiority-margin",
+            "value": 0.1
+          },
+          "result": "clears"
+        },
+        {
+          "metric": "stalls",
+          "role": "guardrail",
+          "direction": "decrease",
+          "estimate": 0.25,
+          "lower": 0,
+          "upper": 0.5,
+          "threshold": {
+            "kind": "non-inferiority-margin",
+            "value": 0.25
+          },
+          "result": "clears"
+        }
+      ],
+      "hardConstraints": [
+        {
+          "id": "invariants",
+          "held": true
+        },
+        {
+          "id": "egress",
+          "held": true
+        },
+        {
+          "id": "autonomy-policy",
+          "held": true
+        }
+      ],
+      "failedChecks": []
+    }
+  },
+  "deterministic": true,
+  "rationale": "The verdict follows from the thresholds pre-registered in the contract and the experiment, read once at the horizon; INCONCLUSIVE is never equivalence (PROP-0011)."
+}
