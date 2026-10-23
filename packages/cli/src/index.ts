@@ -295,6 +295,68 @@ function discovery(home: string): Discovery {
   return found as Discovery
 }
 
+/** A runtime's own sign-in command for one home, as `account_enroll` gives it (ADR-0051). */
+export interface SignIn {
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
+/**
+ * The environment the operator's sign-in command runs in (ADR-0051): theirs, then the runtime's
+ * variables for the home, and never a session bus, so the sign-in lands in the home's own files,
+ * where a run, which starts without D-Bus, reads it.
+ */
+export function signInEnvironment(base: NodeJS.ProcessEnv, login: SignIn): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [name, value] of Object.entries(base)) if (value !== undefined) env[name] = value
+  Object.assign(env, login.env)
+  delete env.DBUS_SESSION_BUS_ADDRESS
+  return env
+}
+
+/** The sign-in command as one line the operator can run themselves: `env -u DBUS_SESSION_BUS_ADDRESS K=V command args`. */
+export function signInLine(login: SignIn): string {
+  const quote = (value: string): string => (/^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`)
+  return ['env', '-u', 'DBUS_SESSION_BUS_ADDRESS', ...Object.entries(login.env).map(([k, v]) => `${k}=${quote(v)}`), quote(login.command), ...login.args.map(quote)].join(' ')
+}
+
+/** What `system account login`, `verify`, and `remove` name: an agent account by its id, a slot of an agent runtime, or a website account. */
+export type AccountTarget = { kind: 'agent'; accountId: string } | { kind: 'agent'; provider: string; slot?: number } | { kind: 'website'; id: string }
+
+/**
+ * Tell an agent account from a website account (ADR-0051): an id with a `:` is an agent account (a
+ * catalog id has none); a name of an agent runtime the daemon lists is that runtime's slot (with
+ * `--slot <n>`, that slot); anything else is a website account. A `--slot` on a website account is
+ * refused.
+ */
+export function accountTarget(args: readonly string[], agentProviders: readonly string[]): AccountTarget {
+  const [name, ...flags] = args
+  if (!name) throw new Error('name an account')
+  let slot: number | undefined
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i] === '--slot' && /^[1-9]\d?$/.test(flags[i + 1] ?? '')) slot = Number(flags[++i])
+    else if (flags[i] !== '--accept') throw new Error(`unknown option ${flags[i]}`)
+  }
+  if (name.includes(':')) {
+    if (slot !== undefined) throw new Error('an account id names its slot already; --slot is for a runtime')
+    return { kind: 'agent', accountId: name }
+  }
+  if (agentProviders.includes(name)) return { kind: 'agent', provider: name, ...(slot !== undefined ? { slot } : {}) }
+  if (slot !== undefined) throw new Error(`${name} is not an agent runtime this host lists, so --slot does not apply`)
+  return { kind: 'website', id: name }
+}
+
+/** One agent account as `system account list` shows it, beside the website accounts: never its hash, and the hint only masked. */
+export function agentAccountLine(entry: { account: Record<string, unknown>; workers: string[] }): Record<string, unknown> {
+  const a = entry.account as { accountId?: string; provider: string; slot: number; home: string; status: string; quarantine?: { reason: string; since: string }; hint?: string; identity?: { reader: string; runtimeVersion: string; verifiedAt: string } }
+  return {
+    kind: 'agent', ...(a.accountId ? { id: a.accountId } : {}), provider: a.provider, slot: a.slot, status: a.status,
+    ...(a.quarantine ? { reason: a.quarantine.reason, since: a.quarantine.since } : {}), ...(a.hint ? { hint: a.hint } : {}), home: a.home,
+    ...(a.identity ? { reader: a.identity.reader, runtimeVersion: a.identity.runtimeVersion, verifiedAt: a.identity.verifiedAt } : {}), workers: entry.workers,
+  }
+}
+
 /** Client configuration snippets for Claude Code and Codex, from the running profile's discovery file. */
 export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()): string {
   const { url } = discovery(home)
