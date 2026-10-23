@@ -5,6 +5,7 @@
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { type AdmissionFailure, type ArtifactRef, TIERS, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { noteDeferral } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow, WorkflowError } from './types.ts'
@@ -163,6 +164,8 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   e.ctx.store.transaction(() => {
     e.writeNode(node, { state: 'FAILED', attempt: node.attempt, error: JSON.stringify(final), ...decisions }, (r) => ({ ...r, lastDecision: decision.id as ArtifactRef }), lease)
     e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { attempt: node.attempt, kind: final.kind, disposition: final.disposition } })
+    // A Worker that stopped at a call waiting for the operator: its session continues once that is approved.
+    noteDeferral(e, run, node, final, attempt.execution)
   })
 }
 

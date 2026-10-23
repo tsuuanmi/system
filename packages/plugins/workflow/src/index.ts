@@ -18,9 +18,11 @@ import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-store'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { sweepDeferrals } from './continuations.ts'
 import { checkTemplate, Engine } from './engine.ts'
 import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
+import { pollMs } from './queue.ts'
 import { deleteRun, purge } from './retention.ts'
 import { wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
@@ -111,11 +113,16 @@ export class Workflow extends Service {
       queueMicrotask(() => {
         purge(engine)
         engine.recover()
+        void sweepDeferrals(engine)
       })
       const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
+      // The requests deferred tool calls wait on: an approved one continues its session, once.
+      const deferrals = setInterval(() => void sweepDeferrals(engine), pollMs(engine))
+      deferrals.unref()
       return async () => {
         clearInterval(daily)
+        clearInterval(deferrals)
         await engine.close()
       }
     })
