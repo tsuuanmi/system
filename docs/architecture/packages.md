@@ -29,7 +29,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
-| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `libs` |
+| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `gateway-core`, `libs` |
 | [evaluations-core](../../packages/evaluations-core/README.md) | orchestration | defines `evaluations` | — | — | `experiments-core`, `libs` |
 | [experiments-core](../../packages/experiments-core/README.md) | orchestration | defines `experiments` | — | — | `libs` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
@@ -380,6 +380,7 @@ flowchart TB
   digest --> gateway_core
   digest --> leases
   digest --> workers_core
+  digest_core --> gateway_core
   display_virtual --> provider_core
   egress --> provider_core
   evaluations_core --> experiments_core

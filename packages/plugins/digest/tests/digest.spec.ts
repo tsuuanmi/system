@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import type { ArtifactRef, DigestView } from '@tsuuanmi/system-digest-core'
+import { type ArtifactRef, digestTool, digestToolHandlers, type DigestView } from '@tsuuanmi/system-digest-core'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import { type Brief, SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -11,9 +11,8 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BENCH, draft, type Drafter, LOG } from '../../../digest-core/conformance/digests.ts'
+import { DigestWorker } from '../../../digest-core/conformance/worker.ts'
 import StoreDigests, { type Config } from '../src/index.ts'
-import { handlers, tool } from '../src/tools.ts'
-import { DigestWorker } from './worker.ts'
 
 vi.setConfig({ testTimeout: 60_000 })
 const schemas = new SchemaRegistry()
@@ -176,8 +175,8 @@ describe('ctx.digests on the store', () => {
 
   it('serves digests_request and digests_get with every input and output checked against mcp-digests@1.0, refusing a bad input with nothing done', async () => {
     const { ctx, log, bench } = await boot((r) => () => ({ text: draft(r.log, r.bench) }))
-    const behavior = handlers(ctx.digests)
-    const call = (name: 'digests_request' | 'digests_get', args: Record<string, unknown>) => tool(name, behavior[name])(args, { scope: 'client' })
+    const behavior = digestToolHandlers(ctx.digests)
+    const call = (name: 'digests_request' | 'digests_get', args: Record<string, unknown>) => digestTool(name, behavior[name])(args, { scope: 'client' })
     const bad = await call('digests_request', { sources: ['the test log'] })
     expect(bad).toMatchObject({ isError: true })
     expect(String((bad.content[0] as { text: string }).text)).toMatch(/^invalid input, nothing done/)

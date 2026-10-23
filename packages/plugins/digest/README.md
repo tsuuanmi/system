@@ -32,16 +32,16 @@ depends on seam definitions only, and fails open.
 - **Restart:** each pending request goes on where it stood: routed again if nothing started (on
   the tier it escalated to, if it did), or waiting for the execution it named; a run is never
   started twice (INV-4).
-- **MCP tools** (client scope): `digests_request` and `digests_get`, each input and output
-  validated against [`mcp-digests.v1.json`](../../../schemas/mcp-digests.v1.json) (1.1: a request
-  names its `escalation`); both may wait up
-  to 55 s for the request to settle.
+- **MCP tools** (client scope): `digests_request` and `digests_get`, the seam's own
+  (`registerDigestTools` of `digest-core`), each input and output validated against
+  [`mcp-digests.v1.json`](../../../schemas/mcp-digests.v1.json) (1.1: a request names its
+  `escalation`); both may wait up to 55 s for the request to settle.
 - **Bundle row:** on. With no read-only Worker on its tier (the agent rows off), every request
   settles `bypassed`, recorded, which is safe.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`; reads `eventLog` when present; `mcp`
   is optional.
-- **Tests:** the seam's conformance suite over this provider, real routing, and a scripted Worker
-  ([`tests/conformance.spec.ts`](tests/conformance.spec.ts)); the brief and its rendering, the
+- **Tests:** the seam's conformance suite over this provider, real routing, and the seam's
+  scripted Worker ([`tests/conformance.spec.ts`](tests/conformance.spec.ts)); the brief and its rendering, the
   tier bound, the escalation (its key, no standard Worker, a request configured on standard, a
   restart between the runs), restart, the time bound, the pending bound, and the MCP tools
   ([`tests/digest.spec.ts`](tests/digest.spec.ts)).

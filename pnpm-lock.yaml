@@ -277,6 +277,9 @@ importers:
 
   packages/digest-core:
     dependencies:
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../gateway-core
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../libs
@@ -290,6 +293,12 @@ importers:
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../plugins/store
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../workers-core
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
 
   packages/evaluations-core:
     dependencies:
@@ -687,9 +696,6 @@ importers:
       '@tsuuanmi/system-workers':
         specifier: workspace:*
         version: link:../workers
-      zod:
-        specifier: ^4.1.0
-        version: 4.6.5
 
   packages/plugins/display-virtual:
     dependencies:

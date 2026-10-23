@@ -3,12 +3,15 @@
  * seam (ADR-0036): a cited `digest@1.0` summary of raw artifacts for the lead, every claim
  * quote-checked against the artifact it cites before the digest is written. A digest fails open:
  * a request no Worker can serve, or whose Worker fails, is settled `bypassed` and recorded, and
- * nothing waits on it. The protocol, the vocabulary below, and the quote check every provider
- * applies live here; `schemas/digest.v1.json` and `schemas/mcp-digests.v1.json` are canonical.
+ * nothing waits on it. The protocol, the vocabulary below, the quote check every provider
+ * applies, and the `digests_*` MCP tools every provider serves live here; `schemas/digest.v1.json`
+ * and `schemas/mcp-digests.v1.json` are canonical.
  * @module @tsuuanmi/system-digest-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { bodyText, SchemaRegistry } from '@tsuuanmi/system-libs'
+
+export { DIGEST_TOOL_INPUTS, DIGEST_TOOLS, type DigestTool, digestTool, digestToolHandlers, registerDigestTools } from './tools.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

@@ -2,14 +2,14 @@
   "name": "@tsuuanmi/system-digest-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Digest seam definition: ctx.digests, cited digest@1.0 summaries of raw artifacts, quote-checked, failing open; with its conformance suite and a fake provider",
+  "description": "Digest seam definition: ctx.digests, cited digest@1.0 summaries of raw artifacts, quote-checked, failing open; the digests_* MCP tools every provider serves; with its conformance suite, a scripted digest Worker, and a fake provider",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
   "files": ["lib", "plugin-manifest.json"],
   "scripts": { "build": "tsc -p tsconfig.build.json" },
-  "dependencies": { "@tsuuanmi/system-libs": "workspace:*" },
-  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
-  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
+  "dependencies": { "@tsuuanmi/system-gateway-core": "workspace:*", "@tsuuanmi/system-libs": "workspace:*" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "zod": "^4.1.0" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-store": "workspace:*", "@tsuuanmi/system-workers-core": "workspace:*", "zod": "^4.1.0" }
 }

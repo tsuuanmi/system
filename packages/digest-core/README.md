@@ -8,11 +8,16 @@ changes by a versioned definition and this conformance suite
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.digests` | abstract `Digests` with `request({ sources, key? })`, `get(requestId)`, `wait(requestId, timeoutMs)`; `DigestRequest`, `DigestView`, `DigestState`, `DigestBody`, `DigestClaim`, `DigestError`, `DIGEST_LIMITS`; the quote check `quoteCheck(draft, sources, read, maxClaims)` (with why there is no digest, `QuoteFailure`), the one escalation `escalation(request, check, answer)` (`ESCALATION_TIER`), and the settling decision `settlement(request, outcome)` every provider applies; `DIGESTS_CONTRACT` (1.1) | [`digest`](../plugins/digest/README.md) (on `ctx.store`); the fake `FakeDigests` |
+| `ctx.digests` | abstract `Digests` with `request({ sources, key? })`, `get(requestId)`, `wait(requestId, timeoutMs)`; `DigestRequest`, `DigestView`, `DigestState`, `DigestBody`, `DigestClaim`, `DigestError`, `DIGEST_LIMITS`; the quote check `quoteCheck(draft, sources, read, maxClaims)` (with why there is no digest, `QuoteFailure`), the one escalation `escalation(request, check, answer)` (`ESCALATION_TIER`), and the settling decision `settlement(request, outcome)` every provider applies; the MCP tools every provider serves, `registerDigestTools(ctx, digests)` (`digests_request`, `digests_get`; `digestToolHandlers`, `digestTool`); `DIGESTS_CONTRACT` (1.1) | [`digest`](../plugins/digest/README.md) (on `ctx.store`); the fake `FakeDigests` |
 
 - The types mirror `digest@1.0` and `mcp-digests@1.1`; the schemas in `schemas/` are canonical.
-  It depends on Cordis and [`libs`](../libs/README.md) (`bodyText`, the text a quote is checked
-  against, which a brief renders too; the schema registry).
+  It depends on Cordis, [`libs`](../libs/README.md) (`bodyText`, the text a quote is checked
+  against, which a brief renders too; the schema registry), and the `ctx.mcp` definition in
+  [`gateway-core`](../gateway-core/README.md), for the tools.
+- **The MCP tools** belong to the seam, not to a provider: each provider registers them through
+  `registerDigestTools` from `ctx.inject(['mcp'], …)`, so replacing the provider keeps the lead's
+  tools as they are. Each call's input and structured output are checked against
+  `mcp-digests.v1.json`; a refused input does nothing.
 - **The quote check** keeps a claim only when it is well formed, cites one of the request's
   sources, and quotes that source's text verbatim (at `offset`, in code points, when given); any
   other claim is dropped and recorded with why. The digest's sources are the request's, never the
@@ -38,3 +43,7 @@ changes by a versioned definition and this conformance suite
     answer that fails for another reason does not escalate.
 
   It also exports `FakeDigests`, which passes it, its Worker on each tier a drafter the test gives.
+- [`conformance/worker.ts`](conformance/worker.ts) is the scripted digest Worker a provider's tests
+  run the suite with: a Worker source over real routing, a read-only Worker on each tier, each run
+  answered by the drafter from the request's sources, its tier, and the prompt the brief rendered
+  to.

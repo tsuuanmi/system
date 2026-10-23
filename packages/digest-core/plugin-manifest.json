@@ -2,7 +2,7 @@
   "schema": "plugin-manifest@1.1",
   "name": "@tsuuanmi/system-digest-core",
   "version": "0.0.0",
-  "description": "Digest seam definition: ctx.digests, cited digest@1.0 summaries of raw artifacts, quote-checked, failing open; with its conformance suite and a fake provider",
+  "description": "Digest seam definition: ctx.digests, cited digest@1.0 summaries of raw artifacts, quote-checked, failing open; the digests_* MCP tools every provider serves; with its conformance suite, a scripted digest Worker, and a fake provider",
   "class": {
     "kind": "family",
     "family": "digest"
