@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -67,6 +67,15 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(parseEvents(['--run'])).toBeUndefined()
     expect(formatEvents([{ seq: 3, at: '2026-10-14T00:00:00Z', type: 'workflow.node.failed', runId: 'r1', nodeId: 'n2', data: { kind: 'ui_drift' } }]))
       .toEqual(['3 2026-10-14T00:00:00Z workflow.node.failed run=r1/n2 {"kind":"ui_drift"}'])
+  })
+
+  it('asks for the baseline report of a project or every one, over the period its flags name, each flag once (PROP-0010 B8)', () => {
+    expect(parseReport([])).toEqual({})
+    expect(parseReport(['--project', 'p1', '--days', '14', '--until', '2026-10-23T00:00:00Z'])).toEqual({ projectId: 'p1', days: 14, until: '2026-10-23T00:00:00Z' })
+    expect(parseReport(['--since', '2026-10-01T00:00:00Z'])).toEqual({ since: '2026-10-01T00:00:00Z' })
+    // The tool refuses a period it cannot name (both since and days, or days that are not a whole number), with nothing read.
+    expect(parseReport(['--days', 'week'])).toEqual({ days: Number.NaN })
+    for (const args of [['--project'], ['--bogus', 'x'], ['--days', '7', '--days', '8'], ['p1']]) expect(parseReport(args), args.join(' ')).toBeUndefined()
   })
 
   it('reports health with exit 0, 1, or 2, and a host that does not answer as down (REQ-HOST-6)', async () => {
@@ -314,7 +323,7 @@ describe('the command surface (REQ-GW-4)', () => {
     const help = spawnSync(tsx, [bin, '--help'], { encoding: 'utf8' })
     const usage = `${help.stdout}${help.stderr}`
     const commands = [...usage.matchAll(/^ {2}([a-z][a-z-]*(?: [a-z][a-z-]*)?)/gm)].map((m) => m[1]!.split(' ')[0])
-    for (const family of [['ask', 'research', 'brainstorm', 'review'], ['run', 'approve', 'vote', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
+    for (const family of [['ask', 'research', 'brainstorm', 'review'], ['run', 'approve', 'vote', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'report', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
       for (const command of family) expect(commands, command).toContain(command)
     }
   })

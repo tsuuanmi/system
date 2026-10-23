@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -32,6 +32,9 @@ const USAGE = `Usage: system <command>
   supersede <runId> <nodeId> (<text...> | -)
                             replace a completed step's result; everything downstream runs again
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
+  report [--project <id>] [--since <time> | --days <n>] [--until <time>] [--json]
+                            the baseline report, from recorded data only: progress, results, what asked for you,
+                            usage, cost per accepted result; by default the last 7 days (the weekly investor report)
   explain [--json] <runId|artifact>
                             the decision chain behind a run (egress, tier, route, acceptance), every attempt's
   artifact [--json] [--offset <n>] [--max <n>] <id>
@@ -266,6 +269,14 @@ async function main(argv: string[]): Promise<number> {
       const outcome = await callTool('usage', rest[0] ? { limit: Number(rest[0]) } : {})
       if (outcome.isError) throw new Error(outcome.text)
       for (const line of formatUsage(outcome.structured as unknown as Parameters<typeof formatUsage>[0])) console.log(line)
+      return 0
+    }
+    case 'report': {
+      const input = parseReport(rest.filter((a) => a !== '--json'))
+      if (!input) break
+      const outcome = await callTool('report', input)
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(rest.includes('--json') ? JSON.stringify(outcome.structured, null, 2) : outcome.text.trimEnd())
       return 0
     }
     case 'explain': {
