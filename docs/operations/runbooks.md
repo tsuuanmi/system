@@ -575,3 +575,337 @@ machine. A result collected by retention prints as `expired`.
   working. Freed space is reused by the store, not returned to the disk. `system health` looks back only `driftWindowHours`, so a short
   retention does not hide recent drift.
 - **Backups** are yours to rotate.
+
+## An approval request expired
+
+Every request in the approval queue expires: at its creation plus the shortest `expiresSeconds`
+of the rules that apply to its class, else the policy's `expiry.defaultSeconds` (a day in the
+bundle's studio policy), never more than `expiry.maxSeconds` (14 days). An unanswered request is
+denied, and the work that waited on it never starts
+([approvals](../design/approvals.md#a-request)).
+
+What you see:
+
+- The request leaves the queue on `/ui` (`system ui`), which lists open and batched requests
+  only. The queue rejects expired requests at start and every `sweepSeconds` (60), so one can show
+  for up to a minute after its time; a verdict on it is refused (`expired`) and changes nothing.
+- MCP `approvals_get <requestId>` shows `state: rejected` and `resolution.cause: expired`;
+  `approvals_list` with `states: ["rejected"]` lists the closed ones. `resolution.decision` is the
+  `approval` decision `denied:expired` (rule `approvals.expiry`): `system artifact <id>` reads it.
+  Cause `verdict` is a verdict of yours; `withdrawn` means the waiting work ended first, or the
+  policy changed ([policy](#change-the-autonomy-policy)).
+
+What happened to the waiting work, by the request's subject:
+
+| The request was for | The work now |
+|---|---|
+| a charter, `project:<id>:charter:<n>` | a first charter: the project is closed `abandoned`, and its open tasks are cancelled (`project-closed`). An amendment: dropped, and the approved charter stays |
+| a task's attempt, `board-task:<id>:attempt:<n>` (version `approval-needed`, `budget-spent`, or `reconciliation-failed`) | the task waits for input, `waiting.reason: rejected`, and nothing starts. Left alone, it is cancelled (`input-expired`) after `inputExpirySeconds` (7 days) |
+| a Worker's tool call, `agent-tool-call:<agent run>:<tool>` | the call is denied. The run that asked already failed (`config_error`); a later run of that session making the same exact call is denied too, and nothing new is queued |
+
+The board moves a task on its own sweep (every `sweepSeconds`, 60), so the new state shows within
+about a minute. It also applies the expiry itself, at the task's `waiting.expiresAt`, when the
+queue did not resolve the request or no longer knows it. A plan gate (`system approve <runId>`)
+is not on this queue.
+
+To ask again or plan again:
+
+1. Read why the work waited: `board_task` gives `waiting` and `lastDecision`; `system artifact
+   <lastDecision>` lists each candidate and its reasons.
+2. **A task:** nothing revives a `rejected` wait (`board_update` refuses it). If the work is still
+   wanted, cancel the task (`board_cancel`, through the Lead) and propose it again
+   (`board_propose`): the policy is asked again for the new task. A task that
+   `writes` a subject holds it while it is open, so cancel first, or the proposal is refused
+   (`conflict`). Tasks that depend on the cancelled one are cancelled on the next sweep:
+   propose them again too. After `reconciliation-failed`, look at the run first (`run.runId` of
+   `board_task`, then `system explain <runId>`): its worktree may hold the work
+   ([a run's worktree](#a-runs-worktree)).
+3. **A charter:** found an abandoned project again with `board_charter`, under a new
+   `clientRequestId` (the old key returns the project it founded). Make a dropped amendment again
+   with the same `projectId` and the next charter version.
+4. **A Worker's call:** start the work again in a new session, or let the agent make a different
+   call: a different input is a different call, with a request of its own.
+5. If requests keep expiring, answer sooner, or lengthen the wait: raise the class's
+   `expiresSeconds` or `expiry.defaultSeconds` (up to `expiry.maxSeconds`)
+   ([policy](#change-the-autonomy-policy)).
+
+## A board task is blocked or waiting for input
+
+A task waits in one of three states: `waiting-for-approval` (a request in the queue),
+`waiting-for-input`, or `review` held for you. Find them with MCP `board_projects` (task counts per
+state), `board_tasks` (`states`: `waiting-for-input`, `waiting-for-approval`, `review`), and
+`board_task`: its `waiting` gives the `reason`, `since`, and `expiresAt` (and `questions`,
+`pendingChecks`, or `approvalRequest`), and `lastDecision` is the `board` decision behind the move
+(`system artifact <id>` shows its reasons). The CLI has no board command: ask the Lead, since the
+`board_*` tools are client scope. `/ui` shows only the approval queue and the reviews.
+
+| `waiting.reason` | What it means | What you can do |
+|---|---|---|
+| `approval-needed` (waiting for approval) | the policy asks before an attempt: a new task, or the next attempt after a rejected review or an answered question | decide its request on `/ui` (subject `board-task:<id>:attempt:<n>`). Approve: the task is ready on the board's next sweep. Deny or expiry: `rejected` |
+| `question` (waiting for input) | a run asked questions it cannot go on without | answer every one, by index, with `board_update` `answers` (through the Lead); the next attempt goes through the gate again. No run asks one today: nothing calls `block` |
+| `rejected` | an approval was denied or expired, or none could be asked (a lost or spent run under a policy that does not ask) | nothing revives it (see below) |
+| `retries-spent` | every attempt is used (`attempts.count` equals `max`, the board's `maxAttempts`, 3): a review rejected the last one, a run failed with none left, or an approval to go on or an answered question had none left to start | nothing revives it. The last result stays on the task, to read or to take |
+| `review-expired` | no accepting decision came: the reviewer's lease lapsed, or the review held for you reached its expiry | nothing revives it. The work is still on its run's branch ([worktree](#a-runs-worktree)) |
+| `operator-review` (in `review`) | the result waits for your acceptance: the checks its class requires have not passed, or the policy forbids the class | Accept or Reject on `/ui` ([review](#accept-or-reject-a-review)) until `expiresAt`; then `review-expired` |
+| `budget-spent` (waiting for approval) | a run passed its budget: a `funding` request, which always asks | decide it on `/ui`. Approve: another attempt, through the gate. Deny or expiry: `rejected`. Not raised today: the engine reserves no budget per task |
+| `reconciliation-failed` (waiting for approval) | the run's holder was lost mid-run and its outcome is not known: a `remediation` request, which always asks | look at the run first (`run.runId`, then `system explain <runId>`). When the engine can report the run's outcome it does, and withdraws the request itself. Approve: another attempt, through the gate; the old run is never started again. Deny or expiry: `rejected` |
+
+**When nothing revives a wait.** Only a question wait takes input. `rejected`, `retries-spent`,
+and `review-expired` end in `cancelled` (`input-expired`) after `inputExpirySeconds` (7 days), or
+sooner by `board_cancel`. To go on, propose the work as a new task (`board_propose`); cancel the
+old one first when it `writes` a subject, and propose again the tasks that depended on it, which
+are cancelled with it. Every approval wait ends at its request's expiry in `rejected`, and no wait
+ever starts work ([board](../design/board.md#what-ends-an-input-wait)).
+
+## Accept or reject a review
+
+A board task reaches review when the run that served an attempt submits its result. Under the
+bundle's studio policy every `workspace-write` task stops here for you: the policy requires `tests`
+and `lint`, the engine reports only the checks it ran itself (`schema`, `review`), so the board
+holds the review for the operator ([board](../design/board.md#required-checks-bind-at-acceptance)).
+A task of a class that needs no check (`read`) or that the policy asked about before its attempt
+is accepted by the engine's own decision and never shows here. A run whose own check failed is
+rejected by the engine as another attempt, also without you.
+
+1. `system ui` prints the link: open it on the host, or over `ssh -L <port>:127.0.0.1:<port>
+   host`. **Reviews** lists every task in review, those held for you first, by expiry. Each row
+   gives the task and its action class, its project, the exact subject (`git-head <commit> @
+   <hash of the changes>`, or an `artifact`), the result's artifacts, the checks still pending,
+   a link to the run, and `yours until <time>`. A row that says `reviewer until` is still held by
+   the run's lease; the engine settles it.
+2. Read the result: the run's page, `system artifact <artifact id>` for an answer, and for a
+   `git-head` subject the run's worktree, which is that exact tree
+   ([worktree](#a-runs-worktree)). Run the pending checks there yourself: **your Accept applies
+   whatever is pending**, since nothing else has run them.
+3. Add a note if you like, then press **Accept** or **Reject**. The page sends the exact subject it
+   showed. A result that changed since, or a task no longer in review, is refused (`409`), nothing
+   is decided, and the page's status line says why.
+4. What happens:
+   - **Accept:** your `acceptance` decision is applied, and the task is `done` with
+     `result.acceptance` set. Tasks that depend on it become ready on the board's next sweep. Nothing
+     merges or commits the work: take it from the worktree or its branch yourself.
+   - **Reject:** another attempt while `attempts.count` is under `max`, through the gate again:
+     `ready` when the policy says `auto` or `notify` (nothing starts a ready task: the Lead
+     starts it with `run` and `task`, which claims it, as a new run with a worktree of its own),
+     `waiting-for-approval` when it asks (a new request in the queue), cancelled when it
+     forbids. With no attempt left the task waits for input (`retries-spent`). Your note is the
+     decision's rationale (`system artifact <decision id>`); no brief carries it to the next
+     attempt yet, so tell the Lead.
+   - **No verdict:** at `yours until` the task waits for input (`review-expired`) and the row
+     leaves the list. The wait is the policy's for the class: a day in the bundle's studio policy.
+
+## A Worker's tool call is deferred on an approval
+
+Every tool call of an agent run passes the run's gate. A call the policy asks about is deferred:
+the run stops at it, and the call waits in the queue
+([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)). This needs an agent Worker
+on a runtime that can ask the gate first (Claude Code; [turn the rows
+on](#turn-an-off-row-back-on)), and a policy that asks. Under the bundle's studio policy a Claude
+Code Worker's calls are `read` and `workspace-write`, both `auto`, and the runtime offers no
+`Bash`, `WebFetch`, or `WebSearch`, the tools that would ask: a deferral shows only after a policy
+gives one of the Worker's classes `ask`.
+
+Where it shows:
+
+- The run fails `config_error`: `<worker> stopped at its <tool> call, which waits for the operator's
+  approval (approval request apr-…); nothing of that call ran`. `system result <runId>`,
+  `system explain <runId>`, and the run's page on `/ui` show it.
+- Event `agent-workers.tool.deferred` (`system events --type agent-workers.tool.deferred`) names the
+  agent run, the Worker, the tool, the request, and the session; never the call's input.
+- The request is in the queue on `/ui`: its class, its subject `content
+  agent-tool-call:<agent run>:<tool> @ <content id of the input>`, a summary that names the tool
+  and what it touches (`Bash: <command>`, `Write <file>`), and what approving does.
+
+To approve:
+
+1. Read the summary: the request is for exactly that call. A command is its argv, the words
+   split on single spaces; the same tool with another input is another call, with a request of its
+   own.
+2. Press **Approve** (or **Deny**), for the request or its batch. One approval is one call: it runs
+   once, and the same call later asks again. Deny, or no answer before the request expires: the
+   call is denied in that session from then on.
+3. **Nothing reruns the call for you yet.** The workers seam has no waiting status, so the run is
+   over, and no component starts the later run of its session once the request is approved. Start
+   it yourself, in the same session, so the gate meets the same call:
+   - a run outside a board task: `system continue <runId>`, or **Continue run** on its page,
+     reopens the failed step as a new attempt in its session. Before the verdict it defers again on
+     the same request and queues nothing new; once approved, the call runs;
+   - a run for a board task is not continued: its failure is reported to the board as an attempt,
+     the task goes through the gate again, and the Lead starts the next attempt with `run` and
+     `task`, naming the earlier `sessionId` (the event shows it) to continue that session.
+
+A call the policy forbids is not deferred: the agent is told the reason and goes on, and the denial
+is recorded (`agent-workers.tool.denied`, `system explain <decision id>`). With no approval queue
+loaded, every call is denied, reads included.
+
+## Change the autonomy policy
+
+The policy is configuration: the studio policy and any project policies sit in the `approvals`
+row. A change takes effect by editing the profile patch and restarting; there is no
+`policy-change` approval for it yet, and no Worker can write the patch (the DSH home is hidden
+from agents).
+
+1. **Read what is loaded:** MCP `approvals_policy` (a `projectId` adds that project's policy)
+   gives the policies and the effective mode of each action class.
+2. **Settle the queue first** if you can: decide what waits on `/ui`, and see which tasks wait on
+   a request (`board_tasks`, `states: ["waiting-for-approval"]`). A verdict cannot be given on a
+   request a change withdraws.
+3. **Edit `~/.dsh/profiles/system/cordis.patch.yml`.** A patch that targets a row replaces its whole
+   config, so write the whole `policies` list: copy the `approvals` row of the
+   [bundle](../../packages/system-bundle/cordis.patch.yml), then change the rule.
+
+   ```yaml
+   - id: approvals
+     config:
+       policies:
+         - schema: 'autonomy-policy@1.0'
+           id: studio-default
+           version: 2              # raise it with every change: requests are made under a version
+           scope: studio
+           rules:
+             - { actionClass: workspace-write, mode: ask }   # was auto, requires tests and lint
+             # … every other rule of the bundle's policy
+           default: ask
+           expiry: { defaultSeconds: 86400, maxSeconds: 1209600 }
+           batch: { maxSize: 10, maxWaitSeconds: 3600 }
+   ```
+
+   Exactly one studio policy; a project policy has `scope: project`, its `projectId`, and
+   `narrows` the studio policy's `id`, and can only be stricter
+   ([example](../../schemas/examples/autonomy-policy.project.json)). The classes that always ask
+   (`external-send`, `deploy`, `delete-data`, `spend`, `charter`, `funding`, `remediation`,
+   `policy-change`) cannot be given `auto` or `notify`.
+4. **Check it before stopping anything:** `system check`. It loads every row against the code and
+   names each problem of the policy set (a rule twice, an expiry above its maximum, a batch wait
+   not under the shortest expiry, a listed command with a shell metacharacter); fix the patch until
+   it says `ok`. A set that fails at start refuses the plugin: no queue, `/ui` answers `503` for
+   it, the board is not mounted, nothing that needs a person runs, and every Worker tool call is
+   denied.
+5. **Restart:** `system shutdown`, then `system start`. At start the queue rejects expired requests
+   and withdraws the open ones the loaded policies no longer ask for.
+6. **Verify:** `approvals_policy` shows the new effective modes.
+
+What happens to what is open:
+
+| The change | Open requests |
+|---|---|
+| a policy's `version` raised, or its `id` gone | every unexpired open request made under the old version is withdrawn at start: cause `withdrawn`, rule `approvals.policy`, the reason names the change |
+| a class that asked now says `auto`, `notify`, or `forbid` (same version) | its open requests are withdrawn: `it now gives <class> <mode>` |
+| a class still asking, same version | they stay, and a verdict still counts. Their expiry never changes |
+| a class that did not ask now asks | nothing to withdraw. The board asks the policy when a task becomes ready and before each further attempt, not at claim or start, so a task already `ready` or `claimed` is not asked again. A Worker's gate asks on every tool call, so its next calls follow the new policy |
+
+A withdrawn request is not a verdict, and nothing asks again by itself. A task that waited on it
+stays in `waiting-for-approval` until its wait expires, then waits for input (`rejected`), whether
+the change loosened or tightened the class: cancel it and propose it again to go on sooner
+([expired request](#an-approval-request-expired)). A Worker's gate denies the same call again in that
+session (it reads the withdrawn request as the answer), and a charter request waits for its
+expiry, then abandons a first charter's project or drops an amendment.
+
+## A resource pool is limited
+
+Only a Worker with a `pool` is metered ([agent Workers](../../packages/plugins/agent-workers/README.md)).
+The bundle's `resources` row configures no pool, so until you configure one a Worker that names a
+pool is unavailable, and one that names none is never limited. A pool and a Worker that draws on
+it, for a Claude Code plan with two windows:
+
+```yaml
+- id: resources
+  config:
+    pools:
+      - pool: max.agents
+        account: max
+        kind: programmatic
+        unknown: available        # a window with no reading yet leaves the pool open
+        windows:
+          - { id: five-hour, kind: rolling, seconds: 18000 }
+          - { id: seven-day, kind: rolling, seconds: 604800 }
+- id: agent-workers
+  config:
+    workers:
+      - { id: claude-dev, runtime: claude-agent-sdk, workspace: /home/me/project, sandbox: workspace-write, tier: standard,
+          pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+```
+
+Without `unknown: available`, a window nobody has read yet fails the pool closed: it opens when a
+run's result gives the first reading. The runtime's window names (`five_hour`) are mapped to your
+window ids by the Worker's `windows`.
+
+Reading a limit:
+
+- MCP `resources_pools` (`account` narrows it) gives each pool: `available`, `until` while it is
+  not, and the latest reading of each window: `state` (`ok`, `limited`, `unknown`),
+  `usedPercentage`, `resetsAt`, `cooldownUntil`, `source`, and `observedAt`.
+- A window is `limited` until the later of its `cooldownUntil` and `resetsAt`. A limit the runtime
+  reports without a reset time is `limited` for the Worker's `limitCooldownSeconds` (an hour by
+  default). A limit it cannot place on a configured window closes every window of the pool. A
+  window with no reading, or `unknown`, counts as not available unless the pool is `unknown:
+  available`.
+- `system health` lists the Worker as `agent:<id> (quota-exhausted)` while its pool is not
+  available, and routing skips it. A run that reaches it anyway fails `quota_exhausted`
+  (`USER_ACTION`) before the agent starts, with a `budget` decision whose reasons name the pool and
+  `until` (`system explain <runId>`). A run that hit the limit while working fails the same way and
+  is never retried on that pool.
+
+What to do:
+
+1. **Wait.** The pool opens by itself at `until`. No command ends a limit early (website
+   accounts have `system account clear-cooldown`; the ledger has no counterpart), and a limited
+   pool admits no run that could read it open again.
+2. **Or add capacity:** configure another pool and account for a second Worker, which routing then
+   picks; or point the Worker's `pool` and `account` at another pool and restart.
+3. Then `system continue <runId>` for a run that failed on the limit.
+
+Usage: MCP `resources_usage` lists the counted usage records, oldest first, a page at a time
+(`limit`, `after`), filtered by `runId`, `projectId`, `taskId`, `account`, `pool`, `since`, and
+`until`. Its `totals` per pool (tokens, turns, cost, records) cover every match, not just the
+page. A record comes from the runtime's own result message, never the model's report, so a run
+that reported no numbers has no record, and a crashed run has none until a transcript is read
+(not built yet). `system usage` lists runs, not the ledger.
+
+## A run's worktree
+
+A Worker with `worktreePerRun: true` works, for each workflow run, in a git worktree of its own
+instead of the configured workspace
+([agent Workers](../../packages/plugins/agent-workers/README.md)). The workspace must be the top
+level of a git repository with a commit, outside the worktree root, and git must be 2.17 or later;
+otherwise the Worker is `unavailable` (`system health`), with the reason in the log.
+
+- **Where:** `<worktreeRoot>/<repository name>-<12 hex digits>/<workflow run id>`, by default
+  `~/.dsh/system/worktrees` (owner-only), on the branch `system/run/<workflow run id>`, cut from the
+  repository's HEAD when the run's first agent run starts. Every later agent run of that workflow
+  run, reviewers included, uses it; the repository's own working tree and branch are never written.
+  Find it with `ls ~/.dsh/system/worktrees/*/<run id>`, `git -C <repository> worktree list`, or
+  the daemon log line `run <id> works in <path> on <branch>`. A task's attempts are separate
+  runs, so each has a worktree and a branch of its own (`run.runId` of `board_task`).
+- **Retention:** while one of its agent runs is queued or running, a worktree is kept. Then, after
+  `worktreeRetentionHours` (168; 0 keeps every worktree), at start and hourly (at most 50 a sweep),
+  `system` commits what the worktree holds on its branch (author `system <system@localhost>`,
+  message `system: keep the uncommitted work of workflow run <id>`) and removes it, never forced
+  (files the repository ignores go with it). A `retention` decision records it (`system explain
+  <decision id>`). The branch is never deleted.
+- **Recover work:**
+  1. While the worktree exists it holds the exact tree a review was bound to, committed or not:
+     `git -C <worktree> status` and `git -C <worktree> diff HEAD`. Run the checks there. Leave it
+     alone while a run for it is live, and until a review of its task is decided.
+  2. To keep it, commit in the worktree (`git -C <worktree> add --all`, then `commit`), or wait for
+     the retention commit. Then take the branch: `git -C <repository> merge system/run/<id>`,
+     `cherry-pick`, or `diff <base>...system/run/<id>`. A branch checked out in a worktree can still
+     be merged from the main tree.
+  3. After retention the work is the branch's last commit: `git -C <repository> log
+     system/run/<id>`. `git -C <repository> worktree add <path> system/run/<id>` opens it again; a
+     run continued after its worktree was removed gets it again from that branch by itself.
+  4. Merging is yours: no board move or policy class merges a branch yet. Delete the branches you no
+     longer need.
+- **A worktree that stays:** one that cannot be committed or removed (locked, say) stays, with the
+  reason logged once, and the next hourly sweep tries again. Unlock it with `git -C <repository>
+  worktree unlock <path>`. One removed by hand is forgotten once git no longer lists it:
+  `git -C <repository> worktree prune`.
+- **A `.git` file changed by the agent:** a run whose worktree's `.git` file no longer points to
+  its own directory fails `reconciliation_failed` ("changed the .git file of its worktree …"), and
+  the worktree is left for you; a later run of it fails `config_error`. Do not run git inside it.
+  Read the files directly, and use `git -C <repository> worktree list` and the branch from the
+  repository. Once the work is saved, `git -C <repository> worktree remove --force <path>`.
+- **A path that is not the run's:** a path that already exists and is not that run's worktree is
+  never taken over (`config_error`). Move it away.
+- **Disk:** each worktree is a full checkout, kept a week by default. Lower
+  `worktreeRetentionHours` when disk is short.
