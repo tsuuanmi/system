@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:hypothesis:v1",
+  "title": "Hypothesis",
+  "description": "Body of a `criteria` artifact: one falsifiable claim about one target of `system` or an application (PROP-0011, design/experiments.md). Its fingerprint is computed by the experiment registry from its vocabulary, never taken from the caller. Not the research profile's `hypothesis-set`, which frames one study.",
+  "type": "object",
+  "required": ["schema", "hypothesisId", "statement", "target", "mechanism", "intervention", "expectedEffect", "context", "priorEvidence", "source", "fingerprint"],
+  "properties": {
+    "schema": { "const": "hypothesis@1.0" },
+    "hypothesisId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "statement": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "target": {
+      "description": "What the claim is about: a workflow template, a plugin, a seam provider, or a configuration, at one version.",
+      "type": "object",
+      "required": ["kind", "ref", "version"],
+      "properties": {
+        "kind": { "enum": ["template", "plugin", "seam-provider", "configuration"] },
+        "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "mechanism": { "$ref": "#/$defs/tagged" },
+    "intervention": { "$ref": "#/$defs/tagged" },
+    "expectedEffect": {
+      "description": "The metric the claim moves, which way, and by how much; `non-inferior` claims no harm.",
+      "type": "object",
+      "required": ["metric", "direction"],
+      "properties": {
+        "metric": { "$ref": "urn:tsuuanmi:system:schema:objective-contract:v1#/$defs/name" },
+        "direction": { "enum": ["increase", "decrease", "non-inferior"] },
+        "magnitude": { "type": "number", "minimum": 0, "maximum": 1000000000 }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "description": "Where the claim is expected to hold: the workload it names, and in words.",
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "workload": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      },
+      "additionalProperties": false
+    },
+    "priorEvidence": {
+      "description": "What the claim rests on: earlier experiments (by id; naming one links it by hand), lessons, and research reports.",
+      "type": "object",
+      "required": ["experiments", "lessons", "research"],
+      "properties": {
+        "experiments": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+        },
+        "lessons": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+        },
+        "research": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "description": "Where the claim came from: a research run, a brainstorm decision, or a retrospective, each by its artifact; or the operator.",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["research", "brainstorm", "retrospective", "operator"] },
+        "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "if": { "properties": { "kind": { "enum": ["research", "brainstorm", "retrospective"] } } },
+      "then": { "required": ["ref"], "properties": { "ref": true } },
+      "additionalProperties": false
+    },
+    "fingerprint": { "$ref": "#/$defs/fingerprint" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "tag": {
+      "description": "A term of the registry's vocabulary.",
+      "$ref": "urn:tsuuanmi:system:schema:objective-contract:v1#/$defs/name"
+    },
+    "tagged": {
+      "description": "A vocabulary tag, as the author gave it, and the claim in words.",
+      "type": "object",
+      "required": ["tag", "text"],
+      "properties": {
+        "tag": { "$ref": "#/$defs/tag" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      },
+      "additionalProperties": false
+    },
+    "fingerprint": {
+      "description": "The semantic key (version 1): the target's kind and ref, the mechanism and intervention as the vocabulary's canonical tags, and the effect's metric and direction; `hash` is the sha256 of their canonical JSON. Equal fingerprints suggest the same idea; only the exact identity refuses an experiment.",
+      "type": "object",
+      "required": ["version", "target", "mechanism", "intervention", "effect", "hash"],
+      "properties": {
+        "version": { "const": "1" },
+        "target": { "type": "string", "minLength": 3, "maxLength": 240 },
+        "mechanism": { "$ref": "#/$defs/tag" },
+        "intervention": { "$ref": "#/$defs/tag" },
+        "effect": { "type": "string", "minLength": 3, "maxLength": 140 },
+        "hash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

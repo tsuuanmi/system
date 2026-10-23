@@ -1,0 +1,145 @@
+{
+  "schema": "objective-contract@1.0",
+  "contractId": "review-workflow",
+  "version": 1,
+  "application": {
+    "kind": "workflow-profile",
+    "ref": "software-development"
+  },
+  "metrics": [
+    {
+      "id": "defects-found",
+      "unit": "defects",
+      "source": "collector",
+      "collector": "review.defect-match",
+      "description": "Findings that are defects whose checked quote lies in the lines their labelled defect's fix changed"
+    },
+    {
+      "id": "usage",
+      "unit": "usd",
+      "source": "ledger",
+      "ledgerUnit": "usd"
+    },
+    {
+      "id": "defects-per-cost",
+      "unit": "defects/usd",
+      "source": "ratio",
+      "numerator": "defects-found",
+      "denominator": "usage"
+    },
+    {
+      "id": "blocking-recall",
+      "unit": "share",
+      "source": "collector",
+      "collector": "review.defect-match"
+    },
+    {
+      "id": "false-positives",
+      "unit": "findings",
+      "source": "collector",
+      "collector": "review.defect-match"
+    },
+    {
+      "id": "quote-validity",
+      "unit": "share",
+      "source": "collector",
+      "collector": "review.quote-validity"
+    },
+    {
+      "id": "latency",
+      "unit": "minutes",
+      "source": "collector",
+      "collector": "trial.latency"
+    },
+    {
+      "id": "stalls",
+      "unit": "stalls",
+      "source": "collector",
+      "collector": "trial.stalls"
+    }
+  ],
+  "hardConstraints": [
+    {
+      "id": "invariants",
+      "statement": "No trial breaks a system invariant",
+      "validator": "system.invariants"
+    },
+    {
+      "id": "egress",
+      "statement": "No trial sends content its egress policy does not permit",
+      "validator": "system.egress"
+    },
+    {
+      "id": "autonomy-policy",
+      "statement": "No trial runs an action the autonomy policy forbids or did not ask about",
+      "validator": "system.autonomy-policy"
+    }
+  ],
+  "primary": {
+    "metric": "defects-per-cost",
+    "direction": "increase",
+    "minimumPracticalEffect": 0.5
+  },
+  "guardrails": [
+    {
+      "metric": "blocking-recall",
+      "direction": "increase",
+      "floor": 0.75
+    },
+    {
+      "metric": "false-positives",
+      "direction": "decrease",
+      "nonInferiorityMargin": 1
+    },
+    {
+      "metric": "quote-validity",
+      "direction": "increase",
+      "nonInferiorityMargin": 0.1
+    },
+    {
+      "metric": "stalls",
+      "direction": "decrease",
+      "nonInferiorityMargin": 0.25
+    }
+  ],
+  "cost": {
+    "metrics": [
+      "usage"
+    ],
+    "unit": "usd",
+    "ceiling": 200
+  },
+  "comparison": "constrained-dominance",
+  "protocol": {
+    "confidence": 0.9,
+    "minCases": 2,
+    "repetitions": 2,
+    "partitions": [
+      "regression"
+    ],
+    "methods": [
+      {
+        "metric": "defects-per-cost",
+        "kind": "bootstrap",
+        "resamples": 10000
+      },
+      {
+        "metric": "blocking-recall",
+        "kind": "sign-flip"
+      },
+      {
+        "metric": "false-positives",
+        "kind": "sign-flip"
+      },
+      {
+        "metric": "quote-validity",
+        "kind": "sign-flip"
+      },
+      {
+        "metric": "stalls",
+        "kind": "sign-flip"
+      }
+    ]
+  },
+  "note": "The review workflow (PROP-0011): illustrative numbers until F5 settles the suite, the floor, and the margins."
+}

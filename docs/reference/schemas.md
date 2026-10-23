@@ -61,7 +61,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.6.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.7.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -123,6 +123,28 @@ guesses.
   (`approved` or `configuration`), the `changeId`, the `requestId` when approved, `from` and `to`,
   the `configHash`, and the proposed `policy` by id and version. Example:
   [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json).
+- `decision@1.7` adds the feedback loop's two decision types
+  ([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). A decision of either must be
+  `@1.7`; every other decision keeps its version.
+  - `registration`: whether the experiment registry pre-registered or refused one revision of an
+    experiment ([experiments](../design/experiments.md#a-registration)). Candidates `preregistered`
+    and `refused`; the decider is the rule `experiments.registry`, its `hash` the sha256 of the
+    vocabulary the fingerprint was normalized from (`vocabularyHash`). Its inputs are the
+    experiment and hypothesis it recorded, every experiment it matched, and the revision it
+    supersedes; `detail` names the `experimentId`, `revision`, `answer`, `identity`, `fingerprint`,
+    the experiments it `cites`, the predicates it names as `changed`, every match with its
+    `relation` and the predicates that `changed` against it, and `supersedes` (the revision). Example:
+    [`decision.registration.json`](../../schemas/examples/decision.registration.json).
+  - `verdict`: the classification of one evaluation against the thresholds its contract and
+    experiment pre-registered ([the verdict rule](../design/evaluations.md#the-verdict-rule)).
+    Candidates `supported`, `refuted`, `inconclusive`, and `invalid`, each with why; the decider is
+    the rule `evaluations.verdict`, its `hash` the sha256 of the experiment's normalized protocol
+    (`protocolHash`). Its inputs are the evaluation, the experiment, and the contract; `detail`
+    names the `experimentId`, `revision`, `evaluationId`, `identity`, `comparison`,
+    `horizonReached`, why it `ended`, each judged metric (its role, the oriented interval, the
+    threshold, and whether it `clears`, is `excluded`, or is `undecided`), each hard constraint and
+    whether it held, the `failedChecks`, and, when the caller gives one, the `netBenefit` bounds.
+    Example: [`decision.verdict.json`](../../schemas/examples/decision.verdict.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -448,9 +470,13 @@ guesses.
   policy that breaks one is refused when loaded. A set holds at most 101 policies: the studio's
   and 100 projects'.
 - The classes that always ask are the irreversible effects (`external-send`, `deploy`,
-  `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`), and
-  `remediation`. The schema refuses `auto` and `notify` for them, except `remediation`,
-  which it predates: a policy that gives `remediation` either is refused when loaded.
+  `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`),
+  `remediation`, and `promotion`. The schema refuses `auto` and `notify` for them, except
+  `remediation`, which it predates: a policy that gives `remediation` either is refused when
+  loaded. `promotion` joined `common@1`'s action classes with the feedback loop
+  ([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). No record named it
+  before, so the schema refuses it `auto` and `notify` from the start without tightening
+  anything, and the record stays `@1.0`.
 - A project policy constrains only the classes it names. The effective mode of a class is the
   strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
   looser project rule has no effect. For a class neither names, it is the stricter of the two
@@ -756,3 +782,101 @@ guesses.
   [`mcp-approvals.decide.json`](../../schemas/examples/mcp-approvals.decide.json),
   [`mcp-approvals.policy-propose.json`](../../schemas/examples/mcp-approvals.policy-propose.json),
   [`mcp-resources.usage.json`](../../schemas/examples/mcp-resources.usage.json).
+
+### `objective-contract`
+
+- The body of a `criteria` artifact: what "better" means for one application, versioned
+  ([PROP-0011](../proposals/0011-feedback-loop.md#objective-contracts)). It is written only on the
+  operator's approval (`producer.type: operator`); the registry refuses an experiment under a
+  contract written otherwise. A new version supersedes the old one (`lineage.supersedes`), and an
+  experiment pins `{id, version, hash, ref}`, `hash` being the sha256 of the contract's canonical
+  JSON.
+- `hardConstraints` always hold `invariants`, `egress`, and `autonomy-policy` (the schema checks
+  it), each naming the collector that validates it; the loop never changes them.
+- `metrics` says where each per-trial value comes from: `collector` (a registered collector),
+  `ledger` (the sum of the usage records the resource ledger attributes to the trial, in one of its
+  units), or `ratio` (the ratio of two other metrics' sums over cases; never a ratio of ratios).
+  Every metric the contract defines is needed: a trial missing one makes its evaluation `invalid`.
+- `primary` names one metric, its direction, and its `minimumPracticalEffect`; each guardrail has
+  either a `nonInferiorityMargin` on the paired difference or a `floor` on the candidate's own
+  level (a ceiling, for a metric that should decrease). There is no weights field and no other
+  `comparison` than `constrained-dominance`.
+- `protocol` declares the interval `confidence`, `minCases`, `repetitions`, the evidence
+  `partitions` (never `development`), and one method per metric: `sign-flip`, `bootstrap` (with
+  its `resamples`), or `bayesian` (with its `prior`). An experiment's protocol may only be
+  stricter ([experiments](../design/experiments.md#a-registration)).
+- The registry also refuses a contract whose primary or a guardrail has no method or no metric, whose
+  ratio reads an undefined metric or a ratio, or that guards the primary or one metric twice
+  (`contractProblems` in [`experiments-core`](../../packages/experiments-core/README.md)). Example:
+  [`objective-contract.review.json`](../../schemas/examples/objective-contract.review.json).
+
+### `hypothesis`
+
+- The body of a `criteria` artifact the experiment registry writes when it answers a registration:
+  one falsifiable claim about one target. It is not the research profile's
+  [`hypothesis-set`](#hypothesis-set-and-evidence-table), which frames one study.
+- `fingerprint` is computed by the registry, never taken from the caller: version 1 of the
+  [semantic key](../design/experiments.md#two-keys), each tag normalized to the vocabulary's
+  canonical tag (the tag itself or one of its aliases). A tag the vocabulary does not hold is
+  refused. The record keeps each tag as its author gave it.
+- `priorEvidence.experiments` names earlier experiments by id; naming one links it by hand, so the
+  registry treats it as related. `source.ref` names the research run, brainstorm decision, or
+  retrospective the claim came from; only the operator's own claim has none. Example:
+  [`hypothesis.worker-agnosticism.json`](../../schemas/examples/hypothesis.worker-agnosticism.json).
+
+### `experiment`
+
+- The body of a `plan` artifact the experiment registry writes when it answers a registration,
+  pre-registered or refused ([a registration](../design/experiments.md#a-registration)). It never
+  changes: a material change is a new `revision`, whose `supersedes` names the previous revision's
+  artifact (from revision 2 on, and only then).
+- `identity` is the exact identity (version 1) and `environment.hash` the sha256 of the normalized
+  environment, both computed by the registry ([two keys](../design/experiments.md#two-keys)); the
+  ids, the revision, the budget, the seed, and the prose are not part of the identity.
+- `registry` holds the answer, the experiments the registration cites (each resolved to its
+  pre-registered revision and artifact), the retry predicates it names as changed (each confirmed
+  by the records against a match), and why the earlier evidence may no longer apply.
+- Both arms are exact subjects with their versions (INV-5); the candidate's `provenance.runs` are
+  the runs that produced it, whose usage counts as its cost. `stopping.trials` is every case of the
+  partitions used, in both arms, at the protocol's repetitions.
+- `budget.funding` is the operator's approval of the funding round that pays for it (an
+  `approval@1.0` artifact, approved by the operator); every line a trial reserves (`perTrial`) has
+  a budget line, and the lines in the contract's cost unit stay within its ceiling.
+- `independence` names opaque provider families, compared for inequality only
+  ([ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)): maker, reviewers, and
+  model-based validators pairwise different, and no validator of a family an arm runs on. Example:
+  [`experiment.worker-agnosticism.json`](../../schemas/examples/experiment.worker-agnosticism.json).
+
+### `evaluation`
+
+- The body of an `evidence` artifact the evaluation engine writes once an evaluation ends
+  ([an evaluation](../design/evaluations.md#an-evaluation)); its envelope inputs are the experiment
+  and every trial's result artifacts. Measurements are observations: the verdict is a `verdict`
+  decision that cites this record.
+- `experiment.identity` is the identity of the exact experiment evaluated (INV-5). `trials` holds
+  every scheduled trial, in schedule order, each `completed`, `failed` (measured: a failed run is an
+  outcome), `lost` (started, its outcome unknown after a restart, never run again), or `skipped`
+  (the evaluation ended first), with the source of each measurement (a collector and its version,
+  or `ledger`) and why it is `invalid` when it is.
+- `integrity` always records the seven checks (`pins`, `seal`, `arms`, `families`, `metrics`,
+  `judge`, `trials`) and every value a trial lacks, with why. `analysis` is empty unless the
+  horizon was reached with every check passed: v1 takes one analysis, at the end; each
+  `difference` is candidate minus baseline as measured.
+- `cost` comes from the resource ledger's usage records only, per pool and unit, per phase, sunk or
+  projected; `arms` is descriptive. Example:
+  [`evaluation.inconclusive.json`](../../schemas/examples/evaluation.inconclusive.json).
+
+### `lesson`
+
+- The body of a `finding` artifact the experiment registry writes; its envelope inputs are the
+  verdicts and experiments it cites. Its `outcome` equals the outcome of every verdict it cites,
+  each verdict is about an experiment it cites, and each such experiment is closed with one of
+  those verdicts; the registry refuses it otherwise. Who may write one is open
+  ([PROP-0011](../proposals/0011-feedback-loop.md#open-questions), Q11); the envelope's producer
+  records who did.
+- `applicability` is the envelope it was observed in. Whether it still applies is computed when it
+  is read, never stored ([lessons](../design/experiments.md#lessons)): each `invalidatedBy`
+  predicate fires when what it names changed in the current environment or the environment no
+  longer shows it (a family's model version, a contract's or suite's version, a vocabulary
+  mechanism, a collector's version, the cost model), or when its `expiry` passed. Example:
+  [`lesson.inconclusive.json`](../../schemas/examples/lesson.inconclusive.json).

@@ -1,0 +1,86 @@
+{
+  "schema": "lesson@1.0",
+  "lessonId": "review-worker-agnostic-needs-cases",
+  "claim": "On two seeded subjects, the agent CLI review team could be shown neither non-inferior nor inferior to the website team on defects per cost: worker agnosticism on review needs more cases before it can be judged.",
+  "outcome": "inconclusive",
+  "evidence": {
+    "verdicts": [
+      "sha256:53c28df19960e15a3c970ad3cde3e66a55999f3821203812dbb9e5c4282dd62b"
+    ],
+    "experiments": [
+      {
+        "id": "review-worker-agnostic-1",
+        "revision": 1,
+        "ref": "sha256:107ceccbb012e9f95796d9ea5e938ebbdf184110b0ab99de8159e59a41d0842a"
+      }
+    ]
+  },
+  "applicability": {
+    "workload": "review.public-commits",
+    "families": [
+      {
+        "family": "chatgpt-web",
+        "observed": "site-2026-10-20"
+      },
+      {
+        "family": "gemini-web",
+        "observed": "site-2026-10-20"
+      },
+      {
+        "family": "codex",
+        "observed": "cli-2026-10"
+      },
+      {
+        "family": "antigravity",
+        "observed": "agy-1.4.6"
+      }
+    ],
+    "environment": "sha256:6215d1717962c3c6be69d0a015ba9983237ae0d9b48c011acefed1fa57c61a95",
+    "objective": {
+      "id": "review-workflow",
+      "version": 1
+    },
+    "suite": {
+      "id": "review-suite",
+      "version": 1
+    },
+    "date": "2026-11-02T14:00:00Z",
+    "confidence": "low"
+  },
+  "invalidatedBy": [
+    {
+      "kind": "model-version",
+      "family": "chatgpt-web",
+      "observed": "site-2026-10-20"
+    },
+    {
+      "kind": "model-version",
+      "family": "gemini-web",
+      "observed": "site-2026-10-20"
+    },
+    {
+      "kind": "model-version",
+      "family": "codex",
+      "observed": "cli-2026-10"
+    },
+    {
+      "kind": "model-version",
+      "family": "antigravity",
+      "observed": "agy-1.4.6"
+    },
+    {
+      "kind": "suite-version",
+      "id": "review-suite",
+      "version": 1
+    },
+    {
+      "kind": "measurement-defect",
+      "collector": "review.defect-match",
+      "version": "1.0.0"
+    },
+    {
+      "kind": "expiry",
+      "at": "2027-05-01T00:00:00Z"
+    }
+  ]
+}

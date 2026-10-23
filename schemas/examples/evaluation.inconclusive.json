@@ -1,0 +1,793 @@
+{
+  "schema": "evaluation@1.0",
+  "evaluationId": "review-worker-agnostic-1:r1",
+  "experiment": {
+    "id": "review-worker-agnostic-1",
+    "revision": 1,
+    "ref": "sha256:107ceccbb012e9f95796d9ea5e938ebbdf184110b0ab99de8159e59a41d0842a",
+    "identity": "sha256:555cbafe58fbebcf61026293cbd984fa2d5c4baf7f7859c30dec52dd067d0849"
+  },
+  "startedAt": "2026-11-02T09:00:00Z",
+  "ended": {
+    "reason": "horizon",
+    "at": "2026-11-02T13:40:00Z"
+  },
+  "horizonReached": true,
+  "trials": [
+    {
+      "index": 0,
+      "case": "self-build.gate-59962e5",
+      "partition": "regression",
+      "repetition": 2,
+      "arm": "baseline",
+      "state": "completed",
+      "task": "task-0",
+      "run": "run_b359aa8d94931b62",
+      "results": [
+        "sha256:51e8090d138d334db485ad3f5c5527dd260c9fca08df73a2ff53d551840cde83"
+      ],
+      "route": {
+        "workers": [
+          "website:chatgpt-main/standard",
+          "website:gemini-main/standard"
+        ],
+        "families": [
+          "chatgpt-web",
+          "gemini-web"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "website:chatgpt-main/standard": "site-2026-10-20",
+          "website:gemini-main/standard": "site-2026-10-20"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 4.5,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 2.5,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 14,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "case": "self-build.gate-59962e5",
+      "partition": "regression",
+      "repetition": 2,
+      "arm": "candidate",
+      "state": "completed",
+      "task": "task-1",
+      "run": "run_325fb97585f5a4f2",
+      "results": [
+        "sha256:93c997ec145fba029db65ce1a3e14b24df4717299e81cb46b7378093c741d68d"
+      ],
+      "route": {
+        "workers": [
+          "agents:codex-review",
+          "agents:antigravity-review"
+        ],
+        "families": [
+          "codex",
+          "antigravity"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "agents:codex-review": "cli-2026-10",
+          "agents:antigravity-review": "agy-1.4.6"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 4,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 3,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 0.75,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 2,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 9,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "case": "self-build.queue-4dd2d3c",
+      "partition": "regression",
+      "repetition": 2,
+      "arm": "baseline",
+      "state": "completed",
+      "task": "task-2",
+      "run": "run_c540a3e68903f45b",
+      "results": [
+        "sha256:3cb4f74bf9c5db42893cd9d155660f6abd8739c0a7ea52b5d33026f3dcffa246"
+      ],
+      "route": {
+        "workers": [
+          "website:chatgpt-main/standard",
+          "website:gemini-main/standard"
+        ],
+        "families": [
+          "chatgpt-web",
+          "gemini-web"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "website:chatgpt-main/standard": "site-2026-10-20",
+          "website:gemini-main/standard": "site-2026-10-20"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 3.5,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 1.5,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 14,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 1,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "case": "self-build.queue-4dd2d3c",
+      "partition": "regression",
+      "repetition": 2,
+      "arm": "candidate",
+      "state": "completed",
+      "task": "task-3",
+      "run": "run_ad65d1e79c4651fc",
+      "results": [
+        "sha256:acc31be1abc8ea057271a25ca258aaea2f7e21d8ab38513d87c1a79531cd4764"
+      ],
+      "route": {
+        "workers": [
+          "agents:codex-review",
+          "agents:antigravity-review"
+        ],
+        "families": [
+          "codex",
+          "antigravity"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "agents:codex-review": "cli-2026-10",
+          "agents:antigravity-review": "agy-1.4.6"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 3,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 2,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 0.75,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 2,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 9,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "case": "self-build.queue-4dd2d3c",
+      "partition": "regression",
+      "repetition": 1,
+      "arm": "candidate",
+      "state": "completed",
+      "task": "task-4",
+      "run": "run_a7ab3a2b759c8de6",
+      "results": [
+        "sha256:8a7ef78be01a08bcc9bcf47a357885cad40a0ebd3f9f095c317e3e8b3de6549d"
+      ],
+      "route": {
+        "workers": [
+          "agents:codex-review",
+          "agents:antigravity-review"
+        ],
+        "families": [
+          "codex",
+          "antigravity"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "agents:codex-review": "cli-2026-10",
+          "agents:antigravity-review": "agy-1.4.6"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 3.5,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 2.5,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 0.75,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 2,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 9,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "case": "self-build.queue-4dd2d3c",
+      "partition": "regression",
+      "repetition": 1,
+      "arm": "baseline",
+      "state": "completed",
+      "task": "task-5",
+      "run": "run_6657115fff749395",
+      "results": [
+        "sha256:a56dec0ba45cf31b36019737c44ff82e0f554c5c2f2e32510cfc9372e0c5135d"
+      ],
+      "route": {
+        "workers": [
+          "website:chatgpt-main/standard",
+          "website:gemini-main/standard"
+        ],
+        "families": [
+          "chatgpt-web",
+          "gemini-web"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "website:chatgpt-main/standard": "site-2026-10-20",
+          "website:gemini-main/standard": "site-2026-10-20"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 4,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 2,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 14,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 1,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "case": "self-build.gate-59962e5",
+      "partition": "regression",
+      "repetition": 1,
+      "arm": "candidate",
+      "state": "completed",
+      "task": "task-6",
+      "run": "run_54a068859594ab73",
+      "results": [
+        "sha256:1bf4df279f482c5d77e0a31d467de050ad616fbc364143411032ef6fb5ef1f21"
+      ],
+      "route": {
+        "workers": [
+          "agents:codex-review",
+          "agents:antigravity-review"
+        ],
+        "families": [
+          "codex",
+          "antigravity"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "agents:codex-review": "cli-2026-10",
+          "agents:antigravity-review": "agy-1.4.6"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 3.5,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 2.5,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 0.75,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 2,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 9,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "case": "self-build.gate-59962e5",
+      "partition": "regression",
+      "repetition": 1,
+      "arm": "baseline",
+      "state": "completed",
+      "task": "task-7",
+      "run": "run_d778a32bece13223",
+      "results": [
+        "sha256:569179c253049eea055d29d838e65bc053239f5e29e8835454f4b50d2126cb25"
+      ],
+      "route": {
+        "workers": [
+          "website:chatgpt-main/standard",
+          "website:gemini-main/standard"
+        ],
+        "families": [
+          "chatgpt-web",
+          "gemini-web"
+        ],
+        "sameFamily": false,
+        "observed": {
+          "website:chatgpt-main/standard": "site-2026-10-20",
+          "website:gemini-main/standard": "site-2026-10-20"
+        }
+      },
+      "measurements": [
+        {
+          "metric": "defects-found",
+          "value": 4,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "usage",
+          "value": 2,
+          "source": "ledger"
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "false-positives",
+          "value": 1,
+          "source": "review.defect-match@1.0.0"
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "source": "review.quote-validity@1.0.0"
+        },
+        {
+          "metric": "latency",
+          "value": 14,
+          "source": "trial.latency@1.0.0"
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "source": "trial.stalls@1.0.0"
+        }
+      ]
+    }
+  ],
+  "arms": [
+    {
+      "arm": "baseline",
+      "metrics": [
+        {
+          "metric": "defects-found",
+          "value": 4,
+          "cases": 2
+        },
+        {
+          "metric": "usage",
+          "value": 2,
+          "cases": 2
+        },
+        {
+          "metric": "defects-per-cost",
+          "value": 2,
+          "cases": 2
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 1,
+          "cases": 2
+        },
+        {
+          "metric": "false-positives",
+          "value": 1,
+          "cases": 2
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "cases": 2
+        },
+        {
+          "metric": "latency",
+          "value": 14,
+          "cases": 2
+        },
+        {
+          "metric": "stalls",
+          "value": 0.5,
+          "cases": 2
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "metrics": [
+        {
+          "metric": "defects-found",
+          "value": 3.5,
+          "cases": 2
+        },
+        {
+          "metric": "usage",
+          "value": 2.5,
+          "cases": 2
+        },
+        {
+          "metric": "defects-per-cost",
+          "value": 1.4,
+          "cases": 2
+        },
+        {
+          "metric": "blocking-recall",
+          "value": 0.75,
+          "cases": 2
+        },
+        {
+          "metric": "false-positives",
+          "value": 2,
+          "cases": 2
+        },
+        {
+          "metric": "quote-validity",
+          "value": 1,
+          "cases": 2
+        },
+        {
+          "metric": "latency",
+          "value": 9,
+          "cases": 2
+        },
+        {
+          "metric": "stalls",
+          "value": 0,
+          "cases": 2
+        }
+      ]
+    }
+  ],
+  "analysis": [
+    {
+      "metric": "defects-per-cost",
+      "method": {
+        "kind": "bootstrap",
+        "library": "statistics-f2",
+        "version": "1.0.0"
+      },
+      "cases": 2,
+      "difference": {
+        "estimate": -0.6,
+        "lower": -1.2,
+        "upper": 0.9
+      }
+    },
+    {
+      "metric": "blocking-recall",
+      "method": {
+        "kind": "sign-flip",
+        "library": "statistics-f2",
+        "version": "1.0.0"
+      },
+      "cases": 2,
+      "difference": {
+        "estimate": -0.25,
+        "lower": -0.25,
+        "upper": -0.25
+      },
+      "candidate": {
+        "estimate": 0.75,
+        "lower": 0.5,
+        "upper": 1
+      }
+    },
+    {
+      "metric": "false-positives",
+      "method": {
+        "kind": "sign-flip",
+        "library": "statistics-f2",
+        "version": "1.0.0"
+      },
+      "cases": 2,
+      "difference": {
+        "estimate": 1,
+        "lower": -1,
+        "upper": 1.5
+      }
+    },
+    {
+      "metric": "quote-validity",
+      "method": {
+        "kind": "sign-flip",
+        "library": "statistics-f2",
+        "version": "1.0.0"
+      },
+      "cases": 2,
+      "difference": {
+        "estimate": 0,
+        "lower": -0.05,
+        "upper": 0.05
+      }
+    },
+    {
+      "metric": "stalls",
+      "method": {
+        "kind": "sign-flip",
+        "library": "statistics-f2",
+        "version": "1.0.0"
+      },
+      "cases": 2,
+      "difference": {
+        "estimate": -0.25,
+        "lower": -0.5,
+        "upper": 0
+      }
+    }
+  ],
+  "hardConstraints": [
+    {
+      "id": "invariants",
+      "held": true,
+      "broken": []
+    },
+    {
+      "id": "egress",
+      "held": true,
+      "broken": []
+    },
+    {
+      "id": "autonomy-policy",
+      "held": true,
+      "broken": []
+    }
+  ],
+  "cost": {
+    "lines": [
+      {
+        "pool": "agents.codex",
+        "unit": "usd",
+        "amount": 5.5,
+        "phase": "evaluation",
+        "kind": "sunk"
+      },
+      {
+        "pool": "agents.antigravity",
+        "unit": "usd",
+        "amount": 4.5,
+        "phase": "evaluation",
+        "kind": "sunk"
+      },
+      {
+        "pool": "web.chatgpt",
+        "unit": "turns",
+        "amount": 12,
+        "phase": "evaluation",
+        "kind": "sunk"
+      },
+      {
+        "pool": "web.gemini",
+        "unit": "turns",
+        "amount": 12,
+        "phase": "evaluation",
+        "kind": "sunk"
+      }
+    ],
+    "operator": {
+      "interruptions": 1,
+      "adjudicationMinutes": 20
+    }
+  },
+  "integrity": {
+    "checks": [
+      {
+        "check": "pins",
+        "passed": true
+      },
+      {
+        "check": "seal",
+        "passed": true
+      },
+      {
+        "check": "arms",
+        "passed": true
+      },
+      {
+        "check": "families",
+        "passed": true
+      },
+      {
+        "check": "metrics",
+        "passed": true
+      },
+      {
+        "check": "judge",
+        "passed": true
+      },
+      {
+        "check": "trials",
+        "passed": true
+      }
+    ],
+    "missing": []
+  }
+}

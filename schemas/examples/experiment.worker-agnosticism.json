@@ -1,0 +1,238 @@
+{
+  "experimentId": "review-worker-agnostic-1",
+  "revision": 1,
+  "objectiveContract": {
+    "id": "review-workflow",
+    "version": 1,
+    "hash": "sha256:573a9fb0b1ed55a98e6f410a53c638a1924267fe4ef9b91fc6d399d6594146f2",
+    "ref": "sha256:8997a60ada0770c95f02234fd4bed1e9db7f1198dba0fba8a9f3c4c08ead0254"
+  },
+  "comparison": {
+    "type": "non-inferiority",
+    "margin": 0.5
+  },
+  "baseline": {
+    "subject": {
+      "type": "content",
+      "ref": "review-team:website",
+      "version": "sha256:9aeecbb93acef19c4ead7ca7e03b84de0b1d77fe438c5ed2197964ed4f1e0dfa"
+    },
+    "label": "a ChatGPT website and a Gemini website member"
+  },
+  "candidate": {
+    "subject": {
+      "type": "content",
+      "ref": "review-team:agent-cli",
+      "version": "sha256:49ba76c950287dd899b8303b55040822f87c68e09db32afa68404e56c721f0c8"
+    },
+    "label": "a Codex CLI and an Antigravity CLI member",
+    "provenance": {
+      "runs": []
+    }
+  },
+  "suite": {
+    "id": "review-suite",
+    "version": 1,
+    "partitions": [
+      {
+        "name": "regression",
+        "hash": "sha256:ea07e92516d348c850bdfd4048b343606122aee56ae606f83d5ec61a2460284d",
+        "cases": 2
+      }
+    ],
+    "used": [
+      "regression"
+    ]
+  },
+  "environment": {
+    "composition": "sha256:c34d8a8ae5275ae8bfc4d362d040ff424bee54fad2d9dfec370b5c3ae96b7b85",
+    "plugins": [
+      {
+        "name": "@tsuuanmi/system-workflow",
+        "version": "0.8.0",
+        "manifestDigest": "sha256:b3a17ef9d93179b661f8aefc1a89850f845d50f5d2358b20262727225889a1b1"
+      },
+      {
+        "name": "@tsuuanmi/system-profile-software-development",
+        "version": "0.8.0",
+        "manifestDigest": "sha256:8bd82d1495534997dcd7289307f0b243e37fa0c6f206605fe8b5fca7102b7e83"
+      }
+    ],
+    "workers": [
+      {
+        "arm": "baseline",
+        "worker": "website:chatgpt-main/standard",
+        "family": "chatgpt-web",
+        "observed": "site-2026-10-20"
+      },
+      {
+        "arm": "baseline",
+        "worker": "website:gemini-main/standard",
+        "family": "gemini-web",
+        "observed": "site-2026-10-20"
+      },
+      {
+        "arm": "candidate",
+        "worker": "agents:codex-review",
+        "family": "codex",
+        "observed": "cli-2026-10"
+      },
+      {
+        "arm": "candidate",
+        "worker": "agents:antigravity-review",
+        "family": "antigravity",
+        "observed": "agy-1.4.6"
+      }
+    ],
+    "templates": [
+      {
+        "name": "review",
+        "specHash": "sha256:84c40ff94553ada2d83dd5f0b6294fb1009268abfc57a3772511c9ba3f2232a4"
+      }
+    ],
+    "collectors": [
+      {
+        "id": "review.defect-match",
+        "version": "1.0.0"
+      },
+      {
+        "id": "review.quote-validity",
+        "version": "1.0.0"
+      },
+      {
+        "id": "trial.latency",
+        "version": "1.0.0"
+      },
+      {
+        "id": "trial.stalls",
+        "version": "1.0.0"
+      },
+      {
+        "id": "system.invariants",
+        "version": "1.0.0"
+      },
+      {
+        "id": "system.egress",
+        "version": "1.0.0"
+      },
+      {
+        "id": "system.autonomy-policy",
+        "version": "1.0.0"
+      }
+    ],
+    "statistics": {
+      "library": "statistics-f2",
+      "version": "1.0.0"
+    },
+    "workload": "review.public-commits",
+    "costModel": "price-table:2026-10",
+    "hash": "sha256:6215d1717962c3c6be69d0a015ba9983237ae0d9b48c011acefed1fa57c61a95"
+  },
+  "protocol": {
+    "confidence": 0.9,
+    "minCases": 2,
+    "repetitions": 2,
+    "partitions": [
+      "regression"
+    ],
+    "methods": [
+      {
+        "metric": "defects-per-cost",
+        "kind": "bootstrap",
+        "resamples": 10000
+      },
+      {
+        "metric": "blocking-recall",
+        "kind": "sign-flip"
+      },
+      {
+        "metric": "false-positives",
+        "kind": "sign-flip"
+      },
+      {
+        "metric": "quote-validity",
+        "kind": "sign-flip"
+      },
+      {
+        "metric": "stalls",
+        "kind": "sign-flip"
+      }
+    ]
+  },
+  "stopping": {
+    "rule": "fixed-horizon",
+    "trials": 8
+  },
+  "budget": {
+    "projectId": "proj-feedback-loop",
+    "milestone": "review-worker-agnostic-1",
+    "funding": "sha256:d7ce73d5a2b05fa3879462f415b5fb6a079cea75223fc4369cd293120ea31134",
+    "lines": [
+      {
+        "pool": "agents.codex",
+        "unit": "usd",
+        "amount": 40
+      },
+      {
+        "pool": "agents.antigravity",
+        "unit": "usd",
+        "amount": 40
+      },
+      {
+        "pool": "web.chatgpt",
+        "unit": "turns",
+        "amount": 60
+      },
+      {
+        "pool": "web.gemini",
+        "unit": "turns",
+        "amount": 60
+      }
+    ],
+    "perTrial": [
+      {
+        "pool": "agents.codex",
+        "unit": "usd",
+        "amount": 5
+      },
+      {
+        "pool": "agents.antigravity",
+        "unit": "usd",
+        "amount": 5
+      },
+      {
+        "pool": "web.chatgpt",
+        "unit": "turns",
+        "amount": 8
+      },
+      {
+        "pool": "web.gemini",
+        "unit": "turns",
+        "amount": 8
+      }
+    ]
+  },
+  "seed": "f7-2026-10-23",
+  "independence": {
+    "maker": "claude-code",
+    "reviewers": [
+      "chatgpt-web"
+    ],
+    "validators": []
+  },
+  "note": "Illustrative: the first experiment of PROP-0011 (F7); the statistics library (F2) and the suite (F5) are pending.",
+  "schema": "experiment@1.0",
+  "hypothesis": {
+    "id": "review-worker-agnostic",
+    "ref": "sha256:217945f357dbd3743301d2f1f55e1e839a4b39db5a4a18a8753dd3df28c49a06"
+  },
+  "registry": {
+    "answer": "NOVEL",
+    "cites": [],
+    "changed": []
+  },
+  "identity": {
+    "version": "1",
+    "hash": "sha256:555cbafe58fbebcf61026293cbd984fa2d5c4baf7f7859c30dec52dd067d0849"
+  }
+}

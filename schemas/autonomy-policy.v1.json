@@ -88,8 +88,8 @@
       },
       "allOf": [
         {
-          "description": "Irreversible actions and the investor's own decisions always ask, even unattended.",
-          "if": { "properties": { "actionClass": { "enum": ["external-send", "deploy", "delete-data", "spend", "charter", "funding", "policy-change"] } } },
+          "description": "Irreversible actions, the investor's own decisions, and a promotion always ask, even unattended.",
+          "if": { "properties": { "actionClass": { "enum": ["external-send", "deploy", "delete-data", "spend", "charter", "funding", "policy-change", "promotion"] } } },
           "then": { "properties": { "mode": { "enum": ["ask", "forbid"] } } }
         }
       ],

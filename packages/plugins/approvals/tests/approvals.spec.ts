@@ -110,6 +110,7 @@ describe('configuration', () => {
       [[STUDIO, { ...PROJECT, id: 'studio' }], /^policy studio: another policy has the same id$/],
       // What the schema itself refuses: an irreversible class that runs on its own, a default that does not fail closed.
       [[{ ...STUDIO, rules: [{ actionClass: 'deploy', mode: 'auto' }] }], /^policy studio: autonomy-policy@1\.0: /],
+      [[{ ...STUDIO, rules: [{ actionClass: 'promotion', mode: 'notify' }] }], /^policy studio: autonomy-policy@1\.0: /],
       [[{ ...STUDIO, default: 'auto' }], /^policy studio: autonomy-policy@1\.0: /],
       [[{ ...PROJECT, scope: 'studio' }], /^policy p1\.policy: autonomy-policy@1\.0: /],
       ['studio', /^policies must be a list of autonomy-policy@1\.0 records$/],
@@ -164,7 +165,7 @@ describe('configuration', () => {
     const { ctx } = await boot()
     const { policies, effective } = await ctx.approvals.policy('p1')
     expect(policies.map((p) => p.id)).toEqual(['studio', 'p1.policy'])
-    expect(effective.map((e) => e.actionClass)).toEqual(['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change'])
+    expect(effective.map((e) => e.actionClass)).toEqual(['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion'])
     policies[0]!.rules.length = 0
     expect((await ctx.approvals.policy()).policies[0]!.rules).toHaveLength(STUDIO.rules.length)
     // No project policy: the studio's alone.

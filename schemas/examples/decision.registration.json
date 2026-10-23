@@ -1,0 +1,46 @@
+{
+  "schema": "decision@1.7",
+  "decisionType": "registration",
+  "question": "Is experiment review-worker-agnostic-1 revision 1 pre-registered?",
+  "inputs": [
+    "sha256:107ceccbb012e9f95796d9ea5e938ebbdf184110b0ab99de8159e59a41d0842a",
+    "sha256:217945f357dbd3743301d2f1f55e1e839a4b39db5a4a18a8753dd3df28c49a06"
+  ],
+  "candidates": [
+    {
+      "option": "preregistered",
+      "selected": true,
+      "reasons": [
+        "NOVEL: no recorded experiment has its identity, its fingerprint, or its target and mechanism, and none is linked to it"
+      ]
+    },
+    {
+      "option": "refused",
+      "selected": false,
+      "reasons": [
+        "not refused: NOVEL: no recorded experiment has its identity, its fingerprint, or its target and mechanism, and none is linked to it"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "experiments.registry",
+    "version": "1",
+    "hash": "sha256:df8289c11e199d976aaa0c6d7d08bb1170f8a80d9e80073fb92eaab97ba943d9"
+  },
+  "outcome": {
+    "option": "preregistered",
+    "detail": {
+      "experimentId": "review-worker-agnostic-1",
+      "revision": 1,
+      "answer": "NOVEL",
+      "identity": "sha256:555cbafe58fbebcf61026293cbd984fa2d5c4baf7f7859c30dec52dd067d0849",
+      "fingerprint": "sha256:e0cebe240cc7d131819188c47d03d3ed9a45e478801c15fd88d16d34b44f546a",
+      "cites": [],
+      "changed": [],
+      "matches": []
+    }
+  },
+  "deterministic": true,
+  "rationale": "The registry answers from the records only: the exact identity refuses a repeat; a fingerprint or a link asks for citations and, for an equal fingerprint, a retry predicate the records confirm (PROP-0011)."
+}

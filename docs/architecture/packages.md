@@ -30,6 +30,8 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
 | [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `libs` |
+| [evaluations-core](../../packages/evaluations-core/README.md) | orchestration | defines `evaluations` | — | — | `experiments-core`, `libs` |
+| [experiments-core](../../packages/experiments-core/README.md) | orchestration | defines `experiments` | — | — | `libs` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
@@ -310,6 +312,8 @@ flowchart TB
     board_core["board-core<br/>defines board"]
     digest["digest<br/>ctx.digests"]
     digest_core["digest-core<br/>defines digests"]
+    evaluations_core["evaluations-core<br/>defines evaluations"]
+    experiments_core["experiments-core<br/>defines experiments"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
     workflow["workflow<br/>ctx.workflow"]
   end
@@ -378,6 +382,7 @@ flowchart TB
   digest --> workers_core
   display_virtual --> provider_core
   egress --> provider_core
+  evaluations_core --> experiments_core
   gateway_anthropic --> gateway_core
   gateway_anthropic --> gateway_turns
   gateway_responses --> gateway_core

@@ -76,6 +76,13 @@ accepted/implemented -> superseded
   and one multi-day pilot project measured against a baseline. Deep Research is future work;
   website and API Worker work follows Base.
 
+- [PROP-0011: Feedback loop](0011-feedback-loop.md), **proposed**. Research, hypothesis,
+  experiment, evaluation, and lesson as records in the ledger of record; a deterministic core
+  evaluation engine under versioned objective contracts, offline and paired, with INCONCLUSIVE
+  allowed; maker, reviewer, and evaluator of different provider families; a registry that never
+  redoes an experiment blindly; promotion through the approval queue. First loop: worker
+  agnosticism on the `review` template.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.

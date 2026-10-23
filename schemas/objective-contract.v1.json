@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:objective-contract:v1",
+  "title": "Objective contract",
+  "description": "Body of a `criteria` artifact: what \"better\" means for one application, versioned (PROP-0011, design/evaluations.md). Hard constraints, guardrails with a non-inferiority margin or an absolute floor, one primary metric, and cost, compared by constrained dominance only: the record has no weights field. Written only on the operator's approval; an experiment pins its version and hash.",
+  "type": "object",
+  "required": ["schema", "contractId", "version", "application", "metrics", "hardConstraints", "primary", "guardrails", "cost", "comparison", "protocol"],
+  "properties": {
+    "schema": { "const": "objective-contract@1.0" },
+    "contractId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "version": {
+      "description": "Changes with every change of the contract; the next version supersedes this one.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "application": {
+      "description": "The project charter or workflow profile that references the contract.",
+      "type": "object",
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": { "enum": ["project", "workflow-profile"] },
+        "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "description": "Every metric the contract names, and where its per-trial value comes from: a registered collector, the resource ledger, or a ratio of two others' sums over cases.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/metric" }
+    },
+    "hardConstraints": {
+      "description": "Named validators every trial must pass; the invariants, egress, and the autonomy policy are always among them. The loop never changes them.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "validator"],
+        "properties": {
+          "id": { "$ref": "#/$defs/name" },
+          "statement": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+          "validator": {
+            "description": "The collector that validates it, by id.",
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+          }
+        },
+        "additionalProperties": false
+      },
+      "allOf": [
+        { "contains": { "type": "object", "properties": { "id": { "const": "invariants" } }, "required": ["id"] } },
+        { "contains": { "type": "object", "properties": { "id": { "const": "egress" } }, "required": ["id"] } },
+        { "contains": { "type": "object", "properties": { "id": { "const": "autonomy-policy" } }, "required": ["id"] } }
+      ]
+    },
+    "primary": {
+      "description": "The one primary metric, its direction, and the smallest effect worth having: a superiority comparison clears only above it.",
+      "type": "object",
+      "required": ["metric", "direction", "minimumPracticalEffect"],
+      "properties": {
+        "metric": { "$ref": "#/$defs/name" },
+        "direction": { "$ref": "#/$defs/direction" },
+        "minimumPracticalEffect": { "type": "number", "minimum": 0, "maximum": 1000000000 }
+      },
+      "additionalProperties": false
+    },
+    "guardrails": {
+      "description": "Metrics the candidate must not harm: each non-inferior within its margin (on the paired difference), or at its absolute floor (on the candidate's own level; a ceiling for a metric that should decrease).",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["metric", "direction"],
+        "properties": {
+          "metric": { "$ref": "#/$defs/name" },
+          "direction": { "$ref": "#/$defs/direction" },
+          "nonInferiorityMargin": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+          "floor": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 }
+        },
+        "oneOf": [
+          { "required": ["nonInferiorityMargin"], "properties": { "nonInferiorityMargin": true }, "not": { "required": ["floor"], "properties": { "floor": true } } },
+          { "required": ["floor"], "properties": { "floor": true }, "not": { "required": ["nonInferiorityMargin"], "properties": { "nonInferiorityMargin": true } } }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "cost": {
+      "description": "The cost metrics, their unit, and the ceiling an experiment's budget may not pass.",
+      "type": "object",
+      "required": ["metrics", "unit", "ceiling"],
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "unit": { "$ref": "#/$defs/unit" },
+        "ceiling": { "type": "number", "minimum": 0, "maximum": 1000000000000 }
+      },
+      "additionalProperties": false
+    },
+    "comparison": {
+      "description": "Constrained dominance: every hard constraint holds, every guardrail is non-inferior, and the primary meets the comparison its experiment declares. Never one weighted score.",
+      "const": "constrained-dominance"
+    },
+    "protocol": { "$ref": "#/$defs/protocol" },
+    "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "name": {
+      "description": "A metric, constraint, or vocabulary name: lowercase words joined by hyphens, optionally dotted.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}(\\.[a-z0-9-]{1,64}){0,3}$"
+    },
+    "unit": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "direction": {
+      "description": "Which way is better: `increase` (higher is better) or `decrease` (lower is better).",
+      "enum": ["increase", "decrease"]
+    },
+    "metric": {
+      "type": "object",
+      "required": ["id", "unit", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "unit": { "$ref": "#/$defs/unit" },
+        "source": {
+          "description": "`collector`: the per-trial value a registered collector measures; `ledger`: the per-trial sum of the usage records the resource ledger attributes to the trial, in one of its units; `ratio`: the ratio of the sums of two other metrics over cases.",
+          "enum": ["collector", "ledger", "ratio"]
+        },
+        "collector": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "ledgerUnit": { "enum": ["tokens", "usd", "turns", "runs", "minutes"] },
+        "numerator": { "$ref": "#/$defs/name" },
+        "denominator": { "$ref": "#/$defs/name" },
+        "description": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "collector" } } },
+          "then": { "required": ["collector"], "properties": { "collector": true }, "not": { "anyOf": [{ "required": ["ledgerUnit"], "properties": { "ledgerUnit": true } }, { "required": ["numerator"], "properties": { "numerator": true } }, { "required": ["denominator"], "properties": { "denominator": true } }] } }
+        },
+        {
+          "if": { "properties": { "source": { "const": "ledger" } } },
+          "then": { "required": ["ledgerUnit"], "properties": { "ledgerUnit": true }, "not": { "anyOf": [{ "required": ["collector"], "properties": { "collector": true } }, { "required": ["numerator"], "properties": { "numerator": true } }, { "required": ["denominator"], "properties": { "denominator": true } }] } }
+        },
+        {
+          "if": { "properties": { "source": { "const": "ratio" } } },
+          "then": { "required": ["numerator", "denominator"], "properties": { "numerator": true, "denominator": true }, "not": { "anyOf": [{ "required": ["collector"], "properties": { "collector": true } }, { "required": ["ledgerUnit"], "properties": { "ledgerUnit": true } }] } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "protocol": {
+      "description": "How an experiment under the contract is analysed, declared before its first trial. An experiment's protocol may only be stricter: a higher confidence, more cases, more repetitions, and the same method for every metric.",
+      "type": "object",
+      "required": ["confidence", "minCases", "repetitions", "partitions", "methods"],
+      "properties": {
+        "confidence": {
+          "description": "The level of every interval.",
+          "type": "number",
+          "exclusiveMinimum": 0.5,
+          "maximum": 0.999
+        },
+        "minCases": {
+          "description": "The fewest cases, over the partitions used, an experiment may have.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "repetitions": {
+          "description": "Trials per case and arm.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "partitions": {
+          "description": "The partitions whose cases are evidence; the development partition never is.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["regression", "held-out"] }
+        },
+        "methods": {
+          "description": "One method per metric, named in advance. The unit of analysis is the case.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/method" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "method": {
+      "type": "object",
+      "required": ["metric", "kind"],
+      "properties": {
+        "metric": { "$ref": "#/$defs/name" },
+        "kind": {
+          "description": "`sign-flip`: an exact or permutation test on paired differences per case; `bootstrap`: an interval over cases, resampled by case; `bayesian`: a posterior under the recorded prior.",
+          "enum": ["sign-flip", "bootstrap", "bayesian"]
+        },
+        "resamples": { "type": "integer", "minimum": 100, "maximum": 1000000 },
+        "prior": {
+          "description": "For `bayesian`: the prior, recorded in full.",
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": { "anyOf": [{ "type": "number" }, { "type": "string", "maxLength": 200 }] }
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "bayesian" } } }, "then": { "required": ["prior"], "properties": { "prior": true } } },
+        { "if": { "properties": { "kind": { "const": "bootstrap" } } }, "then": { "required": ["resamples"], "properties": { "resamples": true } } }
+      ],
+      "additionalProperties": false
+    }
+  }
+}
