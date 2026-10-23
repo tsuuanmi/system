@@ -1,0 +1,144 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
+import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { attempt, bootPilot, charter, decide, FIXED, MEASURED, ORIGINAL, operatorAccepts, type Pilot, propose, queued, reported, TESTS, until } from './pilot.ts'
+
+// The algorithm-development template end to end (PROP-0010 B8): one attempt of a board task, over
+// the real board, approval queue, ledger, digests, and agents source with a worktree per run; only
+// the agent runtime is scripted.
+vi.setConfig({ testTimeout: 120_000 })
+
+const pilots: Pilot[] = []
+afterEach(async () => {
+  while (pilots.length) await pilots.pop()!.dispose()
+})
+const boot = async (...args: Parameters<typeof bootPilot>): Promise<Pilot> => {
+  const pilot = await bootPilot(...args)
+  pilots.push(pilot)
+  return pilot
+}
+
+/** The main working tree as the operator left it: on main, at its commit, clean. */
+const untouched = (pilot: Pilot): void => {
+  expect(pilot.git(pilot.repo, 'symbolic-ref', '--short', 'HEAD')).toBe('main')
+  expect(pilot.git(pilot.repo, 'rev-parse', 'HEAD')).toBe(pilot.head)
+  expect(pilot.git(pilot.repo, 'status', '--porcelain')).toBe('')
+  expect(readFileSync(join(pilot.repo, 'calc.py'), 'utf8')).toBe(ORIGINAL)
+}
+
+describe('the algorithm-development template (PROP-0010 B8)', () => {
+  it('runs one attempt of a board task: develop in the run\'s worktree, an exact-subject review whose fix waits on the approval queue, validation confined to the worktree last, then the result held for the operator with its digest (REQ-WF-5, REQ-WF-9, REQ-WRK-6, INV-15)', async () => {
+    const pilot = await boot({ changes: 1 })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    expect(task.state).toBe('ready')
+    const run = await attempt(ctx, task.taskId)
+    expect(run.task).toMatchObject({ taskId: task.taskId })
+
+    // The review asked for changes with a blocking finding: the fix waits on one request in the queue, on its exact plan and subject.
+    const waiting = await queued(ctx, run.runId)
+    expect(waiting.nodeId).toBe('review:1:approve:1')
+    const request = (await ctx.approvals.get(waiting.approvalRequest))!
+    const reviewed = /^Subject: (\S+)$/m.exec(agent.runs.find((r) => r.role === 'review')!.prompt)![1]!
+    expect(request).toMatchObject({
+      action: { class: 'remediation' }, requester: { component: 'workflow', runId: run.runId },
+      subject: { type: 'artifact', ref: waiting.plan, version: reviewed },
+    })
+    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'review'])
+    await decide(ctx, request.requestId)
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    expect(done.nodes.map((n) => [n.nodeId, n.state])).toEqual([
+      ['develop:1', 'COMPLETED'], ['review:1', 'COMPLETED'], ['review:1:approve:1', 'COMPLETED'], ['review:1:fix:1', 'COMPLETED'], ['review:1:review:2', 'COMPLETED'], ['validate:1', 'COMPLETED'],
+    ])
+
+    // Every step of the run worked in the run's own worktree, on its branch; the repository's tree is untouched.
+    const work = agent.runs.filter((r) => r.role !== 'digest')
+    expect(work.map((r) => [r.role, r.sandbox])).toEqual([
+      ['develop', 'workspace-write'], ['review', 'read-only'], ['fix', 'workspace-write'], ['review', 'read-only'], ['validate', 'workspace-write'],
+    ])
+    const worktree = work[0]!.workspace
+    expect(basename(worktree)).toBe(run.runId)
+    for (const r of work) expect(r.workspace).toBe(worktree)
+    expect(pilot.git(worktree, 'symbolic-ref', '--short', 'HEAD')).toBe(`system/run/${run.runId}`)
+    expect(readFileSync(join(worktree, 'calc.py'), 'utf8')).toBe(FIXED)
+    expect(existsSync(join(worktree, 'test_calc.py'))).toBe(true)
+    untouched(pilot)
+
+    // The reviewer read the task and the exact change, never the developer's answer; the re-review read the fixed subject.
+    const reviews = work.filter((r) => r.role === 'review')
+    expect(reviews[0]!.prompt).toContain('Goal: Make add() add, with its tests passing')
+    expect(reviews[0]!.prompt).toContain('+    return a + b')
+    expect(reviews[0]!.prompt).not.toContain('Hypothesis:')
+    const final = captureGitSubject(worktree)!.subject
+    expect(/^Subject: (\S+)$/m.exec(reviews[1]!.prompt)![1]).toBe(subjectId(final))
+
+    // Validation came last, on the fixed change: its listed command ran as the workspace write the policy judges it, asking no one.
+    expect(agent.calls.filter((c) => c.role === 'validate')).toEqual([{ role: 'validate', tool: 'Bash', verdict: { decision: 'allow' } }])
+    expect(work.find((r) => r.role === 'validate')!.prompt).toContain('The request: Fix add() so it adds')
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class).sort()).toEqual(['charter', 'remediation'])
+
+    // The result is the validation's report on the exact subject the task writes; the review check passed on it.
+    const held = await until(async () => {
+      const t = await ctx.board.task(task.taskId)
+      return t?.result?.digest ? t : undefined
+    }, 'the digest on the task\'s result')
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] } })
+    expect(held.result!.subject).toEqual({ type: 'git-head', ref: pilot.head, version: final.version })
+    const [validation] = held.result!.artifacts
+    expect((ctx.artifacts.get(validation!)!.body as { text: string; workspace: string }).text).toContain(MEASURED)
+    const acceptance = ctx.artifacts.get(done.task!.outcome!.decision!)!.body as { decider: { id: string }; outcome: { option: string; detail: { checks: Record<string, boolean> } } }
+    expect(acceptance).toMatchObject({ decider: { id: 'workflow.task-acceptance' }, outcome: { option: 'accept', detail: { checks: { review: true } } } })
+
+    // The digest cites the validation's report, quoted verbatim.
+    const digest = ctx.artifacts.get(held.result!.digest!)!.body as { sources: ArtifactRef[]; claims: Array<{ citation: { quote: string } }> }
+    expect(digest.sources).toEqual(held.result!.artifacts)
+    expect(digest.claims[0]!.citation.quote).toBe(`${TESTS}: exit 0`)
+
+    // Every run was metered on the pool, and the operator's acceptance on /ui makes the task done.
+    expect((await ctx.resources.usage({ pool: 'plan.agents' })).records).toHaveLength(agent.runs.length)
+    expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
+  })
+
+  it('admits validation only on a Worker whose commands are proven confined: without one, it fails with nothing sent, and the board counts the attempt (ADR-0038, INV-2)', async () => {
+    const pilot = await boot({ executes: false })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    const failed = await reported(ctx, run.runId)
+    expect(failed.status).toBe('failed')
+    expect(failed.nodes.find((n) => n.nodeId === 'validate:1')).toMatchObject({ state: 'FAILED' })
+    // Developed and reviewed; the validation was never started, on any Worker.
+    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'review'])
+    const explained = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'validate:1')!
+    expect(JSON.stringify(explained)).toContain('validate')
+    // The failure is the attempt's: reported to the board, which readies the next one through its gate.
+    expect(failed.task).toMatchObject({ outcome: { status: 'reconciled' } })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    untouched(pilot)
+  })
+
+  it('denies a validation command the policy does not list, asking no one: the validation reports it not run, and the result goes to the operator so (approvals: a Worker\'s tool calls)', async () => {
+    const pilot = await boot({ validate: 'npm run bench' })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() fast')
+    const run = await attempt(ctx, task.taskId)
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    // The validation runs in a conversation of its own, which no later run continues: a call the policy
+    // asks about is denied there, and nothing is queued that no run could use.
+    const denied = agent.calls.find((c) => c.role === 'validate')!
+    expect(denied).toMatchObject({ tool: 'Bash', verdict: { decision: 'deny', reason: expect.stringContaining('session') } })
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class)).toEqual(['charter'])
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied', runId: run.runId })).toHaveLength(1)
+    // The report says what was not measured, and the operator reads it before accepting anything.
+    const held = (await ctx.board.task(task.taskId))!
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+    expect((ctx.artifacts.get(held.result!.artifacts[0]!)!.body as { text: string }).text).toContain('npm run bench: not run')
+  })
+})

@@ -31,7 +31,9 @@ async function boot() {
 }
 
 const { profileConformance } = await import('../../workflow/conformance/profiles.ts')
-profileConformance('software-development', async () => ({ ctx: await boot(), dispose: async () => undefined }), SoftwareDevelopment, { 'agent-review': SoftwareDevelopment.AGENT_REVIEW })
+profileConformance('software-development', async () => ({ ctx: await boot(), dispose: async () => undefined }), SoftwareDevelopment, {
+  'agent-review': SoftwareDevelopment.AGENT_REVIEW, 'algorithm-development': SoftwareDevelopment.ALGORITHM_DEVELOPMENT,
+})
 
 describe('the profiles seam (REQ-WF-9)', () => {
   it('checks a contributed template like a configured one, and refuses a second one by the same name', async () => {
