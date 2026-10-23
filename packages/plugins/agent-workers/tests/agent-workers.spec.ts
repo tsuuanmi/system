@@ -11,7 +11,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { captureGitSubject, SchemaRegistry, subjectId } from '@tsuuanmi/system-libs'
+import { captureGitSubject, SchemaRegistry, startPrompt, subjectId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { LimitState, PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
@@ -99,8 +99,9 @@ function chatWorker(ctx: Context): string[] {
       describe: async () => [{ schema: 'capability-descriptor@1.0', worker: 'chat:a', provider: 'test', tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote',
         capabilities: [{ capability: 'reason', evidence: { kind: 'conformance', at: '2026-10-12T00:00:00Z' } }], state: 'ready', observedAt: '2026-10-12T00:00:00Z' }],
       start: (request) => {
-        plans.push(request.prompt)
-        const text = request.prompt.includes('Plan the software change')
+        const prompt = startPrompt(request, (ref) => ctx.artifacts.get(ref)).prompt
+        plans.push(prompt)
+        const text = prompt.includes('Plan the software change')
           ? '```json\n' + JSON.stringify({ confidence: 'high', nodes: [
             { id: 'implement', objective: 'Implement', prompt: 'add the flag', capabilities: ['develop', 'local-data'], tier: 'standard' },
             { id: 'review', objective: 'Review', prompt: 'review the flag change', capabilities: ['review', 'local-data'], tier: 'standard', dependsOn: ['implement'] },

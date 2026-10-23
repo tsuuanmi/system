@@ -20,7 +20,7 @@ import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, contentId, sha256 } from '@tsuuanmi/system-libs'
-import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
@@ -422,7 +422,8 @@ export class Turns extends Service {
    * first use and stays on its account.
    */
   ask(request: WorkerStart): TurnView {
-    const prompt = request.prompt
+    // A brief is rendered here, at start, its pointers resolved to their artifacts' text (INV-12).
+    const { prompt, classification } = promptOfStart(request, (ref) => this.ctx.artifacts.get(ref))
     if (!prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
     const { account, tier } = parseWebsiteWorker(request.worker)
     const requestKey = sha256(`ask\0${request.key}`)
@@ -454,7 +455,7 @@ export class Turns extends Service {
         acceptance: requirement.acceptance.contract, objective: requirement.objective, submitted_at: null, prompt, status: 'queued',
         account, worker: request.worker, binding: null, answer: null, answer_artifact: null,
         route_decision: request.decisions.route, tier_decision: request.decisions.tier, egress_decision: null,
-        classification: requirement.data.classification, cancel_requested_at: null, error: null, created_at: now(), updated_at: now(),
+        classification, cancel_requested_at: null, error: null, created_at: now(), updated_at: now(),
       }
       db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, objective, classification, prompt, status,
         account, worker, route_decision, tier_decision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`)

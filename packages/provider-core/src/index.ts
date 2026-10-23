@@ -1,6 +1,7 @@
 export { compareWords, sameWords, type WordsComparison } from './answer-text.ts'
 export { type CompletedResponse, type CompletionSnapshot, type ProviderProgressEvent, type ProviderProgressKind, type WaitOptions, waitForStableCompletion } from './completion.ts'
 export { type Disposition, ProviderError, type ProviderErrorKind, abortReason, dispositionOf, toProviderError } from './errors.ts'
+export { promptOfStart } from './start.ts'
 export { type Reconciliation, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, promptShown, reconcileTurn, responseHash } from './reconcile.ts'
 export { type ProviderLease, ProviderScheduler } from './scheduler.ts'
 export { Display, type DisplayMode, type PreparedDisplay } from './display.ts'

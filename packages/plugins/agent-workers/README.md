@@ -111,6 +111,14 @@ The **`agents` Worker source**: agent runtimes as Workers
     fails before it starts.
 
   Without a `pool`, runs are not metered, whether a ledger is loaded or not.
+- **Briefs** ([briefs](../../../docs/design/workflow-engine.md#briefs)): a run started with a
+  `brief@1.x` renders its prompt from it at start (the default text rendering, each pointer
+  replaced by its artifact's text); one that cannot be rendered is refused as `invalid_input`.
+  A resumed session takes the brief as its next message. The source declares each Worker's
+  confinement for its briefs (`sandbox`): the configured sandbox, in the run's workspace (with
+  `worktreePerRun`, the workflow run's worktree, named before it exists), commands only where the
+  runtime proved `executes` in a writable workspace, network as the egress policy and the tool
+  gate allow.
 - **Egress (INV-12):** the agent runs on this machine, but its model is remote.
   So before a run starts, its prompt is checked by `ctx.egress` with
   `workerClass: 'agent'`. The decision is part of the run's decision chain (as for website

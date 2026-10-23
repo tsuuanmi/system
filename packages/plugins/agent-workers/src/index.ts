@@ -26,10 +26,10 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { captureGitSubject, type ContentId, dshHome, sha256 } from '@tsuuanmi/system-libs'
-import { ProviderError, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
-import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart } from '@tsuuanmi/system-workers-core'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
@@ -217,6 +217,7 @@ export class AgentWorkers extends Service {
       },
       wait: (id, timeoutMs) => this.wait(id, timeoutMs),
       cancel: (id) => this.cancel(id),
+      sandbox: (worker, runId) => this.sandboxOf(worker, runId),
       affinity: (sessionId) => {
         const session = this.ctx.store.db.prepare('SELECT worker FROM agent_sessions WHERE session_id = ?').get(sessionId) as { worker: string } | undefined
         return session ? [session.worker] : undefined
@@ -374,18 +375,34 @@ export class AgentWorkers extends Service {
     return evidence
   }
 
+  /**
+   * The confinement a run on an agent Worker is held to, for its brief (brief@1.x `sandbox`): the
+   * configured sandbox in the workspace the run works in (with `worktreePerRun`, the workflow run's
+   * own worktree), commands only where the runtime proved it confines them (`executes`) and the
+   * workspace is writable, and network only as the egress policy and the run's tool gate allow.
+   */
+  private sandboxOf(id: string, runId: string | undefined): WorkerSandbox | undefined {
+    const worker = this.workers.get(id)
+    if (!worker) return undefined
+    const workspace = worker.worktreePerRun && runId !== undefined && RUN_ID.test(runId) ? this.worktrees.pathOf(worker.workspace, runId) : worker.workspace
+    const executes = this.probes.get(worker.runtime)?.evidence.executes === true
+    return { mode: worker.sandbox, workspace, network: 'allow-list', commands: worker.sandbox === 'workspace-write' && executes }
+  }
+
   /** Accept a run on an admitted agent Worker: durable at once, idempotent by key. */
   private start(request: WorkerStart): WorkerExecution {
     const worker = this.workers.get(request.worker)
     if (!worker) throw new ProviderError('invalid_input', `${request.worker} is not an agent Worker`)
-    if (!request.prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
+    // A brief is rendered here, at start, its pointers resolved to their artifacts' text (INV-12).
+    const { prompt, classification } = promptOfStart(request, (ref) => this.ctx.artifacts.get(ref))
+    if (!prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
     // It may name a branch and a directory (a worktree per run): letters, digits, `_`, and `-` only.
     if (request.runId !== undefined && !RUN_ID.test(request.runId)) throw new ProviderError('invalid_input', `run id ${JSON.stringify(request.runId)} must match ${RUN_ID}`)
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
       if (existing) {
-        if (existing.prompt !== request.prompt) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt')
+        if (existing.prompt !== prompt) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt')
         return execution(existing)
       }
       if (request.sessionId) {
@@ -394,8 +411,8 @@ export class AgentWorkers extends Service {
         if (bound !== request.worker) throw new ProviderError('invalid_input', `session ${request.sessionId} belongs to ${bound}, not ${request.worker}`)
       }
       const row: RunRow = {
-        run_id: newId(), request_key: key, worker: request.worker, session_id: request.sessionId ?? null, prompt: request.prompt,
-        classification: request.requirement.data.classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
+        run_id: newId(), request_key: key, worker: request.worker, session_id: request.sessionId ?? null, prompt,
+        classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
         workflow_run_id: request.runId ?? null, created_at: now(), updated_at: now(),
       }
       db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, created_at, updated_at)
