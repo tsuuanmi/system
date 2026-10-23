@@ -276,7 +276,13 @@ second execution path (INV-1).
     member's own earlier answers. A member that cannot continue its
     conversation fails its step; it is never given a fresh one.
   - Members route one at a time, each avoiding every account another member
-    holds (REQ-TEAM-4). A member that finds no other provider family fails as
+    holds (REQ-TEAM-4): every sibling of a Worker another member holds, and
+    every Worker whose descriptor names the same account, so two roles of one
+    agent home are one account. A member whose held account cannot be told
+    apart (no source describes the held Worker or names its siblings, or its
+    siblings name different accounts) fails as `config_error` with that cause,
+    before anything is sent, even with `allowSameFamily`
+    ([distinct accounts](../../../docs/design/teams.md#distinct-accounts)). A member that finds no other provider family fails as
     `config_error`, naming how many families the team needs and how many are
     ready.
   - When the run finishes, its members' leftover mail is acknowledged.
@@ -537,7 +543,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.4 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.5 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board and approval queue among them), with only Worker execution scripted:
   - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
@@ -557,6 +563,9 @@ second execution path (INV-1).
     on it; a reset past `maxLimitWaitHours` fails it; an unsent challenge moves only to another
     group, never to another account of its own, and fails with none; an unsent overload retries
     on its account; under pooled, the failover to another account of the group stands;
+  - since 1.5 (REQ-TEAM-4), a team member never takes a sibling of a Worker another member holds,
+    even of another family, and takes a Worker of another account; a member whose held Worker's
+    siblings name different accounts is refused, `config_error`, with nothing sent;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

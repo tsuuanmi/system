@@ -131,7 +131,10 @@
   synthesis step produces the strongest-supported result and cites the member
   evidence it relies on.
 - **REQ-TEAM-4** Members of an independence-sensitive team are backed by distinct
-  accounts. When the operator allows one provider family, members first keep distinct
+  accounts. Every Worker on one account (the tiers of a website account, every role
+  of an agent runtime's home) counts as that one account, and a member whose held
+  account cannot be told apart from the others' is refused with the cause
+  ([distinct accounts](../design/teams.md#distinct-accounts)). When the operator allows one provider family, members first keep distinct
   accounts of that family while there are enough; only when no other account is
   admitted do they share one Worker, each in its own session. The team's record says
   which ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),

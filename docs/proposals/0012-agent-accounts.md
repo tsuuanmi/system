@@ -680,14 +680,20 @@ The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:
   at start as a `gate` decision; each website and agent Worker names its `account`; the
   `assignment` check; the `wait` outcome bounded by `maxLimitWaitHours`; no failover inside an
   assigned group.
-- **Phase C**, in part (2026-10-23):
+- **Phase C** (2026-10-23 and 2026-10-24):
   - an Antigravity CLI member's session records `antigravity-cli` (`worker-session@1.1`, the
     `workerSessions` contract 1.1,
     [ADR-0015's amendment](../decisions/adr/0015-worker-sessions-and-peer-messaging.md#amendment-2026-10-23-contract-11-names-the-antigravity-cli-runtime));
   - two catalog entries signed in as one person take no work, and health names them (REQ-ACC-7;
     [runbook](../operations/runbooks.md#two-accounts-sign-in-as-one-person));
   - a `quota_exhausted` run with no limit observation closes its Worker's pool, and with no pool
-    cools its runtime down ([agent Workers](../../packages/plugins/agent-workers/README.md)).
+    cools its runtime down ([agent Workers](../../packages/plugins/agent-workers/README.md));
+  - agent `siblings`: every Worker of a runtime, while there is one home per runtime, so a
+    failover leaves them all out, and a cooldown or a closed pool of any of them holds them all
+    (`quota-exhausted`, `limitUntil` the latest reset);
+  - a team's held accounts counted by sibling, and by the descriptor's `account`: two roles of one
+    home are one account, never two members; a member whose held account cannot be told apart is
+    refused with the cause (`workflow` contract 1.5,
+    [distinct accounts](../design/teams.md#distinct-accounts)).
 
-Open in phase C: agent `siblings` and a team's held accounts counted by sibling. The other phases
-are listed [above](#phased-plan).
+The other phases are listed [above](#phased-plan).

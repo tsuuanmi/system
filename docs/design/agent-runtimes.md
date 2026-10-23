@@ -298,6 +298,12 @@ Several sign-ins per runtime are told apart by who is signed in, never by a name
   names the home and no session bus; a run in a named home runs, and a relative one is refused.
   Every provider also passes the provider suite's refusal of a home it does not run in.
   `FakeAgentRuntime` (scripted homes) passes both.
+- **One home, one account, every role** (PROP-0012 phase C, built). Until Workers are account ×
+  role, every runtime runs in its one home, so all the Workers of a runtime are one account: the
+  `agents` source names them all as each one's `siblings`, and the descriptor's `account.id` is the
+  runtime. A cooldown or a closed pool of any of them holds them all (`quota-exhausted`, with
+  `limitUntil` the latest reset), a failover leaves them all out, and a team counts them as one
+  account ([distinct accounts](teams.md#distinct-accounts)). A session stays on its one Worker.
 - **Planned** (PROP-0012 phases E and F): identity readers for Codex and Claude Code on the CLI
   versions phase A verifies, quarantine (`agent-account@1.0` status, `enrollment` decisions),
   `system account login <provider>`, and Workers as account × role. The Antigravity CLI has no
