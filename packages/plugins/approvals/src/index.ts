@@ -5,22 +5,25 @@
  * and each change to one is one store transaction with the decision it names (INV-13). Only an
  * operator verdict approves; expiry and withdrawal only reject (INV-2, INV-5, INV-6). A request is
  * queued only on an `ask` the loaded policies give again when it is made, and one they no longer
- * ask for is withdrawn at load and on every sweep.
+ * ask for is withdrawn at load and on every sweep. A policy change the operator proposes is asked
+ * through the queue as a `policy-change` request on the proposed set's hash, applied only on the
+ * operator's approval, and kept in the store; the stored set applies only while the configuration
+ * it derives from is unchanged (docs/design/approvals.md#a-policy-change).
  * @module @tsuuanmi/system-approvals
  */
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type Action, type ActionClass, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, MODES,
-  type NewRequest, type RequestState, type Subject, type Verdict, type VerdictResult,
+  type Action, type ActionClass, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, type ContentHash, MODES,
+  type NewRequest, POLICY_SET_REF, type PolicyChange, type PolicySetInForce, type RequestState, type Subject, type Verdict, type VerdictResult,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import { ACTION_CLASSES, PolicySet, policyProblems, rank } from './policy.ts'
+import { ACTION_CLASSES, effectOf, PolicySet, policyProblems, proposedSet, rank } from './policy.ts'
 import { registerTools } from './tools.ts'
 
 export { ACTION_CLASSES, PolicySet, policyProblems } from './policy.ts'
@@ -30,7 +33,17 @@ export interface Config {
   policies: readonly AutonomyPolicy[]
   /** How often the queue sweeps expired requests and batches open ones on its own, in seconds, and once at start (1 to 3600, default 60). */
   sweepSeconds?: number
+  /**
+   * The hash of the applied policy set in the store that this configuration replaces. Only read at
+   * a start where the stored set no longer matches the configuration it was derived from: naming
+   * its exact hash lets the configuration take over (the change is retired, recorded); otherwise
+   * the plugin is refused (docs/design/approvals.md#the-configuration-and-the-stored-set).
+   */
+  supersedes?: ContentHash
 }
+
+/** The policy set in force, and where it comes from: `key` names the stored row it was read from, or the configuration. */
+interface InForce { key: string; set: PolicySet; source: 'configuration' | 'store'; changeId?: string }
 
 /** A listing filter (the seam's `list`). */
 export interface ListFilter { states?: RequestState[]; batchId?: string; projectId?: string }
@@ -46,6 +59,10 @@ export const MAX_PAGE = 100
 const SWEEP_PAGE = 500
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const CONTENT_ID = /^sha256:[0-9a-f]{64}$/
+/** Policy changes one `policyChanges` call returns unless asked otherwise, and at most. */
+export const DEFAULT_CHANGES = 20
+export const MAX_CHANGES = 100
+const CHANGE_STATES: ReadonlyArray<PolicyChange['state']> = ['asked', 'applied', 'declined', 'retired']
 const OPEN: readonly RequestState[] = ['open', 'batched']
 /** Listing order: batched requests by batch, then the rest; within each, by expiry, then by insertion. */
 const ORDER = "batch_id IS NULL, COALESCE(batch_id, ''), expires_ms, seq"
@@ -62,6 +79,16 @@ const MIGRATIONS = [{
   CREATE INDEX approval_requests_batch ON approval_requests (batch_id, expires_ms, seq);
   CREATE INDEX approval_requests_project ON approval_requests (project_id, state);
   CREATE INDEX approval_requests_expiry ON approval_requests (expires_ms, seq) WHERE state IN ('open', 'batched');`,
+}, {
+  // Policy changes (policy-change@1.0): applied_seq orders the applied ones; the latest is the set in force while it is not retired.
+  version: 2,
+  sql: `CREATE TABLE policy_changes (
+    seq INTEGER PRIMARY KEY, change_id TEXT NOT NULL UNIQUE, state TEXT NOT NULL, hash TEXT NOT NULL, base_hash TEXT NOT NULL, config_hash TEXT NOT NULL,
+    request_id TEXT NOT NULL UNIQUE, proposed_ms INTEGER NOT NULL, applied_seq INTEGER UNIQUE, revision INTEGER NOT NULL, record TEXT NOT NULL,
+    CHECK (state IN ('asked', 'applied', 'declined', 'retired')),
+    CHECK ((applied_seq IS NOT NULL) = (state IN ('applied', 'retired')))
+  );
+  CREATE INDEX policy_changes_state ON policy_changes (state, seq);`,
 }]
 
 const invalid = (message: string): ApprovalsError => new ApprovalsError('invalid', message)
@@ -71,6 +98,8 @@ const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.
 const exactSubject = (subject: unknown): boolean => isObject(subject)
   && ((typeof subject.version === 'string' && subject.version !== '') || (subject.type === 'artifact' && typeof subject.ref === 'string' && CONTENT_ID.test(subject.ref)))
 const sameList = (a: unknown, b: readonly string[]): boolean => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i])
+/** Text cut to a bound on whole characters, ending in an ellipsis when cut. */
+const clip = (text: string, max: number): string => { const chars = [...text]; return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…` }
 
 /** The fields of a recorded `autonomy` decision that `request` checks. */
 interface AutonomyDecision {
@@ -98,10 +127,13 @@ const decodeCursor = (cursor: string): [number, string, number, number] => {
 
 /**
  * The `system check` preflight (packages/cli): every problem of the configured policy set, as the
- * provider would refuse it at load; none when it loads.
+ * provider would refuse it at load; none when it loads. Whether a stored policy change still
+ * matches the configuration is known only at start, from the store.
  */
 export function checkConfig(config: Partial<Config> = {}): string[] {
-  return policyProblems(config.policies)
+  const problems = policyProblems(config.policies)
+  if (config.supersedes !== undefined && (typeof config.supersedes !== 'string' || !CONTENT_ID.test(config.supersedes))) problems.push('supersedes must be the sha256:… hash of a stored policy set')
+  return problems
 }
 
 export class StoreApprovals extends Approvals {
@@ -112,19 +144,30 @@ export class StoreApprovals extends Approvals {
       + 'expiry.defaultSeconds and every rule\'s expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; '
       + 'a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2)'),
     sweepSeconds: z.natural().min(1).max(3600).default(60).description('Seconds between the queue\'s own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9)'),
+    supersedes: z.string().pattern(CONTENT_ID).description('The sha256:… hash of the applied policy set in the store that this configuration replaces. Read only at a start where that set no longer matches the configuration it was derived from: '
+      + 'then the configuration takes over and the stored change is retired, recorded; without it the plugin is refused, so nothing that needs a person runs (INV-2)'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
-  private readonly set: PolicySet
+  /** The configured set, checked at load. */
+  private readonly configured: PolicySet
+  private readonly supersedes: ContentHash | undefined
+  /** The set in force as last read from the store (see {@link current}). */
+  private state: InForce | undefined
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
     // Checked before anything is written: an invalid set refuses the plugin, so no ctx.approvals
     // is provided, and an action that needs a person waits (fail-closed rule 5).
-    this.set = PolicySet.load(config.policies, this.schemas)
+    this.configured = PolicySet.load(config.policies, this.schemas)
+    if (config.supersedes !== undefined && (typeof config.supersedes !== 'string' || !CONTENT_ID.test(config.supersedes))) throw new Error('approvals: supersedes must be the sha256:… hash of a stored policy set')
+    this.supersedes = config.supersedes
     const seconds = config.sweepSeconds ?? 60
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) throw new Error(`approvals: sweepSeconds must be a whole number of seconds from 1 to 3600, not ${seconds}: expiry is never off (INV-9)`)
     ctx.store.migrate('approvals', MIGRATIONS)
+    // Which set is in force: the configured one, or an applied change derived from it. A stored
+    // set whose configuration changed refuses the plugin unless the configuration supersedes it.
+    this.state = this.inForce(new Date(), true)
     // At load, before any verdict: a request this policy set no longer asks for is withdrawn (S1).
     this.withdrawStale(new Date())
     this.clock(seconds)
@@ -167,9 +210,12 @@ export class StoreApprovals extends Approvals {
 
   async policy(projectId?: string) {
     if (projectId !== undefined && typeof projectId !== 'string') throw invalid('projectId is not a string')
+    const { set, source, changeId } = this.current()
+    const inForce: PolicySetInForce = { hash: set.setHash(), source, configHash: this.configured.setHash(), ...(changeId ? { changeId } : {}), projects: set.projectIds() }
     return {
-      policies: structuredClone(this.set.of(projectId)),
-      effective: ACTION_CLASSES.map((actionClass) => ({ actionClass, mode: this.set.effective(actionClass, projectId).mode })),
+      policies: structuredClone(set.of(projectId)),
+      effective: ACTION_CLASSES.map((actionClass) => ({ actionClass, mode: set.effective(actionClass, projectId).mode })),
+      set: inForce,
     }
   }
 
@@ -196,6 +242,13 @@ export class StoreApprovals extends Approvals {
   async request(request: NewRequest, at: Date = new Date()): Promise<ApprovalRequest> {
     const when = this.instant(at)
     if (!isObject(request) || !isObject(request.verdict) || !isObject(request.action) || !isObject(request.requester)) throw invalid('a request has a subject, an action, a requester, and the verdict that asked')
+    // Only the queue asks for its own policy changes (proposePolicy); a caller never names it.
+    if (request.requester.component === 'approvals' || request.requester.policyChangeId !== undefined) throw invalid('only the queue requests a policy change of its own, through proposePolicy')
+    return this.open(request, when, 'approval-request@1.0')
+  }
+
+  /** Queue a request, checking the verdict it cites inside the transaction that writes it. */
+  private open(request: NewRequest, when: Date, schema: ApprovalRequest['schema']): ApprovalRequest {
     const projectId = request.requester.projectId
     if (projectId !== undefined && typeof projectId !== 'string') throw invalid('requester.projectId is not a string')
     if (!ACTION_CLASSES.includes(request.action.class)) throw invalid(`${String(request.action.class)} is not an action class`)
@@ -207,7 +260,7 @@ export class StoreApprovals extends Approvals {
       const policy = this.askedBy(request, projectId)
       const expiresMs = when.getTime() + this.set.expirySeconds(request.action.class, projectId) * 1000
       const created: ApprovalRequest = {
-        schema: 'approval-request@1.0', requestId: newId('apr'), state: 'open',
+        schema, requestId: newId('apr'), state: 'open',
         subject: request.subject, action: request.action, requester: request.requester,
         policy, classification: request.classification,
         createdAt: when.toISOString(), expiresAt: new Date(expiresMs).toISOString(), revision: 0,
@@ -284,7 +337,8 @@ export class StoreApprovals extends Approvals {
     // Each verdict is its own transaction: a refused one changes nothing, and the others still
     // apply. One that fails (a busy store, a write that went stale) is reported as failed, never
     // hidden behind an error that drops the outcomes of the others.
-    return verdicts.map((v) => {
+    let changed = false
+    const results = verdicts.map((v): VerdictResult => {
       try {
         return this.ctx.store.transaction((): VerdictResult => {
           const request = this.read(v.requestId)?.request
@@ -292,12 +346,18 @@ export class StoreApprovals extends Approvals {
           if (request.resolution) return { requestId: v.requestId, state: request.state, refused: 'already-resolved' }
           if (Date.parse(request.expiresAt) <= when.getTime()) return { requestId: v.requestId, state: request.state, refused: 'expired' }
           if (!sameSubject(request.subject, v.subject)) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
+          // A policy change applies only to the set it was proposed on: once another set is in
+          // force, what the operator was shown is not what an approval would do (INV-5). The next
+          // sweep withdraws it; a rejection still applies.
+          const change = this.changeOf(request)
+          if (change && v.verdict === 'approved' && change.baseHash !== this.set.setHash()) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
           // INV-5: the verdict is written on the request's own subject, the one the operator saw.
           const approval = this.ctx.artifacts.put({
             kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(v.note ? { note: v.note } : {}) },
             classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: request.subject,
           }).id as ArtifactRef
           const resolved = this.resolve(request, 'verdict', v.verdict, when, approval)
+          if (change && v.verdict === 'approved') changed = true
           return { requestId: v.requestId, state: resolved.state, approval }
         })
       } catch (error) {
@@ -306,6 +366,9 @@ export class StoreApprovals extends Approvals {
         return { requestId: v.requestId, state: this.storedState(v.requestId), refused: 'failed' }
       }
     })
+    // A new policy set is in force: every open request is judged again under it, as at load (S1).
+    if (changed) this.withdrawStale(when)
+    return results
   }
 
   async withdraw(requestId: string, at: Date = new Date()): Promise<ApprovalRequest> {
@@ -326,6 +389,217 @@ export class StoreApprovals extends Approvals {
     const when = this.instant(at)
     const expired = this.pass('expires_ms <= ?', when, (request) => Date.parse(request.expiresAt) > when.getTime() ? undefined : this.resolve(request, 'expired', 'denied:expired', when, undefined, EXPIRED))
     return [...expired, ...this.withdrawStale(when)]
+  }
+
+  // --- policy changes (contract 1.1) ---
+
+  /**
+   * Propose one policy record (docs/design/approvals.md#a-policy-change): the whole set it makes
+   * must load as a configured set would, or nothing is stored (`invalid`). The `policy-change`
+   * class is judged under the studio's policies (a project's policy: the project's), and on `ask`
+   * one request is queued on the proposed set's hash, in the transaction that stores the change.
+   * Only the operator's channels call it (the web UI, MCP `approvals_policy_propose`; INV-6).
+   */
+  async proposePolicy(proposal: { policy: AutonomyPolicy; note?: string }, at: Date = new Date()): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
+    const when = this.instant(at)
+    if (!isObject(proposal) || !isObject(proposal.policy)) throw invalid('a proposal is {policy, note?}: one autonomy-policy@1.0 record')
+    const note = proposal.note
+    if (note !== undefined && (typeof note !== 'string' || note.length > 2000)) throw invalid('note must be a string of at most 2000 characters')
+    try {
+      this.schemas.assert('autonomy-policy@1.0', proposal.policy)
+    } catch (error) {
+      throw invalid(`the proposed policy is not a valid autonomy-policy@1.0: ${(error as Error).message}`)
+    }
+    const policy = structuredClone(proposal.policy)
+    const base = this.current()
+    const made = proposedSet(base.set, policy)
+    if ('problems' in made) throw invalid(made.problems.join('; '))
+    const problems = policyProblems(made.policies, this.schemas)
+    if (problems.length) throw invalid(`the set it makes would be refused at load: ${problems.join('; ')}`)
+    const next = PolicySet.load(made.policies, this.schemas)
+    const hash = next.setHash()
+    const baseHash = base.set.setHash()
+    if (hash === baseHash) throw invalid('it changes nothing in the set in force')
+    const projectId = policy.scope === 'project' ? policy.projectId : undefined
+    const verdict = await this.check({ class: 'policy-change', ...(projectId !== undefined ? { projectId } : {}) })
+    if (verdict.mode !== 'ask') throw new ApprovalsError('not-asked', `policy-change: the policy says ${verdict.mode} (decision ${verdict.decision}), so no change can be asked; change the configuration instead`)
+    const effect = effectOf(base.set, next)
+    const changeId = newId('pch')
+    const summary = made.previous
+      ? `Change the autonomy policy ${policy.id}: version ${made.previous.version} to ${policy.version}`
+      : `Add project ${String(projectId)}'s autonomy policy ${policy.id} (version ${policy.version})`
+    const modes = effect.map((e) => `${e.projectId ?? 'studio'} ${e.actionClass} ${e.from} → ${e.to}`).join('; ')
+    const consequences = clip(`If approved: the set ${hash} replaces the set in force (${baseHash}) at once, and every open request is judged again under it. `
+      + `If rejected or unanswered: nothing changes. ${effect.length ? `Effective modes: ${modes}.` : 'No effective mode moves (expiry, batching, commands, or required checks only).'}${note ? ` Note: ${note}` : ''}`, 2000)
+    return this.ctx.store.transaction(() => {
+      // The base is the set in force when the change is stored, never an older one (INV-5).
+      if (this.current().key !== base.key) throw invalid('another policy change came into force while this one was proposed; propose it again on the set in force')
+      const request = this.open({
+        subject: { type: 'content', ref: POLICY_SET_REF, version: hash },
+        action: { class: 'policy-change', summary, consequences },
+        requester: { component: 'approvals', policyChangeId: changeId, ...(projectId !== undefined ? { projectId } : {}) },
+        verdict, classification: 'operator-shared',
+      }, when, 'approval-request@1.1')
+      const change: PolicyChange = {
+        schema: 'policy-change@1.0', changeId, state: 'asked', policy, ...(made.previous ? { previous: structuredClone(made.previous) } : {}),
+        policies: next.all(), hash, baseHash, configHash: this.configured.setHash(), effect, requestId: request.requestId,
+        ...(note ? { note } : {}), proposedAt: when.toISOString(), revision: 0,
+      }
+      try {
+        this.schemas.assertRecord(change)
+      } catch (error) {
+        throw invalid((error as Error).message)
+      }
+      this.ctx.store.db.prepare('INSERT INTO policy_changes (change_id, state, hash, base_hash, config_hash, request_id, proposed_ms, applied_seq, revision, record) VALUES (?, \'asked\', ?, ?, ?, ?, ?, NULL, 0, ?)')
+        .run(changeId, hash, baseHash, change.configHash, request.requestId, when.getTime(), JSON.stringify(change))
+      return { change: structuredClone(change), request }
+    })
+  }
+
+  /** The policy changes, newest first: at most `limit` (default {@link DEFAULT_CHANGES}, at most {@link MAX_CHANGES}), in the given states (default all). */
+  async policyChanges(filter: { states?: Array<PolicyChange['state']>; limit?: number } = {}): Promise<PolicyChange[]> {
+    if (!isObject(filter)) throw invalid('the filter is not an object')
+    const limit = filter.limit ?? DEFAULT_CHANGES
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHANGES) throw invalid(`limit must be a whole number from 1 to ${MAX_CHANGES}`)
+    const states = filter.states ?? CHANGE_STATES
+    if (!Array.isArray(states) || !states.length || states.some((s) => !CHANGE_STATES.includes(s))) throw invalid(`states must be a non-empty list of ${CHANGE_STATES.join(', ')}`)
+    const rows = this.ctx.store.db.prepare(`SELECT change_id, record FROM policy_changes WHERE state IN (${states.map(() => '?').join(', ')}) ORDER BY seq DESC LIMIT ?`)
+      .all(...states, limit) as Array<{ change_id: string; record: string }>
+    return rows.map((r) => this.loadChange(r.change_id, r.record))
+  }
+
+  /** The set in force, read again from the store whenever its latest applied change moved (a verdict here, or another process). */
+  private current(): InForce {
+    const row = this.latestApplied()
+    const key = row ? `${row.change_id}:${row.state}` : 'configuration'
+    if (this.state?.key === key) return this.state
+    return this.state = this.inForce(new Date(), false, row)
+  }
+
+  /** The set judged under now. */
+  private get set(): PolicySet {
+    return this.current().set
+  }
+
+  private latestApplied(): { change_id: string; state: PolicyChange['state']; hash: string; config_hash: string } | undefined {
+    return this.ctx.store.db.prepare('SELECT change_id, state, hash, config_hash FROM policy_changes WHERE applied_seq IS NOT NULL ORDER BY applied_seq DESC LIMIT 1')
+      .get() as { change_id: string; state: PolicyChange['state']; hash: string; config_hash: string } | undefined
+  }
+
+  /**
+   * Which set is in force (docs/design/approvals.md#the-configuration-and-the-stored-set): the latest
+   * applied change's while it is not retired, its configuration (`configHash`) is the configured
+   * set's hash (or its set is the configured set), and its set still loads; the configured set when
+   * no change is in force. A stored set the configuration no longer matches is never used, nor
+   * silently dropped: at a start, a configuration whose `supersedes` names its hash retires it
+   * (recorded) and takes over; otherwise this throws, and the plugin is refused (INV-2).
+   */
+  private inForce(at: Date, atLoad: boolean, row = this.latestApplied()): InForce {
+    if (!row || row.state === 'retired') return { key: row ? `${row.change_id}:retired` : 'configuration', set: this.configured, source: 'configuration' }
+    const key = `${row.change_id}:${row.state}`
+    const configHash = this.configured.setHash()
+    let why: string
+    if (row.config_hash === configHash || row.hash === configHash) {
+      const change = this.change(row.change_id)!
+      try {
+        const set = PolicySet.load(change.policies, this.schemas)
+        if (set.setHash() !== row.hash) throw new Error(`it hashes to ${set.setHash()}, not to its recorded ${row.hash}`)
+        return { key, set, source: 'store', changeId: row.change_id }
+      } catch (error) {
+        why = `its set no longer loads: ${(error as Error).message}`
+      }
+    } else {
+      why = `it was derived from the configured set ${row.config_hash}, and the configuration is now ${configHash}`
+    }
+    if (atLoad && this.supersedes === row.hash) {
+      this.retire(row.change_id, at, why)
+      return { key: `${row.change_id}:retired`, set: this.configured, source: 'configuration' }
+    }
+    throw new Error(`approvals: the autonomy policy set in the store (${row.hash}, policy change ${row.change_id}) is not used: ${why}. Neither set applies, so no ctx.approvals is provided and every action that needs a person waits (fail closed). `
+      + `Restore the configuration it was derived from, or set supersedes: '${row.hash}' in the approvals row to let the configuration replace it.`)
+  }
+
+  /** Retire the applied change a configuration supersedes, with its `policy-change` decision (INV-13). */
+  private retire(changeId: string, at: Date, why: string): void {
+    this.ctx.store.transaction(() => {
+      const change = this.change(changeId)!
+      const to = this.configured.setHash()
+      const decision = this.recordSetChange(change, 'configuration', to, [change.applied!.decision], `the configuration (${to}) names the stored set in supersedes, which is not used: ${why}`, 'not kept: the configuration supersedes it')
+      this.writeChange(change, { ...change, state: 'retired', retired: { at: at.toISOString(), decision }, revision: change.revision + 1 })
+    })
+    this.ctx.logger.info(`approvals: the configuration supersedes the stored policy set of change ${changeId} (${why}); the configured set is in force`)
+  }
+
+  /**
+   * Settle the queue's own policy-change request's change in the transaction that resolved it:
+   * approved, its set comes into force; rejected, expired, or withdrawn, it is declined and nothing
+   * changes.
+   */
+  private settle(change: PolicyChange, request: ApprovalRequest, at: Date): void {
+    if (change.state !== 'asked') throw new Error(`approvals: policy change ${change.changeId} is ${change.state}; its request ${request.requestId} cannot settle it`)
+    const resolution = request.resolution!
+    if (request.state !== 'approved') {
+      const cause = resolution.cause === 'verdict' ? 'rejected' : resolution.cause
+      this.writeChange(change, { ...change, state: 'declined', declined: { at: at.toISOString(), cause, decision: resolution.decision }, revision: change.revision + 1 })
+      return
+    }
+    // Only onto the set it was proposed on, and only a set that loads (INV-2, INV-5).
+    const before = this.current().set.setHash()
+    if (change.baseHash !== before) throw new Error(`approvals: policy change ${change.changeId} was proposed on ${change.baseHash}, and ${before} is in force`)
+    const after = PolicySet.load(change.policies, this.schemas)
+    if (after.setHash() !== change.hash) throw new Error(`approvals: policy change ${change.changeId} does not hash to its recorded set`)
+    const decision = this.recordSetChange(change, 'approved', change.hash, [request.policy.decision, resolution.approval!, resolution.decision],
+      `the operator approved request ${request.requestId} on this set, proposed on the set in force`, 'not kept: the operator approved the change', request.requestId)
+    const seq = (this.ctx.store.db.prepare('SELECT COALESCE(MAX(applied_seq), 0) + 1 AS seq FROM policy_changes').get() as { seq: number }).seq
+    this.writeChange(change, { ...change, state: 'applied', applied: { at: at.toISOString(), decision }, revision: change.revision + 1 }, Number(seq))
+  }
+
+  /** The `policy-change` decision (`decision@1.6`): which set is in force, the old and new hashes its two candidates. */
+  private recordSetChange(change: PolicyChange, cause: 'approved' | 'configuration', to: ContentHash, inputs: ArtifactRef[], why: string, whyNot: string, requestId?: string): ArtifactRef {
+    const from = cause === 'approved' ? change.baseHash : change.hash
+    return this.ctx.artifacts.recordDecision({
+      schema: 'decision@1.6', decisionType: 'policy-change', question: 'Which autonomy policy set is in force?', inputs,
+      candidates: [{ option: to, selected: true, reasons: [why] }, { option: from, selected: false, reasons: [whyNot] }],
+      decider: { type: 'rule', id: cause === 'approved' ? 'approvals.policy-change' : 'approvals.configuration', version: '1', hash: to },
+      outcome: { option: to, detail: { cause, changeId: change.changeId, ...(requestId ? { requestId } : {}), from, to, configHash: this.configured.setHash(), policy: { id: change.policy.id, version: change.policy.version } } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'approvals' }, classification: 'operator-shared' }).id as ArtifactRef
+  }
+
+  /** The queue's own policy-change request's change, checked against the request; undefined for any other request. */
+  private changeOf(request: ApprovalRequest): PolicyChange | undefined {
+    if (request.requester.component !== 'approvals') return undefined
+    const changeId = request.requester.policyChangeId
+    const change = changeId === undefined ? undefined : this.change(changeId)
+    // A record that disagrees with its request is never acted on.
+    if (!change || change.requestId !== request.requestId || change.hash !== request.subject.version || request.action.class !== 'policy-change') {
+      throw new Error(`approvals: request ${request.requestId} names policy change ${String(changeId)}, which is missing or names another request or set`)
+    }
+    return change
+  }
+
+  private change(changeId: string): PolicyChange | undefined {
+    const row = this.ctx.store.db.prepare('SELECT record FROM policy_changes WHERE change_id = ?').get(changeId) as { record: string } | undefined
+    return row && this.loadChange(changeId, row.record)
+  }
+
+  /** A stored change is validated when it is read: one that fails is never acted on. */
+  private loadChange(changeId: string, json: string): PolicyChange {
+    const change = JSON.parse(json) as PolicyChange
+    try {
+      this.schemas.assertRecord(change)
+    } catch (error) {
+      throw new Error(`approvals: the stored policy change ${changeId} is not a valid policy-change@1.0 and is not used: ${(error as Error).message}`)
+    }
+    return change
+  }
+
+  /** Write a change's next revision, revision-checked; `appliedSeq` orders an applied one. */
+  private writeChange(before: PolicyChange, next: PolicyChange, appliedSeq?: number): void {
+    this.schemas.assertRecord(next)
+    const changes = this.ctx.store.db.prepare('UPDATE policy_changes SET state = ?, applied_seq = COALESCE(?, applied_seq), revision = ?, record = ? WHERE change_id = ? AND revision = ?')
+      .run(next.state, appliedSeq ?? null, next.revision, JSON.stringify(next), next.changeId, before.revision).changes
+    if (Number(changes) !== 1) throw new Error(`approvals: policy change ${next.changeId} changed under this write (revision ${before.revision} is stale)`)
   }
 
   // --- writes ---
@@ -413,6 +687,9 @@ export class StoreApprovals extends Approvals {
       resolution: { cause, ...(approval ? { approval } : {}), decision: decision.id as ArtifactRef, at: at.toISOString() },
     }
     this.write(request, next)
+    // The queue's own policy-change request settles its change in the same transaction.
+    const change = this.changeOf(request)
+    if (change) this.settle(change, next, at)
     return next
   }
 
@@ -481,6 +758,14 @@ export class StoreApprovals extends Approvals {
    */
   private staleness(request: ApprovalRequest): string | undefined {
     const projectId = request.requester.projectId
+    const change = this.changeOf(request)
+    if (change) {
+      // A policy change is put to the set it was proposed on; once another is in force, or its
+      // set no longer loads, an approval could not apply it as shown.
+      if (change.baseHash !== this.set.setHash()) return `the set it was proposed on (${change.baseHash}) is no longer in force`
+      const problems = policyProblems(change.policies, this.schemas)
+      if (problems.length) return `the set it proposes no longer loads: ${problems[0]}`
+    }
     if (!this.set.current(request.policy, projectId)) return `${request.policy.id} at version ${request.policy.version} is not a policy of ${projectId === undefined ? 'the studio' : `project ${projectId}`} now`
     const judgedAs = (this.ctx.artifacts.get(request.policy.decision)?.body as AutonomyDecision | undefined)?.outcome?.detail?.actionClass
     const classes = new Set<ActionClass>([request.action.class, ...(ACTION_CLASSES.includes(judgedAs as ActionClass) ? [judgedAs as ActionClass] : [])])

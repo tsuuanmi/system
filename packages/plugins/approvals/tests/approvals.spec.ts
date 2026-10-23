@@ -1,14 +1,15 @@
 // What the conformance suite does not cover: the policy set checked at load (each load-time rule),
 // restart persistence, a policy change reaching requests already open, a verdict race on one store
 // and across processes, the queue's own clock, the batch bound, paging bounds, records that fail
-// their schema, a verdict that fails on its own, and the MCP tools' outputs.
+// their schema, a verdict that fails on its own, the MCP tools' outputs, and an applied policy
+// change across restarts against the configuration it derives from.
 import { fork } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
-import { type Action, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type NewRequest, type Subject, type VerdictResult } from '@tsuuanmi/system-approvals-core'
+import { type Action, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type NewRequest, type PolicyChange, type Subject, type VerdictResult } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
@@ -519,17 +520,18 @@ describe('paging and the MCP tools', () => {
     expect(() => approvals.page({ states: ['pending' as 'open'] })).toThrow(/states must be a list/)
   })
 
-  it('contributes approvals_list, approvals_get, and approvals_policy to clients and approvals_decide to the operator only (INV-6)', async () => {
+  it('contributes approvals_list, approvals_get, and approvals_policy to clients, and approvals_decide and approvals_policy_propose to the operator only (INV-6)', async () => {
     const booted = await boot({ mcp: true })
     const tools = booted.mcp().tools
     expect([...tools.keys()].sort()).toEqual([...APPROVAL_TOOLS].sort())
-    expect(Object.fromEntries([...tools].map(([name, t]) => [name, t.spec.scope]))).toEqual({ approvals_list: 'client', approvals_get: 'client', approvals_decide: 'operator', approvals_policy: 'client' })
+    expect(Object.fromEntries([...tools].map(([name, t]) => [name, t.spec.scope]))).toEqual({ approvals_list: 'client', approvals_get: 'client', approvals_decide: 'operator', approvals_policy: 'client', approvals_policy_propose: 'operator' })
     // Each input shape takes what its schema definition takes.
     const samples: Record<ApprovalTool, Record<string, unknown>> = {
       approvals_list: { states: ['open', 'rejected'], projectId: 'p1', batchId: 'batch-1', limit: 100, after: 'x' },
       approvals_get: { requestId: 'apr-1' },
       approvals_decide: { verdicts: [{ requestId: 'apr-1', subject: subject('x'), verdict: 'rejected', note: 'no' }] },
       approvals_policy: { projectId: 'p1' },
+      approvals_policy_propose: { policy: { ...STUDIO, version: 4 }, note: 'why' },
     }
     for (const name of APPROVAL_TOOLS) {
       expect(zod.object(INPUTS[name]).safeParse(samples[name]).success, name).toBe(true)
@@ -568,7 +570,7 @@ describe('paging and the MCP tools', () => {
     for (const args of [{ verdicts: [] }, { verdicts: [{ ...verdicts[0], verdict: 'maybe' }] }, { verdicts, extra: 1 }]) {
       const refused = await call(booted, 'approvals_decide', args, 'operator')
       expect(refused.isError).toBe(true)
-      expect(text(refused)).toMatch(/^invalid input, nothing done: mcp-approvals@1\.1#\/\$defs\/approvals-decide-input/)
+      expect(text(refused)).toMatch(/^invalid input, nothing done: mcp-approvals@1\.2#\/\$defs\/approvals-decide-input/)
     }
     expect(await ctx.approvals.get(merge.requestId)).toEqual(merge)
 
@@ -582,5 +584,120 @@ describe('paging and the MCP tools', () => {
     const resolved = await call(booted, 'approvals_list', { states: ['approved', 'rejected'] })
     expect((resolved.structuredContent as { requests: ApprovalRequest[] }).requests.map((r) => [r.requestId, r.state])).toEqual([[merge.requestId, 'approved']])
     expect((await call(booted, 'approvals_list', { after: 'forged' })).isError).toBe(true)
+  })
+})
+
+describe('a policy change through the queue (docs/design/approvals.md#a-policy-change)', () => {
+  const NO_MERGE: AutonomyPolicy = { ...STUDIO, version: 4, rules: STUDIO.rules.map((r) => (r.actionClass === 'merge' ? { ...r, mode: 'forbid' } : r)) }
+  /** Propose `policy` and approve its request, as the operator would; the change applied. */
+  const applied = async (booted: Booted, policy: AutonomyPolicy, at: Date = T0): Promise<PolicyChange> => {
+    const { change, request } = await booted.approvals.proposePolicy({ policy }, at)
+    const [result] = await booted.ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }], after(5, at))
+    expect(result).toMatchObject({ state: 'approved' })
+    return (await booted.approvals.policyChanges()).find((c) => c.changeId === change.changeId)!
+  }
+  const refusal = async (dir: string, config: Partial<Config>): Promise<string> => {
+    const ctx = new Context()
+    const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
+    const artifacts = ctx.plugin(Artifacts, {})
+    await Promise.all([store, artifacts])
+    cleanups.push(async () => { await artifacts.dispose(); await store.dispose() })
+    const fiber = ctx.plugin(ManualApprovals, { policies: POLICIES, ...config })
+    const error = await Promise.resolve(fiber).then(() => undefined, (e: unknown) => e)
+    expect(ctx.get('approvals'), 'no ctx.approvals is provided').toBeUndefined()
+    await fiber.dispose()
+    return String((error as Error | undefined)?.message)
+  }
+
+  it('keeps the applied set across a restart while the configuration it derives from is unchanged (INV-4)', async () => {
+    const first = await boot()
+    const change = await applied(first, NO_MERGE)
+    expect(change).toMatchObject({ state: 'applied', configHash: change.baseHash })
+    await first.stop()
+    const second = await boot({ dir: first.dir })
+    const policy = await second.ctx.approvals.policy()
+    expect(policy.policies[0]).toEqual(NO_MERGE)
+    expect(policy.set).toEqual({ hash: change.hash, source: 'store', configHash: change.configHash, changeId: change.changeId, projects: ['p1', 'p3'] })
+    expect((await second.ctx.approvals.check({ class: 'merge' })).mode).toBe('forbid')
+    // A further change builds on the stored set, from the same configuration.
+    const next = await applied(second, { ...PROJECT, version: 2, rules: [...PROJECT.rules, { actionClass: 'spend', mode: 'forbid' }] }, after(60))
+    expect(next).toMatchObject({ baseHash: change.hash, configHash: change.configHash })
+    expect((await second.ctx.approvals.policy()).set?.changeId).toBe(next.changeId)
+  })
+
+  it('refuses the plugin when the configuration changed since the stored set was derived from it, and takes the configuration only when it supersedes that exact set (INV-2, INV-13)', async () => {
+    const first = await boot()
+    const change = await applied(first, NO_MERGE)
+    await first.stop()
+    const edited = [STUDIO, { ...PROJECT, version: 2, default: 'forbid' as const }, NO_COMMANDS]
+    // Neither set is used, nor silently picked: the error names both hashes and the way out.
+    const message = await refusal(first.dir, { policies: edited })
+    expect(message).toContain(`the autonomy policy set in the store (${change.hash}, policy change ${change.changeId}) is not used`)
+    expect(message).toContain(`it was derived from the configured set ${change.configHash}`)
+    expect(message).toContain(`set supersedes: '${change.hash}'`)
+    // A supersedes that names another set changes nothing.
+    expect(await refusal(first.dir, { policies: edited, supersedes: `sha256:${'0'.repeat(64)}` })).toContain('is not used')
+    // The configuration that names the stored set takes over, recorded.
+    const second = await boot({ dir: first.dir, config: { policies: edited, supersedes: change.hash } })
+    const policy = await second.ctx.approvals.policy('p1')
+    expect(policy.set).toMatchObject({ source: 'configuration' })
+    expect(policy.set!.hash).toBe(policy.set!.configHash)
+    expect(policy.policies.map((p) => p.version)).toEqual([3, 2])
+    const [retired] = await second.approvals.policyChanges({ states: ['retired'] })
+    expect(retired).toMatchObject({ changeId: change.changeId, state: 'retired' })
+    const decision = second.ctx.artifacts.get(retired!.retired!.decision)!.body
+    expect(decision).toMatchObject({ schema: 'decision@1.6', decisionType: 'policy-change', decider: { type: 'rule', id: 'approvals.configuration' }, outcome: { option: policy.set!.hash, detail: { cause: 'configuration', from: change.hash, to: policy.set!.hash } } })
+    await second.stop()
+    // Once retired, the edited configuration loads with or without supersedes, and the original configuration no longer brings the change back.
+    await (await boot({ dir: first.dir, config: { policies: edited } })).stop()
+    const third = await boot({ dir: first.dir })
+    expect((await third.ctx.approvals.policy()).policies[0]!.version).toBe(3)
+  })
+
+  it('agrees with a configuration that is the stored set itself, and with the original one', async () => {
+    const first = await boot()
+    const change = await applied(first, NO_MERGE)
+    await first.stop()
+    // The operator copied the applied set into the configuration, in another order.
+    const copied = await boot({ dir: first.dir, config: { policies: [...change.policies].reverse() } })
+    expect((await copied.ctx.approvals.policy()).set).toMatchObject({ hash: change.hash, source: 'store' })
+    await copied.stop()
+    const original = await boot({ dir: first.dir })
+    expect((await original.ctx.approvals.policy()).set).toMatchObject({ hash: change.hash, source: 'store' })
+  })
+
+  it('never uses a stored change that fails its schema (INV-14)', async () => {
+    const first = await boot()
+    const change = await applied(first, NO_MERGE)
+    first.ctx.store.db.prepare('UPDATE policy_changes SET record = ? WHERE change_id = ?').run(JSON.stringify({ ...change, policies: [] }), change.changeId)
+    await first.stop()
+    expect(await refusal(first.dir, {})).toMatch(/the stored policy change .* is not a valid policy-change@1\.0 and is not used/)
+  })
+
+  it('refuses a proposal when the policy forbids policy changes, recording the autonomy decision, and queues nothing (INV-2)', async () => {
+    const locked: AutonomyPolicy = { ...NO_COMMANDS, rules: [...NO_COMMANDS.rules, { actionClass: 'policy-change', mode: 'forbid' }] }
+    const { ctx, approvals } = await boot({ config: { policies: [STUDIO, PROJECT, locked] } })
+    await expect(approvals.proposePolicy({ policy: { ...locked, version: 2, default: 'forbid' } }, T0)).rejects.toThrow(/^policy-change: the policy says forbid/)
+    expect(await failureOf(approvals.proposePolicy({ policy: { ...locked, version: 2, default: 'forbid' } }, T0))).toBe('not-asked')
+    // The studio's own policy still changes through the queue.
+    expect((await approvals.proposePolicy({ policy: NO_MERGE }, T0)).request.action.class).toBe('policy-change')
+    expect((await ctx.approvals.list()).map((r) => r.requester.component)).toEqual(['approvals'])
+  })
+
+  it('serves approvals_policy_propose to the operator only, its output valid, and approvals_policy names the set in force (INV-6)', async () => {
+    const booted = await boot({ mcp: true })
+    const tool = booted.mcp().tools.get('approvals_policy_propose')!
+    const byClient = await tool.handler({ policy: NO_MERGE }, { scope: 'client' })
+    expect([byClient.isError, (byClient.content[0] as { text: string }).text]).toEqual([true, 'invalid: policy changes come only from the operator'])
+    expect(await booted.approvals.policyChanges()).toEqual([])
+    const reply = await tool.handler({ policy: NO_MERGE, note: 'no merges' }, { scope: 'operator' })
+    expect(reply.isError).toBeFalsy()
+    schemas.assertDef('mcp-approvals@1.2', 'approvals-policy-propose-output', reply.structuredContent)
+    expect(reply.structuredContent).toMatchObject({ change: { state: 'asked', note: 'no merges' }, request: { action: { class: 'policy-change' } } })
+    const refused = await tool.handler({ policy: { ...NO_MERGE, version: 3 } }, { scope: 'operator' })
+    expect(refused.isError).toBe(true)
+    const policy = await booted.mcp().tools.get('approvals_policy')!.handler({}, { scope: 'client' })
+    schemas.assertDef('mcp-approvals@1.2', 'approvals-policy-output', policy.structuredContent)
+    expect((policy.structuredContent as { set: { source: string } }).set.source).toBe('configuration')
   })
 })

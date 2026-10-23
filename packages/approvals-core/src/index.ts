@@ -1,8 +1,8 @@
 /**
  * Gate seam definition: `ctx.approvals`, the autonomy policy and the one batched queue for every
  * action that needs a person (docs/design/approvals.md). The types mirror
- * `autonomy-policy@1.0`, `approval-request@1.0`, and `approval@1.0`; the schemas in `schemas/`
- * are canonical. A guarantee seam: it fails closed (INV-2), and its contract changes only by an
+ * `autonomy-policy@1.0`, `approval-request@1.1`, `policy-change@1.0`, and `approval@1.0`; the
+ * schemas in `schemas/` are canonical. A guarantee seam: it fails closed (INV-2), and its contract changes only by an
  * ADR (ADR-0036).
  * @module @tsuuanmi/system-approvals-core
  */
@@ -14,10 +14,17 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The contract version of this seam; its conformance suite names the same. */
-export const APPROVALS_CONTRACT = '1.0'
+/**
+ * The contract version of this seam; its conformance suite names the same. 1.1 adds the optional
+ * {@link Approvals.proposePolicy} and {@link Approvals.policyChanges} (a policy change through a
+ * `policy-change` approval) and the optional `set` of `policy()`: a provider at 1.0 has none, and
+ * its policy changes only by configuration and a restart.
+ */
+export const APPROVALS_CONTRACT = '1.1'
 
 export type ArtifactRef = `sha256:${string}`
+/** A sha256 of canonical JSON that names no artifact: a policy set's hash. */
+export type ContentHash = `sha256:${string}`
 export type Classification = 'public' | 'operator-shared' | 'local-private'
 export interface Subject { type: 'content' | 'git-head' | 'pull-request' | 'artifact' | 'external'; ref: string; version?: string }
 
@@ -120,14 +127,15 @@ export interface AutonomyVerdict {
 
 export type RequestState = 'open' | 'batched' | 'approved' | 'rejected'
 
-/** `approval-request@1.0`. */
+/** `approval-request@1.x`: 1.1 for the queue's own `policy-change` requests, 1.0 for every other. */
 export interface ApprovalRequest {
-  schema: 'approval-request@1.0'
+  schema: 'approval-request@1.0' | 'approval-request@1.1'
   requestId: string
   state: RequestState
   subject: Subject
   action: { class: ActionClass; summary: string; consequences?: string; recommendation?: 'approve' | 'reject'; refs?: ArtifactRef[] }
-  requester: { component: 'workflow' | 'board' | 'worker' | 'resources'; runId?: string; nodeId?: string; sessionId?: string; projectId?: string; taskId?: string; toolUseId?: string }
+  /** `approvals` (1.1): the queue's own request for a policy change, naming its `policyChangeId`; no caller of `request` may name it. */
+  requester: { component: 'workflow' | 'board' | 'worker' | 'resources' | 'approvals'; runId?: string; nodeId?: string; sessionId?: string; projectId?: string; taskId?: string; toolUseId?: string; policyChangeId?: string }
   policy: { id: string; version: number; decision: ArtifactRef }
   classification: Classification
   batchId?: string
@@ -160,6 +168,55 @@ export interface Verdict {
   note?: string
 }
 
+/** The subject ref of a `policy-change` request; its version is the proposed set's hash (INV-5). */
+export const POLICY_SET_REF = 'autonomy-policy-set'
+
+/** An effective mode a policy change moves, for the studio (no `projectId`) or one project. */
+export interface ModeChange { projectId?: string; actionClass: ActionClass; from: Mode; to: Mode }
+
+/**
+ * `policy-change@1.0` (contract 1.1): one change of the autonomy policy set, asked through a
+ * `policy-change` request on the proposed set's hash and applied only on the operator's approval
+ * (docs/design/approvals.md#a-policy-change).
+ */
+export interface PolicyChange {
+  schema: 'policy-change@1.0'
+  changeId: string
+  /** `asked` → `applied` (approved) or `declined` (rejected, expired, withdrawn); `applied` → `retired` (a configuration superseded it). */
+  state: 'asked' | 'applied' | 'declined' | 'retired'
+  /** The proposed record. */
+  policy: AutonomyPolicy
+  /** The record it replaces; absent when it adds a project's policy. */
+  previous?: AutonomyPolicy
+  /** The whole set once applied: the studio policy, then the project policies by project id. */
+  policies: AutonomyPolicy[]
+  /** The sha256 of the canonical JSON of `policies`: its request's exact subject. */
+  hash: ContentHash
+  /** The set in force when proposed: it applies only while that set is still in force. */
+  baseHash: ContentHash
+  /** The configured set the base derives from. */
+  configHash: ContentHash
+  /** Every effective mode it moves. */
+  effect: ModeChange[]
+  requestId: string
+  note?: string
+  proposedAt: string
+  applied?: { at: string; decision: ArtifactRef }
+  declined?: { at: string; cause: 'rejected' | 'expired' | 'withdrawn'; decision: ArtifactRef }
+  retired?: { at: string; decision: ArtifactRef }
+  revision: number
+}
+
+/** The policy set in force (contract 1.1): its hash, where it comes from, the configured set's hash, and the projects with a policy. */
+export interface PolicySetInForce {
+  hash: ContentHash
+  source: 'configuration' | 'store'
+  configHash: ContentHash
+  /** The applied change in force, when the source is the store. */
+  changeId?: string
+  projects: string[]
+}
+
 /** Why a verdict was not recorded; `failed`: the provider could not apply it (an error, logged), so nothing changed. */
 export type Refusal = 'unknown-request' | 'already-resolved' | 'expired' | 'subject-changed' | 'failed'
 export interface VerdictResult { requestId: string; state: RequestState; approval?: ArtifactRef; refused?: Refusal }
@@ -178,8 +235,11 @@ export abstract class Approvals extends Service {
     super(ctx, 'approvals')
   }
 
-  /** The studio policy, the project's when it has one, and the effective mode per action class. */
-  abstract policy(projectId?: string): Promise<{ policies: AutonomyPolicy[]; effective: Array<{ actionClass: ActionClass; mode: Mode }> }>
+  /**
+   * The studio policy, the project's when it has one, and the effective mode per action class; at
+   * contract 1.1, also the set in force (`set`).
+   */
+  abstract policy(projectId?: string): Promise<{ policies: AutonomyPolicy[]; effective: Array<{ actionClass: ActionClass; mode: Mode }>; set?: PolicySetInForce }>
 
   /**
    * Classify one action under the effective policy, recording an `autonomy` decision (its decider
@@ -227,4 +287,19 @@ export abstract class Approvals extends Service {
    * A provider does the second at load too. Returns those it rejected.
    */
   abstract sweep(at: Date): Promise<ApprovalRequest[]>
+
+  /**
+   * Contract 1.1, optional: propose one policy record, a policy of the set at a higher version or a
+   * policy for a project that has none. The whole set it makes must load under the configured
+   * set's rules, or nothing is stored (`invalid`); a policy that forbids `policy-change` refuses it
+   * (`not-asked`). Otherwise one `policy-change` request is queued on the proposed set's hash, and
+   * the set comes into force only when the operator approves that request while the set it was
+   * proposed on is still in force: atomically with the verdict, recorded as a `policy-change`
+   * decision with the old and new hashes, after which every open request is judged again as at
+   * load. Only an operator channel calls it (INV-6).
+   */
+  abstract proposePolicy?(proposal: { policy: AutonomyPolicy; note?: string }, at?: Date): Promise<{ change: PolicyChange; request: ApprovalRequest }>
+
+  /** Contract 1.1, optional: the policy changes, newest first (default 20, at most 100). */
+  abstract policyChanges?(filter?: { states?: Array<PolicyChange['state']>; limit?: number }): Promise<PolicyChange[]>
 }

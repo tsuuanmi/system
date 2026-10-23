@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-approvals",
   "version": "0.0.0",
   "private": true,
-  "description": "ctx.approvals: the autonomy policy and the one batched approval queue on ctx.store, with expiry that denies; MCP approvals_list, approvals_get, approvals_policy, and approvals_decide (operator)",
+  "description": "ctx.approvals: the autonomy policy and the one batched approval queue on ctx.store, with expiry that denies, and policy changes through a policy-change approval; MCP approvals_list, approvals_get, approvals_policy, and approvals_decide and approvals_policy_propose (operator)",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
