@@ -61,7 +61,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.7.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.8.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -164,6 +164,24 @@ guesses.
     threshold, and whether it `clears`, is `excluded`, or is `undecided`), each hard constraint and
     whether it held, the `failedChecks`, and, when the caller gives one, the `netBenefit` bounds.
     Example: [`decision.verdict.json`](../../schemas/examples/decision.verdict.json).
+- `decision@1.8` adds what agent accounts decide ([PROP-0012](../proposals/0012-agent-accounts.md)).
+  A decision of either kind must be `@1.8`; every other decision keeps its version.
+  - The decision type `enrollment`: what account a slot of an agent runtime holds
+    ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
+    Candidates `ready`, `quarantined`, and `signed-out`, each with why; the decider is the rule
+    `agent-accounts.enrollment`. Its inputs are the slot's previous `enrollment` decision, if any,
+    never the principal; `detail` names the `provider`, the `slot`, the `accountId` once a principal
+    was read whole, the quarantine `reason` (`changed`, `ambiguous`, `duplicate`, `unverified`), and
+    the `reader` and `runtimeVersion` that read it. Recorded from PROP-0012 phase E. Example:
+    [`decision.enrollment.json`](../../schemas/examples/decision.enrollment.json).
+  - The `recovery` outcome `wait`: a node refused only because assigned accounts that could take it
+    are at their limit waits for the earliest of their resets, spending no attempt
+    ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)). Its
+    candidates are `retry`, `failover`, `wait`, and `fail`; `detail` names the `kind`
+    (`quota_exhausted`), the `attempt` (unchanged), `until` (the node's `not_before`), `since` (when
+    the node first waited, kept across waits), and `maxLimitWaitHours`. A recovery decision with any
+    other outcome keeps its version. Example:
+    [`decision.recovery-wait.json`](../../schemas/examples/decision.recovery-wait.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -256,7 +274,7 @@ guesses.
 
 - `provider` is informational. Routing must not branch on it (INV-11). Only
   `capabilities` (with each offer's `scope`), `tier`, `quotaClass`, `locality`, `state`,
-  `family`, `maxInputChars`, `load`, and `cooldowns` are routing inputs.
+  `family`, `maxInputChars`, `load`, `cooldowns`, and `account` are routing inputs.
 - `capability-descriptor@1.1` adds the optional `family`: an opaque provider
   family the Worker source sets, which routing only compares for inequality
   ([provider diversity](../design/routing.md#provider-diversity),
@@ -282,6 +300,17 @@ guesses.
   [ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). The only value
   is `review-member`. A record carrying it below `@1.4` is refused. Readers accept 1.0 to 1.4.
   Example: [`capability-descriptor.review-member.json`](../../schemas/examples/capability-descriptor.review-member.json).
+- `capability-descriptor@1.5` adds the optional `account`: the account the Worker runs on, as its
+  source sets it ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)).
+  `id` names the account and `group` the accounts it is compared with (a website's provider, an
+  agent runtime); routing compares both for equality only, never names one (INV-11). `mode` is the
+  group's setting, `assigned` or `pooled`. `limitUntil` is when an account whose Worker reads
+  `quota-exhausted` is expected back, when its source knows; a cooldown carries its own `until`.
+  Under `assigned`, a Worker refused only for its limit refuses the group's other accounts the same
+  work (admission check `assignment`), and the earliest reset among those limits is the
+  `AdmissionFailure`'s `limitUntil` ([assigned accounts](../design/routing.md#assigned-accounts)).
+  A record carrying it below `@1.5` is refused. Readers accept 1.0 to 1.5. Example:
+  [`capability-descriptor.account.json`](../../schemas/examples/capability-descriptor.account.json).
 
 ### `plan`
 
@@ -355,6 +384,25 @@ guesses.
 - `account@1.1` adds `features`: the website features a probe proved on the
   account, and when (REQ-PRV-7). Routing uses only these. A missing or stale
   probe is refreshed; a feature is never assumed.
+
+### `agent-account`
+
+- One enrollment slot of an agent runtime and the account signed in to its home
+  ([PROP-0012](../proposals/0012-agent-accounts.md),
+  [ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
+  The slot is a home only: its number never names, orders, or identifies an account.
+- `accountId` is `<provider>:<h>`, `h` the first 16 hex characters of `identity.hmac`, an
+  HMAC-SHA256 over the provider and the principal's canonical parts keyed by a per-install key in
+  the credential vault. The full `hmac` is what is compared; two different full values with one
+  short form make both accounts `ambiguous`. The principal itself never leaves the runtime (INV-8).
+- `status`: `enrolled` (not verified yet), `ready` (signed in as the pinned principal: the only
+  status that admits a Worker), `signed-out` (the runtime's own sign-in check fails), `quarantined`
+  with `quarantine.reason` `changed`, `ambiguous`, `duplicate`, or `unverified` and the
+  `enrollment` decision that set it. A quarantine never clears by itself.
+- `hint` is a masked hint for the operator, kept local, never sent to a Worker.
+- Written from PROP-0012 phase E; the shape is fixed now (phase B). Examples:
+  [`agent-account.ready.json`](../../schemas/examples/agent-account.ready.json),
+  [`agent-account.quarantined.json`](../../schemas/examples/agent-account.quarantined.json).
 
 ### `session-summary`
 

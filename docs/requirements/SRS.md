@@ -19,9 +19,11 @@
 
 ## Provider accounts (`REQ-ACC`)
 
-- **REQ-ACC-1** Accounts are named semantic identities, for example
+- **REQ-ACC-1** Website accounts are named semantic identities, for example
   `chatgpt-thinker` and `chatgpt-writer`. Each declares a provider, a role, and
-  capabilities. The account catalog is configuration, not code.
+  capabilities. The account catalog is configuration, not code. Agent accounts are
+  identified by their verified login, never named by hand
+  ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
 - **REQ-ACC-2** A caller always names an account, or a capability that admission
   resolves to an account. A provider name alone never selects an account.
 - **REQ-ACC-3** An operator can sign in an account interactively from a remote
@@ -42,7 +44,8 @@
 - **REQ-ACC-7** The account vault is provider-agnostic and supports any number of
   accounts per provider. Each account's state is saved, isolated (own browser
   process, scheduler, and bindings), and survives restarts. Accounts that resolve
-  to the same identity are flagged, and none of them takes work.
+  to the same identity are quarantined: they are flagged, and none of them takes
+  work until the operator resolves it.
 - **REQ-ACC-8** An account may opt in to credential login with email, password,
   and TOTP. It runs only after positive sign-out evidence. TOTP codes are
   computed locally and never obtained from a third party. Anything it cannot
@@ -50,6 +53,15 @@
   page, or a second failure) falls back to interactive login on the same profile.
 - **REQ-ACC-9** Credentials are encrypted at rest and decrypted only in memory.
   They never appear in logs, prompts, artifacts, or process arguments.
+- **REQ-ACC-10** Each provider, website or agent, declares how its accounts are
+  used: `assigned` by default, or `pooled` only on the operator's recorded
+  confirmation of that provider's terms. Under `assigned`, a usage limit on one
+  account never moves its work to another account of that provider
+  ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)).
+- **REQ-ACC-11** Agent accounts are enrolled into slots, each a home of its own. An
+  account whose identity is missing, changed, ambiguous, duplicate, or unverified
+  takes no work, and says why
+  ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
 
 ## Provider turns (`REQ-PRV`)
 
@@ -99,7 +111,9 @@
   configuration. The default composition prefers subscription-chat quota (website
   accounts) for reasoning, search, research, and review, and keeps agent-plan and
   metered quota for work only those Workers can do. Accounts whose quota is
-  exhausted are excluded before admission (purpose P1).
+  exhausted are excluded before admission (purpose P1). Under assigned accounts
+  (REQ-ACC-10), work refused only for their limits waits for the reset, bounded,
+  instead of moving to another account of the provider.
 - **REQ-WRK-9** Every work requirement declares a minimum intelligence tier
   (`economy`, `standard`, or `frontier`). Routing selects the lowest tier whose
   Workers prove the required capabilities. Escalation to a higher tier after an
@@ -117,7 +131,10 @@
   synthesis step produces the strongest-supported result and cites the member
   evidence it relies on.
 - **REQ-TEAM-4** Members of an independence-sensitive team are backed by distinct
-  accounts. When the operator allows one provider family, members first keep distinct
+  accounts. Every Worker on one account (the tiers of a website account, every role
+  of an agent runtime's home) counts as that one account, and a member whose held
+  account cannot be told apart from the others' is refused with the cause
+  ([distinct accounts](../design/teams.md#distinct-accounts)). When the operator allows one provider family, members first keep distinct
   accounts of that family while there are enough; only when no other account is
   admitted do they share one Worker, each in its own session. The team's record says
   which ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),

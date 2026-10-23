@@ -14,7 +14,7 @@ import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classific
 import { acceptPlain } from './acceptance.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
-import { admissionKind, cutShort, escalate, failAttempt, heldWorkers, inputHint, routedDecisions } from './recovery.ts'
+import { admissionKind, assignmentOf, cutShort, escalate, failAttempt, heldWorkers, inputHint, routedDecisions, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
@@ -613,7 +613,13 @@ export class Engine {
         release()
         ;(admitted as AdmittedWorker | undefined)?.release()
       }
-      const { distinctAccounts, ...restricted } = await restriction(this, run, spec)
+      const restricting = await restriction(this, run, spec)
+      // A team member beside a held account no one can tell apart is refused, whatever the operator allows (INV-2).
+      if ('problem' in restricting) {
+        done()
+        return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: restricting.problem }, { sent: false, decisions: [] }, lease)
+      }
+      const { distinctAccounts, ...restricted } = restricting
       // The prompt as its source will render and send it, in characters (ADR-0032): a Worker that takes less is not admitted.
       const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
@@ -621,9 +627,12 @@ export class Engine {
       // The Workers it failed over from, unsent (ADR-0034); with none left but them, it routes as before.
       const failed = node.excluded ? (JSON.parse(node.excluded) as string[]) : []
       const away = failed.length ? { excludeWorkers: { workers: failed, reason: `an earlier attempt of ${node.node_id} failed here before anything was sent` } } : {}
-      const route = (options: RouteOptions): Promise<AdmittedWorker> => this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...away }).catch((error: unknown) => {
+      // After an unsent failure on an assigned account, no other account of its group takes it, on any route (ADR-0052).
+      const assignment = assignmentOf(node)
+      const pinned = assignment ? { assignment } : {}
+      const route = (options: RouteOptions): Promise<AdmittedWorker> => this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...pinned, ...away }).catch((error: unknown) => {
         if (!failed.length || !(error instanceof AdmissionFailure)) throw error
-        return this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options })
+        return this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...pinned })
       })
       try {
         try {
@@ -654,7 +663,11 @@ export class Engine {
         const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
         // A team member short of provider families: say what the team needs, beside why this one failed.
         const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec, record.requirement) : ''
-        return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}` },
+        // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
+        const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
+        if (waiting && 'waited' in waiting) return
+        const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
+        return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
           { sent: false, decisions: [error.decision] }, lease)
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
@@ -675,6 +688,8 @@ export class Engine {
       }
       const routed = {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
+        // The account it runs on, so a failure of it is recovered by its group's mode (ADR-0052).
+        account: admitted.worker.account ? JSON.stringify(admitted.worker.account) : null,
         // The same-family decision first: the last two stay the tier and route decisions.
         decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), admitted.decisions.tier, admitted.decisions.route]),
       }

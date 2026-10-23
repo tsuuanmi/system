@@ -1,0 +1,32 @@
+{
+  "schema": "capability-descriptor@1.5",
+  "worker": "worker:account-b/standard",
+  "provider": "provider-a",
+  "family": "provider-a",
+  "account": {
+    "id": "account-b",
+    "group": "provider-a",
+    "mode": "assigned",
+    "limitUntil": "2026-10-24T18:40:00Z"
+  },
+  "load": {
+    "running": 0,
+    "queued": 0,
+    "pending": 0,
+    "slots": 2
+  },
+  "tier": "standard",
+  "quotaClass": "subscription-chat",
+  "locality": "remote",
+  "capabilities": [
+    {
+      "capability": "reason",
+      "evidence": {
+        "kind": "conformance",
+        "at": "2026-10-24T00:00:00Z"
+      }
+    }
+  ],
+  "state": "quota-exhausted",
+  "observedAt": "2026-10-24T17:40:00Z"
+}

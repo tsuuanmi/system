@@ -31,6 +31,35 @@ The **`agents` Worker source**: agent runtimes as Workers
   reviews. Optional: `reviewMember` (default false; see **Review members**
   below), refused at load (`config_error`) unless the sandbox is `read-only`
   (a writer never reviews), `family` is set, and `worktreePerRun` is off.
+- **Accounts** (`providers`, ADR-0052): each runtime runs one account today, its
+  home, so every Worker of a runtime names the account `{ id: <runtime>, group:
+  <runtime> }` (`capability-descriptor@1.5`), with its runtime's mode:
+  `assigned` by default, or `pooled` only with `pooledTerms` (who confirmed the
+  plan's terms allow it, when, which terms; refused at load otherwise, and
+  recorded at start as a `gate` decision, rule `agent-workers.pooled-terms`).
+  A metered Worker whose pool is out says when it is back (`limitUntil`, the
+  ledger's `until`), so a node that only it could take waits for the reset
+  instead of failing ([assigned accounts](../../../docs/design/routing.md#assigned-accounts)).
+  Several accounts per runtime, enrolled by their login, are PROP-0012's later
+  phases (ADR-0051).
+- **One account, every role** (PROP-0012 phase C): the Workers of one runtime
+  share its home, so they are one account, and each sees what holds the
+  others:
+  - `siblings(worker)` names every Worker of its runtime, itself included, by
+    id. A failover leaves them all out (ADR-0034), and a team member avoids them
+    all once another member holds one (REQ-TEAM-4,
+    [teams](../../../docs/design/teams.md#distinct-accounts)): two roles of one home are
+    never two members.
+  - A Worker is `quota-exhausted` while its runtime cools down (below) or while
+    the pool of **any** Worker of its runtime is closed, with `limitUntil` the
+    latest of their resets (none when one of them names none): the account is
+    back only once each is. It is `unavailable` while such a pool cannot be
+    read (INV-2). A run queued on it then fails before the agent starts
+    (`quota_exhausted`, or `config_error` for an unreadable pool), naming the
+    pool and the Worker it belongs to; its own pool stays its reservation's to
+    check.
+  - A session stays on its one Worker (`affinity`): it never moves to another
+    role (another sandbox) of the account.
 - **Capabilities are what `probe()` proves now** ([`src/probes.ts`](src/probes.ts)). A
   runtime's probe result stands for `probeTtlMs` (default 5 min) from when its probe started,
   never longer. Once it is half that old, the next probe starts in the background, one at a time
@@ -171,7 +200,8 @@ The **`agents` Worker source**: agent runtimes as Workers
     and left no `limited` reading (Codex and the Antigravity CLI report no
     limit observation) closes every window of the pool with a `limited`
     reading (source `limit-notice`) for `limitCooldownSeconds`; a later
-    reading of a window says otherwise;
+    reading of a window says otherwise. A closed pool holds every Worker of
+    the runtime, not only the metered one (**One account, every role**);
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 

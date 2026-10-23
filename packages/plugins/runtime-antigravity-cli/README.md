@@ -22,7 +22,9 @@ refused (`config_error`). The `agents` source's gate classifies agy's tools
 
 What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigravity-cli-workers).
 
-- **Its own home:** agy keeps everything under `$HOME` (its sign-in,
+- **Its own home**, and no other: a run naming one (`RunSpec.home`, one
+  account's home, ADR-0051) is refused (`config_error`) before anything runs.
+  agy keeps everything under `$HOME` (its sign-in,
   `~/.gemini/antigravity-cli`; its global customizations, `~/.gemini/config`;
   its plugins' secrets, `~/.config/antigravity`; seen with agy 1.4.6, which has
   no flag or variable for a config directory). So agy runs with `HOME` set to

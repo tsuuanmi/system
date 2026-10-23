@@ -125,11 +125,13 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     })
     const workers = Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w]))
     const offers = (id: string) => workers[id]!.capabilities.map((c) => [c.capability, c.evidence.kind, c.scope ?? 'any'])
-    expect(workers['agent:codex']).toMatchObject({ schema: 'capability-descriptor@1.4', quotaClass: 'agent-plan', family: 'family-resumes' })
+    // @1.5 since every agent Worker names its account (ADR-0052); the scoped offers are @1.4's.
+    expect(workers['agent:codex']).toMatchObject({ schema: 'capability-descriptor@1.5', quotaClass: 'agent-plan', family: 'family-resumes' })
     expect(offers('agent:codex')).toEqual([['local-data', 'probe', 'any'], ['review', 'probe', 'any'], ['persistent-conversation', 'probe', 'any'], ['reason', 'probe', 'review-member']])
     expect(offers('agent:agy')).toEqual([['local-data', 'probe', 'any'], ['review', 'probe', 'any'], ['reason', 'probe', 'review-member'], ['persistent-conversation', 'conformance', 'review-member']])
     // Not under the profile: never reason, and no conversation its runtime cannot keep.
-    expect(workers['agent:plain']).toMatchObject({ schema: 'capability-descriptor@1.1' })
+    expect(workers['agent:plain']).toMatchObject({ schema: 'capability-descriptor@1.5' })
+    expect(workers['agent:plain']!.capabilities.some((c) => c.scope)).toBe(false)
     expect(offers('agent:plain')).toEqual([['local-data', 'probe', 'any'], ['review', 'probe', 'any']])
     // An ordinary ask never reaches them (P1): fail closed, the scope named.
     await expect(ctx.workers.route(ordinary({ capabilities: ['reason'] }))).rejects.toThrow(/no Worker proves reason \(.*it proves reason only for review-member work/)

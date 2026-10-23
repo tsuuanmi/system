@@ -60,6 +60,10 @@
       "sensitive": false
     },
     {
+      "key": "providers",
+      "sensitive": false
+    },
+    {
       "key": "maxReplayChars",
       "sensitive": false
     },

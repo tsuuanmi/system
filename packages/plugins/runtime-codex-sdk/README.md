@@ -20,6 +20,8 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   - Codex runs in **its own Codex home** (`CODEX_HOME`, config `home`, default
     `<DSH_HOME>/system/codex-home`, created owner-only), never the operator's
     `~/.codex`, where `system mcp-config codex` puts the `system` MCP server.
+    It runs in no other home: a run naming one (`RunSpec.home`, one account's
+    home, ADR-0051) is refused (`config_error`) before anything runs.
     Codex starts MCP servers outside its sandbox, so a Worker would reach their
     tools (`approve`, the credential tools, …). The probe and every run call
     `codex mcp list --json` on that home and fail closed (`config_error`) if any

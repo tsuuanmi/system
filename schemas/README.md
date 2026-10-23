@@ -14,9 +14,9 @@ each field, which a schema cannot fully express, is documented in
 |---|---|
 | [common.v1.json](common.v1.json) | shared value types: content address, ids, classification, tier, quota class, capability, subject |
 | [artifact-envelope.v1.json](artifact-envelope.v1.json) | immutable envelope of every artifact |
-| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle`; 1.6 adds `policy-change`; 1.7 adds `registration` and `verdict` |
+| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle`; 1.6 adds `policy-change`; 1.7 adds `registration` and `verdict`; 1.8 adds `enrollment` and the `recovery` outcome `wait` |
 | [work-requirement.v1.json](work-requirement.v1.json) | input to routing |
-| [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities |
+| [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities; 1.5 adds the `account` it runs on and its provider's `assigned` or `pooled` mode |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node; 1.1 adds `RETIRED`; 1.2 adds the brief its execution was started with |
 | [provider-turn-receipt.v1.json](provider-turn-receipt.v1.json) | body of a provider turn `receipt` artifact |
 | [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |
@@ -26,6 +26,7 @@ each field, which a schema cannot fully express, is documented in
 | [event.v1.json](event.v1.json) | one entry of the append-only event log (`ctx.eventLog`); event types are dotted names such as `ui.heal` |
 | [lease.v1.json](lease.v1.json) | a held lease (`ctx.leases`): resource, owner, token, monotonic generation, expiry |
 | [account.v1.json](account.v1.json) | provider account vault record (portable state; never leaves the provider runtime) |
+| [agent-account.v1.json](agent-account.v1.json) | one enrollment slot of an agent runtime: its home, the account id derived from the verified login by a keyed hash, its status, and why it is quarantined |
 | [provider-answer.v1.json](provider-answer.v1.json) | body of a `report` artifact holding one website Worker answer (the prompt by hash only) |
 | [plan.v1.json](plan.v1.json) | body of a `plan` artifact: nodes a planner proposes to append to its run's DAG |
 | [approval.v1.json](approval.v1.json) | body of an `approval` artifact: an operator's verdict bound to one exact subject |

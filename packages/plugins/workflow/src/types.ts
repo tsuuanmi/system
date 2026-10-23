@@ -54,6 +54,8 @@ export interface NodeView {
   brief?: ArtifactRef
   /** Tokens the result reports spending, when its Worker counts them (model Workers). */
   usage?: { inputTokens: number; outputTokens: number }
+  /** It waits until then for an assigned account's limit to reset, sending nothing meanwhile (ADR-0052). */
+  waitingUntil?: string
   /**
    * In the usage report only: the resource ledger could not count its execution's usage when it
    * ended (`usage.unknown`), for this reason; a cap counts it as 0. The report and health say
@@ -274,6 +276,11 @@ export interface Config {
    * ADR-0035). Off by default.
    */
   allowSameFamily?: boolean
+  /**
+   * Hours a node refused only for assigned accounts' limits may wait for their reset, in all from
+   * its first wait (default 24; 0 never waits); past it, it fails `quota_exhausted` (ADR-0052, INV-9).
+   */
+  maxLimitWaitHours?: number
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */
   autoApprovePlans?: boolean
   /** Reviews of one change, the first included, before remediation stops (default 3). */
@@ -349,6 +356,12 @@ export interface NodeRow {
   excluded?: string | null
   /** A remediation gate's approval request in `ctx.approvals`, once its plan was put to the queue. */
   approval_request?: string | null
+  /** JSON `WorkerAccount` of the Worker its latest attempt was routed to, when it declared one (ADR-0052). */
+  account?: string | null
+  /** JSON `{ group, account }`: after an unsent failure on an assigned account, no other account of its group takes the node (ADR-0052). */
+  assignment?: string | null
+  /** When the node first waited for an assigned account's limit: its waits are bounded from here (`maxLimitWaitHours`). */
+  limit_wait_since?: string | null
   error: string | null
   updated_at: string
 }

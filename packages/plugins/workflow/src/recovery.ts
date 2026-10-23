@@ -4,7 +4,7 @@
  */
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ProviderErrorKind } from '@tsuuanmi/system-provider-core'
-import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, TIERS, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, type RouteOptions, TIERS, type WorkerAccount, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { noteDeferral } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import { MATERIAL, type SourceSnapshot } from './sources.ts'
@@ -116,6 +116,75 @@ export function routedDecisions(node: NodeRow, e?: Engine): ArtifactRef[] {
 /** Failures an unsent attempt fails over from, to another Worker (ADR-0034). */
 const FAILOVER = new Set(['quota_exhausted', 'challenge', 'reauth_required', 'overloaded'])
 
+/** The account an attempt's Worker ran on, as routing saw it, when it declared one (ADR-0052). */
+export function accountOf(node: NodeRow): WorkerAccount | undefined {
+  return node.account ? (JSON.parse(node.account) as WorkerAccount) : undefined
+}
+
+/** The account a node stays on within its group after an unsent failure on an assigned account (ADR-0052), as route options. */
+export function assignmentOf(node: NodeRow): RouteOptions['assignment'] {
+  if (!node.assignment) return undefined
+  const { group, account } = JSON.parse(node.assignment) as { group: string; account: string }
+  return { group, account, reason: `an earlier attempt of ${node.node_id} failed on its assigned account ${account} before anything was sent; another account of its provider does not take its work` }
+}
+
+/** The group and account an attempt ran on, when its account is assigned: where the node then stays (ADR-0052). */
+function assignedOf(node: NodeRow): { group: string; account: string } | undefined {
+  const account = accountOf(node)
+  return account?.mode === 'assigned' ? { group: account.group, account: account.id } : undefined
+}
+
+/** Until when a node waits for an assigned account's limit (ADR-0052), while it does. */
+export function waitingUntil(node: NodeRow): string | undefined {
+  if (node.state !== 'READY' || !node.limit_wait_since || !node.not_before || Date.parse(node.not_before) <= Date.now()) return undefined
+  return (node.error ? (JSON.parse(node.error) as WorkflowError).kind : undefined) === 'quota_exhausted' ? node.not_before : undefined
+}
+
+/**
+ * A node refused only because the assigned accounts that could take it are at their limit waits
+ * for the earliest reset (ADR-0052), as a `recovery` decision with outcome `wait` (`decision@1.8`):
+ * it stays `READY` with `not_before` the reset, kept on its row so a restart waits on (INV-4), sends
+ * nothing, and spends no attempt. Bounded (INV-9): from its first wait, at most `maxLimitWaitHours`
+ * in all. `node` is the row as it stands, its attempt not yet counted. Returns why it does not wait
+ * when it cannot, so the caller fails it as before.
+ */
+export function waitForLimit(e: Engine, run: RunRow, node: NodeRow, failure: AdmissionFailure, message: string, lease: () => Lease): { waited: true } | { why: string } {
+  const until = failure.limitUntil
+  if (!until) return { why: 'no reset of the limit is known' }
+  const max = e.config.maxLimitWaitHours ?? 24
+  const since = node.limit_wait_since ?? new Date().toISOString()
+  const hours = (Date.parse(until) - Date.parse(since)) / 3_600_000
+  if (!(max > 0) || hours > max) return { why: `waiting until ${until} would pass maxLimitWaitHours (${max}) from its first wait at ${since}` }
+  const waited = Math.max(0, (Date.now() - Date.parse(since)) / 3_600_000)
+  const decision = e.ctx.artifacts.recordDecision({
+    schema: 'decision@1.8',
+    decisionType: 'recovery',
+    question: `How does node ${node.node_id} of run ${run.run_id} recover from quota_exhausted?`,
+    inputs: [failure.decision],
+    candidates: [
+      { option: 'retry', selected: false, reasons: ['not retry: no Worker is admitted now; the assigned accounts that could take it are at their limit'] },
+      { option: 'failover', selected: false, reasons: ['not failover: assigned accounts do not take another account\'s work at its limit'] },
+      { option: 'wait', selected: true, reasons: [`the assigned accounts that could take it are at their limit, the first back at ${until}; it waits for that reset (${round(waited)} h of the ${max} h it may wait in all), sends nothing, and spends no attempt`] },
+      { option: 'fail', selected: false, reasons: [`not fail: the reset is known and within maxLimitWaitHours (${max}) of its first wait`] },
+    ],
+    decider: { type: 'rule', id: 'workflow.recovery', version: '1' },
+    outcome: { option: 'wait', detail: { kind: 'quota_exhausted', attempt: node.attempt, until, since, maxLimitWaitHours: max } },
+    deterministic: true,
+  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
+  const error: WorkflowError = { kind: 'quota_exhausted', disposition: 'BACKOFF', message: `${message}; waiting until ${until}` }
+  e.ctx.store.transaction(() => {
+    e.writeNode(node, { state: 'READY', execution_id: null, worker: null, not_before: until, limit_wait_since: since, error: JSON.stringify(error), decisions: JSON.stringify([failure.decision]) }, (r) => {
+      const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
+      delete next.execution
+      return next
+    }, lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.waiting', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { until, since, attempt: node.attempt } })
+  })
+  return { waited: true }
+}
+
+const round = (hours: number): string => (Math.round(hours * 100) / 100).toString()
+
 /**
  * Retry, fail over, or fail a node after a failed attempt (REQ-WF-6), recorded as a
  * `recovery` decision (INV-13). A retry needs a retryable disposition, attempts left, and a
@@ -135,12 +204,15 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // its team bound to the Worker of its first admission (Model A), never moves.
   const sessionId = (JSON.parse(node.spec) as ResolvedNode).session.sessionId
   const held = sessionId ? e.ctx.workers.affinity(sessionId) ?? e.ctx.workerSessions.session(sessionId) : undefined
+  // An assigned account's unsent failure never moves inside its provider group (ADR-0052).
+  const assigned = !attempt.sent && node.worker && FAILOVER.has(error.kind) ? assignedOf(node) : undefined
   // Why a failover is not possible: the first of its conditions that does not hold.
   const noFailover = attempt.sent ? 'the prompt was sent, so the turn stays with its Worker'
     : !node.worker ? 'no Worker served the attempt'
     : !FAILOVER.has(error.kind) ? `${error.kind} is not a failure of one Worker (usage limit, challenge, sign-out, or overload)`
     : node.attempt >= max ? `attempt ${node.attempt} of ${max} failed`
     : held ? `the node's session is held to ${node.worker}`
+    : assigned && error.kind === 'overloaded' ? `${node.worker}'s account is assigned: an overload is retried on it with back-off, never moved to another account of its provider`
     : undefined
   // Why the node cannot run again at all: the first of a retry's conditions that does not hold.
   const noRetry = !RETRYABLE.has(error.disposition) ? `${error.kind} is ${error.disposition}, not retryable`
@@ -148,7 +220,9 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
     : node.attempt >= max ? `attempt ${node.attempt} of ${max} failed`
     : undefined
   if (!noFailover) {
-    reasons.failover.push(`${error.kind} on ${node.worker} before anything was sent, and attempt ${node.attempt} of ${max} failed: another Worker takes it`)
+    reasons.failover.push(assigned
+      ? `${error.kind} on ${node.worker} before anything was sent, and attempt ${node.attempt} of ${max} failed: a Worker of another provider takes it, or else its own account again; its account is assigned, so no other account of its provider does`
+      : `${error.kind} on ${node.worker} before anything was sent, and attempt ${node.attempt} of ${max} failed: another Worker takes it`)
     reasons.retry.push(`not retry: ${error.kind} is bound to ${node.worker}, so the next attempt leaves it out`)
     reasons.fail.push(`not fail: nothing was sent and ${max - node.attempt} attempt(s) of ${max} remain`)
   } else if (noRetry) {
@@ -176,7 +250,10 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
       { option: 'fail', selected: !retry, reasons: reasons.fail },
     ],
     decider: { type: 'rule', id: 'workflow.recovery', version: '1' },
-    outcome: { option: failover ? 'failover' : retry ? 'retry' : 'fail', detail: { kind: error.kind, disposition: error.disposition, attempt: node.attempt, ...(failover ? { from: node.worker!, sent: false } : {}) } },
+    outcome: {
+      option: failover ? 'failover' : retry ? 'retry' : 'fail',
+      detail: { kind: error.kind, disposition: error.disposition, attempt: node.attempt, ...(failover ? { from: node.worker!, sent: false } : {}), ...(retry && assigned ? { assignment: assigned } : {}) },
+    },
     deterministic: true,
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
   const decisions = kept.length ? { decisions: JSON.stringify(kept) } : {}
@@ -185,8 +262,10 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
     const delay = error.disposition === 'IMMEDIATE' || (failover && error.disposition !== 'BACKOFF') ? 0 : (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
     // The failed Worker and those that share its runtime (another tier of the same account).
     const excluded = failover ? { excluded: JSON.stringify([...new Set([...(node.excluded ? (JSON.parse(node.excluded) as string[]) : []), ...e.ctx.workers.siblings(node.worker!)])].sort()) } : {}
+    // Kept on the row, so a restart keeps it: no other account of its group takes the node (ADR-0052).
+    const pinned = assigned ? { assignment: JSON.stringify(assigned) } : {}
     e.ctx.store.transaction(() => {
-      e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...excluded, ...decisions },
+      e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...excluded, ...pinned, ...decisions },
         (r) => {
           // The next attempt gets its own execution; the failed one no longer explains the node.
           const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }

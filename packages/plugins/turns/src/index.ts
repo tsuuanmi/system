@@ -19,7 +19,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { type ContentId, contentId, sha256 } from '@tsuuanmi/system-libs'
+import { type ContentId, contentId, pooledTermsDecision, sha256 } from '@tsuuanmi/system-libs'
 import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -303,6 +303,11 @@ export class Turns extends Service {
       version: 9,
       sql: `CREATE TABLE turn_cooldowns (account TEXT NOT NULL, feature TEXT NOT NULL, until TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (account, feature));`,
     }])
+    // A pooled provider's recorded terms, as a gate decision at each start (ADR-0052, INV-13): the
+    // same terms record the same decision.
+    for (const { provider, pooledTerms } of ctx.accounts.pooled()) {
+      ctx.artifacts.recordDecision(pooledTermsDecision(provider, pooledTerms, 'turns.pooled-terms'), { producer: { type: 'system', ref: 'turns' } })
+    }
     ctx.workers.register({
       name: 'website',
       describe: () => this.describeWorkers(),
@@ -774,9 +779,13 @@ export class Turns extends Service {
       const state = !driver || account.status !== 'ready' ? undefined
         : limits.some((c) => c.feature === '*') ? 'quota-exhausted' : load.running >= slots ? 'busy' : undefined
       const cooldowns = limits.filter((c) => c.feature !== '*').map((c) => ({ capability: c.feature, until: c.until }))
+      // Its provider's accounts are compared by the provider, under its setting (ADR-0052); a limit on the whole account says until when.
+      const whole = limits.find((c) => c.feature === '*')
+      const mode = this.ctx.accounts.setting(account.provider).mode
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         // The site is who serves the work, so the account's provider is the Worker's family (ADR-0027).
-        schema: 'capability-descriptor@1.3', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
+        schema: 'capability-descriptor@1.5', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
+        account: { id: account.id, group: account.provider, mode, ...(whole ? { limitUntil: whole.until } : {}) },
         ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), load, ...(cooldowns.length ? { cooldowns } : {}), tier,
         quotaClass: account.quotaClass, locality: 'remote',
         capabilities: [

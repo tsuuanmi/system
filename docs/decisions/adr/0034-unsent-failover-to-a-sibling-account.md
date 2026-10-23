@@ -1,6 +1,6 @@
 # ADR-0034: An unsent attempt moves to a sibling account; usage limits set cooldowns
 
-- **Status:** Accepted
+- **Status:** Accepted; superseded in part by [ADR-0052](0052-accounts-are-assigned-unless-pooling-is-recorded.md) (proposed: for a provider whose accounts are `assigned`, the default, a limit makes the account's work wait and nothing fails over to another account of that provider; this record stands for `pooled` providers)
 - **Date:** 2026-10-19 (accepted 2026-10-19, by the operator, with [PROP-0007](../../proposals/0007-account-pools.md))
 - **Related:** REQ-WRK-8, [INV-4](../../architecture/invariants.md),
   [ADR-0021](0021-ui-operations-as-data.md), [ADR-0033](0033-least-busy-routing.md)

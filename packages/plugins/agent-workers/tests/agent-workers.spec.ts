@@ -656,6 +656,26 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect((await ctx.workers.route(requirement())).worker.worker).toBe('agent:reviewer')
   })
 
+  it('names its runtime\'s one account, assigned by default, and when an exhausted pool is back, so routing can wait for it (ADR-0052)', async () => {
+    const { ctx } = await boot(new ScriptedAgent(), { workers: [metered()] }, undefined, LEDGER)
+    expect((await ctx.workers.list())[0]).toMatchObject({ schema: 'capability-descriptor@1.5', account: { id: 'scripted', group: 'scripted', mode: 'assigned' } })
+    expect((await ctx.workers.list())[0]!.account).not.toHaveProperty('limitUntil')
+    const reset = inAnHour()
+    await ctx.resources.observe(limitReading(POOL.windows[1] as never, { state: 'limited', resetsAt: reset }))
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted', account: { mode: 'assigned', limitUntil: reset } })
+    // With one account for the runtime, the refusal says when it is back.
+    await expect(ctx.workers.route(requirement())).rejects.toMatchObject({ name: 'AdmissionFailure', limitUntil: reset })
+  })
+
+  it('pools a runtime\'s accounts only with the operator\'s recorded terms, recorded at start as a gate decision (ADR-0052)', async () => {
+    expect(() => new AgentWorkers(new Context(), { workers: [worker()], providers: [{ provider: 'scripted', accounts: 'pooled' }] })).toThrow(/agent-workers\.providers\[0\]: scripted is pooled, and no pooledTerms/)
+    const pooledTerms = { confirmedBy: 'operator', confirmedAt: '2026-10-24T09:00:00Z', terms: 'the plan terms, read 2026-10-24' }
+    const { ctx } = await boot(new ScriptedAgent(), { workers: [worker()], providers: [{ provider: 'scripted', accounts: 'pooled', pooledTerms }] })
+    expect((await ctx.workers.list())[0]).toMatchObject({ account: { id: 'scripted', group: 'scripted', mode: 'pooled' } })
+    const gates = ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', limit: 10 }).map((a) => a.body as { decider: { id: string }; outcome: { option: string; detail: Record<string, unknown> } })
+    expect(gates.filter((g) => g.decider.id === 'agent-workers.pooled-terms')).toEqual([expect.objectContaining({ outcome: { option: 'pooled', detail: { provider: 'scripted', ...pooledTerms } } })])
+  })
+
   it('fails closed when a metered Worker\'s ledger or pool is missing: unavailable, and a run never starts (INV-2)', async () => {
     const agent = new ScriptedAgent()
     const unledgered = await boot(agent, { workers: [metered()] })
@@ -956,6 +976,78 @@ describe('agents source: a usage limit its runtime gives no reading for is never
     await run(ctx, 'k1')
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'ready' })
     expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM agent_cooldowns').get()).toEqual({ n: 0 })
+  })
+})
+
+describe('agents source: every Worker of one runtime is one account, its siblings (PROP-0012 phase C)', () => {
+  const run = async (ctx: Context, key: string, id: string) => {
+    const source = ctx.workers.source('agents')!
+    return source.wait(source.start({ key, worker: id, prompt: 'look at it', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+  }
+  const states = async (ctx: Context) => Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w.state]))
+
+  it('names every Worker of the runtime as its siblings, itself included; another runtime\'s Workers are not (one home, one sign-in)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'] }), {
+      workers: [worker(), worker({ id: 'writer', sandbox: 'workspace-write' }), worker({ id: 'elsewhere', runtime: 'other' })],
+    })
+    // Before, each agent Worker was an account of its own: siblings gave just itself.
+    expect(ctx.workers.siblings('agent:writer')).toEqual(['agent:reviewer', 'agent:writer'])
+    expect(ctx.workers.siblings('agent:reviewer')).toEqual(['agent:reviewer', 'agent:writer'])
+    expect(ctx.workers.siblings('agent:elsewhere')).toEqual(['agent:elsewhere'])
+    // The descriptor's account agrees: one id for the runtime's Workers.
+    const accounts = Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w.account?.id]))
+    expect(accounts).toEqual({ 'agent:reviewer': 'scripted', 'agent:writer': 'scripted', 'agent:elsewhere': 'other' })
+    // A Worker this source does not configure is not its to answer for.
+    expect(ctx.workers.source('agents')!.siblings!('agent:gone')).toBeUndefined()
+  })
+
+  it('holds every role of the account off work while the pool of one of them is closed, and says until when; a run queued on a sibling never starts (REQ-WRK-8, INV-2)', async () => {
+    const agent = new ScriptedAgent()
+    const { ctx } = await boot(agent, { workers: [metered(), worker({ id: 'second' }), worker({ id: 'elsewhere', runtime: 'other' })] }, undefined, LEDGER)
+    ctx.agentRuntimes.register(Object.assign(new ScriptedAgent(), { kind: 'other' }))
+    const reset = inAnHour()
+    await ctx.resources.observe(limitReading(POOL.windows[1] as never, { state: 'limited', resetsAt: reset }))
+    // Before, the unmetered role on the same sign-in stayed ready and took the work into the same limit.
+    expect(await states(ctx)).toEqual({ 'agent:reviewer': 'quota-exhausted', 'agent:second': 'quota-exhausted', 'agent:elsewhere': 'ready' })
+    expect((await ctx.workers.list()).find((w) => w.worker === 'agent:second')).toMatchObject({ account: { id: 'scripted', limitUntil: reset } })
+    const admitted = await ctx.workers.route(requirement(), { excludeWorkers: { workers: ['agent:elsewhere'], reason: 'only the limited account is left' } }).catch((error: unknown) => error)
+    expect(admitted).toMatchObject({ name: 'AdmissionFailure', limitUntil: reset })
+    // Another runtime is another account: it takes the work.
+    expect((await ctx.workers.route(requirement())).worker.worker).toBe('agent:elsewhere')
+    const refused = await run(ctx, 'k1', 'agent:second')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'quota_exhausted', message: `agent:second: the pool max.agents of agent:reviewer, on the same sign-in, is at its limit until ${reset}; nothing was run` } })
+    expect(agent.runs).toEqual([])
+    // Once the pool is back, both roles take work again.
+    await ctx.resources.observe(limitReading(POOL.windows[1] as never, { state: 'ok', observedAt: new Date(Date.now() + 1000).toISOString() }))
+    expect(await states(ctx)).toEqual({ 'agent:reviewer': 'ready', 'agent:second': 'ready', 'agent:elsewhere': 'ready' })
+    expect(await run(ctx, 'k2', 'agent:second')).toMatchObject({ status: 'completed' })
+  })
+
+  it('says no time when one closed pool of the account names none, and the latest when all do: the account is back only once every pool is', async () => {
+    const other: PoolConfig = { ...POOL, pool: 'max.second' }
+    const { ctx } = await boot(new ScriptedAgent(), { workers: [metered(), metered({ id: 'second', pool: 'max.second' })] }, undefined, { pools: [POOL, other] })
+    const soon = inAnHour()
+    const later = new Date(Date.now() + 2 * 3_600_000).toISOString()
+    await ctx.resources.observe(limitReading(POOL.windows[0] as never, { state: 'limited', resetsAt: soon }))
+    await ctx.resources.observe({ ...limitReading(POOL.windows[0] as never, { state: 'limited', resetsAt: later }), pool: 'max.second' })
+    for (const w of await ctx.workers.list()) expect(w).toMatchObject({ state: 'quota-exhausted', account: { limitUntil: later } })
+    // A pool closed with no time known (no reading of a pool that admits no unknown window): no
+    // Worker of the account says when it is back.
+    const unread = await boot(new ScriptedAgent(), { workers: [metered(), metered({ id: 'second', pool: 'max.second' })] }, undefined, { pools: [POOL, { ...other, unknown: 'unavailable' }] })
+    await unread.ctx.resources.observe(limitReading(POOL.windows[0] as never, { state: 'limited', resetsAt: soon }))
+    for (const w of await unread.ctx.workers.list()) {
+      expect(w.state).toBe('quota-exhausted')
+      expect(w.account).not.toHaveProperty('limitUntil')
+    }
+  })
+
+  it('fails closed when the pool of another role on the same sign-in cannot be read: unavailable, and a run never starts (INV-2)', async () => {
+    const agent = new ScriptedAgent()
+    const { ctx } = await boot(agent, { workers: [metered({ pool: 'nope' }), worker({ id: 'second' })] }, undefined, LEDGER)
+    // Before, the unmetered role took work whatever the account's metering said.
+    expect(await states(ctx)).toEqual({ 'agent:reviewer': 'unavailable', 'agent:second': 'unavailable' })
+    expect(await run(ctx, 'k1', 'agent:second')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: 'agent:second: the pool nope of agent:reviewer, on the same sign-in, cannot be read; nothing was run' } })
+    expect(agent.runs).toEqual([])
   })
 })
 

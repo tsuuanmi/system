@@ -60,13 +60,33 @@ without changing identity.
 Member *k* must use a provider family other than those of members 1..*k*−1
 ([ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)). Members also use distinct
 accounts (REQ-TEAM-4): they route one at a time, and each avoids every account another member
-holds. A member that finds no other family fails with `config_error`. When fewer families are
-ready than the team has members (M counts the families of the Workers ready or busy that prove
-the step's capabilities), its message starts
+holds ([below](#distinct-accounts)). A member that finds no other family fails with
+`config_error`. When fewer families are ready than the team has members (M counts the families of
+the Workers ready or busy that prove the step's capabilities), its message starts
 `team T needs N provider families, one per member; M is/are ready (ADR-0027).`; with enough of
 them, the shortage is not the cause, and the admission's own reasons stand. A member that every
 Worker of another family refuses only for its input's length fails as `invalid_input`, and names
 the bound to change ([sources](#sources)).
+
+### Distinct accounts
+
+An account is every Worker that runs on one sign-in, so a member avoids all of them, never just
+the Worker another member runs on (PROP-0012 phase C,
+[ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)):
+
+- The Workers another member holds are its session's (`affinity`), or, when no loaded source owns
+  the session any more, the Worker it joined the team on.
+- Each held Worker's account is its **siblings** (`ctx.workers.siblings`): the tiers of a website
+  account, every role of an agent runtime's one home. Any Worker whose descriptor names the same
+  `account` (`group` and `id`) is on it too, whichever source describes it. A Worker with neither
+  (a model Worker) is an account of its own.
+- So two roles of one home, a reviewer and a developer, are one account: a second member never
+  takes the other role as if it were independent. Members still differ by family first; a role
+  with an operator-set `family` of its own does not make its account another one.
+- **Fail closed.** When a held Worker's account cannot be told apart, the member is refused
+  before anything is routed or sent, `config_error`, with the cause, and `allowSameFamily` does not
+  lift it: the held Worker is described by no loaded source and no source names its siblings, or
+  its siblings' descriptors name different accounts.
 
 With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),
 [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)), such a member routes

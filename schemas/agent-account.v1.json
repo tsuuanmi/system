@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:agent-account:v1",
+  "title": "Agent account record",
+  "description": "One enrollment slot of an agent runtime and the account signed in to its home (proposals/0012-agent-accounts.md, ADR-0051): the account id is derived from the verified login principal by a keyed hash, never named by hand; the principal itself and every token stay inside the runtime (INV-8).",
+  "type": "object",
+  "required": ["schema", "provider", "slot", "home", "status", "revision", "updatedAt"],
+  "properties": {
+    "schema": { "const": "agent-account@1.0" },
+    "accountId": {
+      "description": "`<provider>:<h>`: `h` the first 16 hex characters of `identity.hmac`. Absent until a principal was read whole.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$"
+    },
+    "provider": {
+      "description": "The agent runtime kind that signs the account in and reads its identity: the identity namespace.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "slot": {
+      "description": "The enrollment slot: a home and nothing more. Its number never names, orders, or identifies an account.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "home": {
+      "description": "The slot's owner-only home directory, an absolute path under the DSH home.",
+      "type": "string",
+      "pattern": "^/",
+      "maxLength": 4096
+    },
+    "status": {
+      "description": "`enrolled`: a slot is taken, its sign-in not yet verified; `ready`: signed in as the pinned principal; `signed-out`: the runtime's own sign-in check fails; `quarantined`: see `quarantine`. Only `ready` admits a Worker.",
+      "enum": ["enrolled", "ready", "signed-out", "quarantined"]
+    },
+    "quarantine": {
+      "type": "object",
+      "required": ["reason", "since", "decision"],
+      "properties": {
+        "reason": {
+          "description": "`changed`: the home signs in as another principal; `ambiguous`: the principal cannot be read whole, or its short id collides with another; `duplicate`: two slots resolve to one principal; `unverified`: the runtime or its version has no verified reader.",
+          "enum": ["changed", "ambiguous", "duplicate", "unverified"]
+        },
+        "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "decision": {
+          "description": "The `enrollment` decision that quarantined it (INV-13).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["hmac", "reader", "runtimeVersion", "verifiedAt"],
+      "properties": {
+        "hmac": {
+          "description": "HMAC-SHA256 over the provider and the canonical principal parts, keyed by a per-install key kept in the credential vault; compared in full.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reader": {
+          "description": "The runtime's identity reader that read it, pinned to the CLI versions a supervised check verified.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "runtimeVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "verifiedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "hint": {
+      "description": "A masked hint for the operator (the first letter and the domain of an email), when the runtime shows one; local only, never sent to a Worker.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "revision": { "type": "integer", "minimum": 0 },
+    "updatedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "description": "A ready account has its id and its verified identity, and no quarantine.",
+      "if": { "properties": { "status": { "const": "ready" } }, "required": ["status"] },
+      "then": { "required": ["accountId", "identity"], "properties": { "accountId": true, "identity": true, "quarantine": false } }
+    },
+    {
+      "description": "A quarantined account says why; no other status carries a quarantine.",
+      "if": { "properties": { "status": { "const": "quarantined" } }, "required": ["status"] },
+      "then": { "required": ["quarantine"], "properties": { "quarantine": true } },
+      "else": { "properties": { "quarantine": false } }
+    },
+    {
+      "description": "A changed or duplicate principal was read whole, so the account it was is named.",
+      "if": {
+        "properties": { "quarantine": { "type": "object", "properties": { "reason": { "enum": ["changed", "duplicate"] } }, "required": ["reason"] } },
+        "required": ["quarantine"]
+      },
+      "then": { "required": ["accountId"], "properties": { "accountId": true } }
+    }
+  ]
+}

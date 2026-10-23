@@ -4,7 +4,7 @@ import { type ContentId, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknow
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
-import { isSameFamily } from './recovery.ts'
+import { isSameFamily, waitingUntil } from './recovery.ts'
 import { tieOf, type TeamRound } from './teams.ts'
 import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, WorkflowError } from './types.ts'
 
@@ -19,6 +19,7 @@ export function view(e: Engine, run: RunRow): RunView {
       ...(n.served_tier ? { tier: n.served_tier } : {}), ...(n.quota_class ? { quotaClass: n.quota_class } : {}),
       ...(record.outputReceipt ? { result: record.outputReceipt.result, ...usageOf(e, record.outputReceipt.result) } : {}),
       ...(record.execution?.brief ? { brief: record.execution.brief } : {}),
+      ...(waitingUntil(n) ? { waitingUntil: n.not_before! } : {}),
       ...(n.error && n.state !== 'COMPLETED' ? { error: JSON.parse(n.error) as WorkflowError } : {}),
     }
   })

@@ -112,8 +112,9 @@ flowchart TD
 
 The checks, in order, are `restricted`, `excluded` (the Workers an earlier attempt failed on
 unsent, [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)),
-`diversity`, `capability`, `cooldown` (a usage limit on a capability the work needs), `input`,
-`locality`, `state`, and `tier`; a rejected Worker carries each check it failed, with its
+`diversity`, `capability`, `cooldown` (a usage limit on a capability the work needs),
+`assignment` (another account of an assigned group holds the work, [below](#assigned-accounts)),
+`input`, `locality`, `state`, and `tier`; a rejected Worker carries each check it failed, with its
 reason.
 
 **Input length** ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
@@ -162,6 +163,41 @@ stays admissible: it only orders it later.
 - **A source keeps its own describe fast.** The `agents` source refreshes its runtimes' probes in
   the background and, once a runtime's first probe has finished, never waits for one in a
   describe ([admission evidence](agent-runtimes.md#admission-evidence)).
+
+### Assigned accounts
+
+> Decision: [ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)
+> (proposed), from [PROP-0012](../proposals/0012-agent-accounts.md) and the operator's answer D24.
+
+A descriptor may carry the account its Worker runs on (`capability-descriptor@1.5`):
+`account: { id, group, mode, limitUntil? }`. Every Worker of one account (the tiers of a website
+account) carries the same `id`; `group` is what accounts are compared with (a website's provider,
+an agent runtime); `mode` is that group's setting, `assigned` by default or `pooled`
+([configuration](../reference/configuration.md)). The router compares `id` and `group` for
+equality only and never names one ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
+A Worker with no `account` is routed as before.
+
+- **The `assignment` check.** A Worker is *at its limit* when every check it fails is a `cooldown`
+  on a capability the work needs, or its state `quota-exhausted`: it would take the work but for
+  the limit. While a Worker of an `assigned` account is at its limit, every Worker of another
+  account of the same group is refused that work: "w:a is at its limit until 18:40; assigned
+  accounts do not take another account's work at its limit". Workers of other groups, and the
+  other Workers of the limited account itself, are admitted as before. Work the limited account
+  could not take anyway (another capability, a tier it does not have) is not held. Under `pooled`
+  nothing is held, as in [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md).
+- **When it is back.** Each Worker at its limit is back once every limit it fails lapses: its
+  latest cooldown on what the work needs, and its account's `limitUntil` when its state is the
+  limit; unknown when either is not known. When nothing is admitted and every Worker at its limit
+  is on an assigned account, the `AdmissionFailure` carries `limitUntil`, the earliest known
+  reset, and the admission decision says so; a caller may then wait for it instead of failing (the
+  workflow engine's [`wait`](workflow-engine.md#waiting-for-an-accounts-limit)). It carries none
+  when a limited Worker has no assigned account, or no reset is known.
+- **Staying on an account.** A caller may pass `assignment: { group, account, reason }`: no Worker
+  of another account of that group takes the work (check `assignment`, the caller's reason). The
+  engine passes it after an unsent failure on an assigned account, so the next attempt never moves
+  inside the provider.
+- **One account per group** (the live host): nothing is held, so every Worker is chosen exactly as
+  before, with the same decisions; a refusal for that account's known limit carries `limitUntil`.
 
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified
@@ -284,7 +320,12 @@ design.
     passes, when a turn that used the feature succeeds, or by the operator
     (`system account clear-cooldown`); a feature probe never ends it. A cooldown is Worker state,
     never the account's status: the account stays `ready`, keeps its checks, and health does not
-    ask the operator to act. A node refused only for it fails `quota_exhausted`.
+    ask the operator to act. A node refused only for it fails `quota_exhausted`, unless the
+    account is [assigned](#assigned-accounts): it then waits for the reset, bounded.
+- **Accounts are assigned by default** (D24: personal subscriptions): a limit on one account
+  never moves its work to another account of that provider, for website and agent accounts alike
+  ([assigned accounts](#assigned-accounts)). A provider is `pooled` only with the operator's
+  recorded confirmation of its terms (`pooledTerms`).
 - **Context economy.** Handoffs carry the synthesized, hash-bound result, not the
   research transcript. Retained conversations receive only new suffixes. Node
   results are reused by input hash.

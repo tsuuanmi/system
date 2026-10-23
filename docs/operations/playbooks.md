@@ -53,7 +53,10 @@ when the site answers with it), the account is **cooled**
 
 - `system account list` shows its `cooldowns`: the feature (`*` for the whole account), until
   when, and the limit's message. Event `account.cooldown` records each one.
-- Work that needs a cooled feature routes to another account of the provider; with none, it
+- Work that needs a cooled feature routes to another provider's Worker; under a `pooled`
+  provider also to another account of the provider. Under an `assigned` provider (the default)
+  it never moves to another account of the provider: it
+  [waits for the reset](#work-waits-for-an-accounts-limit). Otherwise, with nothing admitted, it
   fails `quota_exhausted` and names the limit. Other work still runs on the account.
 - It ends on its own (6 h for a feature, 1 h for the account; `featureLimitCooldownMs`,
   `accountLimitCooldownMs`), when a turn that used the feature succeeds, or with
@@ -71,6 +74,30 @@ every Worker of its runtime, even when the runtime reports no reading
     picks any admitted Worker at the step's tier or above;
   - or run the work at another tier with `--tier`.
 - `system usage` shows which quota class each step spent.
+
+## Work waits for an account's limit
+
+Accounts are `assigned` unless you recorded that a provider's terms allow pooling
+([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): your
+subscriptions are personal, so a limit on one account never moves its work to another account of
+the same provider.
+
+- **What you see.** The run's view (MCP `result`, `/ui`) shows the node `READY` with
+  `waitingUntil`; `system explain <runId>` shows its `recovery` decision with outcome `wait`, the reset
+  (`until`), and when it first waited (`since`); its input, the `admission` decision, names the
+  limited Worker and, for each other account of the provider, the `assignment` refusal ("w:a is
+  at its limit until …; assigned accounts do not take another account's work at its limit"). The
+  event log has `workflow.node.waiting`.
+- **Why it does not move.** The provider is assigned (the default). Work of another provider
+  still runs; a Worker of another provider could have taken this step, and none was admitted.
+- **What happens next.** At the reset the node routes again and runs, on that account or, once the
+  limit is gone, on any admitted Worker. Nothing was sent and no attempt was spent. It waits at
+  most `maxLimitWaitHours` (default 24) in all from its first wait; a reset beyond that, or none
+  known, fails it `quota_exhausted` (a weekly limit, say), and you decide.
+- **What you can do.** Nothing, and it runs at the reset. Or end the limit early once you know it
+  reset (`system account clear-cooldown <id>` for a website account), or `system stop <runId>`.
+  To let a provider's accounts take each other's work, record its terms: see
+  [pool a provider's accounts](runbooks.md#pool-a-providers-accounts).
 
 ## A provider UI change
 

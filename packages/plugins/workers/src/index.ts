@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, provesFor, type QuotaClass,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, provesFor, type QuotaClass,
   type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
 
@@ -205,13 +205,19 @@ export class WorkerRouter extends Workers {
     })
     const requirementRef = stored.id as ArtifactRef
     const failures = new Map(workers.map((w) => [w.worker, this.admit(w, requirement, options)]))
+    // Under assigned accounts, a limit keeps the work off the group's other accounts (ADR-0052).
+    const limited = limitedOnly(workers, failures, requirement)
+    assign(workers, failures, limited)
     const admitted = workers.filter((w) => failures.get(w.worker)!.length === 0).sort(this.order(requirement))
     const chosen = admitted[0]
     if (!chosen) {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
       // A capability no Worker proves now is the plainest reason, for example website-only work in a composition without website Workers.
       const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
-      const why = unproven.length ? `no Worker proves ${unproven.join(', ')}` : workers.length ? 'no Worker passes admission' : 'no Worker is registered'
+      const limitUntil = waitUntil(limited)
+      const why = unproven.length ? `no Worker proves ${unproven.join(', ')}`
+        : limitUntil ? `no Worker passes admission; the assigned accounts that could take it are at their limit, the first back at ${limitUntil}`
+        : workers.length ? 'no Worker passes admission' : 'no Worker is registered'
       const decision = this.ctx.artifacts.recordDecision({
         decisionType: 'admission',
         question: `Which Worker may take work needing ${requirement.capabilities.join(', ')} at tier ${requirement.tier.min} or above?`,
@@ -226,7 +232,7 @@ export class WorkerRouter extends Workers {
         deterministic: true,
       }, { producer, classification: requirement.data.classification })
       const summary = rejections.map((r) => `${r.worker}: ${r.failed.map((f) => f.reason).join(', ')}`).join('; ')
-      throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work: ${why} (${summary ? `${summary}; ` : ''}decision ${decision.id})`)
+      throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work: ${why} (${summary ? `${summary}; ` : ''}decision ${decision.id})`, limitUntil)
     }
     const tier = this.ctx.artifacts.recordDecision({
       decisionType: 'tier',
@@ -340,6 +346,8 @@ export class WorkerRouter extends Workers {
     const now = Date.now()
     const cooled = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now)
     if (cooled.length) fail('cooldown', cooled.map((c) => `${c.capability} limit until ${c.until}`).join(', '))
+    // The work stays on its account within its group (ADR-0052); opaque equality only.
+    if (options.assignment && worker.account?.group === options.assignment.group && worker.account.id !== options.assignment.account) fail('assignment', options.assignment.reason)
     if (options.input && worker.maxInputChars !== undefined && options.input.chars > worker.maxInputChars) {
       fail('input', `the input has ${options.input.chars} characters; it takes at most ${worker.maxInputChars}`)
     }
@@ -401,6 +409,65 @@ export class WorkerRouter extends Workers {
     if (!admitted.some((w) => w.tier === tier)) return ['no admitted Worker at this tier']
     return [`the lower tier ${chosen} has an admitted Worker`]
   }
+}
+
+/** A Worker refused only for its usage limit, with its account, and when it is back (unknown: undefined). */
+interface Limited {
+  worker: CapabilityDescriptor
+  until: string | undefined
+}
+
+/**
+ * The Workers refused only for their usage limit (ADR-0052): every check they failed is a
+ * `cooldown` on a capability the work needs, or their state `quota-exhausted`. Each is back once
+ * every one of those limits lapses: the latest cooldown it fails, and its account's `limitUntil`
+ * when its state is the limit; unknown when either is not known.
+ */
+function limitedOnly(workers: readonly CapabilityDescriptor[], failures: ReadonlyMap<string, Failed>, requirement: WorkRequirement): Limited[] {
+  const now = Date.now()
+  const out: Limited[] = []
+  for (const worker of workers) {
+    const failed = failures.get(worker.worker)!
+    const exhausted = worker.state === 'quota-exhausted'
+    if (!failed.length || !failed.every((f) => f.check === 'cooldown' || (f.check === 'state' && exhausted))) continue
+    const resets = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now).map((c) => Date.parse(c.until))
+    const account = worker.account?.limitUntil === undefined ? Number.NaN : Date.parse(worker.account.limitUntil)
+    if (exhausted) resets.push(account > now ? account : Number.NaN)
+    const back = Math.max(...resets)
+    out.push({ worker, until: Number.isFinite(back) ? new Date(back).toISOString() : undefined })
+  }
+  return out
+}
+
+/**
+ * The `assignment` check (ADR-0052): while a Worker of an assigned account is refused only for its
+ * limit, no Worker of another account of its group takes the work. It compares opaque groups and
+ * accounts for equality, and names the limited Worker, never a provider (INV-11).
+ */
+function assign(workers: readonly CapabilityDescriptor[], failures: Map<string, Failed>, limited: readonly Limited[]): void {
+  const holding = limited.filter((l) => l.worker.account?.mode === 'assigned')
+  if (!holding.length) return
+  for (const worker of workers) {
+    const account = worker.account
+    if (!account) continue
+    const by = holding.filter((l) => l.worker.account!.group === account.group && l.worker.account!.id !== account.id)
+    if (!by.length) continue
+    const named = by.slice(0, 3).map((l) => `${l.worker.worker} is at its limit${l.until ? ` until ${l.until}` : ''}`).join('; ')
+    const failed = failures.get(worker.worker)!
+    failed.push({ check: 'assignment', reason: `${named}${by.length > 3 ? ` (and ${by.length - 3} more)` : ''}; assigned accounts do not take another account's work at its limit` })
+    failed.sort((a, b) => ADMISSION_CHECKS.indexOf(a.check) - ADMISSION_CHECKS.indexOf(b.check))
+  }
+}
+
+/**
+ * When the work may be tried again (ADR-0052): the earliest known reset, when every Worker refused
+ * only for its limit is on an assigned account; undefined when one is not (the limit is someone
+ * else's to move around, as before) or none is known.
+ */
+function waitUntil(limited: readonly Limited[]): string | undefined {
+  if (!limited.length || limited.some((l) => l.worker.account?.mode !== 'assigned')) return undefined
+  const known = limited.map((l) => l.until).filter((u): u is string => u !== undefined).sort()
+  return known[0]
 }
 
 /** A Worker's load as one number: what runs, waits, or is routed to it; a source that reports none reads 0. */

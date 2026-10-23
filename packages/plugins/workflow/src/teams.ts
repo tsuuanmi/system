@@ -739,16 +739,49 @@ function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], roun
 /**
  * Which Workers may take a node: a session stays on its Worker; a member of a team avoids every
  * account another member already holds (REQ-TEAM-4), on top of its provider family (ADR-0027).
+ * An account is every Worker on it: each held Worker's siblings, and every Worker whose descriptor
+ * names the same account (docs/design/teams.md#distinct-accounts). When a held Worker's account
+ * cannot be told apart, the member is refused with the cause (`problem`), never admitted beside it.
  */
-export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string }; distinctAccounts?: true }> {
+export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string }; distinctAccounts?: true } | { problem: string }> {
   const own = spec.session.sessionId ? e.ctx.workers.affinity(spec.session.sessionId) : undefined
   if (own) return { restrict: { workers: own, reason: `session ${spec.session.sessionId} stays on its Worker` } }
   if (!spec.team?.member) return {}
-  const taken = new Set(e.nodeRows(run.run_id)
-    .map((n) => specOf(n))
-    .filter((s) => s.team?.id === spec.team!.id && s.team.member !== undefined && s.team.member !== spec.team!.member && s.session.sessionId)
-    .flatMap((s) => e.ctx.workers.affinity(s.session.sessionId!) ?? []))
-  if (!taken.size) return {}
-  const workers = (await e.ctx.workers.list()).map((w) => w.worker).filter((w) => !taken.has(w))
-  return { restrict: { workers, reason: `team ${spec.team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` }, distinctAccounts: true }
+  const team = spec.team
+  // What each other member holds: its session's Workers, from the source that owns the session,
+  // else the Worker it joined the team on.
+  const held = new Map<string, number>()
+  for (const s of e.nodeRows(run.run_id).map((n) => specOf(n))) {
+    if (s.team?.id !== team.id || s.team.member === undefined || s.team.member === team.member || !s.session.sessionId) continue
+    const joined = e.ctx.workerSessions.session(s.session.sessionId)
+    for (const worker of e.ctx.workers.affinity(s.session.sessionId) ?? (joined ? [joined.worker] : [])) if (!held.has(worker)) held.set(worker, s.team.member)
+  }
+  if (!held.size) return {}
+  const listed = await e.ctx.workers.list()
+  const described = new Map(listed.map((w) => [w.worker, w]))
+  // An account a descriptor names, as one comparable value; none for a Worker that names none.
+  const accountOf = (worker: string): string => {
+    const account = described.get(worker)?.account
+    return account ? JSON.stringify([account.group, account.id]) : ''
+  }
+  const taken = new Set<string>()
+  const accounts = new Set<string>()
+  for (const [worker, member] of held) {
+    const siblings = e.ctx.workers.siblings(worker)
+    const cause = `team ${team.id}: member m${member} holds ${worker}`
+    const unknown = `so its account cannot be told apart from the others' (REQ-TEAM-4); nothing was sent for member m${team.member}`
+    if (!described.has(worker) && siblings.every((s) => s === worker)) {
+      return { problem: `${cause}, which no Worker source describes now and none names with its account's other Workers, ${unknown}` }
+    }
+    const named = new Set([worker, ...siblings].filter((s) => described.has(s)).map(accountOf))
+    if (named.size > 1) {
+      return { problem: `${cause}, whose source names ${[...new Set(siblings)].sort().join(', ')} as the Workers of its account, and their descriptors name different accounts, ${unknown}` }
+    }
+    for (const s of [worker, ...siblings]) taken.add(s)
+    for (const account of named) if (account) accounts.add(account)
+  }
+  // A Worker that names an account a member holds is on it, whichever source describes it.
+  for (const w of listed) if (accounts.has(accountOf(w.worker))) taken.add(w.worker)
+  const workers = listed.map((w) => w.worker).filter((w) => !taken.has(w))
+  return { restrict: { workers, reason: `team ${team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` }, distinctAccounts: true }
 }

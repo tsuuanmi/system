@@ -91,4 +91,11 @@ export const MIGRATIONS = [{
   // questions a step asked, and whether the board took the wait, as JSON `TaskQuestion`.
   version: 16,
   sql: 'ALTER TABLE workflow_tasks ADD COLUMN question TEXT;',
+}, {
+  // Assigned accounts (ADR-0052): the account the node's Worker ran on, the account an unsent
+  // failure keeps it on within its group, and when it first waited for an account's limit.
+  version: 17,
+  sql: `ALTER TABLE workflow_nodes ADD COLUMN account TEXT;
+  ALTER TABLE workflow_nodes ADD COLUMN assignment TEXT;
+  ALTER TABLE workflow_nodes ADD COLUMN limit_wait_since TEXT;`,
 }]

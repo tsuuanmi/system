@@ -87,6 +87,7 @@ export class Workflow extends Service {
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
     allowSameFamily: z.boolean().default(false).description('When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035)'),
     retainRunsDays: z.natural().default(30).description('Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session\'s latest run always stays'),
+    maxLimitWaitHours: z.number().min(0).max(720).default(24).description('Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),

@@ -175,6 +175,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', 'claude-agent-sdk: the workspace must be an absolute path')
+    // One account's own home (ADR-0051) is not supported yet: refused, never run in the configured home instead.
+    if (spec.home !== undefined) throw new ProviderError('config_error', 'claude-agent-sdk: it runs in its configured home only; refusing a run that names another (RunSpec.home)')
     const allowed = ALLOWED[spec.sandbox]
     if (!allowed) throw new ProviderError('config_error', `claude-agent-sdk: unknown sandbox ${String(spec.sandbox)}`)
     // Absent or empty means the sandbox's default set; an empty `tools` would disable every tool.

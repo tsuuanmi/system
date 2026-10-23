@@ -32,7 +32,9 @@ installed.
     owner-only), never the operator's `~/.claude`, which the confinement hides.
     Sign in there once (`CLAUDE_CONFIG_DIR=<home> claude`, then `/login`), or
     forward an API key or OAuth token by name (`forwardEnv`). Its sessions, and
-    so `resume`, live there.
+    so `resume`, live there. It runs in no other home: a run naming one
+    (`RunSpec.home`, one account's home, ADR-0051) is refused (`config_error`)
+    before anything runs, and its probe reports no `homes`.
 - **Probe:** it never runs a task.
   1. `claude --version` (not installed, or failing: unavailable);
   2. `proveConfinement` on this host, with its home bound back

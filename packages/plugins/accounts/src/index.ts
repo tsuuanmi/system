@@ -10,7 +10,7 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { type CredentialKey, type CredentialRecord, credentialKey } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
-import { type ContentId, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { type AccountSetting, accountSettings, ASSIGNED, type ContentId, type PooledTerms, type ProviderAccounts, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type PortableState, ProviderError, type Tier } from '@tsuuanmi/system-provider-core'
 
 export type { PortableState }
@@ -71,6 +71,12 @@ const ID = /^[a-z][a-z0-9-]*$/
 
 export interface Config {
   accounts: CatalogEntry[]
+  /**
+   * How each website provider's accounts are used (ADR-0052): `assigned` (the default, and the only
+   * one for personal subscriptions) or `pooled`, which needs `pooledTerms`. A provider no entry names
+   * is assigned.
+   */
+  providers?: ProviderAccounts[]
 }
 
 export class Accounts extends Service {
@@ -83,9 +89,16 @@ export class Accounts extends Service {
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).required(),
       tiers: z.dict(z.string()).default({}).description('Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served'),
     })).default([]).description('Account catalog: any number of accounts per provider'),
+    providers: z.array(z.object({
+      provider: z.string().pattern(ID).required().description('The website provider: the provider of its catalog accounts (its driver kind)'),
+      accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms'),
+      // Not z.object: an omitted object would come back as {}; checked when loaded.
+      pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: who confirmed that this provider\'s terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052)'),
+    })).default([]).description('How each website provider\'s accounts are used; a provider not listed is assigned (ADR-0052)'),
   }) as unknown as z<Config>
 
   private readonly catalog = new Map<string, CatalogEntry>()
+  private readonly settings: Map<string, AccountSetting>
   private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, config: Config) {
@@ -95,6 +108,21 @@ export class Accounts extends Service {
       if (this.catalog.has(entry.id)) throw new ProviderError('config_error', `duplicate account id ${entry.id}`)
       this.catalog.set(entry.id, entry)
     }
+    try {
+      this.settings = accountSettings(config.providers, 'accounts.providers')
+    } catch (error) {
+      throw new ProviderError('config_error', (error as Error).message)
+    }
+  }
+
+  /** How a provider's accounts are used (ADR-0052): its configured setting, else assigned. */
+  setting(provider: string): AccountSetting {
+    return this.settings.get(provider) ?? ASSIGNED
+  }
+
+  /** Every provider configured `pooled`, with the terms its operator recorded. */
+  pooled(): Array<{ provider: string; pooledTerms: PooledTerms }> {
+    return [...this.settings].flatMap(([provider, s]) => (s.mode === 'pooled' && s.pooledTerms ? [{ provider, pooledTerms: s.pooledTerms }] : []))
   }
 
   async list(): Promise<AccountView[]> {
