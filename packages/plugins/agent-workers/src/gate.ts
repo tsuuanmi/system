@@ -10,6 +10,7 @@
  */
 import { lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCall, ToolGate, ToolVerdict } from '@tsuuanmi/system-agent-runtime-core'
 import { type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
@@ -29,8 +30,11 @@ export interface ToolAction {
 
 /**
  * The table is keyed by the tool names the runtimes report (INV-11: a name, never a runtime): Claude
- * Code's built-in tools, and Codex's as its PreToolUse hook reports them (`exec_command` as `Bash`
- * with `command` only, `apply_patch` with the patch as `command`, `view_image`).
+ * Code's built-in tools; Codex's as its PreToolUse hook reports them (`exec_command` as `Bash`
+ * with `command` only, `apply_patch` with the patch as `command`, `view_image`); and the Antigravity
+ * CLI's file tools as its PreToolUse hook reports them (`read_file`, `write_file`, `edit_file`,
+ * each naming its file in `Path`). Its `run_command` is not classified, so it is denied: no
+ * confinement of its commands is proven.
  */
 /** Tools that only read, and the input field that names where; a field that may be absent reads the workspace. */
 const READS: Record<string, { field: string; required: boolean }> = {
@@ -40,9 +44,10 @@ const READS: Record<string, { field: string; required: boolean }> = {
   Glob: { field: 'path', required: false },
   Grep: { field: 'path', required: false },
   view_image: { field: 'path', required: true },
+  read_file: { field: 'Path', required: true },
 }
 /** Tools that change one file, and the input field that names it. */
-const WRITES: Record<string, string> = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' }
+const WRITES: Record<string, string> = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path', write_file: 'Path', edit_file: 'Path' }
 /** Tools that change files by a patch, and the input field that holds it: the patch names every file it touches. */
 const PATCHES: Record<string, string> = { apply_patch: 'command' }
 /** Tools that send data out of this machine, and the input field the operator is shown. */
@@ -56,9 +61,12 @@ type FieldType = 'string' | 'number' | 'boolean' | 'strings' | 'edits'
  * Every input field each classified tool may carry, and its type, from the Claude Agent SDK's tool
  * input types (`sdk-tools.d.ts`; `MultiEdit`, `NotebookRead`, and `LS`, which it no longer
  * declares, from their last published shapes) and from what Codex's PreToolUse hook reports
- * (Codex 0.164: `apply_patch` and `view_image`; its `Bash` is a subset of Claude Code's). A field not
- * listed (Bash's `dangerouslyDisableSandbox`, say, which would run it outside its sandbox), or a
- * listed one of another type, refuses the call: the gate classifies only an input it knows whole.
+ * (Codex 0.164: `apply_patch` and `view_image`; its `Bash` is a subset of Claude Code's) and the
+ * Antigravity CLI's reports (agy 1.4.6 with `gemini-3.8-flash`, recorded in a supervised live check:
+ * `runtime-antigravity-cli/tests/fixtures/agy-1.4.6-hook-inputs.json`; `ArtifactMetadata`, which
+ * writes an agy artifact, is left out). A field not listed (Bash's `dangerouslyDisableSandbox`,
+ * say, which would run it outside its sandbox), or a listed one of another type, refuses the call:
+ * the gate classifies only an input it knows whole.
  */
 const FIELDS: Record<string, Record<string, FieldType>> = {
   Read: { file_path: 'string', offset: 'number', limit: 'number', pages: 'string', allow_large: 'boolean' },
@@ -78,6 +86,9 @@ const FIELDS: Record<string, Record<string, FieldType>> = {
   WebSearch: { query: 'string', allowed_domains: 'strings', blocked_domains: 'strings' },
   apply_patch: { command: 'string' },
   view_image: { path: 'string', detail: 'string' },
+  read_file: { Path: 'string', StartLine: 'number', EndLine: 'number', ByteOffset: 'number' },
+  write_file: { Path: 'string', Content: 'string', Append: 'boolean', Overwrite: 'boolean' },
+  edit_file: { Path: 'string', Target: 'string', Replacement: 'string' },
 }
 const EDIT_FIELDS: Record<string, FieldType> = { old_string: 'string', new_string: 'string', replace_all: 'boolean' }
 
@@ -143,12 +154,22 @@ function realLocation(path: string): string | undefined {
 }
 
 /**
- * Whether `path` (relative to the workspace, or absolute) names the workspace or a path inside it,
- * both as written (lexically) and on disk: its real location (every symlink followed) is inside
- * the workspace's real path. A path that cannot be resolved is not inside. A symlink created after
- * this check is bounded by the runtime's own confinement, which the gate does not replace.
+ * Whether `written` (a path relative to the workspace, an absolute one, or a `file:` URI) names the
+ * workspace or a path inside it, both as written (lexically) and on disk: its real location (every
+ * symlink followed) is inside the workspace's real path. A `file:` URI is the path it names, checked
+ * the same way; one that names no local path (another host, an encoded slash) is not inside, and
+ * neither is a path that cannot be resolved. A symlink created after this check is bounded by the
+ * runtime's own confinement, which the gate does not replace.
  */
-function within(workspace: string, path: string): boolean {
+function within(workspace: string, written: string): boolean {
+  let path = written
+  if (/^file:/i.test(written)) {
+    try {
+      path = fileURLToPath(written)
+    } catch {
+      return false
+    }
+  }
   if (path === '' || path.startsWith('~') || path.includes('\0')) return false
   const root = resolve(workspace)
   if (!inside(root, resolve(root, path))) return false
@@ -213,11 +234,11 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  * which is denied without asking anyone. Every classified tool's input may carry only the fields
  * its SDK type declares, each of its type (an unknown field, or a wrong type, is refused), and a
  * path is inside the workspace only where it really is, every symlink followed:
- * - `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image`: `read`, when the path they name is
- *   inside the workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose
- *   literal leading directory is outside it, or that climbs with `..`, is refused;
- * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`: `workspace-write`, for a file inside the
- *   workspace; outside it is refused (the runtime refuses it too);
+ * - `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image`, `read_file`: `read`, when the path
+ *   they name is inside the workspace (absent for `Glob` and `Grep`: the workspace); a `Glob`
+ *   pattern whose literal leading directory is outside it, or that climbs with `..`, is refused;
+ * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `write_file`, `edit_file`: `workspace-write`, for
+ *   a file inside the workspace; outside it is refused (the runtime refuses it too);
  * - `apply_patch`: `workspace-write`, when its patch reads strictly in the patch grammar and every
  *   file a header names (added, deleted, updated, or moved to) is inside the workspace;
  * - `Bash`: `command`, its argv the command split on single spaces, exactly as the policy's
@@ -225,7 +246,8 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  *   with a shell metacharacter is refused here, before the policy is asked (which forbids the
  *   latter too);
  * - `WebFetch`, `WebSearch`: `external-send`;
- * - any other tool, or an input that is not an object: refused.
+ * - any other tool (`run_command` among them), or an input that is not an object: refused.
+ * A path may be a `file:` URI, which is checked as the path it names.
  */
 export function classify(call: ToolCall, workspace: string): ToolAction | { refused: string } {
   const { tool } = call

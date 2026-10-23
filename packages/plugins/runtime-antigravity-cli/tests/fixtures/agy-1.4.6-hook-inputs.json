@@ -1,0 +1,821 @@
+{
+  "description": "The supervised live check of the Antigravity CLI's PreToolUse hook (docs/operations/runbooks.md#antigravity-cli-workers). Sanitized: paths are placeholders, and no token or credential is kept; conversation ids are agy's own, random.",
+  "agy": "1.4.6",
+  "model": "gemini-3.8-flash-low",
+  "date": "2026-10-23",
+  "placeholders": {
+    "<workspace>": "the session's scratch workspace (absolute, no repository)",
+    "<home>": "agy's HOME: a copy of the Workers' signed-in Antigravity home",
+    "<outside>": "a directory beside the workspace",
+    "<scratch>": "the check's scratch directory"
+  },
+  "toolset": {
+    "asked": "Do not call any tool. List the exact names of every tool (function) you can call, with each one's parameter names",
+    "answered": [
+      "read_file(ByteOffset, EndLine, Path, StartLine)",
+      "run_command(CommandLine, IsDaemon, WaitMsBeforeAsync, toolSummary)",
+      "manage_task(Action, Input, TaskId)",
+      "send_message(Message, Recipient)",
+      "schedule(CronExpression, DurationSeconds, ExactTiming, IsDaemon, MaxIterations, Prompt, TimerCondition)",
+      "invoke_subagent(Model, Prompt, Role, TypeName, Workspace)",
+      "define_subagent(Description, EnableMCPTools, EnableSubagentTools, EnableWriteTools, Name, SystemPrompt)",
+      "manage_subagents(Action, ConversationIds)",
+      "write_file(Append, ArtifactMetadata, Content, Overwrite, Path)",
+      "edit_file(ArtifactMetadata, Path, Replacement, Target)",
+      "search_web(domain, query)",
+      "ask_question(questions)"
+    ]
+  },
+  "hook": {
+    "cwd": "<home>/.gemini/config",
+    "environment": [
+      "AGY_CLI_DISABLE_AUTO_UPDATE",
+      "HOME",
+      "PWD",
+      "SYSTEM_ANTIGRAVITY_GATE_HOOK",
+      "SYSTEM_ANTIGRAVITY_GATE_TOKEN",
+      "XDG_CACHE_HOME",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+      "XDG_STATE_HOME"
+    ],
+    "inputKeys": [
+      "artifactDirectoryPath",
+      "conversationId",
+      "modelName",
+      "stepIdx",
+      "toolCall",
+      "transcriptPath",
+      "workspacePaths"
+    ],
+    "note": "agy ran the hook in the directory of hooks.json with its own environment, the variables the run sets included; toolCall.name is the name the model called (the stream's tool_name), and paths are absolute strings"
+  },
+  "recorded": [
+    {
+      "session": "tools",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
+        "conversationId": "e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 2,
+        "toolCall": {
+          "args": {
+            "Path": "<workspace>/notes.md"
+          },
+          "name": "read_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": true
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 8,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "tools",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
+        "conversationId": "e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 4,
+        "toolCall": {
+          "args": {
+            "Path": "<workspace>"
+          },
+          "name": "read_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": true
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "path is a directory, not a file"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "tools",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
+        "conversationId": "e4e41eeb-c3d1-4c20-b899-6abea0faaea1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 6,
+        "toolCall": {
+          "args": {
+            "CommandLine": "ls -la",
+            "WaitMsBeforeAsync": 5000,
+            "toolSummary": "List current directory"
+          },
+          "name": "run_command"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/e4e41eeb-c3d1-4c20-b899-6abea0faaea1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "CommandLine": "string",
+        "WaitMsBeforeAsync": "number",
+        "toolSummary": "string"
+      },
+      "pathExistedAtHook": {},
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "permission check failed for unsandboxed \"ls -la\": user denied permission to run command:\nls -la\nDo not attempt to circumvent this denial by rephrasing the command, using alternative tools/scripts (e.g. python, sh, curl), or accessing the same target resource. Proceed without performing this action."
+      },
+      "toolRan": false
+    },
+    {
+      "session": "edits",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 2,
+        "toolCall": {
+          "args": {
+            "EndLine": 2,
+            "Path": "<workspace>/notes.md",
+            "StartLine": 1
+          },
+          "name": "read_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "EndLine": "number",
+        "Path": "string",
+        "StartLine": "number"
+      },
+      "pathExistedAtHook": {
+        "Path": true
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 8,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "edits",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 4,
+        "toolCall": {
+          "args": {
+            "Path": "<workspace>/fruits.txt",
+            "Replacement": "cherry",
+            "Target": "apple"
+          },
+          "name": "edit_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Path": "string",
+        "Replacement": "string",
+        "Target": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": true
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "edits",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 6,
+        "toolCall": {
+          "args": {
+            "Content": "hello",
+            "Path": "<workspace>/created.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "edits",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "conversationId": "c104cce5-3874-470e-a9ab-6ad54507db1e",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 8,
+        "toolCall": {
+          "args": {
+            "Append": true,
+            "Content": "\nworld",
+            "Path": "<workspace>/created.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/c104cce5-3874-470e-a9ab-6ad54507db1e/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Append": "boolean",
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": true
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 2,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/allow-ok.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing {\"decision\":\"allow\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 4,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/deny.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing {\"decision\":\"deny\",\"reason\":…}",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "tool call denied by pre-tool hook: recording hook denies deny.txt"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 6,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-exit1.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 1, printing nothing",
+      "hookMs": 6,
+      "step": {
+        "state": "ERROR",
+        "error": "JSON hook \"jsonhook__rec_PreToolUse_0_0\" failed: command failed: exit status 1, stderr:"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 8,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-exit2.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 2, printing a reason on stderr",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "JSON hook \"jsonhook__rec_PreToolUse_0_0\" failed: command failed: exit status 2, stderr: blocked by exit 2"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 10,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-garbage.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing text that is not JSON",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "failed to unmarshal result from hook jsonhook__rec_PreToolUse_0_0 via protojson: not json at all: proto: syntax error (line 1:1): invalid value not"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 12,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-empty.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing nothing",
+      "hookMs": 6,
+      "step": {
+        "state": "DONE"
+      },
+      "toolRan": true,
+      "pathExistedAfter": {
+        "Path": true
+      }
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 14,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-nodecision.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing {}",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "tool call denied by pre-tool hook:"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 16,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-unknown.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "exits 0, printing {\"decision\":\"maybe\"}",
+      "hookMs": 7,
+      "step": {
+        "state": "ERROR",
+        "error": "unsupported hook decision: maybe"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 18,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-timeout.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "outlives its timeout (6 s)",
+      "step": {
+        "state": "ERROR",
+        "error": "JSON hook \"jsonhook__rec_PreToolUse_0_0\" failed: command failed: signal: killed, stderr:"
+      },
+      "toolRan": false
+    },
+    {
+      "session": "hook failures",
+      "input": {
+        "artifactDirectoryPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "conversationId": "ae583bae-a5ea-4e76-acc7-5346072447a1",
+        "modelName": "gemini-3.8-flash-low",
+        "stepIdx": 20,
+        "toolCall": {
+          "args": {
+            "Content": "x",
+            "Path": "<workspace>/fail-crash.txt"
+          },
+          "name": "write_file"
+        },
+        "transcriptPath": "<home>/.gemini/antigravity-cli/brain/ae583bae-a5ea-4e76-acc7-5346072447a1/.system_generated/logs/transcript_full.jsonl",
+        "workspacePaths": [
+          "<workspace>"
+        ]
+      },
+      "argTypes": {
+        "Content": "string",
+        "Path": "string"
+      },
+      "pathExistedAtHook": {
+        "Path": false
+      },
+      "hook": "throws (node exits 1, a stack trace on stderr)",
+      "step": {
+        "state": "ERROR",
+        "error": "JSON hook \"jsonhook__rec_PreToolUse_0_0\" failed: command failed: exit status 1, stderr: file://<scratch>/tools/rec.mjs:41\n    case 'fail-crash': throw new Error('hook crashed')\n                       ^\n\nError: hook crashed\n    at Socket.<anonymous> (file://<scratch>/tools/rec.mjs:41:30)\n    at Socket.emit (node:events:526:24)\n    at endReadableNT (node:internal/streams/readable:1764:12)\n    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)\n\nNode.js v24.21.0"
+      },
+      "toolRan": false
+    }
+  ],
+  "bridge": [
+    {
+      "sandbox": "workspace-write",
+      "toolCall": {
+        "name": "read_file",
+        "args": {
+          "Path": "<workspace>/notes.md"
+        }
+      },
+      "stepIdx": 2,
+      "conversationId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5",
+      "answer": "allow",
+      "by": "gate",
+      "gateSaw": {
+        "tool": "read_file",
+        "input": {
+          "Path": "<workspace>/notes.md"
+        },
+        "callId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5:2"
+      }
+    },
+    {
+      "sandbox": "workspace-write",
+      "toolCall": {
+        "name": "edit_file",
+        "args": {
+          "Path": "<workspace>/fruits.txt",
+          "Replacement": "cherry",
+          "Target": "apple"
+        }
+      },
+      "stepIdx": 4,
+      "conversationId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5",
+      "answer": "allow",
+      "by": "gate",
+      "gateSaw": {
+        "tool": "edit_file",
+        "input": {
+          "Path": "<workspace>/fruits.txt",
+          "Replacement": "cherry",
+          "Target": "apple"
+        },
+        "callId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5:4"
+      }
+    },
+    {
+      "sandbox": "workspace-write",
+      "toolCall": {
+        "name": "write_file",
+        "args": {
+          "Content": "hello",
+          "Path": "<workspace>/created.txt"
+        }
+      },
+      "stepIdx": 6,
+      "conversationId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5",
+      "answer": "allow",
+      "by": "gate",
+      "gateSaw": {
+        "tool": "write_file",
+        "input": {
+          "Content": "hello",
+          "Path": "<workspace>/created.txt"
+        },
+        "callId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5:6"
+      }
+    },
+    {
+      "sandbox": "workspace-write",
+      "toolCall": {
+        "name": "write_file",
+        "args": {
+          "Content": "x",
+          "Path": "<workspace>/gate-denied.txt"
+        }
+      },
+      "stepIdx": 8,
+      "conversationId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5",
+      "answer": "deny",
+      "by": "gate",
+      "reason": "the live check gate denies gate-denied.txt",
+      "gateSaw": {
+        "tool": "write_file",
+        "input": {
+          "Content": "x",
+          "Path": "<workspace>/gate-denied.txt"
+        },
+        "callId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5:8"
+      }
+    },
+    {
+      "sandbox": "workspace-write",
+      "toolCall": {
+        "name": "read_file",
+        "args": {
+          "Path": "<outside>/outside.txt"
+        }
+      },
+      "stepIdx": 10,
+      "conversationId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5",
+      "answer": "deny",
+      "by": "rules",
+      "reason": "read_file Path: \"<outside>/outside.txt\" is not inside the workspace"
+    },
+    {
+      "sandbox": "workspace-write",
+      "toolCall": {
+        "name": "write_file",
+        "args": {
+          "Content": "{}",
+          "Path": "<workspace>/.agents/hooks.json"
+        }
+      },
+      "stepIdx": 12,
+      "conversationId": "91ba6247-0c47-4a41-8a0c-51c4f904baf5",
+      "answer": "deny",
+      "by": "rules",
+      "reason": "write_file Path: a customization root (.agents, .agent, _agents, _agent) is never written, since Antigravity would run its hooks and MCP servers outside the run's gate"
+    },
+    {
+      "sandbox": "read-only",
+      "toolCall": {
+        "name": "read_file",
+        "args": {
+          "Path": "<workspace>/notes.md"
+        }
+      },
+      "stepIdx": 2,
+      "conversationId": "27ab479f-f6bf-4f63-908f-09500ecfed75",
+      "answer": "allow",
+      "by": "gate",
+      "gateSaw": {
+        "tool": "read_file",
+        "input": {
+          "Path": "<workspace>/notes.md"
+        },
+        "callId": "27ab479f-f6bf-4f63-908f-09500ecfed75:2"
+      }
+    },
+    {
+      "sandbox": "read-only",
+      "toolCall": {
+        "name": "write_file",
+        "args": {
+          "Content": "hello",
+          "Path": "<workspace>/created.txt"
+        }
+      },
+      "stepIdx": 4,
+      "conversationId": "27ab479f-f6bf-4f63-908f-09500ecfed75",
+      "answer": "deny",
+      "by": "rules",
+      "reason": "write_file is not a tool this run offers (read_file)"
+    },
+    {
+      "sandbox": "read-only",
+      "toolCall": {
+        "name": "edit_file",
+        "args": {
+          "Path": "<workspace>/fruits.txt",
+          "Replacement": "cherry",
+          "Target": "apple"
+        }
+      },
+      "stepIdx": 6,
+      "conversationId": "27ab479f-f6bf-4f63-908f-09500ecfed75",
+      "answer": "deny",
+      "by": "rules",
+      "reason": "edit_file is not a tool this run offers (read_file)"
+    }
+  ]
+}

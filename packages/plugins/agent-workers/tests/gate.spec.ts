@@ -5,7 +5,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type ToolCall, type ToolVerdict } from '@tsuuanmi/system-agent-runtimes'
 import StoreApprovals from '@tsuuanmi/system-approvals'
@@ -437,11 +437,15 @@ describe('classify: a tool call as the action the policy judges', () => {
       ['WebSearch', { query: 'x', allowed_domains: ['example.com'], blocked_domains: [] }],
       ['apply_patch', { command: '*** Begin Patch\n*** Update File: src/a.ts\n@@\n-x\n+y\n*** End Patch\n' }],
       ['view_image', { path: 'src/a.ts', detail: 'high' }],
+      ['read_file', { Path: join(ws, 'src/a.ts'), StartLine: 1, EndLine: 2, ByteOffset: 0 }],
+      ['write_file', { Path: join(ws, 'b.ts'), Content: 'x', Append: false, Overwrite: true }],
+      ['edit_file', { Path: join(ws, 'src/a.ts'), Target: 'x', Replacement: 'y' }],
     ]
     const wrong: Record<string, [string, unknown]> = {
       Read: ['offset', '1'], NotebookRead: ['cell_id', 1], LS: ['ignore', 'node_modules'], Glob: ['path', 1], Grep: ['-i', 'yes'], Write: ['content', 1],
       Edit: ['replace_all', 'true'], MultiEdit: ['edits', [{ old_string: 'a', new_string: 'b', extra: 1 }]], NotebookEdit: ['new_source', 1],
       Bash: ['timeout', '1000'], WebFetch: ['prompt', 1], WebSearch: ['allowed_domains', 'example.com'], apply_patch: ['command', 1], view_image: ['detail', 1],
+      read_file: ['StartLine', '1'], write_file: ['Append', 'true'], edit_file: ['Target', 1],
     }
     for (const [tool, input] of valid) {
       expect(classify({ tool, input }, ws), tool).not.toHaveProperty('refused')
@@ -490,6 +494,57 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(classify({ tool: 'view_image', input: { path: 'src/a.ts' } }, ws)).toMatchObject({ class: 'read', summary: 'view_image src/a.ts' })
     for (const path of ['/etc/hostname', 'link-file', '../x.png']) expect(classify({ tool: 'view_image', input: { path } }, ws), path).toHaveProperty('refused')
     expect(classify({ tool: 'view_image', input: {} }, ws)).toHaveProperty('refused')
+  })
+
+  it('classifies the Antigravity CLI\'s file tools by the file each names in Path: inside the workspace on disk, a file: URI as the path it names', () => {
+    expect(classify({ tool: 'read_file', input: { Path: join(ws, 'src/a.ts') } }, ws)).toMatchObject({ class: 'read', summary: `read_file ${join(ws, 'src/a.ts')}` })
+    expect(classify({ tool: 'read_file', input: { Path: ws } }, ws)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'write_file', input: { Path: join(ws, 'new/c.ts'), Content: '/etc/passwd' } }, ws)).toMatchObject({ class: 'workspace-write' })
+    expect(classify({ tool: 'edit_file', input: { Path: 'src/a.ts', Target: '~/x', Replacement: '../y' } }, ws)).toMatchObject({ class: 'workspace-write' })
+    const uri = (path: string) => pathToFileURL(path).href
+    expect(classify({ tool: 'read_file', input: { Path: uri(join(ws, 'src/a.ts')) } }, ws)).toMatchObject({ class: 'read' })
+    expect(classify({ tool: 'write_file', input: { Path: uri(join(ws, 'src/new.ts')), Content: 'x' } }, ws)).toMatchObject({ class: 'workspace-write' })
+    const outsideUris = [uri(join(outside, 'secret')), uri(join(ws, 'link-file')), uri(join(ws, 'link-dir/new.txt')), `file://${ws}/src/%2E%2E/%2E%2E/outside/secret`, `file://other-host${ws}/src/a.ts`, `file://${ws}/src%2Fa.ts`, 'file:secret']
+    for (const path of [join(outside, 'secret'), join(ws, 'link-file'), join(ws, 'link-dir', 'new.txt'), join(ws, 'src', 'up', 'secret'), `${ws}/../outside/secret`, '~/.ssh/id_rsa', '', ...outsideUris]) {
+      expect(classify({ tool: 'read_file', input: { Path: path } }, ws), path).toHaveProperty('refused')
+      expect(classify({ tool: 'write_file', input: { Path: path, Content: 'x' } }, ws), path).toHaveProperty('refused')
+      expect(classify({ tool: 'edit_file', input: { Path: path, Target: 'a', Replacement: 'b' } }, ws), path).toHaveProperty('refused')
+    }
+    // A file: URI is a path for every tool: one outside is refused whichever tool names it.
+    expect(classify({ tool: 'Read', input: { file_path: uri('/etc/hostname') } }, ws)).toHaveProperty('refused')
+    for (const input of [{}, { Content: 'x' }, { Path: 1, Content: 'x' }, { Path: join(ws, 'b.ts'), Content: 'x', ArtifactMetadata: { Summary: 'plan' } }]) {
+      expect(classify({ tool: 'write_file', input }, ws), JSON.stringify(input)).toHaveProperty('refused')
+    }
+  })
+
+  it('denies the Antigravity CLI\'s run_command and every other tool of its, whatever their input: no confinement of its commands is proven', () => {
+    for (const call of [
+      { tool: 'run_command', input: { CommandLine: 'ls', WaitMsBeforeAsync: 5000, toolSummary: 'List current directory' } },
+      { tool: 'run_command', input: { CommandLine: 'ls', BypassSandbox: true } },
+      { tool: 'send_command_input', input: { CommandId: '1', Input: 'x' } },
+      { tool: 'search_web', input: { query: 'x' } },
+      { tool: 'invoke_subagent', input: { Prompt: 'x' } },
+      { tool: 'schedule', input: { Prompt: 'x' } },
+      { tool: 'call_mcp_tool', input: {} },
+    ]) {
+      expect(classify(call, ws), call.tool).toEqual({ refused: `${call.tool} is not a tool the gate classifies` })
+    }
+  })
+
+  it('classifies every call agy 1.4.6 made in the supervised live check as the action it is: file reads and writes inside the workspace, run_command refused', () => {
+    const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('../../runtime-antigravity-cli/tests/fixtures/agy-1.4.6-hook-inputs.json', import.meta.url)), 'utf8')
+      .replaceAll('<workspace>', ws).replaceAll('<outside>', outside)) as {
+      recorded: Array<{ input: { toolCall: { name: string; args: Record<string, unknown> } } }>
+      bridge: Array<{ toolCall: { name: string; args: Record<string, unknown> }; by: 'gate' | 'rules'; reason?: string }>
+    }
+    const calls = [...fixture.recorded.map((r) => r.input.toolCall), ...fixture.bridge.map((b) => b.toolCall)]
+    expect(new Set(calls.map((c) => c.name))).toEqual(new Set(['read_file', 'edit_file', 'write_file', 'run_command']))
+    for (const call of calls) {
+      const action = classify({ tool: call.name, input: call.args }, ws)
+      const where = String(call.args.Path ?? '')
+      const expected = call.name === 'run_command' || !where.startsWith(ws) ? 'refused' : call.name === 'read_file' ? 'read' : 'workspace-write'
+      expect('refused' in action ? 'refused' : action.class, JSON.stringify(call)).toBe(expected)
+    }
   })
 
   it('refuses a tool it does not know and an input that is not an object', () => {
