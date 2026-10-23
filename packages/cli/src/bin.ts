@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -59,6 +59,10 @@ const USAGE = `Usage: system <command>
                             takes a changed slot's new principal as a new account
   account remove <accountId | runtime --slot <n>>
                             free an agent account's slot (its home is kept as it is)
+  account migrate [--apply | --rollback] [--stop <runtime>]...
+                            the move from hand-named agent Workers to Workers derived as account × role:
+                            printed (nothing changes), applied, or undone; --stop: a runtime whose Workers stop
+                            at the cutover, its account not ready (drain first)
   account credentials <id>  store login credentials from stdin as JSON {"email","password","totpSecret"?}
   account relogin <id>      sign in again with the stored credentials (TOTP computed locally)
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
@@ -201,7 +205,7 @@ async function agentAccount(action: string, target: Extract<AccountTarget, { kin
     console.log(`not ready: it takes no work until resolved (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`)
     return 1
   }
-  if (!(line.workers as string[]).length) console.log('no Worker runs on it yet: Workers are its runtime\'s own home\'s until they are account × role (PROP-0012 phase F)')
+  if (!(line.workers as string[]).length) console.log('no Worker runs on it yet: give it roles in the agent-workers row (assignments, by this id); while hand-named Workers are loaded, only the account in its runtime\'s own home runs them (docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)')
   return 0
 }
 
@@ -387,6 +391,15 @@ async function main(argv: string[]): Promise<number> {
         const target = accountTarget(rest.slice(1), providers)
         if (target.kind === 'agent') return agentAccount(rest[0], target, rest.includes('--accept'))
         if (rest[0] === 'remove') throw new Error(`${rest[1]} is not an agent account: a website account leaves the catalog through configuration`)
+      }
+      if (rest[0] === 'migrate') {
+        // The move from hand-named agent Workers to account × role (PROP-0012 phase F): planned unless --apply or --rollback.
+        const options = parseMigrate(rest.slice(1))
+        const outcome = await callTool('account_migrate', { ...(options.apply ? { apply: true } : {}), ...(options.rollback ? { rollback: true } : {}), ...(options.stop.length ? { stop: options.stop } : {}) })
+        if (outcome.isError) throw new Error(outcome.text)
+        const printed = formatMigration(outcome.structured ?? {})
+        console.log(printed.text)
+        return printed.exit
       }
       if (rest[0] === 'verify' && rest[1]) {
         const outcome = await callTool('account_verify', { account: rest[1] })

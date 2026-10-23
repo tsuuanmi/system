@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { accountTarget, agentAccountLine, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { parse as parseYaml } from 'yaml'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -459,6 +460,31 @@ describe('agent accounts on the command line (ADR-0051)', () => {
     expect(() => accountTarget(['chatgpt-main', '--slot', '2'], runtimes)).toThrow(/--slot does not apply/)
     expect(() => accountTarget(['codex-sdk:04aa5c1e9b7d3f20', '--slot', '1'], runtimes)).toThrow(/names its slot/)
     expect(() => accountTarget(['codex-sdk', '--slot', 'x'], runtimes)).toThrow(/unknown option/)
+  })
+
+  it('takes system account migrate\'s flags (--apply or --rollback, --stop <runtime> repeatable) and refuses any other', () => {
+    expect(parseMigrate([])).toEqual({ apply: false, rollback: false, stop: [] })
+    expect(parseMigrate(['--apply', '--stop', 'antigravity-cli', '--stop', 'codex-sdk'])).toEqual({ apply: true, rollback: false, stop: ['antigravity-cli', 'codex-sdk'] })
+    expect(parseMigrate(['--rollback'])).toEqual({ apply: false, rollback: true, stop: [] })
+    expect(() => parseMigrate(['--apply', '--rollback'])).toThrow(/not both/)
+    expect(() => parseMigrate(['--rollback', '--stop', 'codex-sdk'])).toThrow(/--stop is for/)
+    expect(() => parseMigrate(['--stop'])).toThrow(/name the runtime/)
+    expect(() => parseMigrate(['--yes'])).toThrow(/unknown option --yes/)
+  })
+
+  it('prints the move: each hand-named Worker\'s new id, what stops it (exit 1), and once nothing does, the row for the profile patch as YAML', () => {
+    const workers = [{ from: 'agent:agy-review', runtime: 'antigravity-cli', role: 'review', why: 'unverified' }, { from: 'agent:codex-review', runtime: 'codex-sdk', role: 'review', to: 'agent:codex-sdk:04aa5c1e9b7d3f20/review', why: 'slot 1' }]
+    const row = { providers: [{ provider: 'codex-sdk' }], roles: [{ id: 'review', workspace: '/w', sandbox: 'read-only', tier: 'standard' }], assignments: [{ account: 'codex-sdk:04aa5c1e9b7d3f20', roles: ['review'] }] }
+    const blocked = formatMigration({ outcome: 'planned', plan: { workers, templates: [], blockers: ['the cutover waits for its reader'] }, row })
+    expect(blocked.exit).toBe(1)
+    expect(blocked.text).toMatch(/agent:agy-review -> stops: unverified\n {2}agent:codex-review -> agent:codex-sdk:04aa5c1e9b7d3f20\/review: slot 1\n\nwhat stops the move:\n {2}- the cutover waits for its reader$/)
+    const ready = formatMigration({ outcome: 'applied', plan: { workers, templates: [{ template: 'plan', group: 'codex-sdk', kind: 'interactive', windows: [{ id: 'w', kind: 'rolling' }] }], blockers: [] }, row, cutover: { decision: 'sha256:1', appliedAt: 't' }, moved: { sessions: 1, runs: 2 } })
+    expect(ready.exit).toBe(0)
+    expect(ready.text).toMatch(/^applied \(decision sha256:1\): 1 session\(s\) and 2 run\(s\) moved/)
+    const yaml = ready.text.split('# the agent-workers row of the profile patch (it replaces the row\'s whole config):\n')[1]!.split('\n\n# add to the resources row')[0]!
+    expect(parseYaml(yaml)).toEqual([{ id: 'agent-workers', config: row }])
+    expect(ready.text).toMatch(/# add to the resources row's config:\ntemplates:\n {2}- template: plan/)
+    expect(formatMigration({ outcome: 'rolled-back', plan: { workers, templates: [], blockers: [] }, row, moved: { sessions: 1, runs: 2 } }).text).not.toMatch(/agent-workers row/)
   })
 
   it('runs the sign-in with the operator\'s environment, the runtime\'s variables for the home, and no session bus; the line they could run says the same', () => {

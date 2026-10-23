@@ -16,7 +16,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
-import { parse as parseYaml } from 'yaml'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 const require = createRequire(import.meta.url)
 const PROFILE = 'system'
@@ -355,6 +355,47 @@ export function agentAccountLine(entry: { account: Record<string, unknown>; work
     ...(a.quarantine ? { reason: a.quarantine.reason, since: a.quarantine.since } : {}), ...(a.hint ? { hint: a.hint } : {}), home: a.home,
     ...(a.identity ? { reader: a.identity.reader, runtimeVersion: a.identity.runtimeVersion, verifiedAt: a.identity.verifiedAt } : {}), workers: entry.workers,
   }
+}
+
+/** `system account migrate` arguments: `--apply` or `--rollback`, and `--stop <runtime>`, repeatable; anything else is refused. */
+export function parseMigrate(args: readonly string[]): { apply: boolean; rollback: boolean; stop: string[] } {
+  const out = { apply: false, rollback: false, stop: [] as string[] }
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--apply') out.apply = true
+    else if (args[i] === '--rollback') out.rollback = true
+    else if (args[i] === '--stop' && /^[a-z][a-z0-9-]{0,63}$/.test(args[i + 1] ?? '')) out.stop.push(args[++i]!)
+    else throw new Error(`unknown option ${args[i]}${args[i] === '--stop' ? ' (name the runtime whose Workers stop)' : ''}`)
+  }
+  if (out.apply && out.rollback) throw new Error('--apply or --rollback, not both')
+  if (out.rollback && out.stop.length) throw new Error('--stop is for a plan or --apply')
+  return out
+}
+
+/**
+ * What `system account migrate` prints (PROP-0012 phase F): what each hand-named Worker becomes,
+ * what stops the move, and, once there is nothing to stop it, the `agent-workers` row to put in the
+ * profile patch (and the templates for the `resources` row) as YAML; with the exit code, 0 unless a
+ * plan has blockers.
+ */
+export function formatMigration(out: Record<string, unknown>): { text: string; exit: number } {
+  const plan = out.plan as { workers: Array<{ from: string; to?: string; why: string }>; templates: unknown[]; blockers: string[] }
+  const outcome = out.outcome as string
+  const moved = out.moved as { sessions: number; runs: number } | undefined
+  const cutover = out.cutover as { decision: string; appliedAt: string } | undefined
+  const head = {
+    planned: cutover ? `the move was applied on ${cutover.appliedAt} (decision ${cutover.decision}); the hand-named rows are refused at load` : 'the move, planned (nothing changed; --apply applies it):',
+    applied: `applied (decision ${cutover?.decision}): ${moved?.sessions ?? 0} session(s) and ${moved?.runs ?? 0} run(s) moved to their new Workers. The hand-named rows are refused from now on: put the row below in the profile patch, then restart (system shutdown, system start)`,
+    'already-applied': `applied already, on ${cutover?.appliedAt} (decision ${cutover?.decision}); nothing changed`,
+    'rolled-back': `rolled back: ${moved?.sessions ?? 0} session(s) and ${moved?.runs ?? 0} run(s) moved back; the hand-named rows load again (put them back in the profile patch, then restart)`,
+    'not-applied': 'no move is applied; nothing changed',
+  }[outcome] ?? outcome
+  const lines = [head, ...plan.workers.map((w) => `  ${w.from} -> ${w.to ?? 'stops'}: ${w.why}`)]
+  if (plan.blockers.length) lines.push('', 'what stops the move:', ...plan.blockers.map((b) => `  - ${b}`))
+  if (outcome !== 'rolled-back' && outcome !== 'not-applied' && (!plan.blockers.length || cutover)) {
+    lines.push('', '# the agent-workers row of the profile patch (it replaces the row\'s whole config):', stringifyYaml([{ id: 'agent-workers', config: out.row }]).trimEnd())
+    if (plan.templates.length) lines.push('', '# add to the resources row\'s config:', stringifyYaml({ templates: plan.templates }).trimEnd())
+  }
+  return { text: lines.join('\n'), exit: outcome === 'planned' && plan.blockers.length && !cutover ? 1 : 0 }
 }
 
 /** Client configuration snippets for Claude Code and Codex, from the running profile's discovery file. */
