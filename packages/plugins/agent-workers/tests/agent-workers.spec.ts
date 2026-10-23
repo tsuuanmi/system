@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -23,6 +23,7 @@ import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { DEVELOP } from './develop.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
+import { openDirectory } from '../src/worktrees.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -926,6 +927,51 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(agent.runs).toHaveLength(2)
     // No temporary file is left beside the brief's files.
     expect(readdirSync(join(agent.runs[0]!.workspace, '.system')).sort()).toEqual(['.gitignore', 'TASKS.md'])
+  })
+
+  it('refuses a .system the agent replaced with a link, writing nothing through it, and its retirement leaves what the link points to (INV-15)', async () => {
+    const repo = repository()
+    const outside = temp('system-outside-')
+    writeFileSync(join(outside, 'kept.txt'), 'not the workspace\'s\n')
+    const agent = developer({
+      act: (spec) => {
+        // A link out of the workspace in place of system's directory.
+        rmSync(join(spec.workspace, '.system'), { recursive: true, force: true })
+        symlinkSync(outside, join(spec.workspace, '.system'))
+        return writes(spec)
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect(await briefed(ctx, 'k-first', taskBrief(ctx, '# p1\n\n### first\n'), 'run_link')).toMatchObject({ status: 'completed' })
+    const refused = await briefed(ctx, 'k-second', taskBrief(ctx, '# p1\n\n### second\n'), 'run_link')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
+    expect(refused.error!.message).toMatch(/\.system is not a directory of the worktree; nothing is written/)
+    expect(agent.runs).toHaveLength(1)
+    expect(readdirSync(outside)).toEqual(['kept.txt'])
+    // Retired, the link is not system's directory: nothing it points to is removed.
+    const workspace = agent.runs[0]!.workspace
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
+    expect(readFileSync(join(outside, 'kept.txt'), 'utf8')).toBe('not the workspace\'s\n')
+  })
+
+  it('opens a directory as itself and works through its descriptor: a link swapped in at its name afterwards is never used (INV-15)', () => {
+    const base = temp('system-directory-')
+    const outside = temp('system-outside-')
+    mkdirSync(join(base, '.system'))
+    writeFileSync(join(base, 'file'), '')
+    symlinkSync(outside, join(base, 'link'))
+    expect([openDirectory(join(base, 'link')), openDirectory(join(base, 'file')), openDirectory(join(base, 'none'))]).toEqual(['other', 'other', 'absent'])
+    const opened = openDirectory(join(base, '.system'))
+    if (typeof opened === 'string') throw new Error(`.system opened as ${opened}`)
+    try {
+      renameSync(join(base, '.system'), join(base, 'moved'))
+      symlinkSync(outside, join(base, '.system'))
+      writeFileSync(join(opened.at, 'TASKS.md'), '# p1\n')
+      expect(readdirSync(outside)).toEqual([])
+      expect(readFileSync(join(base, 'moved', 'TASKS.md'), 'utf8')).toBe('# p1\n')
+    } finally {
+      closeSync(opened.fd)
+    }
   })
 
   it('checks the brief\'s files at egress with the prompt, and writes none into a repository that tracks .system/: nothing reaches the agent (INV-12, INV-2)', async () => {

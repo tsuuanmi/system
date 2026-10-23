@@ -76,9 +76,13 @@ The **`agents` Worker source**: agent runtimes as Workers
     (one check of exactly what the agent is given, INV-12), and written into
     the run's worktree before the agent starts, under `.system/`, whose own
     `.gitignore` (`*`) makes git ignore it: never in the worktree's subject, a
-    review's diff, or a commit. Each file is written whole, read-only (0444),
-    beside its name and renamed over it, never through a link; edits are never
-    read back. A repository that tracks anything under `.system/`, a `.system`
+    review's diff, or a commit. `.system` is opened once, as itself
+    (`O_DIRECTORY | O_NOFOLLOW`), and every file is written relative to that
+    descriptor (through `/proc/self/fd`), so nothing is checked by name before
+    it is used and nothing swapped in at the name meanwhile is written through.
+    Each file is written whole, read-only (0444), beside its name and renamed
+    over it, never through a link; edits are never read back. A repository
+    that tracks anything under `.system/`, a `.system`
     that is not a plain directory, or a file of it that is not a plain file,
     fails the run unsubmitted (`config_error`). The prompt names the files
     only when they are written: a run of no workflow run, or of a Worker
@@ -92,8 +96,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     `worktreeRetentionHours` ago (default 168; 0 keeps every worktree), a
     `retention` decision (rule `agent-workers.worktree-retention`, INV-13, one
     per worktree, under the workflow run) retires the worktree: its changes are
-    committed on its branch (`.system/` removed first unless the repository
-    tracks it, then `git add --all`, author `system
+    committed on its branch (`.system/` removed first, emptied through its
+    descriptor as it was written, unless the repository tracks it or it is
+    not a plain directory; then `git add --all`, author `system
     <system@localhost>`, a message naming the run), then it is removed (`git
     worktree remove`, never forced). Files the repository
     ignores go with it. A branch is never deleted. A worktree that cannot be

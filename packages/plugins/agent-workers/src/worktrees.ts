@@ -19,7 +19,7 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeSync } from 'node:fs'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
@@ -126,6 +126,38 @@ function notPlainFile(path: string): boolean {
   } finally {
     closeSync(fd)
   }
+}
+
+/** A directory opened as itself, and the path that reaches it through its descriptor. The caller closes `fd`. */
+export interface OpenedDirectory { fd: number; at: string }
+
+/**
+ * Open the directory at `path` as itself, never through a link (O_DIRECTORY | O_NOFOLLOW), with
+ * the path that reaches it through the descriptor, `/proc/self/fd/<fd>` (Linux): every step after
+ * the open works relative to the directory opened, so nothing swapped in at `path` meanwhile (a
+ * link out of the workspace, say) is ever used. `absent` when nothing is at `path`; `other` when
+ * something that is not a plain directory is (a link, a file). Throws a {@link WorktreeError} when
+ * that path does not reach the directory opened (no `/proc`): nothing is done in it then.
+ */
+export function openDirectory(path: string): OpenedDirectory | 'absent' | 'other' {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return 'absent'
+    if (code === 'ENOTDIR' || code === 'ELOOP') return 'other'
+    throw error
+  }
+  const at = `/proc/self/fd/${fd}`
+  try {
+    const [opened, reached] = [fstatSync(fd), statSync(at)]
+    if (opened.dev === reached.dev && opened.ino === reached.ino) return { fd, at }
+  } catch {
+    // Not reached: refused below.
+  }
+  closeSync(fd)
+  throw new WorktreeError(`${path} cannot be reached through its descriptor (${at}); nothing is done in it`)
 }
 
 interface WorktreeRow {
@@ -250,6 +282,8 @@ export class Worktrees {
    * edits are never read back. Refused, with nothing reaching the agent, when the worktree is not
    * intact, the repository tracks anything under `.system/`, or `.system` (or a file in it) is not
    * a plain directory (or file) of the worktree: a link is never followed out of the workspace.
+   * `.system` is opened once, as itself, and every file is written relative to that descriptor
+   * ({@link openDirectory}), so nothing is checked by name before it is used.
    */
   async place(workspace: string, files: ReadonlyArray<{ path: string; text: string }>): Promise<void> {
     if (!files.length) return
@@ -259,28 +293,37 @@ export class Worktrees {
     const tracked = await git(workspace, [`--git-dir=${row.gitdir}`, `--work-tree=${workspace}`, 'ls-files', '-z', '--', '.system'])
     if (tracked.length) throw new WorktreeError(`the repository tracks files under .system/ (${tracked.split('\0')[0]}); system's workspace files would change them, so none is written`)
     const dir = join(workspace, '.system')
-    const found = lstatSync(dir, { throwIfNoEntry: false })
-    if (!found) mkdirSync(dir, { mode: 0o755 })
-    else if (!found.isDirectory() || found.isSymbolicLink()) throw new WorktreeError(`${dir} is not a directory of the worktree; nothing is written`)
-    for (const [name, text] of [['.gitignore', '# Written by system: this directory is never part of the work.\n*\n'], ...files.map((f) => [f.path.slice('.system/'.length), f.text])] as const) {
-      const path = join(dir, name)
-      if (notPlainFile(path)) throw new WorktreeError(`${path} is not a plain file; nothing more is written`)
-      // Written whole beside it, never through a link (O_NOFOLLOW, O_EXCL), read-only to the agent,
-      // then renamed over it: a rename replaces whatever is there by then (a link included) and
-      // never follows it.
-      const temporary = join(dir, `.${name}.${randomUUID()}.tmp`)
-      const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o444)
-      try {
+    // Made when absent (mkdir never follows a link at its name), then opened as itself.
+    try {
+      mkdirSync(dir, { mode: 0o755 })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    const opened = openDirectory(dir)
+    if (typeof opened === 'string') throw new WorktreeError(`${dir} is not a directory of the worktree; nothing is written`)
+    try {
+      for (const [name, text] of [['.gitignore', '# Written by system: this directory is never part of the work.\n*\n'], ...files.map((f) => [f.path.slice('.system/'.length), f.text])] as const) {
+        const path = join(opened.at, name)
+        if (notPlainFile(path)) throw new WorktreeError(`${join(dir, name)} is not a plain file; nothing more is written`)
+        // Written whole beside it, never through a link (O_NOFOLLOW, O_EXCL), read-only to the agent,
+        // then renamed over it: a rename replaces whatever is there by then (a link included) and
+        // never follows it.
+        const temporary = join(opened.at, `.${name}.${randomUUID()}.tmp`)
+        const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o444)
         try {
-          writeSync(fd, text)
-        } finally {
-          closeSync(fd)
+          try {
+            writeSync(fd, text)
+          } finally {
+            closeSync(fd)
+          }
+          renameSync(temporary, path)
+        } catch (error) {
+          rmSync(temporary, { force: true })
+          throw error
         }
-        renameSync(temporary, path)
-      } catch (error) {
-        rmSync(temporary, { force: true })
-        throw error
       }
+    } finally {
+      closeSync(opened.fd)
     }
   }
 
@@ -365,10 +408,21 @@ export class Worktrees {
     await this.verify(row)
     const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
     // system's own workspace files (`.system/`, see place) are never part of the work: gone before the commit,
-    // even if the agent changed their .gitignore. A `.system` the repository tracks is the repository's.
+    // even if the agent changed their .gitignore. A `.system` the repository tracks is the repository's,
+    // and one that is not a plain directory is left to the commit. Emptied through its descriptor, as
+    // place writes it, then removed by name: rmdir takes only an empty directory, never a link.
     const system = join(row.path, '.system')
-    const own = lstatSync(system, { throwIfNoEntry: false })
-    if (own?.isDirectory() && !own.isSymbolicLink() && !(await inside(['ls-files', '-z', '--', '.system'])).length) rmSync(system, { recursive: true, force: true })
+    const own = openDirectory(system)
+    if (typeof own === 'object') {
+      try {
+        if (!(await inside(['ls-files', '-z', '--', '.system'])).length) {
+          for (const entry of readdirSync(own.at)) rmSync(join(own.at, entry), { recursive: true, force: true })
+          rmdirSync(system)
+        }
+      } finally {
+        closeSync(own.fd)
+      }
+    }
     let commit: string | undefined
     if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) {
       await inside(['add', '--all'])

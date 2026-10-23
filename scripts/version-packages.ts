@@ -8,15 +8,16 @@
  *
  *   pnpm version-packages
  */
-import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pnpm } from './pnpm.ts'
 import { lockstepVersion, workspacePackages } from './release-artifacts.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+// The pnpm package.json pins (scripts/pnpm.ts).
 const run = (args: string[]): void => {
-  execFileSync('pnpm', args, { cwd: root, stdio: 'inherit' })
+  pnpm(args, 'inherit')
 }
 
 const before = lockstepVersion(workspacePackages())

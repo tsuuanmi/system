@@ -91,7 +91,8 @@ charters, and their tasks.
   withdraws them.
 - **`TASKS.md`:** `tasksMarkdown(projectId)` renders one project's board with the definition's
   `renderTasks` ([`board-core`](../../board-core/README.md)), as Markdown in Backlog.md's spirit, for native agents without MCP: per task its id, title, state, action
-  class, attempts, dependencies, holder, run, why it waits (with its questions), result (with
+  class, attempts, dependencies, holder, run, why it waits (with its questions, or the lines a
+  spent budget's funding request asks for), result (with
   its digest), and
   acceptance criteria as checkboxes (checked once done). Tasks are grouped in progress, waiting,
   ready, proposed, done, cancelled; at most `projectionMaxTasks`, open ones first, the rest

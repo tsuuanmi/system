@@ -77,7 +77,7 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 | `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem |
 | `system health [--json]` | each health check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, UI drift) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
 | `system plugins [--json]` | every plugin of the composition: its recorded lifecycle state (`default`, `candidate`, `retired`), whether a row runs it, its version and class, its rows, and why its manifest is absent or refused ([plugin host](../design/plugin-host.md)) |
-| `system ui` | print the web UI link (runs, steps, decisions; approve, stop, continue; the approval queue's verdicts; accept or reject the reviews of board tasks; pause, resume, or close a board project) |
+| `system ui` | print the web UI link, with the operator token in its fragment ([web UI API](web-ui.md)). The page: the approval queue (approve or deny one request or a whole batch; a `policy-change` request shows its diff), the reviews of board tasks (accept or reject the result shown), and the runs, their steps, and decision chains (approve or reject a plan, vote on a tie, stop, continue); the Board page's projects (pause, resume, or close one, each after a confirmation); and the Autonomy policy page (the set in force, the effective modes, and a proposed change, which applies only once approved in the queue) |
 
 ## Clients
 
