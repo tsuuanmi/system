@@ -32,6 +32,8 @@ describe('architecture rules', () => {
       // The client edge and the other control-plane plugins: one MCP interface for every client (ADR-0011).
       join(packages, 'gateway-core', 'src'), join(plugins, 'mcp-server', 'src'), join(plugins, 'egress', 'src'), join(plugins, 'turns', 'src'),
       join(plugins, 'accounts', 'src'), join(plugins, 'agent-workers', 'src'), join(packages, 'agent-runtime-core', 'src'),
+      // The surfaces that read the core for the operator and the lead.
+      join(plugins, 'report', 'src'),
       ...readdirSync(plugins).filter((d) => d.startsWith('profile-')).map((d) => join(plugins, d, 'src')),
     ]
     const presets = join(packages, 'system-bundle', 'presets')

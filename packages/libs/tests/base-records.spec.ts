@@ -266,6 +266,16 @@ describe('MCP tool calls', () => {
     expect(call('mcp-digests', { tool: 'digests_get', input: { requestId: request.output.requestId }, output: request.output })).toBe(true)
   })
 
+  it('names a report\'s period by since or by days, never both and at most 366 days, and answers with counts only (INV-9, INV-14)', () => {
+    const week = example('mcp-report.week')
+    expect(call('mcp-report', week)).toBe(true)
+    expect(call('mcp-report', { ...week, input: { ...week.input, since: '2026-10-01T00:00:00Z' } })).toBe(false)
+    expect(call('mcp-report', { ...week, input: { days: 367 } })).toBe(false)
+    expect(call('mcp-report', { ...week, input: { since: 'last week' } })).toBe(false)
+    expect(call('mcp-report', { ...week, output: { ...week.output, tasks: { ...week.output.tasks, done: -1 } } })).toBe(false)
+    expect(call('mcp-report', { ...week, output: { ...week.output, summary: 'written by a model' } })).toBe(false)
+  })
+
   it('checks a call against its own tool, not another', () => {
     const claim = example('mcp-board.claim')
     expect(call('mcp-board', { ...claim, tool: 'board_cancel' })).toBe(false)

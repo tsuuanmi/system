@@ -79,6 +79,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'gateway-responses': 'gateways',
   'mcp-server': 'gateways',
   'web-ui': 'gateways',
+  'report': 'gateways',
   'cli': 'gateways',
 }
 

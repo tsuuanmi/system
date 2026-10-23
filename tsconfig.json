@@ -141,6 +141,9 @@
       "@tsuuanmi/system-digest": [
         "packages/plugins/digest/src/index.ts"
       ],
+      "@tsuuanmi/system-report": [
+        "packages/plugins/report/src/index.ts"
+      ],
       "@tsuuanmi/system-resources-core": [
         "packages/resources-core/src/index.ts"
       ],
