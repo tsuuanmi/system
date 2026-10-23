@@ -24,13 +24,13 @@
   config:
     executable: /home/tan/.local/bin/agy
 
-# The agent Workers. This list replaces the whole list, so it keeps claude-review as the live patch
-# has it. All three read the same checkout and never write, so none needs a worktree per run; give
+# The agent Workers. This list replaces the whole list, so it keeps the live patch's Claude Code
+# Worker as it is (claude-research, renamed from claude-review on 2026-10-24). All three read the same checkout and never write, so none needs a worktree per run; give
 # every Worker on the workspace `worktreePerRun: true` once a writing Worker joins them.
 - id: agent-workers
   config:
     workers:
-      - id: claude-review
+      - id: claude-research
         runtime: claude-agent-sdk
         workspace: /home/tan/workspaces/system
         sandbox: read-only

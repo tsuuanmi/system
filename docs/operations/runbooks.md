@@ -153,6 +153,11 @@ default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
   egress row's `workerClasses` with `local-private` added to `agent`. List
   `website`, `model`, and `model-local` too: the setting replaces the whole
   default.
+- **Renaming an agent Worker:** change its `id` in the `agent-workers` row of the
+  profile patch, `system check`, and restart the daemon. The Worker is `agent:<new id>`
+  from then on. Recorded runs, decisions, and usage keep the old id, since records never
+  change. A session bound to the old Worker stays on it, so a new run starts a new session.
+  Its home (`home`) and its account do not change.
 
 ### Codex Workers
 
