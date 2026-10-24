@@ -102,6 +102,18 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site: sign-in, c
     expect(fake.sent).toHaveLength(1)
   })
 
+  it('masks the account in that outline though the page hides its button: the name is read from the hidden button', async () => {
+    const { page, fake } = await open({ accountHidden: true })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { ...TIMEOUTS, accountMs: 500 } })
+    const drifts: DriftEvent[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    await page.goto(`${fake.origin}/app`)
+    await page.evaluate(() => document.querySelector('nav')!.insertAdjacentHTML('beforeend', '<button class="settings" aria-label="Settings for Test User">s</button>'))
+    expect(await driver.checkAuth(page)).toBe('unknown')
+    expect(drifts[0]!.outline!.nodes.map((n) => n.label)).toContain('[redacted]')
+    expect(JSON.stringify(drifts[0]!.outline)).not.toMatch(/Test User|test@example/)
+  })
+
   it('fails a page that shows neither signed in nor signed out once, as drift, never as a session to retry', async () => {
     const { page, fake } = await open({ interstitial: true })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })

@@ -181,7 +181,9 @@ driver, its operations are data: a UI map,
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence
-  ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence)).
+  ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence)). The
+  outline masks the account's own name and address, read from its button even
+  while the page hides it.
 - **Fixtures:** [`fixtures/fake-gemini.ts`](fixtures/fake-gemini.ts) is a local
   stand-in built from the signed-in page read live on 2026-10-12, with no
   private data. It reproduces the live traps:

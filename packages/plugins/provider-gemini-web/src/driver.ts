@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { type Condition, copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { type Condition, copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, toLocator, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page, Route } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -191,13 +191,13 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (await engine.state('auth.signed-in')) return { state: 'signed-in' }
     // Neither: what the page shows instead is outlined as drift evidence, so it can be read without
     // opening the operator's browser, with what each of the account's candidates found.
-    const why = await this.unsignedWhy(engine, rendered)
+    const why = await this.whatShowed(engine, rendered)
     await engine.drift('auth.account').catch(() => undefined)
     return { state: 'unknown', why }
   }
 
   /** What a page that is neither signed in nor signed out showed, from its structure only. */
-  private async unsignedWhy(engine: UiEngine, rendered: boolean): Promise<string> {
+  private async whatShowed(engine: UiEngine, rendered: boolean): Promise<string> {
     const matches = await engine.matches('auth.account').catch(() => undefined)
     const hidden = !!matches?.some((m) => m.found > m.shown)
     const overlay = await engine.state('page.busy-overlay').catch(() => false)
@@ -217,9 +217,20 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     return label.replace(/^Google Account:\s*/, '').trim()
   }
 
-  /** The account's name and address as the page shows them ("Name (address)"), for a drift outline to mask. */
+  /**
+   * The account's name and address as the page shows them ("Name (address)"), for a drift outline
+   * to mask. Read from the button even while the page hides it (live 2026-10-24), since that is
+   * when an outline is taken; never used for anything but masking.
+   */
   private async accountNames(page: Page): Promise<string[]> {
-    const label = await (await this.engine(page).resolve('auth.account', 1000)).locator.first().getAttribute('aria-label')
+    let label = await this.engine(page).resolve('auth.account', 1000).then((found) => found.locator.first().getAttribute('aria-label'), () => null)
+    if (!label) {
+      for (const candidate of this.map.elements['auth.account']!.candidates) {
+        const hidden = toLocator(page, candidate, this.map.locales, { includeHidden: true }).first()
+        if (await hidden.count()) label = await hidden.getAttribute('aria-label')
+        if (label) break
+      }
+    }
     const shown = (label ?? '').replace(/^Google Account:\s*/, '').trim()
     return [shown, ...shown.split(/[()]/).map((part) => part.trim())].filter(Boolean)
   }
