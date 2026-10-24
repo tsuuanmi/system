@@ -1,10 +1,11 @@
 /**
- * agy's own usage report as limit observations (docs/design/agent-runtimes.md#metering). A run's
- * stream and its error name no reset time (agy 1.4.6's quota errors are `individual quota
- * reached`, `You have exhausted your quota on this model.`, `Your AI credits balance is too low to
- * continue.`), but print mode answers `/usage` itself, without an agent turn, spending quota, or
- * leaving a conversation behind (agy's changelog), and under `--output-format json` it writes one
- * JSON object whose `command.data` is the quota summary, reset times in UTC:
+ * agy's own usage report as limit observations, an account's usage report (ADR-0059,
+ * docs/design/agent-runtimes.md#an-accounts-usage-report). A run's stream and its error name no
+ * reset time (agy 1.4.6's quota errors are `individual quota reached`, `You have exhausted your
+ * quota on this model.`, `Your AI credits balance is too low to continue.`), but print mode answers
+ * `/usage` itself, without an agent turn, spending quota, or leaving a conversation behind (agy's
+ * changelog), and under `--output-format json` it writes one JSON object whose `command.data` is the
+ * quota summary, reset times in UTC:
  *
  * ```
  * { "status": "SUCCESS", …, "command": { "name": "usage", "data": {
@@ -23,7 +24,8 @@ import type { LimitObservation } from '@tsuuanmi/system-agent-runtime-core'
  * formats a reset with RFC 3339, and its changelog says print mode answers `/usage` with no agent
  * turn and that piped and JSON output keep UTC. `tests/fixtures/agy-1.4.6-usage.json` holds reports
  * in that shape. On any other version the report is never asked for (an agy that no longer answers
- * `/usage` itself would send it to the model as a prompt), and the run's error says so.
+ * `/usage` itself would send it to the model as a prompt), and it reads `unreadable`, naming the
+ * version.
  */
 export const VERIFIED_LIMIT_VERSIONS: readonly string[] = ['1.4.6']
 

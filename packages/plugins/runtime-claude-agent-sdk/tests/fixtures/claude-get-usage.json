@@ -1,0 +1,108 @@
+{
+  "description": "get_usage answers in the shape Claude Code's control request gives (SDKControlGetUsageResponse of @anthropic-ai/claude-agent-sdk 0.3.296, the handler of the checked Claude Code versions): rate_limits_available, and rate_limits with each window { utilization (0 to 100) | null, resets_at (ISO 8601) | null }. Synthetic values; no account was read. Each case gives the observations limitsFromUsage reads at observedAt, or that it reads none.",
+  "observedAt": "2026-10-24T14:05:00.000Z",
+  "cases": [
+    {
+      "case": "a plan account mid-window: each window with a share is read; null windows, the per-model list, extra usage, the session, and the plan type are not",
+      "answer": {
+        "session": { "total_cost_usd": 0, "total_api_duration_ms": 0, "total_duration_ms": 180, "total_lines_added": 0, "total_lines_removed": 0, "model_usage": {} },
+        "subscription_type": "max",
+        "rate_limits_available": true,
+        "rate_limits": {
+          "five_hour": { "utilization": 42, "resets_at": "2026-10-24T14:20:00.000Z" },
+          "seven_day": { "utilization": 17.5, "resets_at": "2026-10-29T09:00:00+00:00" },
+          "seven_day_oauth_apps": { "utilization": null, "resets_at": null },
+          "model_scoped": [{ "display_name": "model-a", "utilization": 3, "resets_at": "2026-10-29T09:00:00.000Z" }],
+          "extra_usage": { "is_enabled": false, "monthly_limit": null, "used_credits": null, "utilization": null, "currency": null }
+        },
+        "behaviors": null
+      },
+      "limits": [
+        { "window": "five_hour", "status": "allowed", "resetsAt": "2026-10-24T14:20:00.000Z", "usedPercentage": 42, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "seven_day", "status": "allowed", "resetsAt": "2026-10-29T09:00:00.000Z", "usedPercentage": 17.5, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "a window used up: rejected until its reset; a share past 100 reads as 100",
+      "answer": {
+        "subscription_type": "pro",
+        "rate_limits_available": true,
+        "rate_limits": {
+          "five_hour": { "utilization": 100, "resets_at": "2026-10-24T16:00:00.000Z" },
+          "seven_day": { "utilization": 103.4, "resets_at": "2026-10-27T00:00:00.000Z" }
+        },
+        "behaviors": null
+      },
+      "limits": [
+        { "window": "five_hour", "status": "rejected", "resetsAt": "2026-10-24T16:00:00.000Z", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "seven_day", "status": "rejected", "resetsAt": "2026-10-27T00:00:00.000Z", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "a reset not believed: already past on a used-up window, more than 400 days away, or not an ISO time; the share still stands",
+      "answer": {
+        "rate_limits_available": true,
+        "rate_limits": {
+          "five_hour": { "utilization": 100, "resets_at": "2026-10-24T14:00:00.000Z" },
+          "seven_day": { "utilization": 8, "resets_at": "2028-01-01T00:00:00.000Z" },
+          "seven_day_oauth_apps": { "utilization": 9, "resets_at": "next Tuesday" }
+        }
+      },
+      "limits": [
+        { "window": "five_hour", "status": "rejected", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "seven_day", "status": "allowed", "usedPercentage": 8, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "seven_day_oauth_apps", "status": "allowed", "usedPercentage": 9, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "no window has a share yet: no reading, nothing unreadable",
+      "answer": { "rate_limits_available": true, "rate_limits": { "five_hour": { "utilization": null, "resets_at": null }, "seven_day": null } },
+      "limits": []
+    },
+    {
+      "case": "an API key or a third-party provider: no plan limits",
+      "answer": { "subscription_type": null, "rate_limits_available": false, "rate_limits": null, "behaviors": null },
+      "unreadable": "the account reports no plan limits"
+    },
+    {
+      "case": "plan limits said available, and no rate_limits object",
+      "answer": { "rate_limits_available": true, "rate_limits": null },
+      "unreadable": "its rate_limits is not an object"
+    },
+    {
+      "case": "wrong unit: a reset as Unix seconds",
+      "answer": { "rate_limits_available": true, "rate_limits": { "five_hour": { "utilization": 42, "resets_at": 1761315600 } } },
+      "unreadable": "its window five_hour is not in the checked shape"
+    },
+    {
+      "case": "wrong unit: a share as text",
+      "answer": { "rate_limits_available": true, "rate_limits": { "five_hour": { "utilization": "42%", "resets_at": "2026-10-24T14:20:00.000Z" } } },
+      "unreadable": "its window five_hour is not in the checked shape"
+    },
+    {
+      "case": "a negative share",
+      "answer": { "rate_limits_available": true, "rate_limits": { "seven_day": { "utilization": -1, "resets_at": null } } },
+      "unreadable": "its window seven_day reports a used share that is not a percentage"
+    },
+    {
+      "case": "bad shape: a window that is a number, so nothing in the answer is believed",
+      "answer": { "rate_limits_available": true, "rate_limits": { "five_hour": { "utilization": 42, "resets_at": "2026-10-24T14:20:00.000Z" }, "seven_day": 17 } },
+      "unreadable": "its window seven_day is not in the checked shape"
+    },
+    {
+      "case": "bad shape: a window without resets_at",
+      "answer": { "rate_limits_available": true, "rate_limits": { "five_hour": { "utilization": 42 } } },
+      "unreadable": "its window five_hour is not in the checked shape"
+    },
+    {
+      "case": "bad shape: no rate_limits_available",
+      "answer": { "rate_limits": { "five_hour": { "utilization": 42, "resets_at": null } } },
+      "unreadable": "no rate_limits_available"
+    },
+    {
+      "case": "not an object",
+      "answer": "usage",
+      "unreadable": "its answer is not an object"
+    }
+  ]
+}

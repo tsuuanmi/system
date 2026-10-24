@@ -21,9 +21,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   - **hand-named** (`workers`), the shape before phase F. These load and run
     exactly as before until the operator applies `system account migrate`
     (below); from then on the row is refused at load, naming the way forward
-    and back. `maxConcurrentRunsPerAccount`, `pool`, `windows`, and
-    `limitCooldownSeconds` on a `providers` entry belong to the first shape and
-    are refused beside hand-named Workers.
+    and back. `maxConcurrentRunsPerAccount`, `pool`, `windows`,
+    `limitCooldownSeconds`, and `limitReadSeconds` on a `providers` entry belong
+    to the first shape and are refused beside hand-named Workers.
 
   A hand-named entry is `agent:<id>`
   with a `runtime` kind, an absolute `workspace`, a `sandbox` (`read-only` or
@@ -90,7 +90,23 @@ The **`agents` Worker source**: agent runtimes as Workers
     a metered provider to the ledger (`declare('agents', …)`, again whenever
     that set changes or the ledger is another one); a ledger with no `declare`,
     or that refuses, leaves those pools unmade and their Workers `unavailable`
-    (INV-2). A limit on one account never closes another's.
+    (INV-2). A limit on one account never closes another's;
+  - **each account's usage report** (`src/reports.ts`,
+    [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
+    [an account's usage report](../../../docs/design/agent-runtimes.md#an-accounts-usage-report)):
+    for each `ready` assigned account whose Workers draw on a declared pool,
+    on a runtime that implements `limits`, the source reads the account's own
+    usage report into its pool's windows every `limitReadSeconds` (the
+    provider's; default 600, 60 to 86400, `0` off; with `pool` only, else
+    `config_error`), and once after each of its runs (**Metering**, below). A
+    periodic read is skipped while a read of the account, a run's own
+    included, is less than a period old; at most one periodic read is in flight
+    per runtime (the longest unread account first); each read goes through
+    `readLimits` (30 s, aborted by a stop, which waits for it); the first pass
+    runs a few seconds after a start, then each when the next account is due.
+    `readUsageReports()` runs a pass now. A report that cannot be read records
+    nothing and is logged (once per reason for the periodic read); the
+    windows keep their last readings and `observedAt`.
 - **The move from hand-named rows** (`src/migrate.ts`, `system account
   migrate`, MCP `account_migrate`, operator scope;
   [runbook](../../../docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)):
@@ -400,6 +416,19 @@ The **`agents` Worker source**: agent runtimes as Workers
     reading (source `limit-notice`) for `limitCooldownSeconds`; a later
     reading of a window says otherwise. A closed pool holds every Worker of
     its account, not only the metered one (**One account, every role**);
+  - **the account's usage report after the run** (ADR-0059): once after each
+    run of a derived Worker on a declared pool, and after any run that failed
+    `quota_exhausted`, in the home the run ran in, before its usage is recorded
+    and its reservation released, when its runtime implements `limits`. Its
+    observations are recorded after the run's own, as the run's are (the same
+    `windows`, cooldown, and closing of every window for an unmapped
+    rejection), so the latest reading has the share, and a reset read at a
+    limit wins over the cooldown fallback above. One rule is the report's
+    alone: it **never opens a window that a `limited` reading closed** before
+    the later of that reading's `resetsAt` and `cooldownUntil` (without end
+    when it names neither); such an `ok` reading is not recorded, and is
+    logged; a report's rejections are recorded first, so its own `ok` of a
+    window it closes is not either. Its unmapped windows are logged once;
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 
@@ -410,7 +439,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   `agent_cooldowns`): a hand-named Worker's runtime, whose Workers share its one
   home, or a derived Worker's account. Every Worker of it is `quota-exhausted`, and a run queued
   on one fails `quota_exhausted` before the agent starts, until the latest
-  reset time a `rejected` observation of the run named, else for the failing
+  reset time a `rejected` observation of the run, or of the account's usage
+  report read after it, named, else for the failing
   Worker's `limitCooldownSeconds`, never more than seven days (INV-9). It
   survives a restart and ends only at that time. Event `agent-workers.cooldown`
   (`runtime`, a derived Worker's `account`, `worker`, `agentRun`, `until`, and

@@ -247,11 +247,11 @@ function listen(path: string, token: string, decide: (event: HookEvent) => Promi
 }
 
 /** Runs a confined command line with an environment and a working directory; resolves its stdout, rejects on a non-zero exit. */
-export type ConfinedExec = (command: { command: string; args: string[] }, options: { env: Record<string, string>; cwd: string; input?: string | undefined }) => Promise<string>
+export type ConfinedExec = (command: { command: string; args: string[] }, options: { env: Record<string, string>; cwd: string; input?: string | undefined; signal?: AbortSignal | undefined }) => Promise<string>
 
-/** `execFile` with a bound, feeding `input` on stdin; a failure names the command's last word on stderr, not its (long, confined) command line. */
+/** `execFile` with a bound, feeding `input` on stdin, ended by `signal`; a failure names the command's last word on stderr, not its (long, confined) command line. */
 export const execConfined: ConfinedExec = (command, options) => new Promise((resolve, reject) => {
-  const child = execFile(command.command, command.args, { env: options.env, cwd: options.cwd, timeout: 30_000, maxBuffer: 4 << 20 }, (error, stdout, stderr) => {
+  const child = execFile(command.command, command.args, { env: options.env, cwd: options.cwd, timeout: 30_000, maxBuffer: 4 << 20, ...(options.signal ? { signal: options.signal } : {}) }, (error, stdout, stderr) => {
     if (!error) return resolve(String(stdout))
     const failure = error as Error & { code?: unknown; signal?: unknown; killed?: boolean }
     const why = failure.killed ? 'timed out' : `exit ${String(failure.code ?? failure.signal)}`

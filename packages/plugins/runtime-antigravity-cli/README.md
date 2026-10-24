@@ -161,28 +161,31 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   read, output the thinking); no total with a cache read or thinking to place,
   or no reading that fits, reports no usage (a missing number stays missing).
   No per-model split or cost is read.
-- **A quota's reset** (`limits.ts`,
-  [limit readings](../../../docs/design/agent-runtimes.md#limit-readings)): agy's
-  stream and its quota errors name no reset, but print mode answers `/usage`
-  itself, without an agent turn. After a run that failed `quota_exhausted`, on
-  an agy version in `VERIFIED_LIMIT_VERSIONS` (1.4.6, from its binary's type
-  descriptors and changelog), the runtime runs `agy --print=/usage
-  --output-format json` (`USAGE_ARGS`) under the home's confinement, with agy's
-  environment and no gate, and reads its `command.data`: groups of buckets,
-  each with an `id`, `remaining_fraction`, `remaining_amount`, and `reset_time`
-  (RFC 3339, UTC). Each bucket that is not `disabled` and says what is left is
-  an observation of the window its `id` names: `rejected` when nothing is left,
-  else `allowed`, with `usedPercentage` from the fraction and `resetsAt` from the
-  reset (dropped when it does not parse, is more than 400 days away, or, for a
-  rejection, is not ahead of now). A rejected bucket without an `id` is window
-  `*`, which closes the pool as a whole; a bucket that says nothing of what is
-  left is no reading, never `allowed`. The observations go on the run's error
-  (`withMetering`). A report not in the 1.4.6 shape (any field of another type,
-  a fraction outside 0 to 1), one that fails, and any other agy version give
-  none, and the error says why (`its reset time is not read: …`); on another
-  version `/usage` is never sent, since an agy that stopped answering it itself
-  would pass it to the model as a prompt. The `agents` source then closes the
-  pool for the Worker's cooldown, never opens it.
+- **An account's usage report** (`limits({}, signal)`, `limits.ts`,
+  [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
+  [an account's usage report](../../../docs/design/agent-runtimes.md#an-accounts-usage-report)):
+  agy's stream and its quota errors name no reset, but print mode answers
+  `/usage` itself, without an agent turn. On an agy version in
+  `VERIFIED_LIMIT_VERSIONS` (1.4.6, from its binary's type descriptors and
+  changelog), `limits` runs `agy --print=/usage --output-format json`
+  (`USAGE_ARGS`) in its own home (a fit one, as a probe finds it), under the
+  home's confinement, with agy's environment as a run has it and no gate, and
+  reads its `command.data`: groups of buckets, each with an `id`,
+  `remaining_fraction`, `remaining_amount`, and `reset_time` (RFC 3339, UTC).
+  Each bucket that is not `disabled` and says what is left is an observation of
+  the window its `id` names: `rejected` when nothing is left, else `allowed`, with
+  `usedPercentage` from the fraction and `resetsAt` from the reset (dropped when
+  it does not parse, is more than 400 days away, or, for a rejection, is not
+  ahead of now). A rejected bucket without an `id` is window `*`, which closes the
+  pool as a whole; a bucket that says nothing of what is left is no reading,
+  never `allowed`. A report not in the 1.4.6 shape (any field of another type, a
+  fraction outside 0 to 1), one that fails, a named home (it runs in its own
+  only), and any other agy version are `unreadable`, with why; on another version
+  `/usage` is never sent, since an agy that stopped answering it itself would
+  pass it to the model as a prompt. A run never reads it itself (one
+  implementation): after a run that failed `quota_exhausted`, the `agents` source
+  reads `limits`, whose rejected reset closes the pool, or cools the account
+  down, until then; with none, the Worker's cooldown holds, never an open pool.
 - **Config:** `executable`; `home` (absolute); `forwardEnv`, daemon variables
   passed by name (an API key agy should use); `env`, explicit values, never a
   secret (`HOME`, the XDG directories, and the hook's variables there are

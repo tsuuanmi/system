@@ -4,8 +4,9 @@
  * the prompt it received (`echo: <prompt>`) and reports the native handle `h-1`. A provider
  * whose agent reports what it consumed has the scripted agent report it too, so the suite checks
  * it; one that reports nothing passes as it is. A provider that reads who is signed in to a home
- * also runs the identity suite, with a harness that signs scripted homes in and out; the fake
- * {@link FakeAgentRuntime} passes every suite here.
+ * also runs the identity suite, with a harness that signs scripted homes in and out; one that reads an
+ * account's usage report runs the usage report suite (ADR-0059); the fake {@link FakeAgentRuntime}
+ * passes every suite here.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,8 +14,9 @@ import { isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  type AgentRuntimeProvider, type IdentityReading, type LoginCommand, type ProbeOptions, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage,
-  accountIdOf, identityHmac, maskEmail, observe, probeIn, titleOf,
+  type AgentRuntimeProvider, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunMetering, type RunObserver, type RunResult,
+  type RunSpec, type RuntimeEvidence, type TokenUsage,
+  accountIdOf, identityHmac, limitProblem, maskEmail, observe, probeIn, readLimits, titleOf,
 } from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
@@ -299,14 +301,105 @@ export function agentRuntimeIdentityConformance(name: string, harness: IdentityH
 }
 
 /**
+ * What a provider's test supplies to check its usage report (`limits`, ADR-0059): the provider wired
+ * to its scripted runtime in three states. Each is called inside a test, so it may script that state
+ * first.
+ */
+export interface LimitsHarness {
+  /** On a version whose report format was checked, an account signed in to its own home, whose report names at least one window. */
+  readable: () => AgentRuntimeProvider | Promise<AgentRuntimeProvider>
+  /** The same, its report in a shape the reader does not know. */
+  garbled: () => AgentRuntimeProvider | Promise<AgentRuntimeProvider>
+  /** The same, on a version whose report format was not checked, which is `uncheckedVersion`. */
+  unchecked: () => AgentRuntimeProvider | Promise<AgentRuntimeProvider>
+  uncheckedVersion: string
+}
+
+/**
+ * Conformance of a provider that reads an account's usage report (`limits`, ADR-0059): a report on a
+ * checked version gives each window it names as an observation in the seam's units; a version not
+ * checked, a report it cannot read, a home it does not run in, and a stopped read are each
+ * `unreadable` with why, never a throw and never a reading; and {@link readLimits} gives what the
+ * provider gave.
+ */
+export function agentRuntimeLimitsConformance(name: string, harness: LimitsHarness): void {
+  describe(`agent runtime usage report conformance: ${name}`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'system-agent-limits-'))
+    afterAll(() => rmSync(root, { recursive: true, force: true }))
+    const signal = (): AbortSignal => new AbortController().signal
+    const unreadable = (report: LimitReport, what: string): string => {
+      expect('unreadable' in report, `${what}: ${JSON.stringify(report).slice(0, 300)}`).toBe(true)
+      const why = (report as { unreadable: string }).unreadable
+      expect(why.length, `${what} says why`).toBeGreaterThan(0)
+      expect((report as { limits?: unknown }).limits, `${what} carries no reading`).toBeUndefined()
+      return why
+    }
+
+    it('reads a report on a checked version: each window it names, an observation in the seam\'s units, through readLimits as given', async () => {
+      const runtime = await harness.readable()
+      expect(runtime.limits, `${name} reads a usage report`).toBeTypeOf('function')
+      const before = Date.now()
+      const report = await runtime.limits!({}, signal())
+      expect('limits' in report, JSON.stringify(report).slice(0, 300)).toBe(true)
+      const { limits } = report as { limits: LimitObservation[] }
+      expect(limits.length).toBeGreaterThan(0)
+      for (const limit of limits) {
+        expect(limitProblem(limit), JSON.stringify(limit)).toBeUndefined()
+        expect(Date.parse(limit.observedAt)).toBeGreaterThanOrEqual(before - 1000)
+      }
+      expectConsistentMetering({ limits })
+      const read = await readLimits(await harness.readable(), {}, signal())
+      expect((read as { limits: LimitObservation[] }).limits?.map((l) => [l.window, l.status, l.usedPercentage, l.resetsAt])).toEqual(limits.map((l) => [l.window, l.status, l.usedPercentage, l.resetsAt]))
+    })
+
+    it('reads nothing on a version whose report format was not checked: unreadable, naming the version (INV-2)', async () => {
+      const why = unreadable(await (await harness.unchecked()).limits!({}, signal()), 'an unchecked version')
+      expect(why).toContain(harness.uncheckedVersion)
+    })
+
+    it('reads a report in a shape it does not know as unreadable, never a reading and never a throw', async () => {
+      unreadable(await (await harness.garbled()).limits!({}, signal()), 'a garbled report')
+    })
+
+    it('reads no home it does not run in, never its own in its place: a named home without homes, a relative one, or one that is not there is unreadable, never made (ADR-0051)', async () => {
+      const runtime = await harness.readable()
+      const absent = join(root, 'absent')
+      if ((await runtime.probe()).homes) {
+        unreadable(await runtime.limits!({ home: 'relative/home' }, signal()), 'a relative home')
+        unreadable(await runtime.limits!({ home: absent }, signal()), 'a home that is not there')
+        expect(existsSync(absent), 'the home is never made').toBe(false)
+        return
+      }
+      const other = join(root, 'other')
+      mkdirSync(other, { mode: 0o700 })
+      unreadable(await runtime.limits!({ home: other }, signal()), 'a named home on a provider without homes')
+    })
+
+    it('stops when its read is stopped: unreadable, never a throw', async () => {
+      const controller = new AbortController()
+      controller.abort()
+      unreadable(await (await harness.readable()).limits!({}, controller.signal), 'a stopped read')
+    })
+  })
+}
+
+/**
  * A fake agent runtime with scripted homes (ADR-0051), for the suites above and for consumers' tests:
  * a home is signed in when it holds `fake-login.json` (`{ "user": <login> }`, written by
  * {@link FakeAgentRuntime.signIn}); its reader is verified on `version` only. It answers a run with
- * `echo: <prompt>` and the handle `h-1`, runs read-only only, and gates tool calls.
+ * `echo: <prompt>` and the handle `h-1`, runs read-only only, and gates tool calls. Its usage report
+ * (`limits`, ADR-0059) is `fake-limits.json` in the home ({@link FakeAgentRuntime.report}), read on a
+ * verified version for a signed-in home only; a home with none answers `unreadable`.
  */
 export class FakeAgentRuntime implements AgentRuntimeProvider {
   static readonly FILE = 'fake-login.json'
+  static readonly LIMITS = 'fake-limits.json'
   static readonly VERIFIED = ['1.0.0']
+
+  /** Script the usage report of `home`: its windows (each stamped when read), or `garbled`, a shape the fake does not read. */
+  static report(home: string, windows: ReadonlyArray<Omit<LimitObservation, 'observedAt'>> | 'garbled'): void {
+    writeFileSync(join(home, FakeAgentRuntime.LIMITS), windows === 'garbled' ? '{"windows":' : JSON.stringify({ limits: windows }), { mode: 0o600 })
+  }
 
   /** `home`: its own configured home, which a Worker source adopts as slot 1 (optional, as on the seam). */
   constructor(readonly kind = 'fake-runtime', private readonly version = '1.0.0', readonly home?: string) {}
@@ -350,6 +443,25 @@ export class FakeAgentRuntime implements AgentRuntimeProvider {
 
   loginCommand(home: string): LoginCommand {
     return { command: 'fake-login', args: ['--home', home], env: { FAKE_HOME: home } }
+  }
+
+  async limits(options: LimitsOptions, signal: AbortSignal): Promise<LimitReport> {
+    if (signal.aborted) return { unreadable: `${this.kind}: the read was stopped` }
+    if (options.home !== undefined && (!isAbsolute(options.home) || !existsSync(options.home))) return { unreadable: `${this.kind}: the home ${options.home} is not an existing absolute path` }
+    const home = options.home ?? this.home
+    if (home === undefined) return { unreadable: `${this.kind}: it has no home of its own` }
+    if (!FakeAgentRuntime.VERIFIED.includes(this.version)) return { unreadable: `${this.kind}: the usage report of version ${this.version} is not verified` }
+    if (!this.user(home)) return { unreadable: `${this.kind}: ${home} is not signed in` }
+    let scripted: unknown
+    try {
+      scripted = JSON.parse(readFileSync(join(home, FakeAgentRuntime.LIMITS), 'utf8'))
+    } catch (error) {
+      return { unreadable: (error as NodeJS.ErrnoException).code === 'ENOENT' ? `${this.kind}: ${home} holds no usage report` : `${this.kind}: its usage report is not in the shape it reads` }
+    }
+    const limits = (scripted as { limits?: unknown }).limits
+    if (!Array.isArray(limits)) return { unreadable: `${this.kind}: its usage report is not in the shape it reads` }
+    const observedAt = new Date().toISOString()
+    return { limits: limits.map((l) => ({ ...(l as Omit<LimitObservation, 'observedAt'>), observedAt })) }
   }
 
   /** The signed-in user of a home, or undefined when it holds none, or none whole. */

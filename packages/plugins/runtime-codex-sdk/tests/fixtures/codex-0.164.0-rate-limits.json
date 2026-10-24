@@ -1,0 +1,78 @@
+{
+  "description": "Results of the Codex 0.164.0 app server's account/rateLimits/read, in the shape `codex app-server generate-ts` shows (GetAccountRateLimitsResponse: rateLimits, a RateLimitSnapshot of primary and secondary windows, each usedPercent 0 to 100, windowDurationMins, resetsAt in Unix seconds). Synthetic values; no account was read. Each case gives the observations limitsFromRateLimits reads at observedAt, or that it reads none.",
+  "observedAt": "2026-10-24T14:05:00.000Z",
+  "cases": [
+    {
+      "case": "a plan account mid-window: each window named by its length; credits and the plan type are not read",
+      "result": {
+        "rateLimits": {
+          "primary": { "usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1792851600 },
+          "secondary": { "usedPercent": 17.5, "windowDurationMins": 10080, "resetsAt": 1793264400 },
+          "credits": { "hasCredits": false, "unlimited": false, "balance": null },
+          "planType": "plus"
+        }
+      },
+      "limits": [
+        { "window": "300m", "status": "allowed", "resetsAt": "2026-10-24T14:20:00.000Z", "usedPercentage": 42, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "10080m", "status": "allowed", "resetsAt": "2026-10-29T09:00:00.000Z", "usedPercentage": 17.5, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "the shorter window used up: rejected until its reset; a share past 100 reads as 100; a window that is null is no reading",
+      "result": { "rateLimits": { "primary": { "usedPercent": 100.2, "windowDurationMins": 300, "resetsAt": 1792857600 }, "secondary": null } },
+      "limits": [
+        { "window": "300m", "status": "rejected", "resetsAt": "2026-10-24T16:00:00.000Z", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "a window of no stated length: used up, window * (every window of the pool); not used up, no reading",
+      "result": { "rateLimits": { "primary": { "usedPercent": 100, "windowDurationMins": null, "resetsAt": 1792857600 }, "secondary": { "usedPercent": 30, "windowDurationMins": null, "resetsAt": null } } },
+      "limits": [
+        { "window": "*", "status": "rejected", "resetsAt": "2026-10-24T16:00:00.000Z", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "a reset not believed: already past on a used-up window, or more than 400 days away; the share still stands",
+      "result": { "rateLimits": { "primary": { "usedPercent": 100, "windowDurationMins": 300, "resetsAt": 1792850400 }, "secondary": { "usedPercent": 9, "windowDurationMins": 10080, "resetsAt": 1830297600 } } },
+      "limits": [
+        { "window": "300m", "status": "rejected", "usedPercentage": 100, "observedAt": "2026-10-24T14:05:00.000Z" },
+        { "window": "10080m", "status": "allowed", "usedPercentage": 9, "observedAt": "2026-10-24T14:05:00.000Z" }
+      ]
+    },
+    {
+      "case": "no window reported: no reading, nothing unreadable",
+      "result": { "rateLimits": { "primary": null, "secondary": null } },
+      "limits": []
+    },
+    {
+      "case": "no rateLimits object",
+      "result": { "primary": { "usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1792851600 } },
+      "unreadable": "no rateLimits object"
+    },
+    {
+      "case": "wrong unit: a reset as an ISO string",
+      "result": { "rateLimits": { "primary": { "usedPercent": 42, "windowDurationMins": 300, "resetsAt": "2026-10-24T14:20:00Z" } } },
+      "unreadable": "its primary window is not in the checked shape"
+    },
+    {
+      "case": "wrong unit: a window's length in hours, not whole minutes",
+      "result": { "rateLimits": { "secondary": { "usedPercent": 10, "windowDurationMins": 0.5, "resetsAt": null } } },
+      "unreadable": "its secondary window is not in the checked shape"
+    },
+    {
+      "case": "a share as text",
+      "result": { "rateLimits": { "primary": { "usedPercent": "42", "windowDurationMins": 300, "resetsAt": 1792851600 } } },
+      "unreadable": "its primary window is not in the checked shape"
+    },
+    {
+      "case": "a negative share",
+      "result": { "rateLimits": { "primary": { "usedPercent": -3, "windowDurationMins": 300, "resetsAt": 1792851600 } } },
+      "unreadable": "its primary window reports a used share that is not a percentage"
+    },
+    {
+      "case": "bad shape: a window that is a number, so nothing in the answer is believed",
+      "result": { "rateLimits": { "primary": { "usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1792851600 }, "secondary": 17 } },
+      "unreadable": "its secondary window is not in the checked shape"
+    }
+  ]
+}

@@ -133,6 +133,32 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   pool for the Worker's cooldown, never opens it. A completed run reports its
   `turns` (one per `turn.completed`); nothing else of Codex's usage is
   reported (no token counts).
+- **An account's usage report** (`limits({ home }, signal)`,
+  [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
+  `rate-limits.ts`): the app server's `account/rateLimits/read`, only on a Codex
+  version whose answer was checked (`VERIFIED_RATE_LIMITS_VERSIONS`, 0.164.0, from
+  `codex app-server generate-ts`; any other is `unreadable`, naming it, and
+  nothing starts), and only in a home that configures no MCP server (`codex mcp
+  list --json`, as for a probe). `codex app-server` starts under the read
+  confinement with its home bound back writable, Codex's environment, the home as
+  its directory, and the runtime's `--config` overrides (the features above off);
+  over its stdio JSON-RPC (one message per line) it is asked `initialize`, sent
+  `initialized`, asked `account/rateLimits/read`, and ended (stdin closed,
+  SIGTERM, SIGKILL after 5 s). It starts no thread and no turn. The result's
+  `rateLimits.primary` and `secondary` are each an observation of the window
+  their length names, `<windowDurationMins>m` (`300m`, `10080m`; which is the
+  five-hour window is not fixed by name): `usedPercentage` the `usedPercent`
+  (above 100 read as 100), `rejected` at 100 or more, else `allowed`, `resetsAt`
+  from `resetsAt` (Unix seconds) within 400 days (and ahead, for a rejection). A
+  null window is no reading; one of no stated length is reported only when used
+  up, as window `*`. A refusal, an error answer, a line that is not a JSON object
+  or longer than 1 MiB, an early exit, or any window in another shape (a share
+  as text, a reset as an ISO string, a length that is not whole minutes) is
+  `unreadable`: nothing in such an answer is believed. Notifications and the
+  server's own requests are not answered. Fixtures:
+  `tests/fixtures/codex-0.164.0-rate-limits.json`, against an app-server
+  stand-in (`tests/fake-app-server.mjs`); the provider passes the usage report
+  suite.
 - **Configuration:**
   - `executable` (default: `codex` on PATH);
   - `config`: Codex `--config` overrides, such as its model provider, passed as

@@ -61,7 +61,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   *derived*); its status and why in plain words (a quarantine with what its reading found); what it does now, one sentence per step with for how long, each
   a link to its run; its account, with the account's label and its enrolled, ready, signed-out, or
   quarantined state; what it serves (tier, quota class, locality, provider, family, role); its
-  limits, with each reset relative and on the clock; and its load
+  limits, with each reset relative and on the clock, and each window of its account's pools as
+  `five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)` (the window's latest reading, an
+  account's usage report among them, [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
+  its share of the window's length, its reset, and when it was read, each on the clock with the day
+  when not today; `; at its limit` while it is limited); and its load
   ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
   `unknown (why)`, and a Worker source that did not answer is named above the cards.
 
@@ -132,7 +136,8 @@ refusal, `503` without a queue or a board), the roster route (operator only, val
 Worker registry), and, with a browser, the runs, the queue (labels by effect, a batch verdict, a
 refused one as an alert), a press a refresh lands on that still counts, a verdict not recorded
 that stays as an alert through refreshes until dismissed, and the Workers tab (counts, cards by
-status headed by the display name with the id under it, a description or a derived line marked, the step in one sentence, and under Doing now a
+status headed by the display name with the id under it, a description or a derived line marked, the step in one sentence, each pool window's share of its length, reset, and read time, or
+`unknown (why)`, and under Doing now a
 run held for want of a verdict with what frees it and a link to its run).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.

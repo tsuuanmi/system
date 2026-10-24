@@ -26,7 +26,17 @@ export interface AgentProviderConfig extends ProviderAccounts {
   windows?: Record<string, string> | undefined
   /** How long a limit hit with no reset time closes the account's pool (with none, cools the account down), in seconds (default 3600). */
   limitCooldownSeconds?: number | undefined
+  /**
+   * How often each ready account with a pool has its runtime's usage report read, in seconds (ADR-0059;
+   * default {@link DEFAULT_LIMIT_READ_SECONDS}, at least 60, at most a day; 0 turns the periodic read off). With pool only.
+   */
+  limitReadSeconds?: number | undefined
 }
+
+/** The periodic read of each account's usage report, by default (ADR-0059, D55): every 10 minutes. */
+export const DEFAULT_LIMIT_READ_SECONDS = 600
+/** The longest period between two reads of an account's usage report (INV-9). */
+export const MAX_LIMIT_READ_SECONDS = 86_400
 
 /** What a role sets for one runtime: never a routing input. */
 export interface AgentRoleRuntime {
@@ -109,7 +119,8 @@ const fail = (message: string): never => {
 
 /**
  * Check the provider entries' derived-only settings (`pool`, `windows`, `limitCooldownSeconds`,
- * `maxConcurrentRunsPerAccount`); the rest is checked where the setting is applied. Throws `config_error`.
+ * `limitReadSeconds`, `maxConcurrentRunsPerAccount`); the rest is checked where the setting is
+ * applied. Throws `config_error`.
  */
 export function checkProviders(providers: readonly AgentProviderConfig[]): void {
   for (const [i, p] of providers.entries()) {
@@ -122,6 +133,11 @@ export function checkProviders(providers: readonly AgentProviderConfig[]): void 
     if (p.limitCooldownSeconds !== undefined && !(Number.isInteger(p.limitCooldownSeconds) && p.limitCooldownSeconds >= 60 && p.limitCooldownSeconds <= 604_800)) {
       fail(`${at}.limitCooldownSeconds: 60 to 604800 seconds`)
     }
+    const read = p.limitReadSeconds
+    if (read !== undefined && !(Number.isInteger(read) && (read === 0 || (read >= 60 && read <= MAX_LIMIT_READ_SECONDS)))) {
+      fail(`${at}.limitReadSeconds: 0 (off) or 60 to ${MAX_LIMIT_READ_SECONDS} seconds`)
+    }
+    if (read !== undefined && p.pool === undefined) fail(`${at}.limitReadSeconds: the usage report is read into an account's pool, and no pool is set`)
     const n = p.maxConcurrentRunsPerAccount
     if (n !== undefined && !(Number.isInteger(n) && n >= 1 && n <= MAX_CONCURRENT_PER_ACCOUNT)) fail(`${at}.maxConcurrentRunsPerAccount: 1 to ${MAX_CONCURRENT_PER_ACCOUNT}`)
   }
@@ -147,7 +163,7 @@ export function kindsProblem(kinds: unknown, reviewMember: boolean | undefined):
 
 /** Whether a provider entry sets anything only derived Workers use. */
 export const setsDerivedOnly = (p: AgentProviderConfig): boolean =>
-  p.pool !== undefined || Object.keys(p.windows ?? {}).length > 0 || p.limitCooldownSeconds !== undefined || p.maxConcurrentRunsPerAccount !== undefined
+  p.pool !== undefined || Object.keys(p.windows ?? {}).length > 0 || p.limitCooldownSeconds !== undefined || p.limitReadSeconds !== undefined || p.maxConcurrentRunsPerAccount !== undefined
 
 /**
  * The Workers the roles and assignments derive (ADR-0051): one per assignment and role it names,

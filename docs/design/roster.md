@@ -144,7 +144,11 @@ The schema bounds every string and list as well
   the counts (working, idle, at a limit and when the first is back, unavailable), then one card per
   Worker grouped by status, headed by its display name with its id under it, under the page's
   security headers and the operator token, built with DOM methods and text only. **Doing now** lists its steps, then its runs whose liveness needs a
-  look (a held one marked as failed), each with a link to its run.
+  look (a held one marked as failed), each with a link to its run. Each window of a pool reads `five-hour: used 42 % of 5 h, resets 14:20
+  (read 14:05)`: `used` of the window's length, `resets`, and `observedAt` on the clock (an
+  account's own usage report keeps them fresh,
+  [ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md)), and
+  what its reading does not give as `unknown (why)`.
 
 ## Rejected alternatives
 
