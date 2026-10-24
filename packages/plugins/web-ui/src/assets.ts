@@ -558,17 +558,23 @@ export const APP_JS = `'use strict'
               : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
 
   // What the operator reads before a review verdict (T122): the run's change, each reviewer's
-  // verdict, and the run's report, read once per run and result (runs/<id>/review).
+  // verdict, and the run's report, read once per run and result (runs/<id>/review). A read that
+  // failed is kept too, so the 5-second refresh never reads it again: the operator asks for it
+  // again (readAgain), or the result changes.
   const evidenceCache = new Map()
   const reviewOf = async (runId, key) => {
     const kept = evidenceCache.get(runId)
     if (kept && kept.key === key) return kept.value
     let value
-    try { value = await api('runs/' + encodeURIComponent(runId) + '/review') } catch (error) { value = { error } }
+    try { value = await api('runs/' + encodeURIComponent(runId) + '/review') } catch (error) { value = { error, runId } }
     if (evidenceCache.size > 50) evidenceCache.clear()
-    // A read that failed is tried again on the next refresh.
-    if (!value.error) evidenceCache.set(runId, { key, value })
+    evidenceCache.set(runId, { key, value })
     return value
+  }
+  const readAgain = (runId) => {
+    const button = el('button', {}, 'Read it again')
+    button.addEventListener('click', async () => { button.disabled = true; evidenceCache.delete(runId); await refresh() })
+    return button
   }
   const SHOWN_LINES = 200
   // One file's diff as text, each line marked by what it is; a long one shows its first lines and a "show all".
@@ -582,11 +588,11 @@ export const APP_JS = `'use strict'
     return el('div', {}, pre, all)
   }
   const STATUS_WORD = { added: 'added', modified: 'changed', deleted: 'deleted', renamed: 'renamed' }
-  const workChangeView = (change) => {
-    if (!('value' in change)) return el('p', { class: 'unknown' }, 'What changed is unknown (' + change.unknown + '). Do not accept what you could not see.')
+  const workChangeView = (change, runId) => {
+    if (!('value' in change)) return el('p', { class: 'unknown' }, 'What changed is unknown (' + change.unknown + '). Do not accept what you could not see. ', readAgain(runId))
     const { changes, unread } = change.value
     return el('div', { class: 'change' },
-      unread.map((u) => el('p', { class: 'state failed', role: 'alert' }, 'The change in source ' + u.source + ' could not be read: ' + u.detail + '. Do not accept what you could not see.')),
+      unread.map((u) => el('p', { class: 'state failed', role: 'alert' }, 'The change in source ' + u.source + ' could not be read: ' + u.detail + '. Do not accept what you could not see. ', readAgain(runId))),
       !changes.length && !unread.length ? el('p', { class: 'muted' }, 'No worktree of this run holds a change: it wrote no file in one.') : null,
       changes.map((c) => {
         const count = (k) => c.files.reduce((n, f) => n + (f[k] || 0), 0)
@@ -595,27 +601,29 @@ export const APP_JS = `'use strict'
           el('p', { class: 'stat' }, el('strong', {}, total + (total === 1 ? ' file' : ' files') + ' changed'), ' ', el('span', { class: 'add' }, '+' + count('added')), ' ', el('span', { class: 'del' }, '−' + count('removed')),
             el('span', { class: 'muted' }, ' · on ' + c.branch + ', against ' + c.base.branch + ' at ' + c.base.sha.slice(0, 12) + (c.fromBranch ? ' (its worktree was removed: what its branch holds)' : ''))),
           el('ul', { class: 'files' }, c.files.map((f) => el('li', {}, el('details', {},
-            el('summary', {}, el('code', {}, f.path), ' ' + STATUS_WORD[f.status] + (f.from ? ' from ' + f.from : '') + ' ', f.binary || f.note ? el('span', { class: 'muted' }, f.binary ? 'binary' : f.note) : [el('span', { class: 'add' }, '+' + (f.added || 0)), ' ', el('span', { class: 'del' }, '−' + (f.removed || 0))]),
+            el('summary', {}, el('code', {}, f.path), ' ' + STATUS_WORD[f.status] + (f.from ? ' from ' + f.from : '') + ' ', f.binary || f.note ? el('span', { class: 'muted' }, f.binary ? 'binary' : f.note)
+              : f.added === undefined ? el('span', { class: 'muted' }, 'not read') : [el('span', { class: 'add' }, '+' + f.added), ' ', el('span', { class: 'del' }, '−' + (f.removed || 0))]),
             f.diff !== undefined ? diffLines(f.diff) : el('p', { class: 'muted' }, f.binary ? 'A binary file: its content is not shown.' : f.note ? 'Not shown: ' + f.note + '.' : 'Not shown: the change is past what a page shows; read it in ' + c.workspace + '.'),
             f.truncated ? el('p', { class: 'muted' }, 'Cut: read the whole file in ' + c.workspace + '.') : null)))),
           c.more ? el('p', { class: 'muted' }, c.more + ' more file(s) are not listed: read them in ' + c.workspace + '.') : null)
       }))
   }
-  // Each reviewer's verdict on the exact change, with its findings.
+  // Each reviewer's verdict on the exact change, newest first, with its findings; how many more there are.
   const verdictsView = (assessments) => !('value' in assessments) ? el('p', { class: 'unknown' }, 'The reviewers\\' verdicts are unknown (' + assessments.unknown + ').')
     : !assessments.value.length ? el('p', { class: 'muted' }, 'No reviewer gave a verdict on this change. When a review step of the run reads it, its verdict appears here.')
-      : el('ul', { class: 'verdicts' }, assessments.value.map((a) => el('li', {},
+      : el('div', {}, el('ul', { class: 'verdicts' }, assessments.value.map((a) => el('li', {},
         el('strong', { class: a.verdict === 'approve' ? 'state completed' : 'state failed' }, a.verdict === 'approve' ? 'Approved' : 'Changes requested'), ' by the review at ' + (a.nodeId || 'a step') + (a.reviewer ? ' (' + a.reviewer + ')' : ''),
-        a.findings.length ? el('ul', {}, a.findings.map((f) => el('li', { class: f.severity === 'blocking' ? 'state failed' : '' }, el('span', { class: 'tag' }, f.severity), ' ' + f.title + (f.file ? ' (' + f.file + ')' : ''), f.detail ? el('div', { class: 'muted' }, f.detail) : null))) : el('span', { class: 'muted' }, '; no finding'))))
+        a.findings.length ? el('ul', {}, a.findings.map((f) => el('li', { class: f.severity === 'blocking' ? 'state failed' : '' }, el('span', { class: 'tag' }, f.severity), ' ' + f.title + (f.file ? ' (' + f.file + ')' : ''), f.detail ? el('div', { class: 'muted' }, f.detail) : null))) : el('span', { class: 'muted' }, '; no finding')))),
+        assessments.more ? el('p', { class: 'muted' }, 'The newest ' + assessments.value.length + ' verdicts are shown; ' + assessments.more + (assessments.moreAtLeast ? ' or more' : '') + ' older ' + (assessments.more === 1 && !assessments.moreAtLeast ? 'one is' : 'ones are') + ' not.') : null)
   // The run's report in its own words: a line that says a criterion was not met or not measured is marked, the words stay the step's.
   const reportView = (report) => el('div', {},
     el('p', { class: 'muted' }, 'The run\\'s last step, ' + report.nodeId + ', reported this, in its own words:'),
     el('pre', { class: 'report' }, report.text.split('\\n').map((l) => el('span', /\\b(not met|failed|not run)\\b/i.test(l) ? { class: 'state failed' } : /\\bnot measured\\b/i.test(l) ? { class: 'soon' } : /\\bmet\\b/i.test(l) ? { class: 'state completed' } : {}, l + '\\n'))),
     report.truncated ? el('p', { class: 'muted' }, 'Cut at 32,000 characters: the whole report is the run\\'s answer.') : null)
   // On a run's page the report is its answer, already shown: \`report\` false leaves it out.
-  const evidenceView = (review, report = true) => review.error ? el('p', { class: 'state failed' }, 'What the run changed and what its steps said could not be read: ' + review.error.message + '. Do not accept what you could not see.')
+  const evidenceView = (review, report = true) => review.error ? el('p', { class: 'state failed' }, 'What the run changed and what its steps said could not be read: ' + review.error.message + '. Do not accept what you could not see. ', readAgain(review.runId))
     : el('div', { class: 'evidence' },
-      el('h4', {}, 'What changed'), workChangeView(review.change),
+      el('h4', {}, 'What changed'), workChangeView(review.change, review.runId),
       el('h4', {}, 'What the reviewers said'), verdictsView(review.assessments),
       review.report && report ? [el('h4', {}, 'What the checks measured'), reportView(review.report)] : null)
 
