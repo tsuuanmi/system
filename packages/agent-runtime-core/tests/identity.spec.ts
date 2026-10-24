@@ -43,6 +43,25 @@ describe('agent account identity (ADR-0051)', () => {
     expect(maskEmail('a@b')).toBeUndefined()
   })
 
+  it('masks exactly what the former expression accepted, in linear time (CodeQL js/polynomial-redos)', () => {
+    const former = (email: string) => {
+      const match = /^([^@\s])[^@\s]*@([^@\s]+\.[^@\s]+)$/.exec(email)
+      return match ? `${match[1]}…@${match[2]}` : undefined
+    }
+    const parts = ['a', 'b', '.', '@', ' ', '\t', 'x.y', '..', 'é']
+    let seed = 7
+    for (let i = 0; i < 5000; i++) {
+      let email = ''
+      const length = (seed = (seed * 1103515245 + 12345) % 2147483648) % 9
+      for (let j = 0; j < length; j++) email += parts[(seed = (seed * 1103515245 + 12345) % 2147483648) % parts.length]
+      expect(maskEmail(email), JSON.stringify(email)).toBe(former(email))
+    }
+    for (const email of ['.a.b', 'a@.b.c', 'a@b.', 'a@.b', 'a@b..c', 'ab@c.d@e.f']) expect(maskEmail(email), email).toBe(former(email))
+    const started = performance.now()
+    expect(maskEmail(`!@!.${'!.'.repeat(50_000)}`)).toBe(`!…@!.${'!.'.repeat(50_000)}`)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('never probes a named home on a provider that runs in its own home only (INV-2)', async () => {
     let asked = 0
     const own: AgentRuntimeProvider = {

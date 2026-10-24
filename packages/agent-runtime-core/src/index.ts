@@ -385,8 +385,14 @@ export function homeProblem(home: string): string | undefined {
 
 /** An email masked for the operator (`j…@example.com`): its first letter and its domain; undefined for anything else. */
 export function maskEmail(email: string): string | undefined {
-  const match = /^([^@\s])[^@\s]*@([^@\s]+\.[^@\s]+)$/.exec(email)
-  return match ? `${match[1]}…@${match[2]}` : undefined
+  // Read by hand rather than by `^([^@\s])[^@\s]*@([^@\s]+\.[^@\s]+)$`, which backtracks polynomially
+  // on a long run of dots (CodeQL js/polynomial-redos); it accepts exactly what that expression did.
+  if (/\s/.test(email)) return undefined
+  const at = email.indexOf('@')
+  if (at < 1 || at !== email.lastIndexOf('@')) return undefined
+  const domain = email.slice(at + 1)
+  if (!domain.slice(1, -1).includes('.')) return undefined
+  return `${email[0]}…@${domain}`
 }
 
 /**
