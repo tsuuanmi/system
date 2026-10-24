@@ -74,7 +74,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), per state the most recently changed first, at most 50 each, `more` counting the rest per state |
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), and its `revision`, `template` (when it names one), and `attempts {count, max}`, per state the most recently changed first, at most 50 each, `more` counting the rest per state |
 | `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
 | `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
 | `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
@@ -97,9 +97,35 @@ Served when `ctx.board` is present; without it, every route answers `503`
   **Accepted — waiting to merge into <base>: approve**, linked to its `merge` request
   (`?request=<id>`), and also shown under *Waiting for you*; **Accepted and merged into <base> as
   <commit>** (not pushed); **Accepted — not merged:** and why; or that the merge was not approved.
+- A ready task's card says what starts it (*Ready to start: a solo run*, or that it names no
+  template, so the lead starts it) and offers **Start…** ([below](#starting-a-ready-task)).
 - A close cancels every open task of the project (`project-closed`), releasing a claimed one's
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
+
+## Starting a ready task
+
+Served when `ctx.board` is present; without it, both routes answer `503`. The operator starts a
+ready task's run the way the lead does with MCP `run` and `task`
+([board](../design/board.md)): the run claims the ready task itself, and the board records it before
+any step runs.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET tasks/<taskId>/start` | — | `{task {taskId, title, revision, template, attempts}, steps}`: what would run, each step's `nodeId`, `objective`, `capabilities`, least `tier`, and `kind`, `team {kind, members}`, `source`, or `plans` when it has them (`ctx.workflow.templateSteps`) |
+| `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId}})`, its input the task's title and goal |
+
+- An unknown task is `404`, a malformed body `400`. A task that is not ready, names no template
+  (the lead then starts it with a template it chooses), names a template not served, changed since
+  the page showed it (its revision), or names another template than the page sent is `409`, and
+  nothing starts. A refusal by the engine (a paused project, a spent budget, a drained host) is
+  `409` with its reason.
+- The card's **Start…** opens a confirmation that says what runs: the template, the attempt (*its
+  attempt 1 of 3*), each step with the kind of Worker it runs on (*Do solo: a Worker of standard
+  tier or above that can reason*), how many Workers are idle, and that nothing runs until
+  **Confirm start**; **Cancel** closes it. A task that names no template shows why it cannot start
+  here instead. The outcome (the run, linked, or why nothing started) is reported above the page,
+  and the card moves to *Working*.
 
 ## Approval queue
 

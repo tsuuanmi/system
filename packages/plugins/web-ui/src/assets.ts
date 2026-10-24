@@ -164,7 +164,7 @@ export const APP_JS = `'use strict'
   }
   // Idle capacity, and the step that puts it to work.
   const capacityText = (idle, ready) => (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker idle' : ' Workers idle')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
-    + (ready ? '. A ready task starts when the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
+    + (ready ? '. A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
   const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
@@ -695,6 +695,46 @@ export const APP_JS = `'use strict'
         : l.state === 'refused' ? el('div', {}, 'Accepted — not merged: ' + (l.reason || 'refused'))
           : l.state === 'rejected' ? el('div', {}, 'Accepted — the merge was not approved; ' + (l.branch || 'its branch') + ' keeps the commit')
             : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
+    // The operator starts a ready task's run, as the lead does (MCP run with task): behind a
+    // confirmation that says what runs and on which kind of Worker, bound to the task and template shown.
+    const needs = (step) => step.source ? 'the system reads it itself, on no Worker'
+      : (step.team ? 'a team of ' + step.team.members + ' Workers, each of another provider, each' : 'a Worker') + ' of ' + step.tier + ' tier or above that can ' + step.capabilities.join(', ')
+        + (step.kind ? ', for ' + step.kind + ' work' : '') + (step.plans ? '; it plans further steps, which may ask for your approval' : '')
+    const start = (t) => async () => {
+      confirming = true
+      const close = el('button', { onclick: () => { confirming = false; shown.replaceChildren() } }, 'Cancel')
+      let preview
+      try { preview = await api('tasks/' + encodeURIComponent(t.taskId) + '/start') } catch (error) {
+        shown.replaceChildren(el('div', { class: 'panel bad', role: 'alert', 'aria-label': 'Cannot start ' + t.title },
+          el('h3', {}, 'It cannot start from here: ' + t.title), el('p', {}, error.message.replace(/^[a-z_]+: /, '')), close))
+        close.focus()
+        return
+      }
+      const { task, steps } = preview
+      const yes = el('button', { class: 'primary' }, 'Confirm start')
+      yes.addEventListener('click', async () => {
+        yes.disabled = true
+        close.disabled = true
+        yes.textContent = 'Starting…'
+        try {
+          const { run } = await api('tasks/' + encodeURIComponent(t.taskId) + '/start', { revision: task.revision, template: task.template })
+          report(true, 'Started: ' + t.title, [['Run ', runLink(run), ' of the ' + task.template + ' template claimed the task: it is under Working on the Board, and its page shows each step as it runs.']])
+        } catch (error) {
+          report(false, 'Not started: ' + t.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was started: the task is still ready.'])
+        }
+        await settle()
+      })
+      shown.replaceChildren(el('div', { class: 'panel', role: 'group', 'aria-label': 'Confirm start of ' + t.title },
+        el('h3', {}, 'Start ' + t.title),
+        el('ul', {},
+          el('li', {}, 'It runs the ' + task.template + ' template for this task, its attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ': the run claims the task, which moves to Working.'),
+          el('li', {}, steps.length === 1 ? 'Its step, and the kind of Worker it runs on:' : 'Its ' + steps.length + ' steps, in order, and the kind of Worker each runs on:',
+            el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step) + '.')))),
+          el('li', {}, (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' idle now') + '; a step no free Worker can take waits for one.'),
+          el('li', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
+        yes, close))
+      yes.focus()
+    }
     const cardOf = (p, t) => {
       const run = t.run ? working.get(t.run.runId) : undefined
       const since = t.updatedAt || t.createdAt
@@ -703,7 +743,8 @@ export const APP_JS = `'use strict'
         boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
         el('div', { class: 'muted' }, el('span', { class: 'tag' }, t.actionClass), ' ', ago(since)),
         t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
-        t.state === 'ready' ? el('div', {}, 'Waits for the lead to start it') : null,
+        t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
+        t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', {}, run ? [run.name + ', ', 'value' in run.since ? 'for ' + relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time'] : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
         t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,

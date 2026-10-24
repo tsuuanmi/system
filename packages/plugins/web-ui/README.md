@@ -51,6 +51,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   (**Accepted — waiting to merge into main: approve**, linked to its `merge` request and shown under
   Waiting for you; merged, with the commit; or not merged, and why;
   [landing](../../../docs/design/workflow-engine.md#landing-an-accepted-result)).
+  A ready task's **Start…** starts its run as the lead does (MCP `run` with `task`): a
+  confirmation says what runs (its template's steps, each with the kind of Worker it needs, from
+  `ctx.workflow.templateSteps`), the start is bound to the task revision and template shown, and a
+  task that names no template is refused with why
+  ([starting a ready task](../../../docs/reference/web-ui.md#starting-a-ready-task)).
   The operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each opens a confirmation that says what the move does to this project (what goes on, what is
@@ -164,7 +169,10 @@ pause and a close refused to a client token, bound to the revision shown; a paus
 ready task the engine does not run and whose proposed task is not gated, resumed and run to done;
 a close refused while a task is in review, then cancelling the open tasks, releasing a claim, and
 withdrawing the requests a waiting task and a pending amendment were on, in the store-backed queue;
-and, with a browser, a charter founded from the queue (what approving and denying do, with the
+a ready task's run started for the operator's token only, bound to the revision and template
+shown, refused for a task naming no template; and, with a browser, a ready task started from its
+card after its confirmation (moving to Working) and a task naming no template refused with why;
+a charter founded from the queue (what approving and denying do, with the
 project's task counts; the approval recorded and reported with its ids; the project active after
 the board's sweep), a pause and a close each made only after its confirmation, and a Cancel that
 moves nothing. [`tests/web-ui.spec.ts`](tests/web-ui.spec.ts) also checks the projects routes
