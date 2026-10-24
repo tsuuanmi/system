@@ -504,7 +504,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       await expect.poll(() => page.getByRole('heading', { name: link, exact: true }).count()).toBe(1)
       expect(await current()).toBe(link)
       expect(await page.locator('p.lead').innerText()).toContain(purpose)
-      expect(await page.title()).toBe(`system: ${link}`)
+      expect(await page.title()).toMatch(new RegExp(`^(\\(\\d+\\) )?system — ${link}$`))
     }
     // Keyboard: the navigation is links, reached and followed without a pointer.
     await nav.getByRole('link', { name: 'Home' }).focus()

@@ -25,6 +25,7 @@
     "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*"
   },
   "peerDependencies": {
@@ -45,7 +46,6 @@
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
-    "@tsuuanmi/system-workers-core": "workspace:*",
     "patchright-core": "1.63.0",
     "yaml": "2.9.1"
   }

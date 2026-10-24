@@ -1522,6 +1522,9 @@ importers:
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
       '@tsuuanmi/system-workflow':
         specifier: workspace:*
         version: link:../workflow
@@ -1562,9 +1565,6 @@ importers:
       '@tsuuanmi/system-workers':
         specifier: workspace:*
         version: link:../workers
-      '@tsuuanmi/system-workers-core':
-        specifier: workspace:*
-        version: link:../../workers-core
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0

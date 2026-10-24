@@ -334,7 +334,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect((await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' }, client)).status).toBe(401)
     const preview = await call(`tasks/${task.taskId}/start`)
     expect(preview.status, JSON.stringify(preview.value)).toBe(200)
-    expect(preview.value).toEqual({ task: { taskId: task.taskId, title: 'Write the release notes', revision: task.revision, template: 'solo', attempts: task.attempts }, steps: [{ nodeId: 'solo', objective: 'Do solo', capabilities: ['reason'], tier: 'standard' }] })
+    expect(preview.value).toEqual({ task: { taskId: task.taskId, title: 'Write the release notes', revision: task.revision, template: 'solo', attempts: task.attempts }, steps: [{ nodeId: 'solo', objective: 'Do solo', capabilities: ['reason'], tier: 'standard', workers: { free: ['w:frontier', 'w:standard'], busy: [] } }] }) // w:economy is below the step's tier (T124)
     const none = await call(`tasks/${bare.taskId}/start`)
     expect([none.status, none.value.error]).toEqual([409, expect.stringMatching(/names no template, so it cannot start from here: the lead starts it/)])
     expect((await call(`tasks/${bare.taskId}/start`, { revision: bare.revision, template: 'solo' })).status).toBe(409)
