@@ -28,7 +28,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { readdirSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -54,6 +54,7 @@ import { Probes, refused } from './probes.ts'
 import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, type DerivedWorker, deriveWorkers, MAX_CONCURRENT_PER_ACCOUNT, setsDerivedOnly,
 } from './roles.ts'
+import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools } from './tools.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
@@ -121,6 +122,7 @@ export interface AgentWorkerConfig {
 type WorkerSpec = AgentWorkerConfig & { derived?: DerivedWorker['derived'] }
 
 export type { AgentAssignmentConfig, AgentProviderConfig, AgentRoleConfig } from './roles.ts'
+export type { WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
 export type { MigrationPlan } from './migrate.ts'
 
 export interface Config {
@@ -165,6 +167,13 @@ export interface Config {
    * then its changes are committed on its branch and it is removed (default 168; 0 keeps them).
    */
   worktreeRetentionHours?: number
+  /**
+   * Per repository, the commands that set a workflow run's new worktree up before any agent run
+   * works in it (dependencies installed without a network, say), each allowed by the autonomy
+   * policy, run confined: the host read-only but the worktree and the views named, no network
+   * (./setup.ts, ADR-0058). A worktree whose setup did not run under this definition takes no run.
+   */
+  worktreeSetup?: WorktreeSetupConfig[]
 }
 
 interface RunRow {
@@ -198,6 +207,8 @@ interface RunRow {
   session_generation?: number | null
   /** JSON: the earlier runs of its session it replays, in order, fixed when it is first prepared (ADR-0049). */
   replay?: string | null
+  /** The `gate` decision of its worktree's setup (ADR-0058), when its repository has one. */
+  setup_decision?: string | null
   created_at: string
   updated_at: string
 }
@@ -287,6 +298,16 @@ export class AgentWorkers extends Service {
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
     worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
     worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them)'),
+    worktreeSetup: z.array(z.object({
+      repository: z.string().required().description('The repository (absolute): the workspace of the worktreePerRun Workers whose worktrees it sets up'),
+      commands: z.array(z.string()).required().description('1 to 16 commands run in order in a new worktree before any agent run works in it, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv'),
+      views: z.array(z.object({
+        path: z.string().required().description('A host directory (absolute) the setup sees as a private, writable directory of its own, removed when the setup ends'),
+        copy: z.array(z.string()).description('Files of it (names) copied into the private directory first, for example a package store\'s index'),
+        readOnly: z.array(z.string()).description('Paths inside it (relative) bound back read-only into the private directory, for example a package store\'s files'),
+      })).description('Host directories the setup sees as private copies; never a path hidden from agents'),
+      timeoutSeconds: z.natural().min(1).max(3600).default(600).description('The whole setup\'s deadline'),
+    })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
   }) as unknown as z<Config>
 
   private readonly workers = new Map<string, WorkerSpec>()
@@ -312,6 +333,9 @@ export class AgentWorkers extends Service {
   /** Whether each `worktreePerRun` Worker's workspace can hold a worktree per run, as last checked. */
   private readonly repositories = new Map<string, { at: number; check: RepositoryCheck }>()
   private readonly worktrees: Worktrees
+  /** Each repository's worktree setup, by its path as configured (resolved), and what runs them (ADR-0058). */
+  private readonly setups: Map<string, Setup>
+  private readonly worktreeSetups: WorktreeSetups
   /** Each runtime's account setting (ADR-0052); a runtime not configured is assigned. */
   private readonly accounts: Map<string, AccountSetting>
   /** The enrollment slots of each runtime and the accounts in them (ADR-0051). */
@@ -360,7 +384,12 @@ export class AgentWorkers extends Service {
       throw new ProviderError('config_error', (error as Error).message)
     }
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
-    this.worktrees = new Worktrees(ctx, config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees'))
+    const worktreeRoot = config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees')
+    this.worktrees = new Worktrees(ctx, worktreeRoot)
+    // A setup is for the worktrees of a repository a worktreePerRun Worker works in; any other is refused at load.
+    this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
+    // Its private views are made beside the worktrees (a name no repository's directory there takes).
+    this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     const slots = new Map<string, number>()
     for (const entry of providers) {
@@ -439,7 +468,7 @@ export class AgentWorkers extends Service {
       version: 9,
       // Keyed by the account the limit holds: a hand-named Worker's runtime, a derived Worker's account id.
       sql: 'CREATE TABLE agent_cooldowns (runtime TEXT PRIMARY KEY, until TEXT NOT NULL, worker TEXT NOT NULL, run_id TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);',
-    }, ACCOUNTS_MIGRATION, CUTOVER_MIGRATION])
+    }, ACCOUNTS_MIGRATION, CUTOVER_MIGRATION, SETUP_MIGRATION])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -646,7 +675,8 @@ export class AgentWorkers extends Service {
   /** The `agent-workers` row's configuration after the move: its settings as loaded, with the plan's providers, roles, and assignments in place of the hand-named Workers. */
   private rowOf(plan: MigrationPlan): Record<string, unknown> {
     const { workers: _, providers: __, roles: ___, assignments: ____, ...settings } = this.config
-    const kept = Object.fromEntries(Object.entries(settings).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key]))
+    // A setting at its default (an empty worktreeSetup among them) is left out.
+    const kept = Object.fromEntries(Object.entries(settings).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
     return { ...kept, providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
   }
 
@@ -1158,6 +1188,17 @@ export class AgentWorkers extends Service {
     const held = await this.accountGate(worker, false)
     if (held.state !== 'ready') throw new ProviderError(held.state === 'quota-exhausted' ? 'quota_exhausted' : 'config_error', `${row.worker}: ${held.why}; nothing was run`)
     const workspace = await this.workspaceOf(row, worker)
+    // A new worktree is set up first, when its repository has a setup (ADR-0058): a setup not allowed,
+    // or that failed, fails the run here, its decision on the run; nothing has reached the agent yet.
+    const setup = workspace !== worker.workspace ? this.setups.get(resolve(worker.workspace)) : undefined
+    if (setup) {
+      const outcome = await this.worktreeSetups.ensure({
+        agentRun: row.run_id, worker: row.worker, workflowRunId: row.workflow_run_id!, sessionId: row.session_id ?? undefined,
+        classification: row.classification as 'public' | 'operator-shared' | 'local-private', worktree: workspace, repository: realpathSync(worker.workspace),
+      }, setup, signal)
+      this.update(row.run_id, { setup_decision: outcome.decision }, lease)
+      if (outcome.failure) throw outcome.failure
+    }
     // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
     if (row.files && workspace !== worker.workspace) {
       await this.worktrees.place(workspace, JSON.parse(row.files) as Array<{ path: string; text: string }>).catch((error: unknown) => {
@@ -1578,7 +1619,7 @@ function execution(row: RunRow): WorkerExecution {
     id: row.run_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: [row.egress_decision, row.budget_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
+    decisions: [row.egress_decision, row.setup_decision, row.budget_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
   }
 }
 
