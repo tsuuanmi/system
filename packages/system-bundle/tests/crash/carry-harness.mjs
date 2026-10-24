@@ -41,13 +41,23 @@ const { default: Store } = await import('@tsuuanmi/system-store')
 const { default: WorkerRouter } = await import('@tsuuanmi/system-workers')
 const { LEASE_CAP_MS } = await import('./leases.mjs')
 
+/** What `path` holds, or null when there is no such file: read once, never checked first. */
+const contents = (path) => {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
 /** A scripted writing agent: says what calc.py holds when it starts, and, in `crash`, changes it. */
 const scripted = {
   kind: 'scripted',
   probe: async () => ({ available: true, detail: 'scripted', sandboxes: ['read-only', 'workspace-write'], resume: false, executes: false, readsConfined: true, gatesToolCalls: true }),
   run: async (spec) => {
     const path = join(spec.workspace, 'calc.py')
-    report({ ran: { workspace: spec.workspace, calc: existsSync(path) ? readFileSync(path, 'utf8') : null } })
+    report({ ran: { workspace: spec.workspace, calc: contents(path) } })
     if (mode === 'crash') writeFileSync(path, 'def add(a, b):\n    return a + b\n')
     return { text: 'done' }
   },
