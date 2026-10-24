@@ -100,7 +100,8 @@ says so (*Do not accept what you could not see*), never an empty change. The pag
 per run and result. After **Accept**, the result is listed under *Accepted, on their way in* with
 where it stands (*Accepted and committed on system/run/<id> as <head>; its merge request comes
 next*, *Accepted — waiting to merge into main: approve*, linked to its request) until it is merged
-or refused. A run's page shows the same under *What it changed*.
+or refused. A run's page shows its change, its reviewers' verdicts, and where its result stands
+under *What it changed, and what its reviewers said* (its report is its answer, shown above).
 
 ## Projects
 

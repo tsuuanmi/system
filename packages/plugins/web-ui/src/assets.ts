@@ -485,11 +485,12 @@ export const APP_JS = `'use strict'
     el('p', { class: 'muted' }, 'The run\\'s last step, ' + report.nodeId + ', reported this, in its own words:'),
     el('pre', { class: 'report' }, report.text.split('\\n').map((l) => el('span', /\\b(not met|failed|not run)\\b/i.test(l) ? { class: 'state failed' } : /\\bnot measured\\b/i.test(l) ? { class: 'soon' } : /\\bmet\\b/i.test(l) ? { class: 'state completed' } : {}, l + '\\n'))),
     report.truncated ? el('p', { class: 'muted' }, 'Cut at 32,000 characters: the whole report is the run\\'s answer.') : null)
-  const evidenceView = (review) => review.error ? el('p', { class: 'state failed' }, 'What the run changed and what its steps said could not be read: ' + review.error.message + '. Do not accept what you could not see.')
+  // On a run's page the report is its answer, already shown: \`report\` false leaves it out.
+  const evidenceView = (review, report = true) => review.error ? el('p', { class: 'state failed' }, 'What the run changed and what its steps said could not be read: ' + review.error.message + '. Do not accept what you could not see.')
     : el('div', { class: 'evidence' },
       el('h4', {}, 'What changed'), workChangeView(review.change),
       el('h4', {}, 'What the reviewers said'), verdictsView(review.assessments),
-      review.report ? [el('h4', {}, 'What the checks measured'), reportView(review.report)] : null)
+      review.report && report ? [el('h4', {}, 'What the checks measured'), reportView(review.report)] : null)
 
   async function reviews() {
     let listed, accepted
@@ -683,7 +684,7 @@ export const APP_JS = `'use strict'
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
-        ? el('section', { class: 'panel', 'aria-label': 'What it changed' }, el('h3', {}, 'What it changed'), landing ? landingLine(landing) : null, evidenceView(evidence)) : null,
+        ? el('section', { class: 'panel request', 'aria-label': 'What it changed' }, el('h3', {}, 'What it changed, and what its reviewers said'), landing ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
       el('h3', {}, 'Steps'),
       el('ol', { class: 'timeline' }, run.nodes.map((n) => {
         const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
