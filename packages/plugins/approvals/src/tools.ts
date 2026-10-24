@@ -57,9 +57,9 @@ export const INPUTS: Record<ApprovalTool, ToolSpec['inputSchema']> = {
 const DESCRIPTIONS: Record<ApprovalTool, string> = {
   approvals_list: 'List approval requests (default: open and batched), by batch then expiry; a page at a time.',
   approvals_get: 'Read one approval request: its exact subject, action, requester, policy decision, expiry, and resolution.',
-  approvals_decide: 'Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.',
+  approvals_decide: 'Verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.',
   approvals_policy: 'The studio autonomy policy, the project\'s when it has one, the effective mode per action class, and the policy set in force.',
-  approvals_policy_propose: 'Operator only: propose one autonomy policy record (a higher version of a policy, or a project\'s first). The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.',
+  approvals_policy_propose: 'Propose one autonomy policy record. The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.',
 }
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })

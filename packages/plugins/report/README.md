@@ -22,6 +22,11 @@ decides nothing, and no model takes part.
   `attention.liveness`): the stalls, the runs that ended without being known to be gone, those the
   operator freed, and those still held at the period's end, in the attention section, only when
   there is any, and never counted as interruptions.
+- **Reviews held for the operator** (T99 D6, `mcp-report` 1.3, `attention.reviewsHeld`): the
+  scope's tasks in review waiting `operator-review` as the report is made, the soonest to expire
+  first, each with its title, its pending checks, and `expiresAt` (at most 64, the rest counted in
+  `reviewsHeldOmitted`), only when there is any; the rendering says how long each has left as of
+  `asOf`, since an unanswered review expires and its task waits for input that nothing revives.
 - **What a cap counts as 0** (D25, `mcp-report` 1.1,
   [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)): per pool and in all,
   the records without token counts, a cost, or turns, and the runs recorded in the period whose
@@ -48,7 +53,7 @@ decides nothing, and no model takes part.
 - **Tests:** [`tests/report.spec.ts`](tests/report.spec.ts) checks the computation on a week of
   records (period bounds, scope, waits, attention against the charter, usage per pool, the
   baseline, determinism, the bounds, the rendering, what a cap counts as 0, the agent runs whose
-  liveness asked for the operator);
+  liveness asked for the operator, the reviews held for the operator);
   [`tests/pilot.spec.ts`](tests/pilot.spec.ts) runs the `algorithm-development` template on the
   software-development profile's [pilot in miniature](../profile-software-development/tests/pilot.ts)
   and reads what it recorded through the tool: a project's report, the studio's, the same period

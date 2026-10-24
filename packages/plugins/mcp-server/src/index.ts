@@ -58,12 +58,19 @@ interface ListedTool {
   _meta?: { 'system/scope': 'operator' }
 }
 
-/** A JSON Schema without the `pattern` zod adds beside `format: "date-time"`, at every depth. */
-function withoutFormatPatterns(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(withoutFormatPatterns)
+/**
+ * A JSON Schema without what zod adds that tells a client nothing, at every depth: the `pattern`
+ * beside `format: "date-time"`, and the safe-integer bounds (±(2^53 − 1)) `int()` gives an
+ * `integer` that sets no bound of its own. The server checks both with zod all the same.
+ */
+function withoutZodDefaults(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(withoutZodDefaults)
   if (schema === null || typeof schema !== 'object') return schema
-  const entries = Object.entries(schema).filter(([key]) => !(key === 'pattern' && (schema as { format?: unknown }).format === 'date-time'))
-  return Object.fromEntries(entries.map(([key, value]) => [key, withoutFormatPatterns(value)]))
+  const node = schema as { format?: unknown; type?: unknown }
+  const implied = (key: string, value: unknown): boolean => (key === 'pattern' && node.format === 'date-time')
+    || (node.type === 'integer' && ((key === 'maximum' && value === Number.MAX_SAFE_INTEGER) || (key === 'minimum' && value === Number.MIN_SAFE_INTEGER)))
+  const entries = Object.entries(schema).filter(([key, value]) => !implied(key, value))
+  return Object.fromEntries(entries.map(([key, value]) => [key, withoutZodDefaults(value)]))
 }
 
 /** Whether a caller holding `scope` may see and call a tool of `tool` scope. */
@@ -219,16 +226,17 @@ export class McpEndpoint extends McpTools {
    * A tool as `tools/list` shows it (README "Token budget"): its name, description, and input
    * schema as JSON Schema 2020-12, which MCP reads a schema without `$schema` as, so none is sent;
    * no `execution` (absent, a tool takes no task, as the SDK's `taskSupport: "forbidden"` says);
-   * a `date-time` string without zod's 300-character spelling of the format as a `pattern` (the
-   * server checks it with zod all the same); and `_meta: {"system/scope": "operator"}` only on a
-   * tool the operator token alone may call, so a tool without it is a client tool too.
+   * a `date-time` string without zod's 300-character spelling of the format as a `pattern`, and an
+   * integer without the safe-integer bounds zod gives one that sets none (the server checks both
+   * with zod all the same); and `_meta: {"system/scope": "operator"}` only on a tool the operator
+   * token alone may call, so a tool without it is a client tool too.
    */
   private listing(name: string, tool: Tool): ListedTool {
     const cached = this.listings.get(tool)
     if (cached) return cached
     const { $schema: _draft, ...inputSchema } = zod.toJSONSchema(zod.object(tool.spec.inputSchema), { target: 'draft-2020-12', io: 'input' }) as Record<string, unknown>
     const listed: ListedTool = {
-      name, description: tool.spec.description, inputSchema: withoutFormatPatterns(inputSchema) as ListedTool['inputSchema'],
+      name, description: tool.spec.description, inputSchema: withoutZodDefaults(inputSchema) as ListedTool['inputSchema'],
       ...((tool.spec.scope ?? 'operator') === 'operator' ? { _meta: { 'system/scope': 'operator' } } : {}),
     }
     this.listings.set(tool, listed)
@@ -262,6 +270,7 @@ export class McpEndpoint extends McpTools {
     const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }>; browserCap?: () => number } | undefined
     const host = this.ctx.get('pluginHost')
     const resources = this.ctx.get('resources')
+    const board = this.ctx.get('board' as never) as BoardReads | undefined
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
       ...(host ? { manifests: () => host.list().filter((p) => p.rows.length).map((p) => ({ name: p.name, mounted: p.mounted, state: p.manifestState, ...(p.reason ? { reason: p.reason } : {}), findings: (p.findings ?? []).map((f) => f.reason) })) } : {}),
@@ -289,6 +298,8 @@ export class McpEndpoint extends McpTools {
       } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(workers?.sources ? { workerSources: () => workers.sources!() } : {}),
+      // The reviews the board holds for the operator, each with when it expires unseen (T99 D6).
+      ...(board ? { reviews: () => heldReviews(board) } : {}),
       ...(liveness ? { liveness: () => liveness } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       // The notifier's outcomes, recorded as events: the surface reads them, never the plugin (docs/design/notifications.md#health).
@@ -312,7 +323,7 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'operator',
-        description: 'Read the event log in order (QA-7): entries after a cursor, optionally for one run, node, session, turn, or type, or since a time. Pass `next` back as afterSeq for the following page.',
+        description: 'Read the event log in order: a page of entries after a cursor, optionally filtered. Pass `next` back as afterSeq for the following page.',
         inputSchema: {
           runId: zod.string().max(200).optional().describe('Only this run\'s entries'),
           nodeId: zod.string().max(200).optional().describe('Only this node\'s entries'),
@@ -338,7 +349,7 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'operator',
-        description: 'Read a drift evidence artifact (the outline a ui.drift event names): the structure of a page region, never its text. Local-private: the operator\'s alone.',
+        description: 'Read a drift evidence artifact (the outline a ui.drift event names): the structure of a page region, never its text. Local-private.',
         inputSchema: { id: zod.string().max(200).describe('The evidence artifact id from a ui.drift event\'s outline') },
       },
       handler: async (args) => {
@@ -354,7 +365,7 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'operator',
-        description: 'Read an artifact by id: its header (kind, schema, classification, run, node, inputs) and a window of its body (an answer\'s text, else its JSON), in characters. One no longer stored reads as expired or unknown. Operator only.',
+        description: 'Read an artifact by id: its header (kind, schema, classification, run, node, inputs) and a window of its body (an answer\'s text, else its JSON), in characters. One no longer stored reads as expired or unknown.',
         inputSchema: {
           id: zod.string().max(200).describe('The artifact id (sha256:…), e.g. the result an acceptance decision in explain judged'),
           offset: zod.number().int().min(0).optional().describe('The window\'s first character (default 0)'),
@@ -399,7 +410,7 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'client',
-        description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, run liveness, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the runs whose liveness needs a look (stalled, looked at, unknown) and the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.',
+        description: 'Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check\'s detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).',
         inputSchema: { plugins: zod.boolean().optional().describe('Operator: list every plugin, not only those that need a look') },
       },
       handler: async (args, { scope }) => {
@@ -426,7 +437,7 @@ export class McpEndpoint extends McpTools {
           ...(told && (livenessTotal(told) || told.unread.length) ? { liveness: livenessView(told) } : {}),
         }
         const notOk = health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
-        const plugins = all && listed ? `; ${all.length} plugins, ${listed.length === all.length ? 'all listed' : `${listed.length} listed (those that need a look; plugins: true lists every one)`}` : ''
+        const plugins = all && listed ? `; ${all.length} plugins, ${listed.length === all.length ? 'all listed' : `${listed.length} need a look (plugins: true lists every one)`}` : ''
         const runs = told && livenessTotal(told) ? `; runs: ${(['unknown', 'looking', 'stalled'] as const).filter((s) => told.counts[s]).map((s) => `${told.counts[s]} ${s}`).join(', ')}` : ''
         return reply(status, `health ${health.state}: ${health.checks.length} checks, ${notOk.length ? notOk.join(', ') : 'all ok'}${plugins}${runs}`)
       },
@@ -435,7 +446,7 @@ export class McpEndpoint extends McpTools {
     // services that hold each fact; a client (the lead) sees it without account labels.
     this.tools.set('roster', {
       placeholder: false,
-      spec: { scope: 'client', description: 'The roster of every Worker, projected on read: its provider and family, what it is for (the operator\'s description, else a derived line), account (id, label for the operator, enrolled or quarantined state), role, tier, quota class, availability (ready, busy N of M, resting at a limit until its reset, unavailable with why, quarantined), the steps and board tasks it serves now (each in one sentence, with since when), its load, and its account\'s pools with each window\'s used share, reset, and the runs whose usage the ledger could not count. A fact a source could not give reads unknown, with why.', inputSchema: {} },
+      spec: { scope: 'client', description: 'Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit\'s reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account\'s pools (each window\'s used share and reset, runs the ledger could not count). A fact no source gave reads unknown, with why.', inputSchema: {} },
       handler: async (_args, { scope }) => {
         try {
           const roster = await readRoster(this.rosterServices(), { scope })
@@ -465,6 +476,29 @@ export default McpEndpoint
 
 /** Runs `status` lists by name at most; the rest are counted (`runsOmitted`), and `system explain` reads any one. */
 export const STATUS_LIVENESS_RUNS = 16
+
+/** What the `reviews` check reads of the board (`ctx.board`, optional), by shape: its projects, and a project's tasks in review. */
+interface BoardReads {
+  projects(): Promise<Array<{ projectId: string; state: string }>>
+  tasks(filter: { projectId: string; states?: Array<'review'> }): Promise<Array<{ taskId: string; projectId: string; state: string; waiting?: { reason: string; expiresAt: string } }>>
+}
+/** Projects the `reviews` check reads the tasks of at most (INV-9), in the board's order; the rest are said to be unread. */
+const REVIEW_PROJECTS = 64
+
+/**
+ * The reviews the board holds for the operator (`operator-review`), from the projects that may hold
+ * one: every project but a closed one, which the board closes only with no task in review.
+ */
+async function heldReviews(board: BoardReads): Promise<{ held: Array<{ taskId: string; projectId: string; expiresAt: string }>; more?: string }> {
+  const open = (await board.projects()).filter((p) => p.state !== 'closed')
+  const held: Array<{ taskId: string; projectId: string; expiresAt: string }> = []
+  for (const project of open.slice(0, REVIEW_PROJECTS)) {
+    for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
+      if (task.state === 'review' && task.waiting?.reason === 'operator-review') held.push({ taskId: task.taskId, projectId: task.projectId, expiresAt: task.waiting.expiresAt })
+    }
+  }
+  return { held, ...(open.length > REVIEW_PROJECTS ? { more: `the first ${REVIEW_PROJECTS} of ${open.length} open projects read` } : {}) }
+}
 
 const livenessTotal = (told: LivenessRead): number => told.counts.unknown + told.counts.looking + told.counts.stalled
 

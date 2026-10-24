@@ -11,7 +11,10 @@
  * Each ceiling is the size measured when it was set plus about 10 %, rounded up. Raising one is a
  * deliberate, reviewed change: say in the change what grew and why it is worth every session's
  * tokens, update the measured size beside the ceiling, and keep the 10 % headroom; never raise a
- * ceiling just to make a test pass. When a change shrinks the surface, lower the ceiling with it.
+ * ceiling just to make a test pass. When a change shrinks the surface, lower the ceiling with it,
+ * to the new size plus 10 % where that is lower; a ceiling it cannot lower so far stays as it is,
+ * never raised by a trim. A change that grows a measure within its ceiling updates the measured
+ * size beside it.
  */
 
 /** The tokens a client is estimated to pay for `bytes` of JSON (ceil(bytes / 4)). */
@@ -27,16 +30,25 @@ export const BUDGET = {
    * mcp-stdio`). A Worker holds at most the `model` token, which `/mcp` refuses: it lists nothing.
    */
   toolsList: {
-    operator: { measured: 42_854, ceiling: 47_200 },
-    client: { measured: 26_378, ceiling: 29_100 },
+    /**
+     * Trimmed from 46,975 B to 44,521 (T108); its 10 % (49,000) would be over the ceiling, which
+     * stays. `status` and `report` saying they show the reviews held for the operator add 61 B (T107).
+     */
+    operator: { measured: 44_582, ceiling: 47_200 },
+    /** Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107). */
+    client: { measured: 26_413, ceiling: 29_000 },
   },
-  /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling. */
-  tool: { measured: 4_134, ceiling: 4_600 },
+  /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling (`board_charter`). */
+  tool: { measured: 4_085, ceiling: 4_500 },
   /** Canonical replies (the whole JSON-RPC response of a `tools/call`). */
   replies: {
-    /** `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead. */
-    statusOperator: { measured: 1_860, ceiling: 2_100 },
-    statusClient: { measured: 814, ceiling: 900 },
+    /**
+     * `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead;
+     * both ceilings stay (their 10 % would be over them). The `reviews` check (none held) adds 69 B
+     * and 32 B (T107), from 1,951 and 847.
+     */
+    statusOperator: { measured: 2_020, ceiling: 2_100 },
+    statusClient: { measured: 879, ceiling: 900 },
     /** `result` of a failed run on the shipped profile (an `ask` with no account: reauth_required). */
     resultFailed: { measured: 1_363, ceiling: 1_500 },
     /** `usage` on the shipped profile holding that one run. */

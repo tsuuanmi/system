@@ -133,10 +133,12 @@ interface Day { date: string; interruptions: number; batches: number; over?: tru
 interface Attention { maxBatchesPerDay?: number; maxInterruptionsPerDay?: number }
 /** The agent runs whose liveness asked for the operator in the period (PROP-0013), and those still held at its end. */
 interface LivenessAttention { stalled: number; unknown: number; freed: number; held: Array<{ agentRun: string; worker: string; at: string; runId?: string }>; heldOmitted?: number }
+/** A review held for the operator as the report is made (`mcp-report@1.3`): its task, project, and when it expires unseen. */
+interface HeldReview { taskId: string; projectId: string; title: string; expiresAt: string; pendingChecks: string[] }
 
 /** The event-log entries of an agent run's liveness the report counts (PROP-0013). */
 export const LIVENESS_EVENTS = ['agent-workers.run.stalled', 'agent-workers.run.unknown', 'agent-workers.run.freed'] as const
-/** Held runs one report lists (`mcp-report@1.2`); the rest are counted. */
+/** Held runs, and held reviews, one report lists (`mcp-report@1.2`, `@1.3`); the rest are counted. */
 export const MAX_HELD = 64
 
 /** The `report` tool's output (`$defs/report-output`). */
@@ -150,7 +152,8 @@ export interface Report {
   attempts: { reported: number; accepted: number; rejected: number; heldForOperator: number; reconciled: number; other: number; review: { passed: number; failed: number; none: number } }
   remediation: { cycles: number; fixesOpened: number; fixesClosed: number }
   approvals: { asked: number; approved: number; rejected: number; expired: number; withdrawn: number; openNow: number; byClass: ClassCounts[]; wait?: { answered: number; medianSeconds: number; p90Seconds: number; maxSeconds: number } }
-  attention: { interruptions: number; batches: number; days: Day[]; threshold?: Attention; daysOver?: number; liveness?: LivenessAttention }
+  /** `reviewsHeld` (1.3): the reviews held for the operator as the report is made, the soonest to expire first; only when there are any. */
+  attention: { interruptions: number; batches: number; days: Day[]; threshold?: Attention; daysOver?: number; liveness?: LivenessAttention; reviewsHeld?: HeldReview[]; reviewsHeldOmitted?: number }
   usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number }; unknown?: UnknownUsage }
   digests: { attached: number; bypassed: number; claimsKept?: number; claimsDropped?: number; escalated?: number }
   baseline: { acceptedResults: number; interruptions: number; attempts: number; perAcceptedResult?: { tokens: number; costUsd: number; turns: number; interruptions: number; attempts: number } }
@@ -294,10 +297,15 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
     held: heldAll.slice(0, MAX_HELD).map((e) => ({ agentRun: String(e.data?.['agentRun']), worker: String(e.data?.['worker']), at: e.at, ...(e.runId !== undefined ? { runId: e.runId } : {}) })),
     ...(heldAll.length > MAX_HELD ? { heldOmitted: heldAll.length - MAX_HELD } : {}),
   } : undefined
+  // The reviews held for the operator now: each expires unseen at its time, and its task then waits for input (T99 D6).
+  const heldReviews = sources.tasks.filter((t) => t.state === 'review' && t.waiting?.reason === 'operator-review')
+    .map((t): HeldReview => ({ taskId: t.taskId, projectId: t.projectId, title: t.title, expiresAt: t.waiting!.expiresAt, pendingChecks: [...(t.waiting!.pendingChecks ?? [])] }))
+    .sort((a, b) => ms(a.expiresAt) - ms(b.expiresAt) || byKey<HeldReview>((r) => r.taskId)(a, b))
   const attention = {
     interruptions: ordered.reduce((n, d) => n + d.interruptions, 0), batches: ordered.reduce((n, d) => n + d.batches, 0), days: ordered,
     ...(limits ? { threshold: limits, daysOver: ordered.filter((d) => d.over).length } : {}),
     ...(liveness ? { liveness } : {}),
+    ...(heldReviews.length ? { reviewsHeld: heldReviews.slice(0, MAX_HELD), ...(heldReviews.length > MAX_HELD ? { reviewsHeldOmitted: heldReviews.length - MAX_HELD } : {}) } : {}),
   }
 
   // Usage: the ledger's counted records observed in the period, per pool, summed in one order.

@@ -145,6 +145,8 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
         { date: '2026-10-18', interruptions: 2, batches: 0 }, { date: '2026-10-20', interruptions: 1, batches: 0 },
       ],
       threshold: { maxInterruptionsPerDay: 2, maxBatchesPerDay: 1 }, daysOver: 0,
+      // The review still held for the operator as the report is made, with when it expires.
+      reviewsHeld: [{ taskId: 't4', projectId: 'p1', title: 't4', expiresAt: at(3), pendingChecks: [] }],
     })
     // The record with no token counts is counted, and a tokens cap counts it as 0 (D25): said per pool.
     expect(report.usage).toEqual({
@@ -321,5 +323,21 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
     // None: no such field, no such line.
     expect(buildReport(PERIOD, week(), 'p1').attention).not.toHaveProperty('liveness')
     expect(renderReport(buildReport(PERIOD, week(), 'p1'))).not.toContain('Agent runs')
+  })
+
+  it('shows the reviews held for the operator as the report is made, the soonest to expire first, with when each expires (T99 D6)', () => {
+    const held = (taskId: string, expiresAt: string, pendingChecks: Array<'tests' | 'lint'> = []) => task(taskId, 'review', { waiting: { reason: 'operator-review', since: at(6), expiresAt, pendingChecks } })
+    const sources = { ...week(), asOf: at(7, 1), tasks: [...week().tasks.filter((t) => t.taskId !== 't4'), held('t8', at(8, 6), ['tests', 'lint']), held('t7', at(7, 4)), task('t9', 'review', { waiting: { reason: 'review-expired', since: at(6), expiresAt: at(9) } })] }
+    const report = buildReport(PERIOD, sources, 'p1')
+    expect(() => schemas.assertDef('mcp-report@1.3', 'report-output', report)).not.toThrow()
+    expect(report.attention.reviewsHeld).toEqual([
+      { taskId: 't7', projectId: 'p1', title: 't7', expiresAt: at(7, 4), pendingChecks: [] },
+      { taskId: 't8', projectId: 'p1', title: 't8', expiresAt: at(8, 6), pendingChecks: ['tests', 'lint'] },
+    ])
+    expect(renderReport(report)).toContain(`- Reviews held for you now: t7 "t7" (expires in 3h, at ${at(7, 4)}), t8 "t8" (expires in 1d 5h, at ${at(8, 6)}; tests, lint not run). Accept or Reject each on /ui before it expires: unanswered, its task waits for input, which nothing revives.`)
+    // None held: no such field, no such line.
+    const none = buildReport(PERIOD, { ...week(), tasks: week().tasks.filter((t) => t.taskId !== 't4') }, 'p1')
+    expect(none.attention).not.toHaveProperty('reviewsHeld')
+    expect(renderReport(none)).not.toContain('Reviews held for you')
   })
 })

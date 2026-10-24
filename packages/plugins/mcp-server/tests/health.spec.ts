@@ -60,6 +60,28 @@ describe('host health (REQ-HOST-6)', () => {
     expect((await healthReport(base({ workerSources: () => [silent] }))).state).toBe('degraded')
   })
 
+  it('names each review held for the operator with when it expires, the soonest first, as advice that never degrades health (T99 D6)', async () => {
+    const now = Date.parse('2026-10-25T04:23:00.000Z')
+    const held = [
+      { taskId: 'task-b', projectId: 'p1', expiresAt: '2026-10-26T04:23:00.000Z' },
+      { taskId: 'task-a', projectId: 'system', expiresAt: '2026-10-25T07:23:00.000Z' },
+    ]
+    const reviews = await check({ reviews: async () => ({ held }), now: () => now }, 'reviews')
+    expect(reviews).toEqual({
+      name: 'reviews', state: 'ok',
+      detail: '2 review(s) held for you: task-a of system expires in 3 h (at 2026-10-25T07:23:00.000Z); task-b of p1 expires in 1 d (at 2026-10-26T04:23:00.000Z). Accept or Reject each on /ui (Reviews) before it expires; unanswered, its task waits for input (docs/operations/runbooks.md#accept-or-reject-a-review)',
+    })
+    expect(await check({ reviews: async () => ({ held: [] }) }, 'reviews')).toEqual({ name: 'reviews', state: 'ok', detail: 'no review is held for you' })
+    expect((await healthReport(base({ reviews: async () => ({ held }) }))).state).toBe('ok')
+    // Five are named, the soonest first (one past its time reads expired), the rest counted; projects not read are said.
+    const many = Array.from({ length: 7 }, (_, i) => ({ taskId: `t${i}`, projectId: 'p1', expiresAt: new Date(now + (i - 1) * 5_400_000).toISOString() }))
+    const named = (await check({ reviews: async () => ({ held: [...many].reverse(), more: 'the first 64 of 70 open projects read' }), now: () => now }, 'reviews'))?.detail
+    expect(named).toMatch(/^7 review\(s\) held for you: t0 of p1 expired \(at 2026-10-25T02:53:00\.000Z\); t1 of p1 expired \(at 2026-10-25T04:23:00\.000Z\); t2 of p1 expires in 1 h 30 min \(at [^)]+\); t3 of p1 expires in 3 h \(at [^)]+\); t4 of p1 expires in 4 h 30 min \(at [^)]+\) and 2 more \(the first 64 of 70 open projects read\)\. Accept or Reject/)
+    expect((await check({ reviews: async () => ({ held: [], more: 'the first 64 of 70 open projects read' }) }, 'reviews'))?.detail).toBe('no review is held for you (the first 64 of 70 open projects read)')
+    // A board that cannot be read is said, never read as none.
+    expect(await check({ reviews: async () => { throw new Error('the store is closed') } }, 'reviews')).toMatchObject({ state: 'down', detail: 'the check failed: the store is closed' })
+  })
+
   it('says a source whose first describe has not landed is describing, and counts the Workers heard as so far, never as every one (T99 D8)', async () => {
     const at = '2026-10-24T07:12:00.000Z'
     const seven = Array.from({ length: 7 }, (_, i) => ({ worker: `w${i}`, state: 'ready' }))

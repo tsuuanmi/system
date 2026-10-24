@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-report:v1",
   "title": "MCP report tool",
-  "description": "Input and output of the `report` MCP tool (design/reports.md): the baseline report of PROP-0010 B8, computed by code from recorded data only (the board, the approval queue, the resource ledger, the event log, and the decisions they name) over a period and one project or every one. The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/report-input` and `#/$defs/report-output`. 1.1 adds what a cap counts as 0; 1.2 adds `attention.liveness`, the agent runs whose liveness asked for the operator.",
+  "description": "Input and output of the `report` MCP tool (design/reports.md): the baseline report of PROP-0010 B8, computed by code from recorded data only (the board, the approval queue, the resource ledger, the event log, and the decisions they name) over a period and one project or every one. The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/report-input` and `#/$defs/report-output`. 1.1 adds what a cap counts as 0; 1.2 adds `attention.liveness`, the agent runs whose liveness asked for the operator. 1.3 adds `attention.reviewsHeld`, the reviews held for the operator and when each expires.",
   "type": "object",
   "required": [
     "tool",
@@ -656,6 +656,61 @@
                 }
               },
               "additionalProperties": false
+            },
+            "reviewsHeld": {
+              "description": "1.3: the board tasks whose review is held for the operator as the report is made (`operator-review`), the soonest to expire first, only when there is any: each expires unseen at `expiresAt`, and its task then waits for input (`review-expired`).",
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "required": [
+                  "taskId",
+                  "projectId",
+                  "title",
+                  "expiresAt",
+                  "pendingChecks"
+                ],
+                "properties": {
+                  "taskId": {
+                    "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+                  },
+                  "projectId": {
+                    "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "expiresAt": {
+                    "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+                  },
+                  "pendingChecks": {
+                    "description": "The class's required checks the acceptance did not report passed, as the task's `waiting.pendingChecks` names them.",
+                    "type": "array",
+                    "maxItems": 6,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "tests",
+                        "typecheck",
+                        "lint",
+                        "schema",
+                        "quote-check",
+                        "review"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "reviewsHeldOmitted": {
+              "description": "1.3: held reviews counted but not listed, past the first 64.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000000
             }
           },
           "additionalProperties": false

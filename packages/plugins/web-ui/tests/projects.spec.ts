@@ -157,6 +157,22 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await outcome.innerText()).toBe('')
   }, 60_000)
 
+  it.runIf(canRunBrowser)('says on Home and above the Reviews when the first review held for the operator expires, in a real browser (T99 D6)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    const { task } = await reviewed(ctx, 'Fix the slow image build')
+    expect(task.waiting).toMatchObject({ reason: 'operator-review' })
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    const waiting = page.getByRole('region', { name: 'Waiting for you' })
+    await expect.poll(() => waiting.innerText()).toMatch(/1 task waits for your review; the first held for you expires in \d+ (h|min|days)/)
+    expect(await page.getByRole('region', { name: 'Reviews' }).innerText()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
+  }, 60_000)
+
   it.runIf(canRunBrowser)('shows the Board as a Kanban: a column per state with one card per task, who works on it, its run, a project filter, and the moves in each project\'s header (T97)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted

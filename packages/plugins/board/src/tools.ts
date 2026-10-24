@@ -54,7 +54,7 @@ const charter = () => zod.strictObject({
     pools: zod.array(budgetLine()).min(1).max(16),
     attention: zod.strictObject({ maxBatchesPerDay: zod.number().int().min(0).max(100).optional(), maxInterruptionsPerDay: zod.number().int().min(0).max(100).optional() }).optional(),
   }),
-}).describe('Version 1 for a new project, the current one plus 1 for an amendment; never carries its approval')
+}).describe('Version 1 for a new project, the current one plus 1 for an amendment')
 const milestone = () => zod.strictObject({
   id: id(), title: zod.string().min(1).max(200), criteria: zod.array(id()).max(32).optional(), state: zod.enum(['planned', 'funded', 'done', 'dropped']),
   due: timestamp().optional(), budget: zod.array(budgetLine()).max(16).optional(), funding: artifactRef().optional(),
@@ -66,7 +66,7 @@ const generation = () => zod.number().int().min(1).describe('The lease generatio
 export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_projects: { state: projectState().optional(), ...page },
   board_charter: {
-    projectId: id().optional().describe('An existing project\'s id to amend its charter (pivot), or a new project\'s; generated when absent, from clientRequestId when one is given, so a retry names the same project'),
+    projectId: id().optional().describe('An existing project\'s id to amend (pivot), or a new one\'s; when absent, generated (from clientRequestId when given, so a retry names the same project)'),
     title: zod.string().min(1).max(200), template: id().optional(), classification: zod.enum(['public', 'operator-shared', 'local-private']).optional(),
     charter: charter(), milestones: zod.array(milestone()).max(64).optional(), clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
@@ -78,18 +78,16 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
     acceptance: zod.array(zod.strictObject({ id: id(), statement: shortText(), check: zod.enum(['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review', 'operator']).optional() })).min(1).max(32),
     dependsOn: zod.array(id()).max(64).optional(), actionClass: actionClass(), milestone: id().optional(), template: id().optional(),
     writes: subject().optional(), budget: zod.array(budgetLine()).max(16).optional(),
-    maxAttempts: zod.number().int().min(1).max(10).optional().describe('Attempts the task gets, 1 to 10 (default: the board\'s for the task\'s template, else its maxAttempts, 3); every run that serves it is one, a rejected review included'),
+    maxAttempts: zod.number().int().min(1).max(10).optional().describe('Attempts the task gets (default: the board\'s for its template, else its maxAttempts, 3); each run that serves it is one, a rejected review included'),
     clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
-  board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update') },
+  board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length (default 600); board_update renews it') },
   board_update: {
     taskId: id(), generation: generation().optional(),
-    note: zod.string().min(1).max(2000).optional().describe('A progress line; not stored: the result comes from the workflow run that serves the task'),
-    answers: zod.array(zod.strictObject({
-      question: zod.number().int().min(0).max(7).describe('The question\'s index, from 0, in the task\'s waiting.questions (board_task)'),
-      answer: zod.string().min(1).max(2000).describe('Your answer, 1 to 2000 characters'),
-    })).min(1).max(8).optional()
-      .describe('Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question\'s index from 0 in the task\'s waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt'),
+    note: zod.string().min(1).max(2000).optional().describe('A progress line, not stored: the run that serves the task gives its result'),
+    // The shape of an answer is said once, on the array, which the generated reference shows (T99 D7).
+    answers: zod.array(zod.strictObject({ question: zod.number().int().min(0).max(7), answer: zod.string().min(1).max(2000) })).min(1).max(8).optional()
+      .describe('Answers to a question wait, each item {question, answer}: question is the question\'s index from 0 in the task\'s waiting.questions (board_task), answer your text; every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt'),
   },
   board_cancel: { taskId: id(), note: shortText().optional() },
   board_pause: { projectId: id() },
@@ -104,12 +102,12 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_tasks: 'List a project\'s tasks, filtered by state or milestone; a page at a time.',
   board_task: 'Read one task: its goal, acceptance criteria, state, holder, run, result, and why it waits.',
   board_propose: 'Propose a task. The board makes it ready once its dependencies are done and the autonomy policy allows its action class, or asks the operator first.',
-  board_claim: 'Take a ready task\'s lease (ready to claimed), capped by leases.maxTtlMs; the output gives its real expiry and the generation. Then start its attempt with the `run` tool, naming the task with this owner as holder and this generation: the run records itself on the board before any step runs, keeps the lease, and submits and accepts its own result. A claim no run starts lapses back to ready.',
-  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index). Once a run serves the task, the run renews the lease itself. Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.',
+  board_claim: 'Take a ready task\'s lease (ready to claimed), capped by leases.maxTtlMs; the output gives its expiry and generation. Then start its attempt with the `run` tool, naming the task with this owner as holder and this generation: the run is recorded on the board before any step runs, keeps the lease, and submits and accepts its own result. A claim no run starts lapses back to ready.',
+  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions. Once a run serves the task, the run renews the lease. Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes none and expires to cancelled.',
   board_cancel: 'Cancel a task that is not running or in review; a pending approval request is withdrawn and the tasks that depend on it are cancelled.',
-  board_pause: 'Operator only: pause an active project. Until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.',
-  board_resume: 'Operator only: resume a paused project. Its proposed tasks go through the gate on the board\'s next sweep, and its ready tasks may be claimed again. Recorded as a board decision.',
-  board_close: 'Operator only: close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.',
+  board_pause: 'Pause an active project: until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.',
+  board_resume: 'Resume a paused project: its proposed tasks go through the gate on the board\'s next sweep, and its ready tasks may be claimed again. Recorded as a board decision.',
+  board_close: 'Close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.',
 }
 
 const summary = (t: BoardTask) => ({

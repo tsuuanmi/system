@@ -1978,6 +1978,11 @@ rejected by the engine as another attempt, also without you.
      attempt yet, so tell the Lead.
    - **No verdict:** at `yours until` the task waits for input (`review-expired`) and the row
      leaves the list. The wait is the policy's for the class: a day in the bundle's studio policy.
+     Before then, Home's **Waiting for you** and the line above **Reviews** say when the first
+     held for you expires, `system health` names each with when it expires (`reviews`, advice that
+     never degrades health), and `system report` lists those held as it is made; with the `notify`
+     row on, a notice comes `expiryLeadMinutes` before one expires
+     ([get notified](#get-notified)).
 
 ## Pause, resume, or close a project
 

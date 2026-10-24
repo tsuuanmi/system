@@ -7,7 +7,7 @@
 
 ## `account_agents`
 
-Operator tool: list agent accounts (ADR-0051): each enrollment slot with its account id, masked hint, status and why, home, and the Workers that run there; and each runtime with its slots, how many are taken, and whether it can read identity.
+List agent accounts: each enrollment slot with its account id, masked hint, status and why, home, and the Workers that run there; and each runtime with its slots, how many are taken, and whether it can read identity.
 
 Scope: `operator`
 
@@ -15,7 +15,7 @@ No arguments.
 
 ## `account_clear_cooldown`
 
-End an account's usage limit early (ADR-0034): one feature, or every one when none is named. A feature probe never ends one.
+End an account's usage limit early: one feature, or every one when none is named. A feature probe never ends one.
 
 Scope: `operator`
 
@@ -26,7 +26,7 @@ Scope: `operator`
 
 ## `account_code`
 
-Operator tool: supply the one-time code a running sign-in is waiting for.
+Supply the one-time code a running sign-in is waiting for.
 
 Scope: `operator`
 
@@ -37,7 +37,7 @@ Scope: `operator`
 
 ## `account_cooldowns`
 
-The site usage limits in force per account (ADR-0034): a feature, or * for the whole account, kept off until a time. Work that needs it routes to another account meanwhile.
+The site usage limits in force per account: a feature, or * for the whole account, kept off until a time. Work that needs it routes to another account meanwhile.
 
 Scope: `operator`
 
@@ -47,7 +47,7 @@ Scope: `operator`
 
 ## `account_enroll`
 
-Operator tool: enroll an agent account (ADR-0051). step begin takes the lowest free slot of a provider (or the slot named; a taken slot or an accountId is signed in again in its own home) and returns the runtime's own sign-in command for the slot's home, which you run in your own terminal without D-Bus; step verify then reads who signed in and records the account: ready, signed-out, or quarantined (changed, ambiguous, duplicate, unverified) with why. accept takes a changed slot's new principal as a new account.
+Enroll an agent account. step begin takes a provider's lowest free slot (or the slot named; a taken slot or an accountId signs in again in its own home) and returns the runtime's sign-in command for the slot's home, to run in your own terminal without D-Bus; step verify then reads who signed in and records the account: ready, signed-out, or quarantined (changed, ambiguous, duplicate, unverified) with why.
 
 Scope: `operator`
 
@@ -79,7 +79,7 @@ Scope: `operator`
 
 ## `account_migrate`
 
-Operator tool: the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F). By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker's new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it. stop: runtimes whose Workers stop at the cutover because their account is not ready.
+The move from hand-named agent Workers to Workers derived as account × role. By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker's new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it.
 
 Scope: `operator`
 
@@ -101,7 +101,7 @@ Scope: `operator`
 
 ## `account_relogin`
 
-Operator tool: sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).
+Sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).
 
 Scope: `operator`
 
@@ -111,7 +111,7 @@ Scope: `operator`
 
 ## `account_remove`
 
-Operator tool: free an agent account's slot (ADR-0051), by its account id or by provider and slot. Recorded as an enrollment decision; its home and the sign-in in it are kept as they are, and a later sign-in in that slot replaces it.
+Free an agent account's slot, by its account id or by provider and slot. Recorded as an enrollment decision; its home and the sign-in in it are kept as they are, and a later sign-in in that slot replaces it.
 
 Scope: `operator`
 
@@ -133,7 +133,7 @@ Scope: `operator`
 
 ## `account_set_credentials`
 
-Operator tool: store an account's login credentials encrypted (email, password, optional Base32 TOTP secret) and switch it to credential login. Nothing is returned or logged.
+Store an account's login credentials encrypted (email, password, optional Base32 TOTP secret) and switch it to credential login. Nothing is returned or logged.
 
 Scope: `operator`
 
@@ -156,7 +156,7 @@ Scope: `operator`
 
 ## `agent_run_free`
 
-Operator tool: free the session and worktree an agent run holds because it ended with its liveness unknown, on your word that its agent is gone (agentGone). Recorded as your decision. Refused while its liveness is still looked at, a process holds it, or its holder or agent process is present. A worktree is removed only when clean, or with commitWorktree after its changes are committed on its branch; the branch stays.
+Free the session and worktree an agent run holds because it ended with its liveness unknown, on your word that its agent is gone (agentGone). Recorded as your decision. Refused while its liveness is still looked at, a process holds it, or its holder or agent process is present. A worktree is removed only when clean, or with commitWorktree after its changes are committed on its branch; the branch stays.
 
 Scope: `operator`
 
@@ -169,7 +169,7 @@ Scope: `operator`
 
 ## `agent_worktrees`
 
-Operator tool: list the worktrees of workflow runs (a worktree per run) not removed yet, oldest first: each with its run, branch, state (in-use while an agent run of its workflow run runs; held while one ended with its liveness unknown; finished otherwise), what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it.
+List the workflow runs' worktrees not removed yet, oldest first: each with its run, branch, state (in-use while an agent run of its workflow run runs; held while one ended with its liveness unknown; else finished), what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it.
 
 Scope: `operator`
 
@@ -179,7 +179,7 @@ Scope: `operator`
 
 ## `agent_worktrees_remove`
 
-Operator tool: remove finished run worktrees now instead of waiting for the retention, every one or those of one workflow run (runId). One is removed only while no agent run of its workflow run is unfinished or held, and only when it holds nothing uncommitted, or with commitChanges after its changes are committed on its branch: nothing is discarded, and the branch stays. Recorded as your retention decision; a worktree it cannot remove stays, and why.
+Remove finished run worktrees now, before the retention does: every one, or one workflow run's (runId). One is removed only while no agent run of its workflow run is unfinished or held, and only when clean, or with commitChanges after its changes are committed on its branch: nothing is discarded, and the branch stays. Recorded as your retention decision; one it cannot remove stays, with why.
 
 Scope: `operator`
 
@@ -191,7 +191,7 @@ Scope: `operator`
 
 ## `approvals_decide`
 
-Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.
+Verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.
 
 Scope: `operator`
 
@@ -235,7 +235,7 @@ Scope: `client`
 
 ## `approvals_policy_propose`
 
-Operator only: propose one autonomy policy record (a higher version of a policy, or a project's first). The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.
+Propose one autonomy policy record. The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.
 
 Scope: `operator`
 
@@ -259,7 +259,7 @@ Scope: `operator`
 
 ## `artifact`
 
-Read an artifact by id: its header (kind, schema, classification, run, node, inputs) and a window of its body (an answer's text, else its JSON), in characters. One no longer stored reads as expired or unknown. Operator only.
+Read an artifact by id: its header (kind, schema, classification, run, node, inputs) and a window of its body (an answer's text, else its JSON), in characters. One no longer stored reads as expired or unknown.
 
 Scope: `operator`
 
@@ -271,7 +271,7 @@ Scope: `operator`
 
 ## `ask`
 
-Ask one Worker, chosen by the router for the work (capability, tier, quota order). Waits up to waitSeconds; otherwise returns a runId for `result`.
+Ask one Worker, routed by capability, tier, and quota order. Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 Scope: `client`
 
@@ -281,9 +281,9 @@ Scope: `client`
 | `sessionId` | string |  | Continue an existing persistent session |
 | `persist` | boolean |  | Start a persistent session (a normal conversation) |
 | `tier` | "economy" \| "standard" \| "frontier" |  | Minimum intelligence tier; the lowest admitted tier at or above it runs |
-| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | The input's classification; local-private never leaves the machine |
 | `clientRequestId` | string |  | Retry-safe request key |
-| `waitSeconds` | integer |  | How long to wait for the run to finish before returning (default 45 s) |
+| `waitSeconds` | integer |  | Seconds to wait for the run to finish (default 45) |
 
 ## `board_brief`
 
@@ -314,17 +314,17 @@ Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `projectId` | string |  | An existing project's id to amend its charter (pivot), or a new project's; generated when absent, from clientRequestId when one is given, so a retry names the same project |
+| `projectId` | string |  | An existing project's id to amend (pivot), or a new one's; when absent, generated (from clientRequestId when given, so a retry names the same project) |
 | `title` | string | yes |  |
 | `template` | string |  |  |
 | `classification` | "public" \| "operator-shared" \| "local-private" |  |  |
-| `charter` | object | yes | Version 1 for a new project, the current one plus 1 for an amendment; never carries its approval |
+| `charter` | object | yes | Version 1 for a new project, the current one plus 1 for an amendment |
 | `milestones` | array |  |  |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `board_claim`
 
-Take a ready task's lease (ready to claimed), capped by leases.maxTtlMs; the output gives its real expiry and the generation. Then start its attempt with the `run` tool, naming the task with this owner as holder and this generation: the run records itself on the board before any step runs, keeps the lease, and submits and accepts its own result. A claim no run starts lapses back to ready.
+Take a ready task's lease (ready to claimed), capped by leases.maxTtlMs; the output gives its expiry and generation. Then start its attempt with the `run` tool, naming the task with this owner as holder and this generation: the run is recorded on the board before any step runs, keeps the lease, and submits and accepts its own result. A claim no run starts lapses back to ready.
 
 Scope: `client`
 
@@ -332,11 +332,11 @@ Scope: `client`
 |---|---|---|---|
 | `taskId` | string | yes |  |
 | `owner` | string | yes | Who works on it, e.g. the lead's session id |
-| `ttlSeconds` | integer |  | Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update |
+| `ttlSeconds` | integer |  | Lease length (default 600); board_update renews it |
 
 ## `board_close`
 
-Operator only: close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.
+Close an active or paused project as achieved or stopped; refused while one of its tasks runs or is in review. Its open tasks are cancelled (project-closed), the approval requests they and a pending amendment waited on are withdrawn, and the project takes no task again. Recorded as a board decision.
 
 Scope: `operator`
 
@@ -347,7 +347,7 @@ Scope: `operator`
 
 ## `board_pause`
 
-Operator only: pause an active project. Until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.
+Pause an active project: until it is resumed no task of it is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry. Recorded as a board decision.
 
 Scope: `operator`
 
@@ -385,12 +385,12 @@ Scope: `client`
 | `template` | string |  |  |
 | `writes` | object |  |  |
 | `budget` | array |  |  |
-| `maxAttempts` | integer |  | Attempts the task gets, 1 to 10 (default: the board's for the task's template, else its maxAttempts, 3); every run that serves it is one, a rejected review included |
+| `maxAttempts` | integer |  | Attempts the task gets (default: the board's for its template, else its maxAttempts, 3); each run that serves it is one, a rejected review included |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `board_resume`
 
-Operator only: resume a paused project. Its proposed tasks go through the gate on the board's next sweep, and its ready tasks may be claimed again. Recorded as a board decision.
+Resume a paused project: its proposed tasks go through the gate on the board's next sweep, and its ready tasks may be claimed again. Recorded as a board decision.
 
 Scope: `operator`
 
@@ -424,7 +424,7 @@ Scope: `client`
 
 ## `board_update`
 
-Renew your lease on a task you hold (with its generation), or answer a waiting task's questions (every one, by index). Once a run serves the task, the run renews the lease itself. Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.
+Renew your lease on a task you hold (with its generation), or answer a waiting task's questions. Once a run serves the task, the run renews the lease. Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes none and expires to cancelled.
 
 Scope: `client`
 
@@ -432,19 +432,19 @@ Scope: `client`
 |---|---|---|---|
 | `taskId` | string | yes |  |
 | `generation` | integer |  | The lease generation the caller holds (a fence, INV-4) |
-| `note` | string |  | A progress line; not stored: the result comes from the workflow run that serves the task |
-| `answers` | array |  | Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt |
+| `note` | string |  | A progress line, not stored: the run that serves the task gives its result |
+| `answers` | array |  | Answers to a question wait, each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text; every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt |
 
 ## `brainstorm`
 
-Ask a team to recommend an answer to a question, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you, the caller: it approves and authorizes nothing.
+Ask a team to recommend an answer, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split gets one debate and a re-vote, a tie comes back to you (`vote`). Returns a runId at once; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you: it approves and authorizes nothing.
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `question` | string | yes | The question and its context: options, constraints, what has been decided |
-| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | The input's classification; local-private never leaves the machine |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `continue`
@@ -500,19 +500,19 @@ Scope: `client`
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `requestId` | string | yes | The digest request, as digests_request returned it |
-| `waitSeconds` | integer |  | How long to wait for the request to settle before returning it (default 0, at most 55 s) |
+| `waitSeconds` | integer |  | Seconds to wait for the request to settle (default 0) |
 
 ## `digests_request`
 
-Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them (once more on the standard tier when every claim fails the check), and every claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.
+Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them (once more on the standard tier when every claim fails the check); a claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `sources` | array | yes | The raw artifacts to digest, by content id (1 to 64, each once) |
-| `clientRequestId` | string |  | Retry-safe request key: the same key returns the same request |
-| `waitSeconds` | integer |  | How long to wait for the request to settle before returning it (default 0, at most 55 s) |
+| `clientRequestId` | string |  | Retry-safe request key |
+| `waitSeconds` | integer |  | Seconds to wait for the request to settle (default 0) |
 
 ## `drain`
 
@@ -524,7 +524,7 @@ No arguments.
 
 ## `events`
 
-Read the event log in order (QA-7): entries after a cursor, optionally for one run, node, session, turn, or type, or since a time. Pass `next` back as afterSeq for the following page.
+Read the event log in order: a page of entries after a cursor, optionally filtered. Pass `next` back as afterSeq for the following page.
 
 Scope: `operator`
 
@@ -541,7 +541,7 @@ Scope: `operator`
 
 ## `evidence`
 
-Read a drift evidence artifact (the outline a ui.drift event names): the structure of a page region, never its text. Local-private: the operator's alone.
+Read a drift evidence artifact (the outline a ui.drift event names): the structure of a page region, never its text. Local-private.
 
 Scope: `operator`
 
@@ -551,7 +551,7 @@ Scope: `operator`
 
 ## `explain`
 
-The decision chain behind a run (the decisions no step holds, such as a board task's admission, result subject, acceptance, and report; then egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.
+The decision chain behind a run (its own decisions, such as a board task's admission, result subject, acceptance, and report; then egress, tier, route, and acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do); or any artifact id's inputs; or such an execution by its id.
 
 Scope: `client`
 
@@ -561,7 +561,7 @@ Scope: `client`
 
 ## `model_key`
 
-Operator tool: store a model route's API key, encrypted, under the credential reference its apiKeyEnv names. Nothing is returned or logged.
+Store a model route's API key, encrypted, under the credential reference its apiKeyEnv names. Nothing is returned or logged.
 
 Scope: `operator`
 
@@ -572,7 +572,7 @@ Scope: `operator`
 
 ## `report`
 
-The baseline report, from recorded data only (no model writes it): for a period (default the 7 days before now: the weekly investor report) and one project or every one, the board's progress and tasks, the attempts and the reviews of their results, remediation, the approval requests asked and answered and how long your verdicts took, what asked for the operator per day against the charter's attention budget, the resource ledger's usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.
+The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board's progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter's attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.
 
 Scope: `client`
 
@@ -581,19 +581,19 @@ Scope: `client`
 | `projectId` | string |  | One project; absent: every project on the board |
 | `since` | string |  | The period's start, ISO 8601 (inclusive); not with days |
 | `until` | string |  | The period's end, ISO 8601 (exclusive); default now |
-| `days` | integer |  | The period as the days before until (default 7: the weekly investor report) |
+| `days` | integer |  | The period as the days before until (default 7, the weekly investor report) |
 
 ## `research`
 
-Research a question with the research profile: testable hypotheses, two cited literature reviews on two provider families (web search, or the providers' Deep research with `deep`), one evidence table from both, a critique on another family, and conclusions per hypothesis that say where the reviews agree and differ. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).
+Research a question: testable hypotheses, two cited literature reviews on two provider families (web search, or Deep research with `deep`), one evidence table from both, a critique on another family, and conclusions per hypothesis, where the reviews agree and differ. Returns a runId at once; poll `result` (minutes; with `deep`, up to an hour).
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `question` | string | yes |  |
-| `deep` | boolean |  | Review the literature with the provider's Deep research |
-| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `deep` | boolean |  | Use the providers' Deep research |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | The input's classification; local-private never leaves the machine |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `resources_pools`
@@ -633,7 +633,7 @@ Scope: `client`
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `runId` | string | yes |  |
-| `waitSeconds` | integer |  | How long to wait for the run to finish before returning (default 45 s) |
+| `waitSeconds` | integer |  | Seconds to wait for the run to finish (default 45) |
 
 ## `resume`
 
@@ -645,21 +645,21 @@ No arguments.
 
 ## `review`
 
-Review as a team, one member per provider family: text you give (an approach, a design, a diff), or a public repository read at one pinned commit. Each member lists findings that quote `path:line` and the line's text; system checks every quote against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you, the caller: it approves and authorizes nothing.
+Review as a team, one member per provider family: text you give (an approach, a design, a diff) or a public repository at one pinned commit. Each finding quotes `path:line` and the line's text, every quote checked against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, a tie comes back to you (`vote`). Returns a runId at once; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you: it approves and authorizes nothing.
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `material` | string | yes | What to review and the criteria it must meet; with `repository`, what to look for in it |
-| `repository` | object |  | Review this public repository, read by system at one pinned commit |
+| `repository` | object |  | A public repository to review, read at one pinned commit |
 | `focus` | array |  | Paths or globs of the repository to read first |
-| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | The input's classification; local-private never leaves the machine |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `roster`
 
-The roster of every Worker, projected on read: its provider and family, what it is for (the operator's description, else a derived line), account (id, label for the operator, enrolled or quarantined state), role, tier, quota class, availability (ready, busy N of M, resting at a limit until its reset, unavailable with why, quarantined), the steps and board tasks it serves now (each in one sentence, with since when), its load, and its account's pools with each window's used share, reset, and the runs whose usage the ledger could not count. A fact a source could not give reads unknown, with why.
+Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit's reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account's pools (each window's used share and reset, runs the ledger could not count). A fact no source gave reads unknown, with why.
 
 Scope: `client`
 
@@ -667,7 +667,7 @@ No arguments.
 
 ## `run`
 
-Start a workflow template by name (built in: ask, brainstorm, review; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. With `task`, the run serves one attempt of that board task: it claims the ready task (or takes the claim you hand it from board_claim), the board records the run before any step runs, the run renews the lease while it lives, and it submits its own result and acceptance to the board, or reports its failure; a task not ready, or a stale claim, refuses the run with nothing started. Waits up to waitSeconds; otherwise returns a runId for `result`.
+Start a workflow template by name (built in: ask, brainstorm, review; profiles add more, such as research), its steps routed by capability. With `task`, the run serves one attempt of that board task: it is recorded on the board before any step runs, renews the lease while it lives, and submits its own result and acceptance, or its failure; a task not ready or a stale claim refuses the run, nothing started. Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 Scope: `client`
 
@@ -680,9 +680,9 @@ Scope: `client`
 | `persist` | boolean |  | Start a persistent session |
 | `tier` | "economy" \| "standard" \| "frontier" |  | Minimum tier for the steps that take the caller's tier |
 | `task` | object |  | Run for this board task, one attempt of it: without holder and generation the run claims the ready task itself |
-| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | The input's classification; local-private never leaves the machine |
 | `clientRequestId` | string |  | Retry-safe request key |
-| `waitSeconds` | integer |  | How long to wait for the run to finish before returning (default 45 s) |
+| `waitSeconds` | integer |  | Seconds to wait for the run to finish (default 45) |
 
 ## `session_inbox`
 
@@ -709,7 +709,7 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, run liveness, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the runs whose liveness needs a look (stalled, looked at, unknown) and the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.
+Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check's detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).
 
 Scope: `client`
 
@@ -730,7 +730,7 @@ Scope: `operator`
 
 ## `supersede`
 
-Replace a completed step's result with a corrected one; everything downstream runs again, and a planner downstream plans again, retiring its old plan (a planner's replacement must be a valid plan). Lineage invalidation, an operator action.
+Replace a completed step's result with a corrected one; everything downstream runs again, and a planner downstream plans again, retiring its old plan (a planner's replacement must be a valid plan). Lineage invalidation.
 
 Scope: `operator`
 
@@ -743,17 +743,17 @@ Scope: `operator`
 
 ## `usage`
 
-Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why). A run's answer, results, and errors are in `result`.
+Recent runs and, per step, the Worker, tier, and quota class that served it, the tokens a model Worker reports, and usage the ledger could not count (usageUnknown, with why). A run's answer, results, and errors are in `result`.
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `limit` | integer |  | Runs, the most recent first (default 10, at most 500) |
+| `limit` | integer |  | Runs, the most recent first (default 10) |
 
 ## `vote`
 
-Break a team's tie: the deciding vote, bound to the exact tie decision the run shows in `blocked` (an option, or inconclusive), with your rationale.
+Break a team's tie: the deciding vote, bound to the exact tie decision the run shows in `blocked`, with your rationale.
 
 Scope: `client`
 

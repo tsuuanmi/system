@@ -90,7 +90,7 @@ export class Login extends Service {
         }
       })
       c.mcp.tool('account_set_credentials', {
-        description: 'Operator tool: store an account\'s login credentials encrypted (email, password, optional Base32 TOTP secret) and switch it to credential login. Nothing is returned or logged.',
+        description: 'Store an account\'s login credentials encrypted (email, password, optional Base32 TOTP secret) and switch it to credential login. Nothing is returned or logged.',
         inputSchema: { account: zod.string().min(1).max(64), email: zod.string().min(3).max(320), password: zod.string().min(1).max(1024), totpSecret: zod.string().max(256).optional() },
       }, async ({ account, email, password, totpSecret }) => {
         try {
@@ -101,7 +101,7 @@ export class Login extends Service {
         }
       })
       c.mcp.tool('account_relogin', {
-        description: 'Operator tool: sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).',
+        description: 'Sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).',
         inputSchema: { account: zod.string().min(1).max(64) },
       }, async ({ account }) => {
         try {
@@ -112,7 +112,7 @@ export class Login extends Service {
         }
       })
       c.mcp.tool('account_code', {
-        description: 'Operator tool: supply the one-time code a running sign-in is waiting for.',
+        description: 'Supply the one-time code a running sign-in is waiting for.',
         inputSchema: { account: zod.string().min(1).max(64), code: zod.string().min(4).max(10) },
       }, async ({ account, code }) => {
         try {

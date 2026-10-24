@@ -42,13 +42,13 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     one (`system plugins` asks for it). Health is always complete (REQ-HOST-6, `src/health.ts`):
     each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
     disk, vault key custody, accounts to sign in again or signed in as one person
-    (`duplicateIdentities`), Worker availability,
+    (`duplicateIdentities`), Worker availability, reviews held for the operator,
     login profiles held for a login, open with their kept tabs, or blocked by a
     process that could not be stopped (`login-profiles`, from `browser`), provider UI drift within
     `driftWindowHours`, usage the resource ledger could not count, notifications that failed) as `ok`,
     `degraded`, or `down`, and the worst of them. Only an operator-scope caller
     sees the details; a client sees each check's name and state. It reads the
-    mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`, `resources`), skips
+    mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`, `resources`, `board`), skips
     those not mounted, and reports a check whose source throws as down. Workers
     count as available only when `ready` or `busy`. `workers` lists the Workers,
     then reads how each Worker source answered its last read (`ctx.workers.sources()`,
@@ -58,10 +58,15 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)).
     A silent source whose first describe has not landed (`describing`, right after a start)
     is named as `describing…`, and the Workers heard are counted `so far`, as the roster
-    counts them from the same reads (T99 D8).
-    A vault key beside the vault
+    counts them from the same reads (T99 D8). A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
     check is reused for `storeCheckMinutes`.
+  - `reviews` (with `ctx.board` mounted) names each board task whose review is held for the
+    operator (`operator-review`), the soonest to expire first (five named, the rest counted),
+    with when it expires (`expires in 3 h (at …)`), from the projects that are not closed (the
+    tasks of at most 64 read, the rest said): advice, always `ok`, as the vault key's is, since an
+    unanswered review expires and its task waits for input that nothing revives (T99 D6). A board
+    that cannot be read is down.
   - `liveness` (with a router that tells `ctx.workers.liveness()`, PROP-0013) is degraded while a
     run that ended without being known to be gone holds its session and worktree, or while a
     Worker source cannot tell (INV-2), naming the first five runs of each state and counting the
@@ -121,7 +126,8 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
   `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`,
   `ctx.get('eventLog')`, `ctx.get('pluginHost')`, and `ctx.get('resources')` optionally, and for the
-  roster `ctx.get('agentWorkers')`, `ctx.get('workflow')`, and `ctx.get('board')`.
+  roster `ctx.get('agentWorkers')`, `ctx.get('workflow')`, and `ctx.get('board')` (which health's
+  `reviews` check reads too).
 
 ## Scopes
 
@@ -193,9 +199,14 @@ other payload (QA-12, INV-9).
   and input schema, converted from the same zod schema the SDK validates each call with. It
   leaves out what tells a client nothing: `$schema` (the schema is JSON Schema 2020-12, which MCP
   reads a schema without `$schema` as), the SDK's `execution: {taskSupport: "forbidden"}` (absent
-  means the same), the 300-character `pattern` zod adds beside `format: "date-time"` (the server
-  checks the date-time with zod, as strictly as before), and the scope `_meta` of a client tool
+  means the same), the 300-character `pattern` zod adds beside `format: "date-time"`, the
+  safe-integer bounds (±(2^53 − 1)) zod gives an integer that sets no bound of its own (the server
+  checks both with zod, as strictly as before), and the scope `_meta` of a client tool
   ([scopes](#scopes)).
+- **Descriptions:** a tool's description says what it does and what a caller must know to call
+  it, once: what a parameter's own description says is not repeated in the tool's, and the
+  scope is the listing's `_meta`, never a word in the text. Every fact a client needs stays; the
+  canonical docs keep the rationale and the references.
 - **Bounded reads:** `status` lists only the plugins that need a look unless asked; `usage`
   lists 10 runs unless asked for up to 500, each run with its steps' Workers, tiers, quota
   classes, and tokens only (its answer, ids, and errors are in `result`).
@@ -203,4 +214,4 @@ other payload (QA-12, INV-9).
   set from, with about 10 % headroom. A test fails when a measure is over its ceiling, and the
   surface test then prints every tool's size. Raising a ceiling is a reviewed change that says
   what grew and why it is worth every session's tokens. A change that shrinks the surface lowers
-  the ceiling with it.
+  the ceiling with it, to the new size plus 10 % where that is lower; a trim never raises one.

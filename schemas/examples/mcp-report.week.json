@@ -67,7 +67,10 @@
         { "date": "2026-10-22", "interruptions": 1, "batches": 1 }
       ],
       "threshold": { "maxBatchesPerDay": 3, "maxInterruptionsPerDay": 6 },
-      "daysOver": 0
+      "daysOver": 0,
+      "reviewsHeld": [
+        { "taskId": "task-4c1e", "projectId": "proj-sparse-align", "title": "Band the kernel's inner loop", "expiresAt": "2026-10-24T06:40:00.000Z", "pendingChecks": ["tests"] }
+      ]
     },
     "usage": {
       "total": { "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184, "unknownRuns": 1 },
