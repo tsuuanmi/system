@@ -1,7 +1,7 @@
 ---
 id: PROP-0013
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-24
 summary: Three ways for a board task's attempts to learn from the work itself, each as recorded facts that the core acts on and a capability plugin never acts on. First, a code-host observer (`scm-<host>`, egress declared) polls a bound PR or branch with conditional requests and records CI checks, reviews, and merge conflicts as facts bound to the head SHA; the actionable ones brief the next attempt, and landing (merge or apply) is a `merge` approval bound to the base and head SHAs. Second, a completion gate at the Worker's stop boundary runs the required checks in the run's own confinement and feeds a failure back into the same session, bounded and recorded, failing closed. Third, a liveness verdict declares a run dead only when its holder and its runtime are both positively gone and nothing happened within a bound; a failed probe is never death, and automation never sends input to a session blocked on an approval.
 owners: [operator]
@@ -648,10 +648,20 @@ no completion gate. The lease rule narrows when `lost` fires and changes no reco
 
 ## Decision
 
-Pending the operator's review. On acceptance, each phase writes the ADRs named in the
-[phased plan](#phased-plan).
+Accepted in part by the operator on 2026-10-24 (D32):
+
+- **Accepted, to be built:** the liveness verdict (L1, L2) and the completion gate (C1 to C3),
+  first, since they cost little and fix failure modes seen today. Each phase still starts on the
+  operator's go-ahead and writes the ADRs named in the [phased plan](#phased-plan); C3 changes what
+  the core accepts and keeps its own decision.
+- **Deferred:** the code-host observer and landing (W1 to W5), until the pilot (PROP-0010 B8)
+  produces PRs. They are decided again then.
+
+The open questions stay open: questions 7 to 9 are answered when the liveness or completion phase
+that needs them starts; questions 2 to 6 belong to the deferred parts; question 1, copying the two
+research notes under [research](../research/README.md), is not done yet.
 
 ## Implementation
 
-None yet. When a phase starts, the [roadmap](roadmap.md#later-candidates) moves it from the later
-candidates into a milestone table.
+None yet. When a phase starts, the [roadmap](roadmap.md#feedback-from-work-prop-0013) gives it a
+row of a milestone table.

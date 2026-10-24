@@ -92,7 +92,9 @@ accepted/implemented -> superseded
   required for personal plans, under which a limit makes an account's work wait instead of moving
   it to another account of that provider, website accounts included.
 
-- [PROP-0013: Feedback from work](0013-feedback-from-work.md), **proposed**. Three ways for a
+- [PROP-0013: Feedback from work](0013-feedback-from-work.md), **accepted** in part (D32: the
+  liveness verdict and the completion gate, to be built; the code-host observer and landing
+  deferred until the pilot produces PRs). Three ways for a
   board task's attempts to learn from the work, as facts the core acts on: a code-host observer
   (`scm-<host>`, egress declared) that records a bound PR's CI checks, reviews, and conflicts by
   conditional polling, bound to the head SHA, and briefs the next attempt with the actionable ones,

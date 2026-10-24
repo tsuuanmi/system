@@ -3,7 +3,8 @@
 Non-normative. This is the ordered queue of milestones for
 [PROP-0001](0001-unified-system-architecture.md), from M6a
 [PROP-0003](0003-production-readiness.md), from B1
-[PROP-0010](0010-base-version.md), and from F1 [PROP-0011](0011-feedback-loop.md). What each
+[PROP-0010](0010-base-version.md), from F1 [PROP-0011](0011-feedback-loop.md), and from L1
+[PROP-0013](0013-feedback-from-work.md). What each
 release stage must
 deliver, and its exit criteria, are defined in
 [release scope](../requirements/release-scope.md). This file only orders the work
@@ -55,6 +56,22 @@ started F1 on 2026-10-23, in parallel with the Base pilot (B8).
 | **F5** Review contract and suite | not started | the `review` objective contract; a three-partition suite seeded from [self-build](../validation/self-build.md); collectors | F1, F4 |
 | **F6** Controller and promotion | not started | the `improve` template; promotion bound to the exact evaluation and subject | F1, F3, F4 |
 | **F7** First experiment | not started | worker agnosticism on `review`, the acceptance test of v1 | F3 to F6 |
+
+## Feedback from work (PROP-0013)
+
+What each phase delivers is in [PROP-0013](0013-feedback-from-work.md#phased-plan). The operator
+accepted it in part on 2026-10-24 (D32): the liveness verdict and the completion gate first, each
+phase on the operator's go-ahead; the code-host observer and landing wait until the pilot (B8)
+produces PRs.
+
+| Phase | State | Delivers | Depends on |
+|---|---|---|---|
+| **L1** Liveness rules | accepted, not started | a failed lease renewal is not a lost lease; death needs a verdict; no automated input to a session blocked on an approval | — |
+| **L2** Liveness in reconciliation | accepted, not started | a verdict before every reconciliation of an agent run; stalls reported | L1 |
+| **C1** Evidence | accepted, not started | a supervised check that the pinned Claude Agent SDK honours a `Stop` hook's block | — |
+| **C2** Completion gate | accepted, not started | the required checks at a Worker's stop boundary, a failure fed back in the same session, bounded, failing closed | C1 |
+| **C3** Checks at acceptance | accepted, not started | completion evidence reported as checks on the result's exact subject, with its own ADR and the operator's decision | C2 |
+| **W1** to **W5** Code-host observer and landing | deferred until the pilot produces PRs | code-host observations briefing the next attempt; landing on an approval bound to the base and head SHAs | B8 |
 
 ## Done and open milestones
 
@@ -127,9 +144,3 @@ Not scheduled; each needs the operator's go-ahead:
 Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), an
 ACP client gateway for editors, sandboxed or SSH `exec` providers, more website
 providers, and a desktop launcher.
-
-Proposed, not scheduled: [PROP-0013](0013-feedback-from-work.md), feedback from work. Its phases,
-each on the operator's go-ahead, in the proposed order: L1 and L2 (a liveness verdict: a failed
-probe is not death, no automated input to a session blocked on an approval), C1 to C3 (a completion
-gate at the Worker's stop boundary, then its checks at acceptance), and W1 to W5 (code-host
-observations briefing the next attempt, then landing). W2 and W5 need B8's branches.
