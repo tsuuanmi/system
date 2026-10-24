@@ -1,8 +1,8 @@
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { describe, expect, it } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
-import { replanAnswer, replanTemplate, settledOp, states } from './replan.ts'
-import { browserStack, until, waitingPlan } from './stack.ts'
+import { replanAnswer, replanTemplate, states } from './replan.ts'
+import { browserStack, settledOp, until, waitingPlan } from './stack.ts'
 
 const { boot } = browserStack()
 

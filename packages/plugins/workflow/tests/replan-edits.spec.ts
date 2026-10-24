@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
-import { planOf, replanAnswer, replanTemplate, settledOp, states } from './replan.ts'
-import { browserStack, until, waitingPlan } from './stack.ts'
+import { planOf, replanAnswer, replanTemplate, states } from './replan.ts'
+import { browserStack, settledOp, until, waitingPlan } from './stack.ts'
 
 const { boot } = browserStack()
 
