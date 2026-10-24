@@ -575,7 +575,7 @@ export const APP_JS = `'use strict'
         const made = decisions.get(n.nodeId) || []
         return el('li', { class: 'step' },
           el('div', {}, el('strong', {}, n.nodeId), ' ', el('span', { class: 'state ' + cls }, word),
-            n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + ' · ' + (n.tier || n.minTier) + ' tier' + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
+            n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (names.has(n.worker) ? '' : ' · ' + (n.tier || n.minTier) + ' tier') + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
           n.error ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
           made.length ? el('details', {}, el('summary', {}, 'How it was decided (' + made.length + ')'),
             made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))) : null)
@@ -646,7 +646,7 @@ export const APP_JS = `'use strict'
     const asksOf = (p) => open.filter((r) => r.requester.component === 'board' && r.requester.projectId === p.projectId && r.requester.taskId)
     const stateOf = (p) => {
       const charter = charterOf(p)
-      return el('span', {}, p.state + (p.closure ? ' (' + p.closure.outcome + ')' : ''),
+      return el('div', {},
         charter ? el('div', {}, p.state === 'proposed' ? 'Its charter waits for your verdict: ' : 'Its amendment waits for your verdict: ', decideLink(charter.requestId, 'decide it')) : null,
         asksOf(p).length ? el('div', {}, asksOf(p).length + ' task(s) wait for your approval: ', asksOf(p).flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])) : null)
     }
