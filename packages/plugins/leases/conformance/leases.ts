@@ -3,7 +3,8 @@
  * docs/reference/schemas.md, INV-4, INV-15). It holds any provider to the documented contract
  * through `ctx.leases` alone: one holder per resource, a monotonic generation per resource,
  * renewal and release by token, takeover after expiry, a commit fence inside the committing
- * store transaction, and bounded TTLs. `boot` returns a context that provides `ctx.leases` and
+ * store transaction, and bounded TTLs; from 1.1, a held lease is lost only on a positive loss, never
+ * on a renewal that merely failed (ADR-0054). `boot` returns a context that provides `ctx.leases` and
  * `ctx.store`, with `maxTtlMs` set to {@link LEASE_MAX_TTL_MS} and no lease held.
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -48,8 +49,27 @@ const commit = (ctx: Context, lease: Lease, now: number, value: string): string 
 const commits = (ctx: Context): string[] =>
   (ctx.store.db.prepare('SELECT value FROM leases_conformance_commits ORDER BY rowid').all() as Array<{ value: string }>).map((r) => r.value)
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>): Scenario<Boot> => ({
-  id: `leases.${id}`, since: '1.0', title,
+/**
+ * Make every `ctx.store.transaction` throw a plain error (a store that is busy or failing, never a
+ * lost lease) while `failing()` says so. A provider keeps its leases in `ctx.store`: its commit fence
+ * runs inside the committing store transaction. Returns the restore.
+ */
+const flaky = (ctx: Context, failing: () => boolean): (() => void) => {
+  const store = ctx.store as unknown as { transaction: (fn: never) => unknown }
+  const original = store.transaction
+  store.transaction = function (this: unknown, fn: never) {
+    if (failing()) throw new Error('database is locked')
+    return original.call(ctx.store, fn)
+  }
+  return () => {
+    store.transaction = original
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since = '1.0'): Scenario<Boot> => ({
+  id: `leases.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
     try {
@@ -63,7 +83,7 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const leasesSuite = defineSuite<Boot>({
   seam: 'leases',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('one-holder', 'grants a resource to one holder at a time, as a lease@1.0 record, and refuses a second holder while the lease is live (INV-15)', async (ctx) => {
       const lease = valid(ctx.leases.acquire(R, 1000, 'host-a:1:aaa', T0))
@@ -187,5 +207,42 @@ export const leasesSuite = defineSuite<Boot>({
       })
       expect(outcome).toEqual({ held: true, value: { renewed: true, lost: true, reason: 'LeaseLost' } })
     }),
+    scenario('hold-renewal-error', 'keeps holding through a renewal that fails with an error other than a loss: lost stays unaborted, the lease is renewed once the store answers again, and no one else takes it meanwhile (ADR-0054)', async (ctx) => {
+      const started = Date.now()
+      // The store fails from the first beat (at a third of the TTL) until before the lease expires.
+      const restore = flaky(ctx, () => Date.now() - started > 250 && Date.now() - started < 650)
+      try {
+        const outcome = await ctx.leases.hold(R, 1200, async (holding) => {
+          const first = holding.lease().expiresAt
+          await sleep(1500)
+          return { lost: holding.lost.aborted, renewed: holding.lease().expiresAt > first, other: ctx.leases.acquire(R, 1000, 'host-b:2:bbb') === undefined ? 'refused' : 'granted' }
+        })
+        expect(outcome).toEqual({ held: true, value: { lost: false, renewed: true, other: 'refused' } })
+      } finally {
+        restore()
+      }
+    }, '1.1'),
+    scenario('hold-lapsed-on-error', 'aborts lost with LeaseLost once the lease\'s own expiry passes with every renewal failing; a new holder then takes the resource, and the old holder\'s commit is refused (ADR-0054, INV-4)', async (ctx) => {
+      let failing = false
+      const restore = flaky(ctx, () => failing)
+      try {
+        const outcome = await ctx.leases.hold(R, 1200, async (holding) => {
+          // Held: from now on, every renewal fails.
+          failing = true
+          const old = holding.lease()
+          await sleep(900)
+          const early = holding.lost.aborted
+          await sleep(700)
+          const reason = holding.lost.reason as unknown
+          failing = false
+          const next = valid(ctx.leases.acquire(R, 1000, 'host-b:2:bbb'))
+          return { early, lost: holding.lost.aborted, reason: reason instanceof Error ? reason.name : String(reason), higher: next.generation > old.generation, commit: commit(ctx, old, Date.now(), 'old') }
+        })
+        expect(outcome).toEqual({ held: true, value: { early: false, lost: true, reason: 'LeaseLost', higher: true, commit: 'StaleGeneration' } })
+        expect(commits(ctx)).toEqual([])
+      } finally {
+        restore()
+      }
+    }, '1.1'),
   ],
 })

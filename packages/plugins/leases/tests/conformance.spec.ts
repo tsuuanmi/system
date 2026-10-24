@@ -10,7 +10,7 @@ import Leases from '../src/index.ts'
 // The real provider over a real store passes the seam's suite (ADR-0037).
 runSuite(leasesSuite, {
   name: '@tsuuanmi/system-leases',
-  contract: '1.0',
+  contract: '1.1',
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-leases-conformance-'))
     const ctx = new Context()

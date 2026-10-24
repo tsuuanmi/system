@@ -48,7 +48,11 @@ export class StaleGeneration extends Error {
 export interface Holding {
   /** The lease as last renewed; present it to every fenced commit. */
   lease(): Lease
-  /** Aborted (with the {@link LeaseLost}) when a heartbeat finds the lease expired, taken over, or invalidated. */
+  /**
+   * Aborted (with a {@link LeaseLost}) on a positive loss only: a heartbeat finds the lease expired,
+   * taken over, or invalidated, or the lease's expiry passes with no renewal. A renewal that merely
+   * failed is not a loss (ADR-0054).
+   */
   readonly lost: AbortSignal
 }
 
@@ -108,6 +112,12 @@ export class Leases extends Service {
    * then release (a release that fails, as the store closes, leaves the lease to expire). While
    * another holder's lease is live, nothing runs and the caller learns when to look again: that
    * lease's expiry plus a second, at least a second. The body decides what a lost lease means.
+   *
+   * `lost` aborts only on a positive loss (ADR-0054): a renewal that finds the lease expired, taken
+   * over, or invalidated ({@link LeaseLost}), or the lease's own expiry passing with no renewal. A
+   * renewal that fails otherwise (the store busy or failing) is not a loss: it is tried again at the
+   * next beat, and at the latest at the lease's expiry, while the lease is still live. Fencing is
+   * unchanged, so a holder whose lease lapsed commits nothing whatever it was told.
    */
   async hold<T>(resource: string, ttlMs: number, body: (holding: Holding) => Promise<T>): Promise<Held<T>> {
     let lease = this.acquire(resource, ttlMs)
@@ -116,18 +126,34 @@ export class Leases extends Service {
       return { held: false, retryInMs: Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000) }
     }
     const lost = new AbortController()
-    const heartbeat = setInterval(() => {
+    const period = ttlMs / 3
+    let heartbeat: NodeJS.Timeout | undefined
+    const beat = (): void => {
+      if (lost.signal.aborted) return
       try {
         lease = this.renew(lease!, ttlMs)
       } catch (error) {
-        lost.abort(error)
+        if (error instanceof LeaseLost) {
+          lost.abort(error)
+          return
+        }
+        const why = (error instanceof Error ? error.message : String(error)).slice(0, 200)
+        if (Date.now() >= lease!.expiresAt) {
+          lost.abort(new LeaseLost(resource, `expired with no renewal (the last one failed: ${why})`))
+          return
+        }
+        this.ctx.logger.warn(`leases: renewing ${resource} failed (${why}); the lease stands until ${new Date(lease!.expiresAt).toISOString()}, and is renewed again before then`)
       }
-    }, ttlMs / 3)
+      // The next beat, and never later than the lease's own expiry, where an unrenewed lease is lost.
+      heartbeat = setTimeout(beat, Math.max(1, Math.min(period, lease!.expiresAt - Date.now())))
+      heartbeat.unref()
+    }
+    heartbeat = setTimeout(beat, period)
     heartbeat.unref()
     try {
       return { held: true, value: await body({ lease: () => lease!, lost: lost.signal }) }
     } finally {
-      clearInterval(heartbeat)
+      clearTimeout(heartbeat)
       try {
         this.release(lease)
       } catch {
