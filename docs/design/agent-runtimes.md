@@ -400,6 +400,10 @@ principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-ar
 - **Health** (`agent-accounts`) names every account that is not `ready`, with its status and why;
   `system account list` (MCP `account_agents`) lists each slot beside the website accounts, with
   the Workers that run on it.
+- **An event** for a slot newly quarantined, or quarantined for another reason:
+  `agent-workers.account.quarantined` names the provider, slot, account id, reason, and the
+  Workers that take no work, with the `enrollment` decision, never the principal or its hint; a
+  [notification](notifications.md) reads it. A failed append is logged; the change stands.
 
 ### Workers = account × role
 

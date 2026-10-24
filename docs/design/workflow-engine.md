@@ -466,6 +466,11 @@ the decision artifact that caused it.
 Attempts are bounded (default 3). The operator command `continue` reopens exactly
 one `FAILED` node.
 
+Every `workflow.node.failed` event names the failure's `kind` and `disposition`, and
+`workflow.run.failed` those of the run's error when it has one, so a reader of the event log tells
+a failure only the operator can resolve (`USER_ACTION`) from the others without reading the run
+([notifications](notifications.md)).
+
 **Failover** ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)). A
 node that failed with `quota_exhausted`, `challenge`, `reauth_required`, or `overloaded` before
 anything was sent (the execution reports `submitted: false`) is routed again with the failed

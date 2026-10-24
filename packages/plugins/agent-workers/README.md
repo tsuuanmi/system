@@ -150,6 +150,11 @@ The **`agents` Worker source**: agent runtimes as Workers
   - Each probe re-reads the runtime's `ready` accounts, and each run the
     account of its home: a different principal is quarantined `changed`, none
     signed out, recorded first; a re-read never lifts anything.
+  - A slot newly quarantined, or quarantined for another reason, appends
+    `agent-workers.account.quarantined` (provider, slot, account id, reason,
+    its Workers; the `enrollment` decision), never the principal or its hint,
+    for [notifications](../../../docs/design/notifications.md); a failed append
+    is logged only.
   - Hand-named Workers run in their runtime's own home, slot 1's: they take
     work while no slot holds it, or while its account is `ready` or
     `unverified` (no verified reader, as before enrollment); otherwise they are

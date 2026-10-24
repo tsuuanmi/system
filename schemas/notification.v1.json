@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:notification:v1",
+  "title": "Notification",
+  "description": "One out-of-band notice to the operator (the notify plugin, docs/design/notifications.md): what happened, which request, run, pool, or account it is about, and the exact commands to act, made from one recorded event only. The body of the webhook's POST, and the text of a desktop notification. It names ids, classes, kinds, and times; it never carries a secret, a prompt, an answer, a request's summary, or a command a request would run.",
+  "type": "object",
+  "required": ["schema", "id", "kind", "subject", "at", "event", "title", "text", "act"],
+  "properties": {
+    "schema": { "const": "notification@1.0" },
+    "id": {
+      "description": "`<kind>:<subject>:<event seq>`: the same event never makes two notices of one kind.",
+      "type": "string", "maxLength": 300
+    },
+    "kind": {
+      "description": "approval.opened: a request was queued; approval.expiring: an open request expires within the configured lead time (unanswered, it is denied); run.user-action: a step or run failed with disposition USER_ACTION; run.escalated: a step was escalated to a higher tier after its result was rejected; run.waiting: a step waits for an assigned account's limit to reset (ADR-0052 wait); pool.limited: a resource pool closed at its limit; worker.quarantined: an agent account was quarantined, so its Workers take no work (PROP-0012 E).",
+      "enum": ["approval.opened", "approval.expiring", "run.user-action", "run.escalated", "run.waiting", "pool.limited", "worker.quarantined"]
+    },
+    "subject": {
+      "description": "What the notice is about, and what deduplication counts by: the request id, the workflow run id, the pool id, or the agent account id (`<provider>:slot-<n>` for a slot with no account id yet).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "at": {
+      "description": "When the event was recorded; for approval.expiring, when the reminder was made.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+    },
+    "event": {
+      "description": "The event-log entry the notice was made from.",
+      "type": "object",
+      "required": ["seq", "type"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "type": { "type": "string", "maxLength": 100 }
+      },
+      "additionalProperties": false
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "text": { "description": "What happened and what is at stake, in one or two sentences.", "type": "string", "minLength": 1, "maxLength": 1000 },
+    "act": {
+      "description": "The exact commands the operator runs to act, most direct first.",
+      "type": "array", "minItems": 1, "maxItems": 4,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "link": {
+      "description": "The operator page (`/ui`) without its token: it opens where the page already holds one; `system ui` prints the link with the token.",
+      "type": "string", "format": "uri", "maxLength": 300
+    }
+  },
+  "additionalProperties": false
+}

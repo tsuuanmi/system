@@ -13,6 +13,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
@@ -120,6 +121,13 @@ const epochMs = (value: string, name: string): number => {
 }
 /** Money and minutes at a millionth: a sum of decimal amounts never refuses a reservation that fits exactly. */
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
+
+/** When a `limited` reading's limit ends (the later of `cooldownUntil` and `resetsAt`), in ms; undefined for any other reading. */
+const limitedUntil = (reading: LimitState): number | undefined => {
+  if (reading.state !== 'limited') return undefined
+  const ends = [reading.cooldownUntil, reading.resetsAt].filter((t): t is string => t !== undefined).map((t) => Date.parse(t)).filter(Number.isFinite)
+  return ends.length ? Math.max(...ends) : undefined
+}
 /** At most {@link MAX_REASONS} reasons, the last one saying how many more there were. */
 const bounded = (reasons: string[]): string[] => reasons.length <= MAX_REASONS ? reasons : [...reasons.slice(0, MAX_REASONS - 1), `and ${reasons.length - MAX_REASONS + 1} more`]
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -315,12 +323,23 @@ export class StoreResources extends Resources {
     for (const key of ['resetsAt', 'cooldownUntil'] as const) if (reading[key] !== undefined) epochMs(reading[key], key)
     return this.ctx.store.transaction((db) => {
       const ref = this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'limit-state@1.0', body: reading, classification: 'operator-shared', producer: PRODUCER }).id as ArtifactRef
-      const latest = db.prepare('SELECT account, observed_ms FROM resource_readings WHERE pool = ? AND window_id = ?').get(reading.pool, window.id) as { account: string; observed_ms: number } | undefined
+      const latest = db.prepare('SELECT account, observed_ms, reading FROM resource_readings WHERE pool = ? AND window_id = ?').get(reading.pool, window.id) as { account: string; observed_ms: number; reading: string } | undefined
       // An older reading never replaces a newer one; one of an account the pool no longer has never stands.
       if (!latest || latest.account !== reading.account || latest.observed_ms <= observed) {
         db.prepare(`INSERT INTO resource_readings (pool, window_id, account, observed_ms, reading, artifact) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT (pool, window_id) DO UPDATE SET account = excluded.account, observed_ms = excluded.observed_ms, reading = excluded.reading, artifact = excluded.artifact`)
           .run(reading.pool, window.id, reading.account, observed, JSON.stringify(reading), ref)
+        // The window closes the pool now, and did not before: one event, in the reading's transaction.
+        const until = limitedUntil(reading)
+        const before = latest && latest.account === reading.account ? limitedUntil(JSON.parse(latest.reading) as LimitState) : undefined
+        const now = Date.now()
+        if (until !== undefined && until > now && !(before !== undefined && before > now)) {
+          try {
+            this.ctx.get('eventLog')?.append({ type: 'resources.pool.limited', data: { pool: reading.pool, account: reading.account, window: window.id, until: new Date(until).toISOString(), source: reading.source, evidence: ref } })
+          } catch (error) {
+            this.ctx.logger.warn(`resources: the resources.pool.limited event of ${reading.pool} was not appended: ${(error as Error).message}`)
+          }
+        }
       }
       return ref
     })

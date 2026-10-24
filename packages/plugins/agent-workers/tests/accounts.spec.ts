@@ -183,6 +183,18 @@ describe('agent accounts: quarantine (ADR-0051, REQ-ACC-7, REQ-ACC-11)', () => {
     await expect(accounts(b).verify({ provider: KIND, slot: 1 }, { accept: true })).rejects.toMatchObject({ kind: 'invalid_input' })
   })
 
+  it('appends agent-workers.account.quarantined once per slot newly quarantined, with its Workers and decision, never the principal or its hint (docs/design/notifications.md, REQ-HOST-9)', async () => {
+    const b = await boot()
+    const alice = await enrolled(b, 'alice@example.test')
+    FakeAgentRuntime.signIn(b.home, 'bob@example.test')
+    const changed = await accounts(b).verify({ provider: KIND, slot: 1 })
+    // The same reading again: still quarantined for the same reason, no second event.
+    await accounts(b).verify({ provider: KIND, slot: 1 })
+    const events = b.ctx.eventLog.query({ type: 'agent-workers.account.quarantined' })
+    expect(events).toEqual([expect.objectContaining({ decision: changed.quarantine!.decision, data: { provider: KIND, slot: 1, accountId: alice.accountId, reason: 'changed', workers: ['agent:reviewer'] } })])
+    expect(JSON.stringify(events)).not.toMatch(/alice|bob|example\.test/)
+  })
+
   it('quarantines both slots of one principal (duplicate), each with its own decision', async () => {
     const b = await boot()
     await enrolled(b, 'alice@example.test')

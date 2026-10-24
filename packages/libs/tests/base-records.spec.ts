@@ -261,6 +261,28 @@ describe('usage-unknown@1.0', () => {
   })
 })
 
+describe('notification@1.0', () => {
+  const opened = example('notification.approval-opened')
+  const failed = example('notification.run-user-action')
+
+  it('names its kind, subject, event, and the commands to act, and nothing more (docs/design/notifications.md, REQ-HOST-9)', () => {
+    expect(valid('notification@1.0', failed)).toBe(true)
+    for (const key of ['id', 'kind', 'subject', 'at', 'event', 'title', 'text', 'act']) {
+      const { [key]: _, ...without } = opened
+      expect(valid('notification@1.0', without), key).toBe(false)
+    }
+    const { link: _, ...unlinked } = opened
+    expect(valid('notification@1.0', unlinked)).toBe(true)
+    expect(valid('notification@1.0', { ...opened, kind: 'approval.expired' })).toBe(false)
+    // No room for a prompt, an answer, or a summary beside the text.
+    expect(valid('notification@1.0', { ...opened, prompt: 'the plan' })).toBe(false)
+    expect(valid('notification@1.0', { ...opened, text: 'x'.repeat(1001) })).toBe(false)
+    expect(valid('notification@1.0', { ...opened, act: [] })).toBe(false)
+    expect(valid('notification@1.0', { ...opened, act: ['a', 'b', 'c', 'd', 'e'] })).toBe(false)
+    expect(valid('notification@1.0', { ...opened, subject: 'apr 1; rm' })).toBe(false)
+  })
+})
+
 describe('brief@1.0 and digest@1.0', () => {
   const brief = example('brief.task')
   const digest = example('digest.test-run')

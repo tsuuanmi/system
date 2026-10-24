@@ -184,7 +184,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"],"model":["public","operator-shared"],"model-local":["public","operator-shared"]}` | Classifications each Worker class may receive |
+| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"],"model":["public","operator-shared"],"model-local":["public","operator-shared"],"webhook":[]}` | Classifications each Worker class may receive |
 | `defaultClassification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification when the caller states none |
 | `scanSecrets` | boolean | `true` | Scan payloads for credentials (secretlint recommended rules) |
 | `denyPatterns` | object[] | `[]` | Operator patterns that must never leave the machine |
@@ -289,6 +289,25 @@
 | `retainDays` | number (1…) | `30` | Days a finished call and its prompt are kept |
 | `maxSessionTurns` | number (1…10000) | `100` | A session's turns, at most, unless an entry sets its own (ADR-0031; default: the session layer's turn budget) |
 | `maxHistoryChars` | number (1…2000000) | `320000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer's compaction point) |
+
+## `notify`
+
+[@tsuuanmi/system-notify](../../packages/plugins/notify/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined |
+| `expiryLeadMinutes` | number (1…1440) | `60` | How long before an open approval request expires (and is denied) it is notified again, in minutes |
+| `dedupMinutes` | number (1…1440) | `10` | At most one notice per subject and kind in this many minutes |
+| `maxQueue` | number (1…1000) | `50` | Notices waiting to be sent, at most; one more is dropped, logged, and shown in health |
+| `pollSeconds` | number (1…3600) | `15` | How often the event log and the reminders are read, in seconds, beside each new event |
+| `timeoutSeconds` | number (1…60) | `10` | The longest one delivery to one sink may take, in seconds; it is not retried |
+| `maxAgeMinutes` | number (1…10080) | `60` | An event older than this when read makes no notice (a host or row that was off), in minutes; an open request's expiry reminder is kept |
+| `link` | string | `"http://127.0.0.1:47317/ui/"` | The operator page each notice links to, without its token (an http or https URL) |
+| `desktop` | boolean | `true` | Desktop notifications through notify-send; without it on PATH, a no-op that health shows |
+| `webhook` | object | `{}` | The webhook sink, off by default |
+| `webhook.enabled` | boolean | `false` | POST each notice as notification@1.0 JSON; needs egress declared for the webhook class in the egress row |
+| `webhook.credential` | string | `"SYSTEM_NOTIFY_WEBHOOK_URL"` | The credential reference the webhook URL is stored under (system notify webhook); the URL is never configuration |
 
 ## `plugin-host`
 

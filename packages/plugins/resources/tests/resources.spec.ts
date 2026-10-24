@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type LimitState, type PoolConfig, type PoolTemplate, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
@@ -88,6 +89,31 @@ const ready = async (ctx: Context) => {
 }
 const caps = (amount: number) => [{ pool: 'a.programmatic', unit: 'usd' as const, amount }]
 const line = (amount: number) => [{ pool: 'a.programmatic', unit: 'usd' as const, amount }]
+
+describe('events', () => {
+  it('appends resources.pool.limited once when a reading closes a pool, not again while it stays closed (docs/design/notifications.md, REQ-HOST-9)', async () => {
+    const dir = tempDir()
+    const ctx = new Context()
+    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(StoreResources, { pools: POOLS })]
+    await Promise.all(fibers)
+    cleanups.push(async () => {
+      for (const fiber of [...fibers].reverse()) await fiber.dispose()
+    })
+    const now = Date.now()
+    const iso = (ms: number) => new Date(ms).toISOString()
+    await ctx.resources.observe(reading('a.interactive', 'five-hour', { observedAt: iso(now - 60_000) }))
+    const first = await ctx.resources.observe(reading('a.interactive', 'five-hour', { state: 'limited', source: 'limit-notice', resetsAt: iso(now + 3_600_000), observedAt: iso(now - 30_000) }))
+    // Still closed, later end: no second event. A limit already past when read opens nothing to tell.
+    await ctx.resources.observe(reading('a.interactive', 'five-hour', { state: 'limited', source: 'limit-notice', resetsAt: iso(now + 7_200_000), observedAt: iso(now - 20_000) }))
+    await ctx.resources.observe(reading('a.interactive', 'seven-day', { state: 'limited', source: 'limit-notice', resetsAt: iso(now - 1000), observedAt: iso(now - 10_000) }))
+    const events = ctx.eventLog.query({ type: 'resources.pool.limited' })
+    expect(events.map((e) => e.data)).toEqual([{ pool: 'a.interactive', account: 'a', window: 'five-hour', until: iso(now + 3_600_000), source: 'limit-notice', evidence: first }])
+    // Open again, then closed: a new event.
+    await ctx.resources.observe(reading('a.interactive', 'five-hour', { observedAt: iso(now - 5000) }))
+    await ctx.resources.observe(reading('a.interactive', 'five-hour', { state: 'limited', source: 'limit-notice', cooldownUntil: iso(now + 600_000), observedAt: iso(now - 1000) }))
+    expect(ctx.eventLog.query({ type: 'resources.pool.limited' })).toHaveLength(2)
+  })
+})
 
 describe('restart', () => {
   it('a restarted provider over the same store has the same pools, readings, holds, and totals (INV-4)', async () => {

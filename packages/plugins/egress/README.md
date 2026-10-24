@@ -9,8 +9,9 @@
   - the classification is permitted for the Worker class (`workerClasses`,
     default `website`, `agent`, `model`, and `model-local`:
     `[public, operator-shared]`; an operator widens `model-local` for
-    `local-private` once its route's address is loopback). An unknown class is
-    denied.
+    `local-private` once its route's address is loopback; and `webhook`, the
+    [notify](../notify/README.md) plugin's webhook, `[]`: nothing leaves for it
+    until the operator lists `operator-shared`). An unknown class is denied.
   - no credential is found: secretlint's recommended rules (private keys, cloud
     and SaaS tokens, and others; in process, with secrets masked), a built-in
     `aws-access-key-id` pattern for the AWS keys those rules miss (a secret
@@ -25,7 +26,8 @@
 - **Callers:** `turns` (`website`, before a provider turn), `agent-workers`
   (`agent`, before an agent run), and `models` (`model` for an API model,
   `model-local` for a model on this machine, before a call), each on its actual
-  payload after routing.
+  payload after routing; `notify` (`webhook`, before each notice it posts, on
+  the exact body).
   `agent` is an agent runtime Worker: it runs here, but its model is remote. An
   operator whose agent model runs on this machine widens
   `workerClasses.agent` to admit `local-private`.

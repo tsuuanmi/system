@@ -1110,7 +1110,7 @@ export class TaskRuns {
     this.e.ctx.store.transaction((db) => {
       this.e.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this.e), decision]) }, (r) => ({ ...r, lastDecision: decision }), lease)
       db.prepare('UPDATE workflow_tasks SET question = ?, updated_at = ? WHERE run_id = ? AND question IS NULL').run(JSON.stringify(asked), now(), run.run_id)
-      this.e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { executionId: execution.id, source: node.source, worker: node.worker, kind: error.kind } })
+      this.e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { executionId: execution.id, source: node.source, worker: node.worker, kind: error.kind, disposition: error.disposition } })
       this.e.ctx.eventLog.append({ type: 'workflow.task.question', runId: run.run_id, nodeId: node.node_id, decision, data: { taskId: row.task_id, questions: questions.length } })
     })
     return true

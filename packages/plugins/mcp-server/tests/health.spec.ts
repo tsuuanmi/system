@@ -245,4 +245,27 @@ describe('host health (REQ-HOST-6)', () => {
     expect((await healthReport(base({ workers: async () => [{ worker: 'w1', state: 'reauth-required' }, { worker: 'w2', state: 'quota-exhausted' }] }))).state).toBe('down')
     expect((await healthReport(base({ nodeVersion: '22.23.3' }))).state).toBe('down')
   })
+
+  it('shows notifications only once the notifier recorded something, degraded while a sink\'s latest outcome failed or a notice was dropped (REQ-HOST-6, REQ-HOST-9)', async () => {
+    const at = '2026-10-24T08:00:00.000Z'
+    const of = (...data: Array<Record<string, unknown>>) => paged(data.map((d) => ({ at, data: d })))
+    expect(await check({ deliveries: of() }, 'notifications')).toBeUndefined()
+    expect(await check({ deliveries: of({ outcome: 'sent', sink: 'desktop' }, { outcome: 'sent', sink: 'webhook' }) }, 'notifications')).toEqual({ name: 'notifications', state: 'ok', detail: '2 notice(s) sent recently' })
+    // A failure the next delivery to the same sink outlived is over.
+    expect(await check({ deliveries: of({ outcome: 'failed', sink: 'desktop', reason: 'x' }, { outcome: 'sent', sink: 'desktop' }) }, 'notifications')).toMatchObject({ state: 'ok' })
+    const failing = await check({
+      deliveries: of(
+        { outcome: 'unavailable', sink: 'desktop', reason: 'notify-send is not on PATH' },
+        { outcome: 'sent', sink: 'webhook' },
+        { outcome: 'failed', sink: 'webhook', reason: 'egress refused (decision sha256:ab): operator-shared content may not leave for webhook Workers' },
+        { outcome: 'failed', sink: 'desktop', reason: 'notify-send is not on PATH' },
+        { outcome: 'dropped', kind: 'run.user-action', subject: 'run-1', reason: 'queue full' },
+      ),
+    }, 'notifications')
+    expect(failing).toEqual({
+      name: 'notifications', state: 'degraded',
+      detail: 'desktop: notify-send is not on PATH (2 failed recently); webhook: egress refused (decision sha256:ab): operator-shared content may not leave for webhook Workers (1 failed recently); 1 notice(s) dropped: the queue was full (maxQueue). Notices may not reach you: see system events --type notify.delivery (docs/operations/runbooks.md#get-notified)',
+    })
+    expect((await healthReport(base({ deliveries: of({ outcome: 'dropped' }) }))).state).toBe('degraded')
+  })
 })

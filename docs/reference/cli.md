@@ -48,6 +48,12 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 |---|---|
 | `system model key <NAME>` | store a model route's API key from stdin, encrypted, under the credential reference its `apiKeyEnv` names ([runbook](../operations/runbooks.md#api-and-local-models)) |
 
+## Notifications
+
+| Command | What it does |
+|---|---|
+| `system notify webhook` | store the notification webhook's URL from stdin (never an argument), encrypted, under the credential reference the `notify` row names (`webhook.credential`, default `SYSTEM_NOTIFY_WEBHOOK_URL`); https, or http to this machine. Nothing is printed back. Refused while the `notify` row is off ([get notified](../operations/runbooks.md#get-notified)) |
+
 ## Accounts
 
 | Command | What it does |
@@ -81,7 +87,7 @@ planned; website accounts are configuration ([`accounts`](configuration.md#accou
 | `system resume` | admit new runs again after a drain |
 | `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start); with no workflow engine running, stop it directly once `/proc` proves it is this home's host |
 | `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem. A plugin the install ships that cannot be resolved or loaded is a problem; only a row whose package the install does not ship (DSH's own, a third party's) is passed over |
-| `system health [--json]` | each health check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, UI drift, usage the resource ledger could not count) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
+| `system health [--json]` | each health check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, UI drift, usage the resource ledger could not count, notifications that failed) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
 | `system roster [--json]` | every Worker, from MCP `roster` ([roster](../design/roster.md)): its availability (ready, busy N of M, resting at a limit until its reset, unavailable with why, quarantined), its account (id, label, and its enrolled or quarantined state), role, tier, quota class, family, load, the steps and board tasks it serves now, and its account's pools with each window's used share and reset and the runs whose usage the ledger could not count; a fact it could not read shows `unknown (why)`. `--json` prints the record (`mcp-roster@1.0`). Exit 1 when the profile does not answer or refuses |
 | `system plugins [--json]` | every plugin of the composition: its recorded lifecycle state (`default`, `candidate`, `retired`), whether a row runs it, its version and class, its rows, why its manifest is absent or refused, and each finding of the manifest check with the decision that recorded it ([plugin host](../design/plugin-host.md#the-manifest-check)) |
 | `system ui` | print the web UI link, with the operator token in its fragment ([web UI API](web-ui.md)). The page: the approval queue (approve or deny one request or a whole batch; a `policy-change` request shows its diff), the reviews of board tasks (accept or reject the result shown), and the runs, their steps, and decision chains (approve or reject a plan, vote on a tie, stop, continue); the Board page's projects (pause, resume, or close one, each after a confirmation); the Roster page (every Worker, as `system roster` shows it); and the Autonomy policy page (the set in force, the effective modes, and a proposed change, which applies only once approved in the queue) |

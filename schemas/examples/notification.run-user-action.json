@@ -1,0 +1,12 @@
+{
+  "schema": "notification@1.0",
+  "id": "run.user-action:run_8d41c0:5120",
+  "kind": "run.user-action",
+  "subject": "run_8d41c0",
+  "at": "2026-10-24T10:40:55.000Z",
+  "event": { "seq": 5120, "type": "workflow.node.failed" },
+  "title": "Run run_8d41c0 needs you",
+  "text": "Step develop:1 failed as reauth_required (USER_ACTION): nothing more runs on its own until you act.",
+  "act": ["system explain run_8d41c0", "system continue run_8d41c0 develop:1", "system ui"],
+  "link": "http://127.0.0.1:47317/ui/"
+}

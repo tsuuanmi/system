@@ -27,7 +27,7 @@ const shipped = (dir: string, edit: (m: Record<string, any>) => void): string =>
 
 describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   it('has one for every plugin and every seam definition, each valid as the host reads it, and all agreeing with the code', () => {
-    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(38)
+    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(39)
     expect(derived.filter((d) => d.manifest.defines).map((d) => d.dir).sort()).toEqual([
       'agent-runtime-core', 'approvals-core', 'board-core', 'digest-core', 'evaluations-core', 'experiments-core', 'gateway-core', 'models-core', 'plugin-host-core', 'provider-core',
       'resources-core', 'workers-core',
@@ -53,7 +53,10 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }])
     expect(of('store').manifest.config?.map((c) => c.key)).toEqual(['path', 'busyTimeoutMs', 'synchronous'])
     expect(of('report').manifest.config).toBeUndefined()
-    expect(derived.filter((d) => d.manifest.config).length).toBe(34)
+    expect(derived.filter((d) => d.manifest.config).length).toBe(35)
+    // The notifier's webhook URL is a credential reference's value, never configuration.
+    expect(of('notify').manifest.config?.find((c) => c.key === 'webhook')).toEqual({ key: 'webhook', sensitive: false })
+    expect(of('notify').manifest).toMatchObject({ class: { kind: 'family', family: 'surface' }, provides: [] })
     // Secrets live in the credential vault; a plugin's configuration holds paths and references only.
     expect(derived.flatMap((d) => (d.manifest.config ?? []).filter((c) => c.sensitive).map((c) => `${d.dir}.${c.key}`))).toEqual([])
   })

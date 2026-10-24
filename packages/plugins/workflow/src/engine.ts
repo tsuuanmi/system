@@ -507,7 +507,7 @@ export class Engine {
       const decision = missingSubject(this, run, node, found.missing)
       const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: the agent's working tree ${found.missing} can no longer be captured` }
       this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error) }, (r) => ({ ...r, lastDecision: decision }), lease)
-      this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { kind: error.kind } })
+      this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { kind: error.kind, disposition: error.disposition } })
       return
     }
     const bound = found
@@ -848,11 +848,11 @@ export class Engine {
       if (refused) {
         const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused.message }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: refused.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind } })
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted && node.subject && !(gate = subjectGate(this, run, node, result)).passed) {
         const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind } })
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted) {
         if (gate?.passed) {
           decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
@@ -866,7 +866,7 @@ export class Engine {
         // The acceptance's own reasons first, then why it did not run again higher.
         const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${rejected.join('; ')}; not escalated: ${escalation.why}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       }
     })
   }
@@ -880,7 +880,9 @@ export class Engine {
         const left = this.ctx.workerSessions.inbox(member.sessionId)
         if (left.length) this.ctx.workerSessions.ack(member.sessionId, left.at(-1)!.seq)
       }
-      this.ctx.eventLog.append({ type: `workflow.run.${status}`, runId: run.run_id, data: { template: run.template } })
+      // A failure says its kind and disposition, so a reader can tell one only the operator can resolve (USER_ACTION).
+      const failure = status === 'failed' ? failureOf(fields.error) : undefined
+      this.ctx.eventLog.append({ type: `workflow.run.${status}`, runId: run.run_id, data: { template: run.template, ...failure } })
     })
     this.ctx.store.afterCommit(() => {
       for (const wake of this.waiters.get(run.run_id) ?? []) wake()
@@ -924,6 +926,17 @@ export class Engine {
       ...row,
       dependsOnCompleted: (all: NodeRow[]) => (JSON.parse(row.spec) as ResolvedNode).dependsOn.every((id) => all.find((n) => n.node_id === id)?.state === 'COMPLETED'),
     }))
+  }
+}
+
+/** A failed run's stored error as its `kind` and `disposition`, for its event; nothing when it holds none that reads as one. */
+function failureOf(error: string | null | undefined): { kind: string; disposition: string } | undefined {
+  if (!error) return undefined
+  try {
+    const parsed = JSON.parse(error) as Partial<WorkflowError> | null
+    return typeof parsed?.kind === 'string' && typeof parsed.disposition === 'string' ? { kind: parsed.kind, disposition: parsed.disposition } : undefined
+  } catch {
+    return undefined
   }
 }
 

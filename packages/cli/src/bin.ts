@@ -48,6 +48,8 @@ const USAGE = `Usage: system <command>
   evidence <id>             the page outline a ui.drift event names (structure, never text; local-private)
   model key <NAME>          store a model route's API key from stdin, encrypted, under the
                             credential reference its apiKeyEnv names
+  notify webhook            store the notification webhook's URL from stdin, encrypted, under the credential
+                            reference the notify row names (needs the notify row)
   account list              list provider accounts and their status, agent accounts beside them (profile must be running)
   account login <id>        open a remote login desktop (noVNC over ssh -L); Save stores the account
   account login <runtime> [--slot <n>]
@@ -85,7 +87,7 @@ const USAGE = `Usage: system <command>
          [--after <seq>] [--limit <n>] [--json]
                             the event log in order (operator); --after the printed next for more
   health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
-                            Workers, UI drift, uncounted usage) and what to do; exit 0 healthy, 1 degraded,
+                            Workers, UI drift, uncounted usage, notifications) and what to do; exit 0 healthy, 1 degraded,
                             2 down or not running
   roster [--json]           every Worker: its account (and its enrolled or quarantined state), role, tier, quota class,
                             availability (ready, busy N of M, resting until its reset, unavailable with why, quarantined),
@@ -368,6 +370,18 @@ async function main(argv: string[]): Promise<number> {
       const value = (await readAllStdin()).trim()
       if (!value) throw new Error('no key on stdin')
       const outcome = await callTool('model_key', { name: rest[1], value })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(outcome.text)
+      return 0
+    }
+    case 'notify': {
+      if (rest[0] !== 'webhook' || rest.length !== 1) break
+      // A webhook URL carries its token: from stdin only, as a key is (system notify webhook < file).
+      requireRow('notify')
+      if (process.stdin.isTTY) throw new Error('pipe the URL on stdin (system notify webhook < file); a terminal would echo it')
+      const value = (await readAllStdin()).trim()
+      if (!value) throw new Error('no URL on stdin')
+      const outcome = await callTool('notify_webhook', { value })
       if (outcome.isError) throw new Error(outcome.text)
       console.log(outcome.text)
       return 0

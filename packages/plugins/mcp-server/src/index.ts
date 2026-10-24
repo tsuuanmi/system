@@ -235,6 +235,8 @@ export class McpEndpoint extends McpTools {
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(workers?.sources ? { workerSources: () => workers.sources!() } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
+      // The notifier's outcomes, recorded as events: the surface reads them, never the plugin (docs/design/notifications.md#health).
+      ...(eventLog ? { deliveries: ({ since, afterSeq, limit }: { since: string; afterSeq: number; limit: number }) => eventLog.query({ type: 'notify.delivery', since, afterSeq, limit }) } : {}),
       minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,
       driftWindowMs: (this.config.driftWindowHours ?? 24) * 60 * 60_000,
     })

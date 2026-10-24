@@ -44,7 +44,7 @@ from the code in [packages](packages.md); this table names the roles.
 |---|---|---|---|---|---|
 | Kernel | `store` | core: ledger of record | built | `system-store` (`node:sqlite`, WAL) | every stateful plugin |
 | Kernel | `artifacts` | core: ledger of record | built | `system-artifacts`: envelope, ids, lineage, schema validation, decisions | every producer of results or decisions |
-| Kernel | `eventLog` | core: ledger of record | built | `system-event-log` (named so because Cordis owns `ctx.events`) | append: workflow, turns, provider-chatgpt-web; listen: profile-scientific-research; query: workflow (the request a Worker's deferred call waits on), report (attempts, remediation, batches, and digests in a period) |
+| Kernel | `eventLog` | core: ledger of record | built | `system-event-log` (named so because Cordis owns `ctx.events`) | append: workflow, turns, provider-chatgpt-web, approvals, resources, agent-workers, notify (its delivery outcomes); listen: profile-scientific-research, notify (a wake-up only); query: workflow (the request a Worker's deferred call waits on), report (attempts, remediation, batches, and digests in a period), notify (after its own cursor), mcp-server (health) |
 | Kernel | `leases` | core: work state machine | built | `system-leases` (generations, fencing). Contract 1.1: `hold` aborts `lost` only on a positive loss, never on a renewal that merely failed ([ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)) | workflow, turns, agent-workers |
 | Kernel | `credentials` | core: ledger of record (secrets) | built | definition: **DSH** `dsh-credentials`; provider: `system-credentials-vault` (encrypted at rest) | accounts, `llm-pi-ai` (route keys by reference), models (`model_key`) |
 | Provider runtime | `display` | plugin: Worker | built | `Display` in `system-provider-core`; `system-display-virtual` (Xvfb) | browser |
@@ -79,7 +79,7 @@ from the code in [packages](packages.md); this table names the roles.
 | — | `profiles` | — | not planned | profile plugins contribute templates through `ctx.workflow.template` | — |
 | — | `clientProtocols` (turn broker) | — | not planned | gateways are plain plugins that share the `gateway-turns` library ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)) | — |
 
-Gateways (`gateway-anthropic`, `gateway-responses`, `web-ui`, `report`, the CLI) only consume services,
+Gateways (`gateway-anthropic`, `gateway-responses`, `web-ui`, `report`, `notify`, the CLI) only consume services,
 so they are plain plugins with no seam of their own. The two client-protocol gateways share
 the library `gateway-turns`: the text tool protocol and threads bound to provider
 conversations ([gateways](../design/gateways.md)). Every client endpoint, MCP included, shares
@@ -112,7 +112,7 @@ The `Class` column of the [seam catalog](#seam-catalog) gives each seam's class.
 | context | attached to a Worker at launch; reduces tokens entering context without changing results | `context` (planned) |
 | workflow | template: job graph, team kind, milestones, default criteria | profiles through `workflow.template`: `profile-software-development`, `profile-scientific-research` |
 | knowledge | indexing and retrieval over the ledger of record | `knowledge` (planned) |
-| surface | reads from the core and presents it to the operator and the lead | `mcp`, `webServer`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `report`, the CLI |
+| surface | reads from the core and presents it to the operator and the lead | `mcp`, `webServer`, `gateway-anthropic`, `gateway-responses`, `web-ui`, `report`, `notify` (out-of-band notices from the event log, its row off; [notifications](../design/notifications.md)), the CLI |
 
 Rules for the two classes:
 

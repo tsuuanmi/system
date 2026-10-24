@@ -1378,6 +1378,80 @@ the placeholders (`system explain <runId>`; [briefs](../design/workflow-engine.m
   retention does not hide recent drift.
 - **Backups** are yours to rotate.
 
+## Get notified
+
+An unanswered approval request expires denied, and a run that waits for you waits until you look.
+The `notify` row tells you out of band, from what the event log recorded
+([notifications](../design/notifications.md)): a request opened, a request still open an hour
+before it expires, a run that failed for you (`USER_ACTION`) or was escalated, a step waiting for an
+account's limit, a pool closed at its limit, an agent account quarantined. Each notice says what,
+which request, run, pool, or account, and the command to act (`system ui`, `system explain
+<runId>`, `system continue <runId> <nodeId>`, `system account verify …`). It never carries a
+secret, a prompt, an answer, or a request's summary. The row is off by default.
+
+**On the desktop.** The host runs `notify-send` (libnotify; on Debian or Ubuntu, `sudo apt
+install libnotify-bin`) in the session it runs in, which needs a notification daemon on the
+session bus: a desktop session, or a systemd user service of that session (its
+`DBUS_SESSION_BUS_ADDRESS` is passed on). Turn the row on in your profile patch and restart:
+
+```yaml
+- id: notify
+  disabled: false
+```
+
+**Through a webhook** (a phone push service, a chat webhook): its URL leaves the machine with every
+notice, so it is opt-in twice. Turn the webhook on in the row, and declare the egress for it in the
+`egress` row (a patch that targets a row replaces its whole config, so list every class, the
+defaults included); `desktop: false` on a host with no desktop session:
+
+```yaml
+- id: notify
+  disabled: false
+  config:
+    desktop: false
+    webhook: { enabled: true }
+- id: egress
+  config:
+    workerClasses:
+      website: [public, operator-shared]
+      agent: [public, operator-shared]
+      model: [public, operator-shared]
+      model-local: [public, operator-shared]
+      webhook: [operator-shared]
+```
+
+Restart, then store the URL in the vault, from a file or a pipe, never as an argument: `system
+notify webhook < webhook-url.txt` (MCP `notify_webhook`). It must be https, or http to this
+machine, with any token in its path or query, not as a user or password. It is read at each
+delivery, so storing a new one needs no restart; it is never logged or recorded. Each notice is
+`POST`ed as a [`notification@1.0`](../reference/schemas.md#notification) JSON body, after the egress
+gate checks that exact body (an `egress` decision each time).
+
+**Tune it** in the row's config ([configuration](../reference/configuration.md#notify)): `kinds`
+(drop `run.escalated` if escalations are noise to you), `expiryLeadMinutes` (60), `dedupMinutes`
+(at most one notice per request, run, pool, or account and kind in 10 minutes), `maxQueue` (50),
+and `link` (the `/ui` page each notice links to, without its token: the default is the loopback
+page; behind `ssh -L`, the address you open it at). An event older than `maxAgeMinutes` (60) when
+read makes no notice, so turning the row on after a long time off does not replay old events.
+
+**When a notice did not come.** `system health` shows `notifications` degraded, naming the sink
+and why; `system events --type notify.delivery` lists every outcome. Nothing is retried, so fix
+the cause and the next notice goes:
+
+| Why | Do |
+|---|---|
+| `notify-send is not on PATH` (desktop `unavailable`) | install libnotify, or set `desktop: false` |
+| `notify-send failed: …` | the session has no notification daemon or bus: run the host in your desktop session, or use the webhook |
+| `egress refused (decision …)` | declare `webhook: [operator-shared]` in the egress row, as above; `system artifact <decision>` says why it refused (a credential-like value in the body is refused as well) |
+| `no egress gate (ctx.egress) is loaded` | turn the `egress` row on |
+| `no webhook URL is stored under …` | `system notify webhook < file` |
+| `the webhook answered HTTP <n>`, `the webhook request failed (<code>)`, `did not answer within …` | check the URL and the service; `timeoutSeconds` bounds each delivery (10 s) |
+| `notice(s) dropped: the queue was full` | many notices at once: narrow `kinds` or raise `maxQueue` |
+
+A failure stays in health for `driftWindowHours` (24 h) on the `mcp-server` row, or until the next
+delivery to that sink succeeds. To stop notifications, turn the row off again (`disabled: true`):
+nothing else changes, and the stored URL stays in the vault until you replace it.
+
 ## An approval request expired
 
 Every request in the approval queue expires: at its creation plus the shortest `expiresSeconds`
@@ -1430,7 +1504,8 @@ To ask again or plan again:
    call: a different input is a different call, with a request of its own.
 5. If requests keep expiring, answer sooner, or lengthen the wait: raise the class's
    `expiresSeconds` or `expiry.defaultSeconds` (up to `expiry.maxSeconds`)
-   ([policy](#change-the-autonomy-policy)).
+   ([policy](#change-the-autonomy-policy)). To be told when a request opens and again before it
+   expires, [get notified](#get-notified).
 
 ## A board task is blocked or waiting for input
 

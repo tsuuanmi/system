@@ -30,6 +30,11 @@ and the `system` plugins, and it does not use `dsh-base`
   removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test
   proves that it mounts again.
+- **Notifications, off:** the [`notify`](../plugins/notify/README.md) row tells the operator out of
+  band what needs them, from recorded events only (an approval request opened or about to expire,
+  a run failed for them, a limit wait, a quarantined agent account); the operator turns it on
+  ([runbook](../../docs/operations/runbooks.md#get-notified)). Its webhook also needs egress
+  declared for the `webhook` class in the `egress` row, whose default lets nothing leave for it.
 - **An alternative provider, off:** `digest-extractive` provides `ctx.digests`, as `digest` does,
   extractive-first ([digests](../../docs/design/digests.md#extractive-first)). The operator swaps it
   in by one patch that turns `digest` off and it on

@@ -183,7 +183,7 @@ export function refuseInstructions(e: Engine, run: RunRow, node: NodeRow, proble
       delete next.execution
       return next
     }, lease)
-    e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { kind: error.kind, placeholders: problem.placeholders } })
+    e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { kind: error.kind, disposition: error.disposition, placeholders: problem.placeholders } })
   })
 }
 

@@ -340,14 +340,20 @@ runs the work the router admitted to them. Callers never reach a source directly
   recorded data only (the board, the approval queue, the resource ledger, the event log), as the
   MCP tool `report` and `system report`; by default the weekly investor report. It writes and
   decides nothing ([reports](../design/reports.md)).
+- **Notifications** (`notify`, its row off): out-of-band notices to the operator, from recorded
+  events only, of what needs them (an approval request opened or about to expire, a run failed for
+  the operator or escalated, a step waiting for an account's limit, a pool closed, an agent account
+  quarantined), on the desktop or, opt-in, to a webhook behind the egress gate. It reads the event
+  log after its own cursor and decides nothing; its outcomes are events that health reads
+  ([notifications](../design/notifications.md)).
 - **Does not own:** orchestration state. Gateways translate protocols and enforce transport
   security only.
-- **Design:** [gateways](../design/gateways.md), [reports](../design/reports.md), [roster](../design/roster.md); wire details in
-  [reference](../reference/gateways.md).
+- **Design:** [gateways](../design/gateways.md), [reports](../design/reports.md), [roster](../design/roster.md),
+  [notifications](../design/notifications.md); wire details in [reference](../reference/gateways.md).
 - **Packages:** [mcp-server](../../packages/plugins/mcp-server/README.md),
   [gateway-core](../../packages/gateway-core/README.md),
   [gateway-turns](../../packages/gateway-turns/README.md),
   [gateway-anthropic](../../packages/plugins/gateway-anthropic/README.md),
   [gateway-responses](../../packages/plugins/gateway-responses/README.md),
   [web-ui](../../packages/plugins/web-ui/README.md), [report](../../packages/plugins/report/README.md),
-  [cli](../../packages/cli/README.md).
+  [notify](../../packages/plugins/notify/README.md), [cli](../../packages/cli/README.md).

@@ -265,11 +265,12 @@
   validated plugin configuration field.
 - **REQ-HOST-6** The host reports its health: each check (runtime, store, disk,
   vault key custody, accounts, Workers, provider UI drift, usage the resource
-  ledger could not count) as ok, degraded, or down with what to do, and the
-  worst of them. Health is degraded while a provider UI change was seen
-  recently, while a Worker source was silent or failed in its last read, naming
-  it, and while a resource pool has a run whose usage the ledger could not
-  count, and has not counted since, in its current window.
+  ledger could not count, notifications that failed) as ok, degraded, or down
+  with what to do, and the worst of them. Health is degraded while a provider UI
+  change was seen recently, while a Worker source was silent or failed in its
+  last read, naming it, while a resource pool has a run whose usage the ledger
+  could not count, and has not counted since, in its current window, and while
+  a notification sink's latest delivery recently failed or a notice was dropped.
 - **REQ-HOST-7** Every plugin package and seam definition ships a manifest
   (`plugin-manifest@1.x`) that agrees with its code: the seams it provides,
   consumes, and defines, at their contract versions, and its core component or
@@ -289,3 +290,15 @@
   runs whose usage could not be counted. A fact the host cannot read is shown as
   unknown with why, never as a default, and every read is bounded. The operator
   and the lead read it; only the operator sees account labels.
+- **REQ-HOST-9** When the operator turns notifications on, the host tells the
+  operator out of band, from recorded events only, of each approval request
+  opened and of each still open a configured lead time before it expires, of a
+  run that failed with disposition `USER_ACTION` or was escalated, of a step
+  waiting for an account's limit, of a pool closed at its limit, and of an agent
+  account quarantined, naming what happened, its subject, and the command to
+  act, and never a secret, prompt, or answer. It sends at most one notice per
+  subject and kind in a configured window, through a bounded queue, never
+  blocking or changing the producer of an event; it sends to a remote sink only
+  on an egress policy declared for it (INV-12), the sink's address kept as a
+  credential, and records every failure, which health shows; nothing is retried
+  forever.
