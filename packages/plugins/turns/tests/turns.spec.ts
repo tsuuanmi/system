@@ -12,7 +12,6 @@ import Leases from '@tsuuanmi/system-leases'
 import Login from '@tsuuanmi/system-login'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
-import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import WorkerRouter, { AdmissionFailure, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import * as GeminiWeb from '@tsuuanmi/system-provider-gemini-web'
@@ -22,7 +21,7 @@ import { contentId, type ProviderAccounts, SchemaRegistry } from '@tsuuanmi/syst
 import Store from '@tsuuanmi/system-store'
 import TurnReceipts from '@tsuuanmi/system-turn-receipts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { canRunBrowser, fileDisplay, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
 import { chromium } from 'patchright-core'
@@ -32,6 +31,9 @@ const cleanups: Array<() => unknown> = []
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
+
+/** The file's one Xvfb: every test's browser draws on it, as a profile's browsers share display-virtual's. */
+const TestDisplay = fileDisplay()
 
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
 const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
@@ -79,7 +81,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; pr
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
     ctx.plugin(Accounts, { accounts: options.accounts ?? [account('chatgpt-main')], ...(options.providers ? { providers: options.providers } : {}) }),
-    ctx.plugin(VirtualDisplay, {}),
+    ctx.plugin(TestDisplay),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
@@ -901,7 +903,7 @@ async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<str
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
     ctx.plugin(Accounts, { accounts: [{ id: 'gemini-main', provider: 'gemini-web', quotaClass: 'subscription-chat', tiers: { economy: 'flash-lite', standard: 'flash', frontier: 'pro' } }] }),
-    ctx.plugin(VirtualDisplay, {}),
+    ctx.plugin(TestDisplay),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(GeminiWeb, { origin: fake.origin, pageGapMs: 0 }),
@@ -942,7 +944,7 @@ async function bootBoundChatGpt(options: { fake?: FakeOptions; turns?: Record<st
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
     ctx.plugin(Accounts, { accounts: [{ id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } }] }),
-    ctx.plugin(VirtualDisplay, {}),
+    ctx.plugin(TestDisplay),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),

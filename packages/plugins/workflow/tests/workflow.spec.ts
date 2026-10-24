@@ -10,7 +10,6 @@ import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
-import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
@@ -25,7 +24,7 @@ import TurnReceipts from '@tsuuanmi/system-turn-receipts'
 import Turns from '@tsuuanmi/system-turns'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it } from 'vitest'
-import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { canRunBrowser, fileDisplay, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
 import { source } from '../../../workers-core/conformance/workers.ts'
@@ -39,6 +38,9 @@ const cleanups: Array<() => unknown> = []
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
+
+/** The file's one Xvfb: every test's browser draws on it, as a profile's browsers share display-virtual's. */
+const TestDisplay = fileDisplay()
 
 const REPORT = 'Plugins matter <a href="https://src.example/catalog">[1]</a>.'
 /** A team member's answers, as the engine's prompts ask for them (docs/design/teams.md). */
@@ -88,7 +90,7 @@ async function boot(options: { fake?: FakeOptions; gemini?: FakeGeminiOptions; d
         ? { id, provider: 'gemini-web', quotaClass: 'subscription-chat' as const, tiers: { economy: 'flash-lite', standard: 'flash', frontier: 'pro' } }
         : { id, provider: 'chatgpt-web', quotaClass: 'subscription-chat' as const, tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } })),
     }),
-    ctx.plugin(VirtualDisplay, {}),
+    ctx.plugin(TestDisplay),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),

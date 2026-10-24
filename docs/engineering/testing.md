@@ -104,6 +104,13 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
 headed Chrome, not a mocked engine: invisibility, foreground behavior, and the
 absence of automation leaks are properties of the real browser.
 
+- A file of tests that each compose the real stack shares one Xvfb:
+  `fileDisplay()` in
+  [`browser-patchright/tests/support.ts`](../../packages/plugins/browser-patchright/tests/support.ts)
+  starts it in `beforeAll` and stops it in `afterAll`, and each test mounts it where it would
+  mount `display-virtual`, as a profile's browsers share one display. Each test still launches
+  its own Chrome. The fake passes the display conformance suite, and `display-virtual` itself is
+  tested on its own real Xvfb.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
   product's own `discoverChrome` and launch it with the product's arguments.
   The order is `CHROME_PATH`, then a system Chrome no older than the engine,

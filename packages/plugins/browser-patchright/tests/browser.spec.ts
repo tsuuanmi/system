@@ -4,7 +4,7 @@ import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { Display, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import BrowserPool from '../src/index.ts'
-import { canRunBrowser as canRun, testChrome as chrome } from './support.ts'
+import { canRunBrowser as canRun, testChrome as chrome, fileDisplay } from './support.ts'
 
 /** These tests exercise the patchright provider itself, so they use its concrete page and context types. */
 const pool = (ctx: Context): BrowserPool => ctx.browser as unknown as BrowserPool
@@ -223,6 +223,14 @@ if (canRun) {
   displayConformance('KillableDisplay (the test fake)', async () => {
     const ctx = new Context()
     const fiber = ctx.plugin(KillableDisplay)
+    await fiber
+    return { ctx, dispose: () => fiber.dispose() }
+  })
+  // The test fake that gives a whole test file one Xvfb (support.ts).
+  const FileDisplay = fileDisplay()
+  displayConformance('the file display (the test fake)', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(FileDisplay)
     await fiber
     return { ctx, dispose: () => fiber.dispose() }
   })
