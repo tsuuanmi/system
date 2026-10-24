@@ -111,6 +111,21 @@ describe('each event kind is read into its notice (REQ-HOST-9)', () => {
     expect(read({ type: 'approvals.resolved', data: { requestId: 'apr_1', state: 'approved' } })).toEqual({ resolved: 'apr_1' })
   })
 
+  it('a board task\'s review held for the operator: a reminder before its hold expires, at once when it expires within the lead; forgotten when it ends (T99 D6)', () => {
+    const expiresAt = iso(NOW + 24 * 3600_000)
+    const held = read({ type: 'board.review.held', data: { taskId: 'task-9', projectId: 'p1', expiresAt, pendingChecks: ['tests', 'lint'] } })
+    expect(held).toEqual({ remind: { requestId: 'review:task-9', remindMs: Date.parse(expiresAt) - 3600_000, expiresMs: Date.parse(expiresAt), seq: 7, actionClass: 'review', projectId: 'p1', policyChange: false, review: { taskId: 'task-9' } } })
+    expect(read({ type: 'board.review.held', data: { taskId: 'task-9', expiresAt: iso(NOW + 600_000) } }).remind?.remindMs).toBe(NOW)
+    expect(read({ type: 'board.review.ended', data: { taskId: 'task-9', state: 'done' } })).toEqual({ resolved: 'review:task-9' })
+    expect(read({ type: 'board.review.held', data: { taskId: 'not an id', expiresAt } })).toEqual({})
+    const notice = notify.reminderNotice(held.remind!, Date.parse(expiresAt) - 45 * 60_000, { leadMs: 3600_000 })!
+    expect(notice).toMatchObject({ schema: 'notification@1.1', kind: 'review.expiring', subject: 'task-9', title: 'A review expires soon: board task task-9', act: ['system ui', 'MCP board_task {"taskId":"task-9"}'] })
+    expect(notice.text).toBe(`Board task task-9 of project p1 waits for your Accept or Reject, held for you until ${expiresAt}, in about 45 min. Unanswered by then, the review expires: the task waits for input (review-expired), which nothing revives.`)
+    schemas.assert('notification@1.1', notice)
+    // Its kind is refused under the earlier record.
+    expect(() => schemas.assert('notification@1.1', { ...notice, schema: 'notification@1.0' })).toThrow()
+  })
+
   it('an approval request close to its expiry: the reminder says when it is denied', () => {
     const expiresMs = NOW + 30 * 60_000
     const notice = notify.reminderNotice({ requestId: 'apr_1', remindMs: NOW, expiresMs, seq: 7, actionClass: 'deploy', policyChange: false }, NOW, { leadMs: 3600_000 })!
@@ -219,6 +234,43 @@ describe('the notifier', () => {
     notifier.pass(expires - 30 * 60_000)
     await notifier.idle()
     expect(sink.sent).toHaveLength(3)
+  })
+
+  it('reminds of a board task\'s review held for the operator before the hold expires, not of one decided first, and at once of one held for less than the lead (T99 D6)', async () => {
+    const { ctx } = await kernel()
+    const sink = new RecordingSink()
+    const notifier = new Notifier(ctx, { expiryLeadMinutes: 60 }, [sink])
+    const expires = NOW + 24 * 3600_000
+    append(ctx, { type: 'board.review.held', data: { taskId: 'task-1', projectId: 'p1', expiresAt: iso(expires), pendingChecks: ['tests', 'lint'] } })
+    append(ctx, { type: 'board.review.held', data: { taskId: 'task-2', projectId: 'p1', expiresAt: iso(expires), pendingChecks: [] } })
+    notifier.pass(NOW)
+    await notifier.idle()
+    // A hold makes no notice of its own: the operator's Reviews list on /ui shows it.
+    expect(sink.sent).toEqual([])
+    // The operator decides task-2 first: it is forgotten.
+    append(ctx, { type: 'board.review.ended', data: { taskId: 'task-2', projectId: 'p1', state: 'done' } })
+    notifier.pass(NOW + 60_000)
+    notifier.pass(expires - 59 * 60_000)
+    await notifier.idle()
+    expect(sink.sent.map((n) => `${n.kind} ${n.subject}`)).toEqual(['review.expiring task-1'])
+    expect(sink.sent[0]).toMatchObject({ schema: 'notification@1.1', title: 'A review expires soon: board task task-1', act: ['system ui', 'MCP board_task {"taskId":"task-1"}'] })
+    schemas.assert('notification@1.1', sink.sent[0])
+    notifier.pass(expires - 30 * 60_000)
+    await notifier.idle()
+    expect(sink.sent).toHaveLength(1)
+    // A hold shorter than the lead is told at once.
+    append(ctx, { type: 'board.review.held', data: { taskId: 'task-3', projectId: 'p1', expiresAt: iso(NOW + 20 * 60_000), pendingChecks: [] } })
+    notifier.pass(NOW + 120_000)
+    await notifier.idle()
+    expect(sink.sent.map((n) => `${n.kind} ${n.subject}`).slice(1)).toEqual(['review.expiring task-3'])
+    // Off when the operator's kinds leave it out.
+    const quiet = new RecordingSink()
+    const { ctx: other } = await kernel()
+    const filtered = new Notifier(other, { kinds: ['approval.expiring'] }, [quiet])
+    append(other, { type: 'board.review.held', data: { taskId: 'task-4', expiresAt: iso(NOW + 20 * 60_000) } })
+    filtered.pass(NOW + 60_000)
+    await filtered.idle()
+    expect(quiet.sent).toEqual([])
   })
 
   it('makes no notice of an event older than maxAgeMinutes, but keeps an open request\'s reminder', async () => {
@@ -448,6 +500,9 @@ describe('the plugin, end to end', () => {
     expect(configProblems({ link: 'file:///ui' })).toEqual(['link must be an http or https URL'])
     expect(configProblems({ webhook: { credential: 'https://x' } })).toEqual(['webhook.credential must be a credential reference (an UPPER_SNAKE name), not https://x'])
     expect(configProblems({ kinds: [] })).toEqual(['kinds is empty: turn the notify row off instead'])
-    expect(KINDS).toHaveLength(7)
+    // Every kind the notifier makes is one its record declares, in the same order (review.expiring since 1.1).
+    const record = JSON.parse(readFileSync(new URL('../../../../schemas/notification.v1.json', import.meta.url), 'utf8')) as { properties: { kind: { enum: string[] } } }
+    expect([...KINDS]).toEqual(record.properties.kind.enum)
+    expect(KINDS).toHaveLength(8)
   })
 })

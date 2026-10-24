@@ -9,7 +9,7 @@
  * template's placeholder unfilled (`instructionsProblem`, INV-2).
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { type Brief, type BriefBudgetLine, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
+import { type Brief, type BriefBudgetLine, type BriefCheck, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import type { ArtifactRef, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
@@ -29,7 +29,8 @@ export interface TaskFrame {
   taskId: string
   attempt: number
   goal: string
-  acceptance: Array<{ id: string; statement: string }>
+  /** The task's criteria, each with what checks it (`check`) when the task names it (brief@1.3). */
+  acceptance: Array<{ id: string; statement: string; check?: BriefCheck }>
   pointers: BriefPointer[]
   budget: BriefBudgetLine[]
   /** Files a source with a worktree of the run's own writes there: the board's `TASKS.md` projection (docs/design/workflow-engine.md#tasksmd-in-a-runs-workspace). */
@@ -69,7 +70,8 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
   const handle = spec.session.sessionId ? e.ctx.workers.handle(spec.session.sessionId) : undefined
   return {
     // A board task's brief offers the Worker a bounded way to ask instead of answering (@1.2 `ask`): its questions block the task.
-    schema: task ? 'brief@1.2' : 'brief@1.1',
+    // A criterion that names what checks it carries that (@1.3 `check`), so a step that measures the change knows its own.
+    schema: !task ? 'brief@1.1' : task.acceptance.some((a) => a.check !== undefined) ? 'brief@1.3' : 'brief@1.2',
     ...(task ? { projectId: task.projectId, taskId: task.taskId, attempt: task.attempt, ask: { maxQuestions: QUESTION_LIMITS.count } } : {}),
     ...(task?.files?.length ? { files: task.files } : {}),
     goal: clampText(task?.goal ?? spec.objective, BRIEF_LIMITS.goal),

@@ -157,8 +157,11 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
 ## A working day
 
 1. **The lead starts each ready task**: MCP `run` with `template: algorithm-development`, an
-   `input` with what this attempt should try, and `task: { taskId }`. The run claims the task,
-   and the board records it before anything runs. Then, in the run's own worktree:
+   `input` with what this attempt should try, and `task: { taskId }`. The input is the develop
+   step's alone: the review and the validation read the task's goal and criteria, never it
+   ([which inputs reach which step](../reference/workflow-templates.md#which-inputs-reach-which-step)).
+   The run claims the task, and the board records it before anything runs. Then, in the run's own
+   worktree:
    - the developer states a hypothesis and changes the code (`develop:1`);
    - the reviewer reviews that exact change (`review:1`); blocking findings put a fix to the queue,
      and the fix and a re-review run once you approve it

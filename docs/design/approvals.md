@@ -30,9 +30,9 @@
 > Differs from target: with no queue loaded, remediation falls back to the operator's plan gate
 > (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a
 > Worker's tool calls are judged under the studio policy only, since no trusted envelope names an
-> agent run's project yet; a deferred run fails as `config_error`, since the workers seam has no
-> waiting status, and only the workflow engine continues its session once approved (a board
-> task's next attempt is the board's)
+> agent run's project yet; a deferred agent run fails as `config_error`, since the workers seam
+> has no waiting status, and only the workflow engine waits on the request and continues the
+> session once approved (a board task's step waits in its live run, a plain run fails until then)
 > ([below](#where-a-workers-gate-leaves-room)).
 
 Every action that needs a person goes through one queue, in batches, and nothing else asks the
@@ -306,9 +306,10 @@ ids, never the call's input.
   ends the headless query with the call kept in the session's transcript. On Codex the call is
   blocked, its output in the thread naming the request, and the runtime stops Codex; in the later
   run the model makes the call again.
-- **Resume.** The same session continues in a later run (by its native handle): for a workflow
-  run that serves no board task, the engine starts it by itself once the request is approved,
-  once per approval ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). The hook
+- **Resume.** The same session continues in a later run (by its native handle): the workflow
+  engine starts it by itself once the request is approved, once per approval; a board task's step
+  waits on the request in its live run meanwhile, and a rejection or expiry ends that attempt for
+  the operator ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). The hook
   runs again on the deferred call. The gate finds the request opened for that exact call in
   that session, and checks it in full before using it: subject type `content`, ref
   `agent-tool-call:<the agent run that opened it>:<tool>`, version the input's content id, the
@@ -335,13 +336,15 @@ ids, never the call's input.
   a run that waits on the operator is `failed` (`config_error`, the request in its message). A
   waiting status would change that guarantee seam's contract.
 - **The later run.** Whoever owns the work starts the run that continues the session; the gate
-  does not. For a workflow run that serves no board task the engine does, once the request is
-  approved: it reopens the node that deferred as a new attempt on the same session, at most once
-  per approval, with a `recovery` decision
-  ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). A board task's run is the
-  board's: its next attempt resumes the session from a brief. The engine finds the request from
-  the gate's `agent-workers.tool.deferred` event and checks it through `ctx.approvals`, so
-  `WorkerStart` and the workers seam stay as they are.
+  does not. For a workflow run the engine does, once the request is approved: it reopens the node
+  that deferred as a new attempt on the same session, at most once per approval, with a
+  `recovery` decision ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). A board
+  task's step waits on the request in its live run, so the task's attempt is not spent on the
+  wait; a run outside the board fails until the verdict. When a board task's attempt ends without
+  a verdict, the engine withdraws the requests its Workers left open, so none is left on a session
+  no later attempt resumes. The engine finds the request from the gate's
+  `agent-workers.tool.deferred` event and checks it through `ctx.approvals`, so `WorkerStart` and
+  the workers seam stay as they are.
 - **Where pending checks bind.** The bundle's studio policy gives `workspace-write` `auto` with
   `tests` and `lint` required, so a Claude Code Worker reads and writes inside its workspace,
   those checks pending. They bind at the board's acceptance of the task's result. A run outside

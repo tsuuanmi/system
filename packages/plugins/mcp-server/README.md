@@ -56,6 +56,9 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     within the router's 5 s) or failed, with when, and is degraded while one is,
     down when no Worker answered or a source's failure failed the read
     ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)).
+    A silent source whose first describe has not landed (`describing`, right after a start)
+    is named as `describing…`, and the Workers heard are counted `so far`, as the roster
+    counts them from the same reads (T99 D8).
     A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
     check is reused for `storeCheckMinutes`.

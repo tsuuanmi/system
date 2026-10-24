@@ -172,7 +172,9 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`
   waits for them.
 - `validate:1` runs the tests and benchmarks the task's acceptance criteria name, changing no
-  file, and reports each command, its exit code, and the output lines that hold the result. Only a
+  file, and reports each command, its exit code, and the output lines that hold the result. It
+  reads the criteria, each with what checks it, from its brief, never the caller's input (below);
+  with no criteria (a run that serves no board task) it runs nothing and says none was named. Only a
   Worker whose commands are proven confined (`executes`) proves `validate`
   ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)); with none, the
   step fails admission and nothing is sent. Each command passes the tool gate by its exact argv: a
@@ -183,6 +185,28 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   brief points at it. The engine reports the `review` check on that subject, never `tests`: a
   model's account of a command is not a check, so under a policy that requires `tests` the board
   holds the result for the operator.
+
+#### Which inputs reach which step
+
+Each step reads only what it needs, so one step's orders never become another's (T99 D4). The
+caller's input (MCP `run` `input`, the lead's text for this attempt) is the writing step's: a lead
+puts there the change it wants and how, and needs no labels for the other steps. Every step of a
+board task's run also reads the task frame its brief states first
+([a board task's brief](../design/workflow-engine.md#a-board-tasks-brief)): the project, the task
+and attempt, the goal, the acceptance criteria with what checks each (`brief@1.3`), the budget left
+at that step, the pointers (the results of the tasks it depends on, the previous attempt's result
+and the decision behind this one), and the board's `TASKS.md` in the worktree.
+
+| Step | Reads | Never reads |
+|---|---|---|
+| `develop:1` (and its variants) | the task frame; the caller's input; on a later attempt, the session of the attempt before it when it is resumed | — |
+| `review:1` | the task frame; its own instructions; the exact subject the engine appends: the worktree's subject, its diff, and the caller's input as the requested change | the developer's answer or conversation |
+| `review:1:fix:<n>` (remediation) | the task frame; the engine's fix prompt: the caller's input, the reviewed subject, and the review's blocking findings, quoted | — |
+| `review:1:review:<n+1>` | as `review:1`, on the fixed subject | the fix's answer |
+| `validate:1` | the task frame; its own instructions; the run's worktree as the review left it | the caller's input, and any step's answer |
+
+A run of the template that serves no board task has no task frame: its validation names no
+criteria and runs nothing, so start it for a board task (MCP `run` with `task`).
 
 ## Removed templates
 

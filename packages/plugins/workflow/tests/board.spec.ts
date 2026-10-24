@@ -446,6 +446,43 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(decisionsOf(ctx, 'gate', 'workflow.task-subject')).toHaveLength(1)
   })
 
+  it('explains a task\'s run with the decisions no step holds, in the order they were made: how it took the task, the result\'s subject, its acceptance, the report (T99 D9, REQ-ART-3)', async () => {
+    const { ctx } = await boot()
+    await project(ctx)
+    // In the order they were made: decisions made within one millisecond keep no order between them.
+    const inOrder = (decisions: Array<{ id: string }>) => {
+      const at = decisions.map((d) => Date.parse(ctx.artifacts.get(d.id)!.createdAt))
+      expect(at).toEqual([...at].sort((a, b) => a - b))
+    }
+    // A run whose result binds to no subject its task writes: taken, refused at the subject, reported failed.
+    const writer = await ready(ctx, 'writer', { writes: { type: 'git-head', ref: 'abc123' } })
+    const failed = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: writer.taskId } })
+    await reported(ctx, failed.runId)
+    const told = ctx.workflow.explain(failed.runId)!
+    expect(told.decisions?.map((d) => [d.type, d.outcome]).sort()).toEqual([['admission', 'claim'], ['gate', 'fail'], ['reconciliation', 'report']])
+    inOrder(told.decisions!)
+    expect(told.decisions!.find((d) => d.type === 'gate')!.reasons[0]).toMatch(/no result of the run is on git-head abc123/)
+    // None of them is a step's: each step lists its own.
+    const stepDecisions = told.nodes.flatMap((n) => n.decisions.map((d) => d.id))
+    for (const d of told.decisions!) expect(stepDecisions).not.toContain(d.id)
+    // A run whose result is accepted: taken, then its acceptance, which the board applied.
+    const answer = await ready(ctx, 'answer')
+    const done = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: answer.taskId } })
+    expect((await reported(ctx, done.runId)).task?.outcome).toMatchObject({ status: 'accepted' })
+    // Its result reached the board, so its digest was decided too: bypassed, with no digest provider loaded.
+    await until(() => ctx.workflow.get(done.runId)?.task?.digest?.state === 'bypassed', 'the digest decision')
+    const accepted = ctx.workflow.explain(done.runId)!
+    expect(accepted.decisions?.map((d) => [d.type, d.outcome]).sort()).toEqual([['acceptance', 'accept'], ['admission', 'bypass'], ['admission', 'claim']])
+    inOrder(accepted.decisions!)
+    const acceptance = accepted.decisions!.find((d) => d.type === 'acceptance')!
+    expect(acceptance.id).toBe((await ctx.board.task(answer.taskId))!.result!.acceptance)
+    expect(acceptance.result).toBe(ctx.workflow.get(done.runId)!.result)
+    // A plain run has none.
+    const plain = ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public' })
+    await settled(ctx, plain.runId)
+    expect(ctx.workflow.explain(plain.runId)!.decisions).toBeUndefined()
+  })
+
   it('briefs a task from the board: the accepted results of the task it depends on by content id, its budget less the usage the ledger counts for it, its criteria first (PROP-0010)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)

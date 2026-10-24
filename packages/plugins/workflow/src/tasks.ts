@@ -28,6 +28,7 @@ import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
+import { withdrawCalls } from './continuations.ts'
 import { TaskDigests } from './digests.ts'
 import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
@@ -285,7 +286,7 @@ export class TaskRuns {
     const files = project ? await this.tasksFile(board, project, classification) : undefined
     return {
       projectId: task.projectId, taskId: task.taskId, attempt, goal: clampText(task.goal, BRIEF_LIMITS.goal),
-      acceptance: task.acceptance.map(({ id, statement }) => ({ id, statement })), pointers, budget: await this.budgetOf(task),
+      acceptance: task.acceptance.map(({ id, statement, check }) => ({ id, statement, ...(check ? { check } : {}) })), pointers, budget: await this.budgetOf(task),
       ...(files ? { files } : {}),
     }
   }
@@ -1298,6 +1299,8 @@ export class TaskRuns {
     const row = this.row(runId)
     const run = this.e.runRow(runId)
     if (!row || row.phase === 'reported' || !run || run.status === 'running') return
+    // The attempt has ended: what its Workers' gates and its gates left open in the queue is withdrawn first (./continuations.ts).
+    await withdrawCalls(this.e, runId)
     const board = this.e.board
     // Reported once the board is back (attach).
     if (!board) return

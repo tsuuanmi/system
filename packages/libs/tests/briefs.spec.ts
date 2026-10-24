@@ -26,6 +26,15 @@ describe('briefs', () => {
     expect(renderBrief(brief({ projectId: 'p1', taskId: 't1', attempt: 1 }), read)).not.toContain('"questions"')
   })
 
+  it('says what checks each criterion of a board task that names it, before the instructions (brief@1.3 check)', () => {
+    const checked = renderBrief(brief({
+      schema: 'brief@1.3', projectId: 'p1', taskId: 't1', attempt: 1,
+      acceptance: [{ id: 'a1', statement: 'pnpm test passes', check: 'tests' }, { id: 'a2', statement: 'the benchmark records a speed-up' }],
+    }), read)
+    expect(checked).toContain('Acceptance criteria:\n- a1: pnpm test passes (check: tests)\n- a2: the benchmark records a speed-up\n')
+    expect(checked.indexOf('Acceptance criteria:')).toBeLessThan(checked.indexOf('Compact this:'))
+  })
+
   it('names a brief\'s files only when its source writes them into the run\'s workspace (brief@1.2 files)', () => {
     const filed = brief({ schema: 'brief@1.2', projectId: 'p1', taskId: 't1', attempt: 1, files: [{ path: '.system/TASKS.md', ref: LOG, note: 'the board of p1' }] })
     expect(renderBrief(filed, read, { placesFiles: true })).toContain('Files in your workspace, written by system before this run (read-only; edits are never read back):\n- .system/TASKS.md: the board of p1')

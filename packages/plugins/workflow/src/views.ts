@@ -2,6 +2,7 @@
 import type { Decision } from '@tsuuanmi/system-artifacts'
 import { type ContentId, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknownOf } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
+import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
@@ -58,12 +59,16 @@ function usageOf(e: Engine, result: ArtifactRef): Pick<NodeView, 'usage'> {
 
 /**
  * What the run waits for: a plan's gate (the operator's `approve`, or, for a remediation fix put to
- * the approval queue, the verdict on its request there) or a team's tie (a deciding `vote`).
+ * the approval queue, the verdict on its request there), a team's tie (a deciding `vote`), or a
+ * board task's step whose Worker's tool call waits on the operator's verdict in the queue.
  */
 function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
   const node = e.nodeRows(runId).find((n) => n.state === 'BLOCKED')
   if (!node) return {}
   const spec = JSON.parse(node.spec) as ResolvedNode
+  if (waitsOnCall(node)) {
+    return { blocked: { kind: 'tool-call', nodeId: node.node_id, approvalRequest: node.approval_request!, until: node.not_before!, ...(node.execution_id ? { executionId: node.execution_id } : {}) } }
+  }
   return {
     blocked: spec.executor === 'decide' ? tieOf(e, node) : {
       kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef, ...(node.not_before ? { until: node.not_before } : {}),
@@ -102,12 +107,18 @@ function withUnknownUsage(e: Engine, run: RunView): RunView {
   return { ...run, nodes: run.nodes.map((n) => (n.executionId !== undefined && kinds.has(n.executionId) ? { ...n, usageUnknown: kinds.get(n.executionId)! } : n)) }
 }
 
-/** The decision chain of a run, per node: egress, tier, route (or admission), acceptance (REQ-ART-3). */
+/**
+ * The decision chain of a run (REQ-ART-3): the engine's decisions on the run as a whole (a board
+ * task's admission and session, its holder, the result's subject and acceptance, the report, the
+ * funding gate, the digest), then per node: egress, tier, route (or admission), acceptance.
+ */
 export function explain(e: Engine, runId: string): Explanation | undefined {
   const run = e.runRow(runId)
   if (!run) return undefined
+  const own = runDecisions(e, runId)
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
+    ...(own.length ? { decisions: own } : {}),
     nodes: e.nodeRows(runId).map((node) => {
       const record = JSON.parse(node.record) as NodeRecord
       const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
@@ -126,6 +137,23 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
       }
     }),
   }
+}
+
+/** The decision types the engine records for a run as a whole, under no step. */
+const RUN_DECISION_TYPES = ['admission', 'gate', 'acceptance', 'reconciliation', 'recovery'] as const
+
+/**
+ * The engine's own decisions on a run that no step holds, in the order they were made: those of a
+ * board task's run (`workflow.task-*`: admission, session, holder, subject, acceptance, report,
+ * funding, digest) and the abandonment of a run the board never recorded. A Worker's own decisions
+ * filed under the run (its tool gate's) are its source's, and are not among them. At most 1000 of
+ * each type are read (INV-9).
+ */
+function runDecisions(e: Engine, runId: string): ExplainedDecision[] {
+  const found = RUN_DECISION_TYPES.flatMap((type) => e.ctx.artifacts.list({ kind: 'decision', decisionType: type, runId, limit: 1000 }))
+    .filter((a) => a.nodeId === undefined && (a.body as Decision | undefined)?.decider.id.startsWith('workflow.'))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  return found.map((a) => decision(e, a.id as ArtifactRef)).filter((d): d is ExplainedDecision => !!d)
 }
 
 function decision(e: Engine, id: ArtifactRef): ExplainedDecision | undefined {

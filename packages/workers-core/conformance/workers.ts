@@ -586,17 +586,41 @@ export function workersConformance(name: string, boot: Boot): void {
         const admitted = await ctx.workers.route(requirement())
         expect(admitted.worker.worker).toBe('w:a')
         expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'source stuck')).toEqual({ option: 'source stuck', selected: false, reasons: ['did not describe its Workers within 5 s'] })
-        // A provider that keeps each source's last read names the silent one, so health can.
+        // A provider that keeps each source's last read names the silent one, so health can; one that
+        // tells a source still describing for the first time says so of this one, which never answered.
         if (ctx.workers.sources) {
-          expect(ctx.workers.sources()).toEqual([
+          const reads = ctx.workers.sources()
+          expect(reads).toEqual([
             { source: 'live', state: 'described', at: expect.any(String), workers: 1 },
-            { source: 'stuck', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s' },
+            { source: 'stuck', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s', ...(reads[1]?.describing !== undefined ? { describing: true } : {}) },
           ])
         }
       } finally {
         await dispose()
       }
     }, 20_000)
+
+    it('says a silent source is still describing until one of its describes lands, even past the bound: its Workers are not known yet, never none (T99 D8)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        let land!: (workers: CapabilityDescriptor[]) => void
+        let calls = 0
+        ctx.workers.register(source('slow', () => (++calls === 1 ? new Promise<CapabilityDescriptor[]>((resolve) => { land = resolve }) : new Promise<never>(() => undefined))))
+        ctx.workers.register(source('live', [worker('w:a')]))
+        expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:a'])
+        const first = ctx.workers.sources?.().find((s) => s.source === 'slow')
+        // A provider that does not tell a first read apart leaves nothing more to check.
+        if (first?.describing === undefined) return
+        expect(first).toEqual({ source: 'slow', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s', describing: true })
+        // Its first describe lands past the bound; its next read, silent again, is no longer its first.
+        land([worker('w:s')])
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:a'])
+        expect(ctx.workers.sources!().find((s) => s.source === 'slow')).toEqual({ source: 'slow', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s' })
+      } finally {
+        await dispose()
+      }
+    }, 30_000)
 
     it('keeps a source whose describe fails as failed in its last read, with why, until a later read hears it', async () => {
       const { ctx, dispose } = await boot()

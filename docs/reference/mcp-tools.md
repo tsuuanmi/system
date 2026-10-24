@@ -385,6 +385,7 @@ Scope: `client`
 | `template` | string |  |  |
 | `writes` | object |  |  |
 | `budget` | array |  |  |
+| `maxAttempts` | integer |  | Attempts the task gets, 1 to 10 (default: the board's for the task's template, else its maxAttempts, 3); every run that serves it is one, a rejected review included |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `board_resume`
@@ -432,7 +433,7 @@ Scope: `client`
 | `taskId` | string | yes |  |
 | `generation` | integer |  | The lease generation the caller holds (a fence, INV-4) |
 | `note` | string |  | A progress line; not stored: the result comes from the workflow run that serves the task |
-| `answers` | array |  | Answers to a waiting-for-input task's questions, by index; answering every one makes it ready again |
+| `answers` | array |  | Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt |
 
 ## `brainstorm`
 
@@ -550,7 +551,7 @@ Scope: `operator`
 
 ## `explain`
 
-The decision chain behind a run (egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.
+The decision chain behind a run (the decisions no step holds, such as a board task's admission, result subject, acceptance, and report; then egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.
 
 Scope: `client`
 

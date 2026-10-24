@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-board:v1",
   "title": "MCP board tools",
-  "description": "Input and output of the `board_*` MCP tools (design/board.md). `board_pause`, `board_resume`, and `board_close` are operator scope: a project is paused, resumed, or closed only from the operator's channel (INV-6). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. 1.1 adds `board_pause`, `board_resume`, and `board_close`.",
+  "description": "Input and output of the `board_*` MCP tools (design/board.md). `board_pause`, `board_resume`, and `board_close` are operator scope: a project is paused, resumed, or closed only from the operator's channel (INV-6). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. 1.1 adds `board_pause`, `board_resume`, and `board_close`. 1.2 adds `board_propose`'s `maxAttempts`.",
   "type": "object",
   "required": [
     "tool",
@@ -1077,6 +1077,12 @@
             "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine"
           }
         },
+        "maxAttempts": {
+          "description": "1.2: attempts the task gets, 1 to 10 (default: the board's for the task's template, else its maxAttempts, 3); every run that serves it is one, a rejected review included.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
         "clientRequestId": {
           "description": "Retry-safe request key.",
           "type": "string",
@@ -1190,7 +1196,7 @@
         },
         "answers": {
           "type": "array",
-          "description": "Answers to a waiting-for-input task's questions, by index; answering every one makes it ready again.",
+          "description": "Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{\"question\": 0, \"answer\": \"Use the v2 API\"}]. Answering every one sends the task through the gate for its next attempt.",
           "minItems": 1,
           "maxItems": 8,
           "items": {
@@ -1201,11 +1207,13 @@
             ],
             "properties": {
               "question": {
+                "description": "The question's index, from 0, in the task's waiting.questions (board_task).",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 7
               },
               "answer": {
+                "description": "Your answer, 1 to 2000 characters.",
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 2000

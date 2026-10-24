@@ -35,7 +35,7 @@ the operator itself: every move that needs a person goes through the
 | `charter(input)` | found a project or amend its charter; opens a `charter` approval request |
 | `project`, `projects` | read projects |
 | `pause`, `resume`, `close` | the operator's project moves |
-| `propose(input)` | add a task in `proposed` |
+| `propose(input)` | add a task in `proposed`, with the attempts it names (`maxAttempts`), else the provider's for its template, else its default ([attempts](#attempts)) |
 | `task`, `tasks` | read tasks |
 | `claim`, `renew` | take and renew a task's lease |
 | `start`, `submit` | record the run before it starts; record its result |
@@ -259,7 +259,7 @@ work again as a new task.
 
 | `waiting.reason` | From | Revived by | Otherwise |
 |---|---|---|---|
-| `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
+| `question` | `block` with questions | `answer` (`board_update` `answers`, one `{question, answer}` per question, `question` its index from 0 in `waiting.questions`), every question once: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked (a policy that does not ask, or a funding ask past the bound) | nothing | expires: `input-expired` |
 | `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
 | `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
@@ -358,6 +358,32 @@ the workflow engine lands a result made in a run's worktree, committing it on th
 asking a `merge` request of its own on the queue
 ([landing an accepted result](workflow-engine.md#landing-an-accepted-result)); the board moves
 nothing for it, and a task-level `merge` action class still gates a task's attempt, not a landing.
+
+### A review held for the operator
+
+A held review waits for the operator alone, and expires unseen if no one looks (T99 D6). So the
+store-backed provider says when one starts and ends, as events in the move's transaction, for the
+surfaces to tell the operator before it expires:
+
+| Event | When | Data |
+|---|---|---|
+| `board.review.held` | a move leaves the task in `review` waiting `operator-review` that was not | the task, its project, `expiresAt`, the checks still pending, and the run, naming the move's `board` decision |
+| `board.review.ended` | a move takes a held review out of it: the operator's acceptance (done), a rejection (another attempt, or a wait for input), its expiry (`review-expired`) | the task, its project, the state it went to, and the wait's reason |
+
+- Ids, states, and times only. The event log is optional to the board, as to the approval queue:
+  an append that fails is logged, and the move stands.
+- The notifier tells a held review `expiryLeadMinutes` before it expires (`review.expiring`), at
+  once when it expires sooner, and forgets it when it ends ([notifications](notifications.md)).
+  `system status`, the baseline report's attention section, and Home on `/ui` show each held review
+  with when it expires.
+
+### Attempts
+
+A task makes at most `attempts.max` attempts, each a run that serves it (a rejected review
+included). The proposal names it (`maxAttempts`, 1 to 10; MCP `board_propose` since `mcp-board`
+1.2); else the provider's configuration for the task's template (`templateAttempts`, by template
+name), else its `maxAttempts` (3). The lead names more where one attempt tests one hypothesis and a
+few may miss; the count never changes once the task is proposed.
 
 ## Fail-closed rules
 

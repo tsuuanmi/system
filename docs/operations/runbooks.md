@@ -1684,6 +1684,12 @@ its Workers until it answers`.
   decision names the source (`system explain <runId>`, a candidate `source agents`). A source that
   `failed to describe its Workers` fails every route until it answers: no step is routed, and
   health is down.
+- **Right after a start**, a source whose first describe has not landed yet (the `agents` source
+  probes its runtimes first) reads `describing…`: health says `N available so far; source agents
+  describing… (its first describe since it registered has not landed …)`, and `system roster` (and
+  the Workers page and Home on `/ui`) says `N Worker(s) so far (source agents still describing its
+  Workers)` and `source agents describing…`. The Workers counted are those heard so far, not
+  every one: wait for the first probe, then read again, and both count every Worker.
 - **Read health again.** A source that was only slow answers in the next read, and health no
   longer names it. A step refused while it did not answer is run again with `system continue
   <runId> <nodeId>` or a new run.
@@ -1768,9 +1774,11 @@ the placeholders (`system explain <runId>`; [briefs](../design/workflow-engine.m
 An unanswered approval request expires denied, and a run that waits for you waits until you look.
 The `notify` row tells you out of band, from what the event log recorded
 ([notifications](../design/notifications.md)): a request opened, a request still open an hour
-before it expires, a run that failed for you (`USER_ACTION`) or was escalated, a step waiting for an
-account's limit, a pool closed at its limit, an agent account quarantined. Each notice says what,
-which request, run, pool, or account, and the command to act (`system ui`, `system explain
+before it expires, a board task's review held for you an hour before the hold expires
+(`review.expiring`; unanswered, the task waits for input and nothing revives it), a run that failed
+for you (`USER_ACTION`) or was escalated, a step waiting for an account's limit, a pool closed at
+its limit, an agent account quarantined. Each notice says what, which request, task, run, pool, or
+account, and the command to act (`system ui`, `system explain
 <runId>`, `system continue <runId> <nodeId>`, `system account verify …`). It never carries a
 secret, a prompt, an answer, or a request's summary. The row is off by default.
 
@@ -1906,11 +1914,11 @@ projects with their open tasks per state (the **Board** page), not each task.
 | `waiting.reason` | What it means | What you can do |
 |---|---|---|
 | `approval-needed` (waiting for approval) | the policy asks before an attempt: a new task, or the next attempt after a rejected review or an answered question | decide its request on `/ui` (subject `board-task:<id>:attempt:<n>`). Approve: the task is ready on the board's next sweep. Deny or expiry: `rejected` |
-| `question` (waiting for input) | a step of the task's run answered with questions it cannot go on without (its run failed as `question`, outcome `blocked`; [a question from a run](../design/workflow-engine.md#a-question-from-a-run)) | answer every one, by index, with `board_update` `answers` (through the Lead); the next attempt goes through the gate again, and its brief points at your answers |
+| `question` (waiting for input) | a step of the task's run answered with questions it cannot go on without (its run failed as `question`, outcome `blocked`; [a question from a run](../design/workflow-engine.md#a-question-from-a-run)) | answer every one, by index, with `board_update` `answers` (through the Lead): one item `{question, answer}` per question, `question` its index from 0 in `waiting.questions`, `answer` the text (1 to 2000 characters), e.g. `{"taskId": "task-…", "answers": [{"question": 0, "answer": "Use the v2 API"}]}`; the next attempt goes through the gate again, and its brief points at your answers |
 | `rejected` | an approval was denied or expired, or none could be asked (a lost or spent run under a policy that does not ask, or a funding ask past `fundingMaxPercent`) | nothing revives it (see below) |
-| `retries-spent` | every attempt is used (`attempts.count` equals `max`, the board's `maxAttempts`, 3): a review rejected the last one, a run failed with none left (also a last attempt whose budget was spent: its run failed as `budget_spent` and asked you for no funding, since no approval could start another attempt), or an approval to go on or an answered question had none left to start | nothing revives it. The last result stays on the task, to read or to take. For a spent budget, see what was spent with MCP `resources_usage` (`taskId`) and propose the work again with larger lines or more attempts |
+| `retries-spent` | every attempt is used (`attempts.count` equals `max`: what the proposal named, else the board's `templateAttempts` for its template, else its `maxAttempts`, 3; [attempts](../design/board.md#attempts)): a review rejected the last one, a run failed with none left (also a last attempt whose budget was spent: its run failed as `budget_spent` and asked you for no funding, since no approval could start another attempt), or an approval to go on or an answered question had none left to start | nothing revives it. The last result stays on the task, to read or to take. For a spent budget, see what was spent with MCP `resources_usage` (`taskId`) and propose the work again with larger lines or more attempts |
 | `review-expired` | no accepting decision came: the reviewer's lease lapsed, or the review held for you reached its expiry | nothing revives it. The work is still on its run's branch ([worktree](#a-runs-worktree)) |
-| `operator-review` (in `review`) | the result waits for your acceptance: the checks its class requires have not passed, or the policy forbids the class | Accept or Reject on `/ui` ([review](#accept-or-reject-a-review)) until `expiresAt`; then `review-expired` |
+| `operator-review` (in `review`) | the result waits for your acceptance: the checks its class requires have not passed, or the policy forbids the class | Accept or Reject on `/ui` ([review](#accept-or-reject-a-review)) until `expiresAt`; then `review-expired`. Home, the Reviews list, `system status`, and the report say when each expires; with the notify row on, `review.expiring` tells you `expiryLeadMinutes` (60) before ([get notified](#get-notified)) |
 | `budget-spent` (waiting for approval) | a line of the task's `budget` is reached: the ledger refused the reservation of the next step of its run (failed as `budget_spent`, no step started after the refusal, outcome `blocked`; the steps that ran before it keep their results, and the next attempt's brief points at them; [a task's budget](../design/workflow-engine.md#a-tasks-budget)): a `funding` request, which always asks. On the task's last attempt there is none: the task waits for input (`retries-spent`). The request names the lines it would add (its summary, and `waiting.funding` on `board_task`): for each spent line, what the task overdrew plus one attempt's share of the line, from the ledger's count | see what was spent with MCP `resources_usage` (`taskId`), and read the request's summary and consequences on `/ui`. Approve: the board adds exactly those lines to the task's `budget` (recorded in its `funding`, with your approval), and the next attempt goes through the gate. Deny or expiry: `rejected`, the budget unchanged. A request with no lines (the ledger could not count the task's usage) only lets it go on, and the ledger refuses the next run again while a line is reached: propose the work again with larger lines. A request whose consequences say the resource ledger did not release a step's reservation (its run, step, and `until` time; the run's failure in `system explain <runId>` names it too) was refused by a hold that still counts, not by recorded usage: check the ledger with `system health` and `resources_pools`, wait past the `until` time, then approve; approved sooner, the next attempt's first step may be refused again on the same hold. An ask past the board's `fundingMaxPercent` (default 100% of the lines the task declared, over all its raises) opens no request: the task waits for input (`rejected`, see below); raise `fundingMaxPercent` in the `board` row for later tasks, or propose the work again |
 | `reconciliation-failed` (waiting for approval) | the run's holder was lost mid-run and its outcome is not known: a `remediation` request, which always asks | look at the run first (`run.runId`, then `system explain <runId>`). When the engine can report the run's outcome it does, and withdraws the request itself. Approve: another attempt, through the gate; the old run is never started again. Deny or expiry: `rejected` |
 
@@ -2044,9 +2052,14 @@ about is denied, nothing is queued, and the agent goes on without it
 
 Where it shows:
 
-- The run fails `config_error`: `<worker> stopped at its <tool> call, which waits for the operator's
-  approval (approval request apr-…); nothing of that call ran`. `system result <runId>`,
-  `system explain <runId>`, and the run's page on `/ui` show it.
+- A run for a board task waits: its step is `BLOCKED` on the request, the run's view says
+  `blocked: tool-call` with the request and until when, and the task stays `running`, its
+  attempt not spent (`system result <runId>` returns at once and says so; the run's page on `/ui`
+  links the request; `system explain <runId>` shows the step's `recovery` decision `wait`, rule
+  `workflow.deferred-call`). It counts against `maxWaitingRuns`, not `maxActiveRuns`.
+- A run outside a board task fails `config_error`: `<worker> stopped at its <tool> call, which
+  waits for the operator's approval (approval request apr-…); nothing of that call ran`.
+  `system result <runId>`, `system explain <runId>`, and the run's page on `/ui` show it.
 - Event `agent-workers.tool.deferred` (`system events --type agent-workers.tool.deferred`) names the
   agent run, the Worker, the tool, the request, and the session; never the call's input.
 - The request is in the queue on `/ui`: its class, its subject `content
@@ -2061,8 +2074,18 @@ To approve:
 2. Press **Approve** (or **Deny**), for the request or its batch. One approval is one call: it runs
    once, and the same call later asks again. Deny, or no answer before the request expires: the
    call is denied in that session from then on.
-3. **What runs the call.** The workers seam has no waiting status, so the run is over; what
-   continues its session once you approve depends on who owns the run:
+3. **What runs the call.** The workers seam has no waiting status, so the agent run is over; the
+   workflow engine continues its session once you approve:
+   - a run for a board task goes on by itself: within `approvalPollSeconds` (15 s) of your
+     approval the waiting step runs again as a new attempt in its session, with a line saying the
+     call was approved, and the call runs once (a `recovery` decision `continue`, rule
+     `workflow.approved-call`, and a `workflow.run.continued` event naming the request). The task's
+     attempt goes on to its result. A deny, or no verdict by the request's expiry, ends the step as
+     `call_rejected` or `call_expired` (`USER_ACTION`, which notify tells as `run.user-action`): the
+     run fails, its report is an attempt the board counts, and the task goes through the gate for
+     its next attempt (or waits for input, `retries-spent`, with none left). Stopping the run, or
+     any other end of the attempt, withdraws every request its Workers left open, so an approval
+     given later runs nothing;
    - a run outside a board task continues by itself: within `approvalPollSeconds` (15 s) of your
      approval the engine reopens the failed step as a new attempt in its session, with a line
      saying the call was approved, and the call runs once. It is a `recovery` decision (rule
@@ -2070,10 +2093,7 @@ To approve:
      the request; one approval continues the run once. A deny or an expiry continues nothing, and
      nor does an approval for a run you already continued, stopped, or deleted. To go on without
      the call, `system continue <runId>` reopens the step yourself (before a verdict it defers again
-     on the same request, queuing nothing new);
-   - a run for a board task is not continued: its failure is reported to the board as an attempt,
-     the task goes through the gate again, and the Lead starts the next attempt with `run` and
-     `task`, naming the earlier `sessionId` (the event shows it) to continue that session.
+     on the same request, queuing nothing new).
 
 A call the policy forbids is not deferred: the agent is told the reason and goes on, and the denial
 is recorded (`agent-workers.tool.denied`, `system explain <decision id>`). With no approval queue

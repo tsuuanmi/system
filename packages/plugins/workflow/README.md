@@ -454,16 +454,31 @@ second execution path (INV-1).
        the session's generation advances.
     3. The next wake opens a fresh conversation that starts from the handoff.
 - **A deferred tool call's continuation
-  ([design](../../../docs/design/workflow-engine.md#a-deferred-tool-call)).** A node that
-  fails for good on an execution its Worker's tool gate deferred (sent, `config_error`, on a
-  session, in a run that serves no board task) keeps the request it waits on, read from the
-  gate's `agent-workers.tool.deferred` event (`workflow_deferrals`). Every
-  `approvalPollSeconds`, and at start, the engine reads those requests through
-  `ctx.approvals`: one the operator approved, for exactly that execution and session, continues
-  the session once, under the run's lease and in one transaction: a `recovery` decision
-  (`workflow.approved-call`), the node reopened as a new attempt whose instructions end with the
-  approval, and `workflow.run.continued` (`by: rule`). A rejected request, or a run that moved on
-  (continued, stopped, deleted, or failed elsewhere), continues nothing.
+  ([design](../../../docs/design/workflow-engine.md#a-deferred-tool-call)).** An execution its
+  Worker's tool gate deferred (sent, `config_error`, on a session) names the request it waits on
+  in the gate's `agent-workers.tool.deferred` event.
+  - **A board task's step waits** (T99 D2): instead of failing, the node becomes `BLOCKED` on
+    the request (`approval_request`) until the request's expiry (`gateTimeoutHours` with the
+    queue unreadable), after a `recovery` decision `wait` (`decision@1.8`, rule
+    `workflow.deferred-call`). The run stays live, holding its task and renewing its lease (the
+    task stays `running`, its attempt not spent); its view shows `blocked: tool-call`, and it
+    counts against `maxWaitingRuns`. Every `approvalPollSeconds`, under the run's lease, the
+    engine reads the request: approved by the operator for exactly that call before it expired,
+    the session continues once (as below); rejected, expired, withdrawn, approved for anything
+    else, or with no verdict by the deadline, the step fails as `call_rejected` or `call_expired`
+    (`USER_ACTION`, a `recovery` decision `fail`), and the run's report is an attempt the board
+    counts. Not for a run that lost its holder or whose budget refused a step: its node fails as
+    before. When a board task's run has ended, before its report, the requests still open that
+    its Workers' gates or its remediation gates opened are withdrawn.
+  - **A run that serves no board task** fails on that node, which keeps the request it waits on
+    (`workflow_deferrals`). Every `approvalPollSeconds`, and at start, the engine reads those
+    requests through `ctx.approvals`.
+  - Either way, a request the operator approved, for exactly that execution and session,
+    continues the session once, under the run's lease and in one transaction: a `recovery`
+    decision (`workflow.approved-call`), the node reopened as a new attempt whose instructions end
+    with the approval, and `workflow.run.continued` (`by: rule`). For a run outside the board, a
+    rejected request, or a run that moved on (continued, stopped, deleted, or failed elsewhere),
+    continues nothing.
 - **A plain run's acceptance
   ([design](../../../docs/design/workflow-engine.md#a-plain-runs-acceptance)).** A run that
   serves no board task and wrote (a `develop` step completed) records, before it completes, an
@@ -523,7 +538,11 @@ second execution path (INV-1).
     `usageUnknown`, the kind its Worker source recorded first in the run's
     `usage.unknown` entries
     ([resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
-  - `explain` gives each step's egress, tier, route (or admission), and
+  - `explain` gives the run's own decisions that no step holds (`decisions`: a board
+    task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
+    holder, the result's subject and acceptance, the report, a funding gate, and the
+    digest, in the order they were made; a Worker's own decisions filed under the run
+    are not among them), then each step's egress, tier, route (or admission), and
     acceptance or recovery decisions with their reasons (REQ-ART-3), and each
     vote decision's ballots (round, member, choice, confidence, rationale). It
     lists every attempt's decisions in the order they were made, so a rejected
@@ -689,7 +708,10 @@ second execution path (INV-1).
   a stored one refused at promotion and before a Worker starts, each on a decision with nothing
   sent, and a `{{…}}` in the caller's input or a result sent as written.
   The continuation of a deferred call runs end to end with a gating agent runtime
-  in [`agent-workers`' gate tests](../agent-workers/tests/gate.spec.ts).
+  in [`agent-workers`' gate tests](../agent-workers/tests/gate.spec.ts), for a plain run and for a
+  board task's run over the store-backed board: the step waiting with its task running, approved
+  and continued once, rejected and expired (`USER_ACTION`, an attempt counted), stopped (its
+  request withdrawn), and across an engine restart.
   [`tests/replies.spec.ts`](tests/replies.spec.ts) holds the `result` and `usage` replies of
   completed fixture runs to their ceilings, checks that each says its answer once, and that
   `usage` leaves out what `result` gives
@@ -721,7 +743,7 @@ in `engine.ts`:
 | `growth.ts` | graph growth and approval gates |
 | `review.ts` | exact-subject review and remediation cycles; what a node's instructions are composed from, a re-review's from its review |
 | `queue.ts` | a remediation fix's gate on the approval queue: the request on its exact subject, its verdict, adoption after a crash |
-| `continuations.ts` | a deferred tool call's continuation: the request noted when its node fails, read from the queue, the session continued once when approved |
+| `continuations.ts` | a deferred tool call: a board task's step waiting on its request in the live run, or a plain run's request noted when its node fails; read from the queue, the session continued once when approved; a board task's attempt ending with the requests it left open withdrawn |
 | `acceptance.ts` | a plain run's acceptance: the policy's required checks it did not pass, recorded as pending |
 | `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members; the caller's text shown once where a prompt shows its snapshot |
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |

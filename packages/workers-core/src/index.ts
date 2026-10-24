@@ -389,6 +389,13 @@ export interface WorkerSourceRead {
   workers: number
   /** Why it is not `described`: the bound it missed, or its error's message, bounded. */
   detail?: string
+  /**
+   * Optional: on a `silent` read, true while no describe of the source has landed since it was
+   * registered (its first, a start's first probe, say, is still running), so its Workers are not
+   * known yet, never known to be none. A surface says "describing" then, not a count that reads as
+   * every Worker. Absent once one of its describes has landed, even after the bound.
+   */
+  describing?: true
 }
 
 /** The admission checks, in the order the router applies them. */

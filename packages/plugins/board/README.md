@@ -32,7 +32,12 @@ charters, and their tasks.
     `waiting` `operator-review` with the checks still pending, for the policy's wait for the class
     (`waitSeconds` over `ctx.approvals.policy`), then `review-expired` on the sweep. Only the
     operator's acceptance (on `/ui`, [`web-ui`](../web-ui/README.md)) accepts it then; a
-    rejection, or a decision with the checks passed, applies.
+    rejection, or a decision with the checks passed, applies. A move that starts such a hold
+    appends `board.review.held` (the task, project, `expiresAt`, pending checks, run) and one that
+    ends it `board.review.ended` (the state it went to, and why), in its transaction, when an
+    event log is loaded (optional; an append that fails is logged), so notify tells the operator
+    before the hold expires
+    ([a review held for the operator](../../../docs/design/board.md#a-review-held-for-the-operator)).
   - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,
     and withdraws it after; a withdrawal that fails is logged, and the request expires on its
     own. The sweep leaves a task waiting on a request the board withdrew itself as it is. A
@@ -112,11 +117,14 @@ charters, and their tasks.
   at client scope, the lead's; `board_pause`, `board_resume`, and `board_close` at operator scope
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each input and structured output is validated against
-  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) (1.1) `$defs/<tool>-input` and
+  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) (1.2) `$defs/<tool>-input` and
   `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`. A
   tool that changes the board checks the output it would give inside the move's transaction,
   before it commits (each such method takes an optional `check`), so an output its schema refuses
   (a defect) is refused with nothing moved, and a request the move opened is withdrawn.
+  - `board_propose` takes the attempts the task gets (`maxAttempts`, 1 to 10, `mcp-board` 1.2);
+    without it, the task gets the configuration's `templateAttempts` for its template, else
+    `maxAttempts` (3) ([attempts](../../../docs/design/board.md#attempts));
   - `board_charter` and `board_propose` are retry-safe under `clientRequestId`, recorded in the
     same transaction as the write (the table is never pruned: M5, open); a `board_charter` retry
     reports the charter version that call asked about, and founding under a key derives the
@@ -130,7 +138,9 @@ charters, and their tasks.
     starts lapses back to `ready`;
   - `board_update` renews the caller's lease for as long as it was claimed (a run that serves
     the task renews it itself), or answers every
-    question of a waiting task by index, not both; its `note` is not stored (no record holds
+    question of a waiting task by index, not both: `answers` holds one `{question, answer}` per
+    question, `question` its index from 0 in `waiting.questions`, which the tool's own description
+    says, so the generated reference shows it; its `note` is not stored (no record holds
     progress notes yet). Only a `question` wait takes answers: a `rejected`, `retries-spent`, or
     `review-expired` wait takes no input and only expires to cancelled, and answering the last
     attempt's questions leaves the task waiting for input (`retries-spent`), never ready with no

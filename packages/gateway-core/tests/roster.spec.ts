@@ -274,6 +274,18 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(failed.workers).toEqual({ unknown: 'it could not be read: source agents: describe threw' })
     expect(value(failed.sources)).toEqual([{ source: 'agents', state: 'failed', at: AT, workers: 0, detail: 'describe threw' }])
     expect(formatRoster(failed)).toContain('source agents failed at')
+    // A source whose first describe has not landed is still describing (mcp-roster@1.4): the count is so far (T99 D8).
+    const early = await readRoster(services({ workers: { ...services().workers!, sources: () => [
+      { source: 'agents', state: 'silent', at: AT, workers: 0, detail: 'did not describe its Workers within 5 s', describing: true },
+      { source: 'website', state: 'described', at: AT, workers: 1 },
+    ] } }), { scope: 'operator', now: NOW })
+    valid(early)
+    expect(value(early.sources)[0]).toEqual({ source: 'agents', state: 'silent', at: AT, workers: 0, detail: 'did not describe its Workers within 5 s', describing: true })
+    expect(formatRoster(early)).toMatch(/Worker\(s\) so far \(source agents still describing its Workers\): /)
+    expect(formatRoster(early)).toContain(`source agents describing… at ${AT}: its first describe since it registered has not landed (did not describe its Workers within 5 s); its Workers are not listed yet`)
+    // Never on a read that is not silent: a described source is no longer describing, whatever it said.
+    const odd = await readRoster(services({ workers: { ...services().workers!, sources: () => [{ source: 'agents', state: 'described', at: AT, workers: 3, describing: true }] } }), { scope: 'operator', now: NOW })
+    expect(value(odd.sources)[0]).not.toHaveProperty('describing')
     // A descriptor without an account, family, or load says so.
     const bareWorker = await readRoster(services({}, [descriptor('model:local', { family: undefined })]), { scope: 'operator', now: NOW })
     expect(entry(bareWorker, 'model:local')).toMatchObject({ family: { unknown: expect.any(String) }, account: { unknown: expect.stringContaining('names no account') }, load: { unknown: 'its Worker source reports no load' }, pools: { unknown: expect.any(String) } })

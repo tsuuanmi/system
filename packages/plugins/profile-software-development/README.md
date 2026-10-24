@@ -23,7 +23,12 @@ holds no engine code and no rules of its own.
     cycle's re-review is given the same instructions, on the fixed subject;
   - `validate:1` (`validate`, `local-data`, economy at least; `tests` work) runs the tests and
     benchmarks the task's criteria name, in a one-shot conversation (no session),
-    on a Worker whose commands are proven confined (`executes`). It comes last, so its report
+    on a Worker whose commands are proven confined (`executes`). It reads the task's
+    criteria, each with what checks it (`brief@1.3`), from its brief, and never the
+    caller's input, which is the develop step's orders (T99 D4), nor any step's answer;
+    with no criteria it runs nothing and says so
+    ([which inputs reach which step](../../../docs/reference/workflow-templates.md#which-inputs-reach-which-step)).
+    It comes last, so its report
     measures the subject the task leaves after any fix, and that report is the
     run's result: what the task keeps, what its digest cites, and what the next
     attempt reads.
@@ -53,7 +58,8 @@ holds no engine code and no rules of its own.
   board, approval queue, ledger, digest provider, and `agents` source with a
   worktree per run, over a scratch repository, with only the agent runtime
   scripted (it asks the tool gate before every call). One attempt with a fix
-  through the queue, held for the operator with its digest; validation with no
+  through the queue, held for the operator with its digest, the validator given
+  the criteria and their checks but not the caller's input; validation with no
   Worker proving `validate`; an unlisted validation command; writers given kinds,
   each step (the fix, and the `docs` variant's) on the writer of its kind.
   [`tests/agent-review.spec.ts`](tests/agent-review.spec.ts) runs `agent-review`'s

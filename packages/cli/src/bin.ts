@@ -145,6 +145,7 @@ interface RunOutcome {
   answer?: string
   nodes?: Array<{ nodeId: string; state: string }>
   blocked?: { kind: 'gate'; nodeId: string; plan: string; approvalRequest?: string } | { kind: 'tie'; nodeId: string; decision: string; options: Array<{ option: string; summary: string }>; until: string }
+    | { kind: 'tool-call'; nodeId: string; approvalRequest: string; until: string }
   error?: { kind: string; message: string }
 }
 
@@ -170,6 +171,10 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
     }
     if (run.status === 'running' && run.blocked?.kind === 'gate') {
       console.error(`waiting for approval of plan ${run.blocked.plan}: system approve ${run.runId} --plan ${run.blocked.plan} [--reject] [note]`)
+      return 0
+    }
+    if (run.status === 'running' && run.blocked?.kind === 'tool-call') {
+      console.error(`step ${run.blocked.nodeId}'s Worker stopped at a tool call waiting on approval request ${run.blocked.approvalRequest} until ${run.blocked.until}: decide it in the approval queue (system ui, or MCP approvals_decide); approved, the step goes on in the same session`)
       return 0
     }
     if (run.status === 'completed') {

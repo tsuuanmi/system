@@ -13,6 +13,7 @@ import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, provesFor, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
+import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { admissionKind, assignmentOf, cutShort, escalate, failAttempt, heldWorkers, inputHint, routedDecisions, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
@@ -402,6 +403,10 @@ export class Engine {
             // there, or apply the verdict the queue has (./queue.ts).
             const queued = waiting.filter((n) => isRemediationGate(JSON.parse(n.spec) as ResolvedNode) && n.not_before)
             if (queued.length && await settleQueued(this, run, queued, current)) continue
+            // A board task's step whose Worker's tool call waits on the operator: continue it once
+            // approved, or end the attempt on a rejection or expiry (./continuations.ts).
+            const calls = current_.filter(waitsOnCall)
+            if (calls.length && await settleCalls(this, run, calls, current)) continue
             const expired = waiting.find((n) => !(Date.parse(n.not_before ?? '') - Date.now() > 0))
             if (expired) {
               if (!expired.not_before) {
@@ -412,8 +417,9 @@ export class Engine {
               continue
             }
             // A run waiting on the queue reads it again every approvalPollSeconds.
-            const poll = queued.length && queueOf(this) ? [pollMs(this)] : []
-            if (waiting.length) this.retryLater(runId, Math.min(...poll, ...waiting.map((n) => Date.parse(n.not_before!) - Date.now())))
+            const poll = (queued.length && queueOf(this)) || calls.length ? [pollMs(this)] : []
+            const deadlines = [...waiting, ...calls]
+            if (deadlines.length) this.retryLater(runId, Math.min(...poll, ...deadlines.map((n) => Date.parse(n.not_before!) - Date.now())))
             // Waiting for the operator's `approve` or the caller's `vote`, which schedule the run again,
             // or for the queue's verdict, read on the poll above;
             // whoever waits on the run learns now that it waits on them.
@@ -761,6 +767,8 @@ export class Engine {
     }
     if (!current) return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `execution ${node.execution_id} is gone` }, { sent: true }, lease)
     if (current.status === 'failed') {
+      // A board task's step whose Worker stopped at a tool call deferred to the operator waits on that request.
+      if (await awaitCall(this, run, node, current, lease)) return
       return failAttempt(this, run, node, current.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }, { sent: current.submitted, execution: current }, lease)
     }
     if (!current.result) {

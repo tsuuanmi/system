@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:brief:v1",
   "title": "Brief",
-  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`; 1.2 adds `ask` and `files`.",
+  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`; 1.2 adds `ask` and `files`; 1.3 adds an acceptance criterion's `check`.",
   "type": "object",
   "required": ["schema", "goal", "acceptance", "artifacts", "budget", "sandbox", "classification"],
   "properties": {
-    "schema": { "enum": ["brief@1.0", "brief@1.1", "brief@1.2"] },
+    "schema": { "enum": ["brief@1.0", "brief@1.1", "brief@1.2", "brief@1.3"] },
     "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "attempt": { "type": "integer", "minimum": 1, "maximum": 10 },
@@ -20,7 +20,11 @@
         "required": ["id", "statement"],
         "properties": {
           "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
-          "statement": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+          "statement": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+          "check": {
+            "description": "1.3: what checks the criterion, as its board task names it (board-task acceptance `check`), so a Worker that measures the change knows which criteria are its to run.",
+            "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review", "operator"]
+          }
         },
         "additionalProperties": false
       }
@@ -154,11 +158,15 @@
   "allOf": [
     {
       "if": { "properties": { "instructions": { "type": "array" } }, "required": ["instructions"] },
-      "then": { "description": "@1.1 fields (instructions) are refused before @1.1.", "properties": { "schema": { "enum": ["brief@1.1", "brief@1.2"] } } }
+      "then": { "description": "@1.1 fields (instructions) are refused before @1.1.", "properties": { "schema": { "enum": ["brief@1.1", "brief@1.2", "brief@1.3"] } } }
     },
     {
       "if": { "anyOf": [{ "properties": { "ask": { "type": "object" } }, "required": ["ask"] }, { "properties": { "files": { "type": "array" } }, "required": ["files"] }] },
-      "then": { "description": "@1.2 fields (ask, files) are refused before @1.2.", "properties": { "schema": { "const": "brief@1.2" } } }
+      "then": { "description": "@1.2 fields (ask, files) are refused before @1.2.", "properties": { "schema": { "enum": ["brief@1.2", "brief@1.3"] } } }
+    },
+    {
+      "if": { "properties": { "acceptance": { "type": "array", "contains": { "type": "object", "properties": { "check": true }, "required": ["check"] } } }, "required": ["acceptance"] },
+      "then": { "description": "@1.3 fields (a criterion's check) are refused before @1.3.", "properties": { "schema": { "const": "brief@1.3" } } }
     }
   ],
   "additionalProperties": false

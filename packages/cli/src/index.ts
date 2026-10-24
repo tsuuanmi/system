@@ -1041,12 +1041,16 @@ export interface ExplainedLiveness {
   action: string
 }
 
+type ExplainedDecision = { id: string; type: string; outcome: string; reasons: string[]; result?: string }
+
 interface Explained {
   runId: string
   template: string
   status: string
   specHash: string
-  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: Array<{ id: string; type: string; outcome: string; reasons: string[]; result?: string }> }>
+  /** The engine's decisions on the run as a whole (a board task's admission, subject, acceptance, report), which no step holds. */
+  decisions?: ExplainedDecision[]
+  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: ExplainedDecision[] }>
   liveness?: ExplainedLiveness[]
   livenessUnread?: Array<{ source: string; detail: string }>
 }
@@ -1067,14 +1071,20 @@ export function formatLiveness(runs: readonly ExplainedLiveness[], unread: Reado
   ]
 }
 
-/** `system explain <runId>`: each step's decisions (egress, tier, route, acceptance) with their reasons, then its executions whose liveness needs a look. */
+/**
+ * `system explain <runId>`: the run's own decisions (a board task's admission, subject, acceptance,
+ * report), then each step's (egress, tier, route, acceptance) with their reasons, then its
+ * executions whose liveness needs a look.
+ */
 export function formatExplanation(explained: Explained): string[] {
   const liveness = explained.liveness?.length || explained.livenessUnread?.length ? ['liveness', ...formatLiveness(explained.liveness ?? [], explained.livenessUnread)] : []
+  const line = (d: ExplainedDecision): string => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})${d.result ? `  result ${d.result}` : ''}`
   return [
     `${explained.runId}  ${explained.template}  ${explained.status}  spec ${explained.specHash}`,
+    ...(explained.decisions?.length ? ['  run (decisions no step holds)', ...explained.decisions.map(line)] : []),
     ...explained.nodes.flatMap((n) => [
       `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}`,
-      ...n.decisions.map((d) => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})${d.result ? `  result ${d.result}` : ''}`),
+      ...n.decisions.map(line),
     ]),
     ...liveness,
   ]

@@ -79,10 +79,13 @@ export interface RunView {
   nodes: NodeView[]
   /**
    * What the run waits for: a `gate`, the operator's approval of `plan` (`approve`), or, for a
-   * remediation fix put to the approval queue, the verdict on `approvalRequest` there; or a team's
-   * `tie`, a deciding `vote` on `decision` (one of `options`) until `until`.
+   * remediation fix put to the approval queue, the verdict on `approvalRequest` there; a team's
+   * `tie`, a deciding `vote` on `decision` (one of `options`) until `until`; or, for a board task's
+   * step whose Worker stopped at a tool call deferred to the operator, the `tool-call`'s verdict on
+   * `approvalRequest` in the queue, until `until` (docs/design/workflow-engine.md#a-deferred-tool-call).
    */
   blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef; until?: string; approvalRequest?: string } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
+    | { kind: 'tool-call'; nodeId: string; approvalRequest: string; until: string; executionId?: string }
   error?: WorkflowError
   /** The board task the run serves (one attempt of it), when it serves one. */
   task?: TaskView
@@ -309,6 +312,12 @@ export interface Explanation {
   template: string
   status: RunStatus
   specHash: ContentId
+  /**
+   * The engine's decisions on the run as a whole, which no step holds, in the order they were made:
+   * a board task's admission and session, its holder, the result's subject and acceptance, the
+   * report, the funding gate, and the digest. Only when there are any.
+   */
+  decisions?: ExplainedDecision[]
   nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; decisions: ExplainedDecision[] }>
   /**
    * The run's executions whose liveness needs a look, as their Worker sources tell it

@@ -73,6 +73,8 @@ export class WorkerRouter extends Workers {
   private readonly registry = new Map<string, WorkerSource>()
   /** How each registered source answered its last read, by name: what `sources()` reports. */
   private readonly reads = new Map<string, WorkerSourceRead>()
+  /** The registered sources one of whose describes has landed, even past the bound: a silent read of any other is still its first (`describing`). */
+  private readonly landed = new WeakSet<WorkerSource>()
   private readonly registered = new Map<string, AcceptanceContract>(Object.entries(BUILT_IN))
   private readonly schemas = new SchemaRegistry()
   /** One route at a time, across every caller, so no two read the same load (ADR-0033). */
@@ -192,8 +194,10 @@ export class WorkerRouter extends Workers {
   /**
    * Every Worker with the name of its source, validated and ordered by id. A source that does not
    * describe its Workers within `DESCRIBE_MS` counts as describing none (`silent`), so one stuck
-   * source never holds every route behind the routing lock. A source whose `describe` throws fails
-   * the read with its error, as before. How each source answered is kept as its last read.
+   * source never holds every route behind the routing lock; while none of its describes has landed
+   * since it registered, that read says it is still `describing` (its Workers not known yet). A
+   * source whose `describe` throws fails the read with its error, as before. How each source
+   * answered is kept as its last read.
    */
   private async described(): Promise<{ all: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[] }> {
     const silent: string[] = []
@@ -203,7 +207,10 @@ export class WorkerRouter extends Workers {
       const late = delay(DESCRIBE_MS, undefined, { signal: done.signal }).catch(() => undefined)
       let workers: CapabilityDescriptor[] | undefined
       try {
-        workers = await Promise.race([source.describe(), late])
+        const describing = source.describe()
+        // A describe that lands past the bound still lands: the source's next silent read is not its first.
+        describing.then(() => this.landed.add(source), () => undefined)
+        workers = await Promise.race([describing, late])
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.remember(source, { source: source.name, state: 'failed', at, workers: 0, detail: `failed to describe its Workers: ${message.slice(0, 200)}` })
@@ -212,7 +219,8 @@ export class WorkerRouter extends Workers {
         done.abort()
       }
       if (!workers) silent.push(source.name)
-      this.remember(source, workers ? { source: source.name, state: 'described', at, workers: workers.length } : { source: source.name, state: 'silent', at, workers: 0, detail: SILENT })
+      this.remember(source, workers ? { source: source.name, state: 'described', at, workers: workers.length }
+        : { source: source.name, state: 'silent', at, workers: 0, detail: SILENT, ...(this.landed.has(source) ? {} : { describing: true as const }) })
       return { source: source.name, workers: workers ?? [] }
     }))
     const seen = new Map<string, string>()

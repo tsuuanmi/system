@@ -512,6 +512,9 @@ importers:
       '@tsuuanmi/system-approvals':
         specifier: workspace:*
         version: link:../approvals
+      '@tsuuanmi/system-board':
+        specifier: workspace:*
+        version: link:../board
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
@@ -604,6 +607,9 @@ importers:
       '@tsuuanmi/system-board-core':
         specifier: workspace:*
         version: link:../../board-core
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core

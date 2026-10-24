@@ -81,7 +81,15 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
 
     // Validation came last, on the fixed change: its listed command ran as the workspace write the policy judges it, asking no one.
     expect(agent.calls.filter((c) => c.role === 'validate')).toEqual([{ role: 'validate', tool: 'Bash', verdict: { decision: 'allow' } }])
-    expect(work.find((r) => r.role === 'validate')!.prompt).toContain('The request: Fix add() so it adds')
+    // The validator read the task's criteria, each with what checks it, and the worktree: never the
+    // caller's input, which is the develop step's orders (T99 D4), nor any step's answer.
+    const validator = work.find((r) => r.role === 'validate')!.prompt
+    expect(validator).toContain(`- a1: ${TESTS} passes (check: tests)`)
+    expect(validator).not.toContain('Fix add() so it adds')
+    expect(validator).not.toContain('Hypothesis:')
+    expect(work[0]!.prompt).toContain('Fix add() so it adds')
+    const brief = ctx.artifacts.get(done.nodes.find((n) => n.nodeId === 'validate:1')!.brief!)!.body as { schema: string; acceptance: unknown[] }
+    expect(brief).toMatchObject({ schema: 'brief@1.3', acceptance: [{ id: 'a1', statement: `${TESTS} passes`, check: 'tests' }] })
     expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class).sort()).toEqual(['charter', 'remediation'])
 
     // The result is the validation's report on the exact subject the task writes; the review check passed on it.

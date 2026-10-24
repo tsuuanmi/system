@@ -117,7 +117,8 @@ provider family than the Workers that served those nodes
 ## Briefs
 
 Every Worker execution the engine starts is given a `brief@1.1` (`@1.2` for a board task's run,
-with its `ask` and `files`; [`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
+with its `ask` and `files`, `@1.3` when a criterion of its task names what checks it;
+[`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
 starts, in the transaction that starts it, and named by it (`workflow-node@1.2`
 `execution.brief`, the node's view, and the `workflow.node.started` event). The engine composes
 the record; the Worker source renders it into its own prompt
@@ -191,7 +192,8 @@ flowchart LR
 
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
-criteria; the task's budget lines less the usage spent on the task (the brief informs; the run's
+criteria, each with what checks it when the task names that (`brief@1.3` `check`); the task's
+budget lines less the usage spent on the task (the brief informs; the run's
 [reservation](#a-tasks-budget) enforces), counted for each step when it starts, after its
 reservation, so a step's brief states what is left after the steps before it, in this attempt and
 the earlier ones (the operator's decision of 2026-10-24, D31; a step still in flight beside it has
@@ -542,14 +544,35 @@ a limit makes the account's work wait; it never moves to another account of its 
 
 A Worker whose tool gate deferred a call on an approval request stops there, and its execution
 fails as `config_error` naming the request: the workers seam has no waiting status
-([approvals](approvals.md#a-deferred-call)). Its node fails, and so does the run. When the
-operator approves that request, the engine continues the session by itself, once:
+([approvals](approvals.md#a-deferred-call)). The engine reads which request the execution
+deferred on from the Worker gate's own record of it (the `agent-workers.tool.deferred` event: the
+execution and the request id). When the operator approves that request, the engine continues the
+session by itself, once. What the node does meanwhile depends on the run.
 
-- **Noted when the node fails.** In the transaction that fails the node, the engine reads which
-  request the execution deferred on from the Worker gate's own record of it (the
-  `agent-workers.tool.deferred` event: the execution and the request id) and keeps it
-  (`workflow_deferrals`). Only a sent execution that failed as `config_error`, on a node with a
-  session, of a run that serves no board task (the board decides a task's next attempt).
+**A board task's run waits** (T99 D2): failing the node would end the attempt one second after the
+call, with the request left open on a session no later attempt resumes (a held session is never
+resumed, [above](#a-board-tasks-brief)). The step waits instead, in a live run:
+
+| Step | Records | On failure |
+|---|---|---|
+| waits | when a sent execution of a node on a session fails as `config_error` and its gate's event names the request: a `recovery` decision `wait` (`decision@1.8`, rule `workflow.deferred-call`, naming the request, the execution, the session, and until when), and in its transaction the node `BLOCKED` with the request on its row (`approval_request`) until the request's `expiresAt` (`gateTimeoutHours` from now when the queue cannot be read then); `workflow.node.blocked` | not for a run that lost its holder or whose budget refused a step: it starts nothing new, so the node fails as before |
+| while it waits | the run holds its task and renews its lease; the task stays `running`, its attempt not spent. The run's view shows `blocked: { kind: tool-call, nodeId, approvalRequest, until }`, `wait` and `result` return at once, and the run counts against `maxWaitingRuns`. The engine reads the request through `ctx.approvals.get` every `approvalPollSeconds`, under the run's lease | a queue not loaded or unreadable: it waits, logged once, until its deadline |
+| approved | the operator's verdict on exactly that call (requester `worker`, the deferred execution as its run, the node's session, `cause: verdict` with its approval), given by the request's expiry: under the run's lease, in one transaction, a `recovery` decision `continue` (rule `workflow.approved-call`), and the node reopened as a new attempt on the same session, as below; `workflow.run.continued` (`by: rule`) | an approval that does not bind that call, or given after the expiry, is not used (INV-5): the node fails as below |
+| rejected, expired, or no verdict by the deadline | a `recovery` decision `fail` (rule `workflow.deferred-call`), the node `FAILED` as `call_rejected` (a verdict, a withdrawal, an approval not bound) or `call_expired` (an expiry, or no verdict read by the deadline, after which the request is withdrawn), disposition `USER_ACTION`, nothing of the call run; `workflow.node.failed` names the request. The run fails on it, and its report is an attempt the board counts (`reconcileRun`) | — |
+| the attempt ends any other way | when the run has ended (stopped, its holder lost, a step beside it failed, its budget spent), before its report, every request still open that its Workers' gates opened (requester `worker`, one of the run's executions) or its remediation gates opened (requester `workflow`, the run) is withdrawn, so an approval given later runs nothing unseen | one that cannot be withdrawn is logged and expires on its own (INV-9) |
+
+- **Restart** (INV-4): the request and the deadline are on the node's row, its decision recorded
+  with it, so a restart reads the same request again and asks nothing; an execution whose failure
+  the engine had not yet read is read again, and waits then.
+- The board's task stays `running` throughout: the wait is the run's, which keeps its holder, so
+  the board's contract is unchanged; the operator decides the request in the queue (`/ui`, MCP
+  `approvals_decide`), and notify tells it as `approval.opened` and `approval.expiring`.
+
+**A run that serves no board task fails** on that node, and so does the run:
+
+- **Noted when the node fails.** In the transaction that fails the node, the engine keeps the
+  request the execution deferred on (`workflow_deferrals`). Only a sent execution that failed as
+  `config_error`, on a node with a session, of a run that serves no board task.
 - **Read from the queue** every `approvalPollSeconds` (default 15, INV-9), and once at start,
   through `ctx.approvals.get` only. Open, it waits; rejected (a verdict, an expiry, a
   withdrawal), nothing is continued; with no queue loaded, it waits.
@@ -620,10 +643,17 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **Explained.** These decisions are the run's, not a step's: `explain` lists them first, in the
+  order they were made (REQ-ART-3), before each step's own: the task's admission and session, a
+  lost holder, the result's subject and acceptance, the report, a funding gate, and the digest.
 - **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
   worktree ([below](#tasksmd-in-a-runs-workspace)).
 - **A question.** A step may answer with questions instead of a result; the task then waits for
   input ([below](#a-question-from-a-run)).
+- **A deferred tool call.** A step whose Worker stopped at a tool call the policy asks about waits
+  on that request in the live run, the task still `running`; approved, the same session goes on;
+  rejected or expired, the attempt ends for the operator; an attempt that ends any other way
+  withdraws the requests it left open ([above](#a-deferred-tool-call)).
 - **Its budget**, when the task declares one, is reserved on the ledger before each step of the
   run starts work, and a spent one stops the run before its next step and blocks the task
   ([below](#a-tasks-budget)).

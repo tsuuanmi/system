@@ -45,6 +45,7 @@
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
     "@tsuuanmi/system-approvals": "workspace:*",
+    "@tsuuanmi/system-board": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",

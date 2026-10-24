@@ -1,0 +1,12 @@
+{
+  "schema": "notification@1.1",
+  "id": "review.expiring:task-6b167a2bff07:5120",
+  "kind": "review.expiring",
+  "subject": "task-6b167a2bff07",
+  "at": "2026-10-25T06:23:00.000Z",
+  "event": { "seq": 5120, "type": "board.review.held" },
+  "title": "A review expires soon: board task task-6b167a2bff07",
+  "text": "Board task task-6b167a2bff07 of project system waits for your Accept or Reject, held for you until 2026-10-25T07:23:00.000Z, in about 60 min. Unanswered by then, the review expires: the task waits for input (review-expired), which nothing revives.",
+  "act": ["system ui", "MCP board_task {\"taskId\":\"task-6b167a2bff07\"}"],
+  "link": "http://127.0.0.1:47317/ui/"
+}

@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Roadmap:
 > [B5](../proposals/roadmap.md) (PROP-0010). Requirement: REQ-HOST-9. Record:
-> [`notification@1.0`](../reference/schemas.md#notification).
+> [`notification@1.1`](../reference/schemas.md#notification).
 >
 > Implemented in [`notify`](../../packages/plugins/notify/README.md), its bundle row off; differs
 > from target: no notice when a request expires (it is denied by then, and the waiting work's own
@@ -12,8 +12,8 @@
 
 An approval request that nobody answers expires, and expiry denies it
 ([approvals](approvals.md#a-request)): a request the operator never saw is lost work. The same holds
-for a run that waits for the operator, a step waiting out an account's limit, or an account whose
-Workers stopped taking work. `/ui` and `system health` show all of these, but only to an operator
+for a board task's review held for the operator, a run that waits for the operator, a step waiting
+out an account's limit, or an account whose Workers stopped taking work. `/ui` and `system health` show all of these, but only to an operator
 who looks. Notifications tell the operator out of band, on the desktop or through a webhook they
 choose, with the exact command to act.
 
@@ -43,6 +43,7 @@ it. Its row is off by default; the operator turns it on
 | `run.waiting` | `workflow.node.waiting` (ADR-0052 recovery `wait`: assigned accounts at their limit) | `workflow` | the run id | `system explain <run>`, `system account list`, `system stop <run>` |
 | `pool.limited` | `resources.pool.limited` (a reading closed a pool that was open) | `resources` | the pool id | `system health`, MCP `resources_pools` |
 | `worker.quarantined` | `agent-workers.account.quarantined` (a slot newly quarantined, PROP-0012 E) | `agent-workers` | the account id, or `<provider>:slot-<n>` | `system account list`, `system account verify …` (`--accept` for `changed`), `system account login …` |
+| `review.expiring` (`notification@1.1`) | the reminder of a `board.review.held` (a board task's review held for the operator), `expiryLeadMinutes` (60) before its `expiresAt`, or at once when it expires sooner; a `board.review.ended` read first cancels it | the notifier, from `board`'s events ([a review held for the operator](board.md#a-review-held-for-the-operator)) | the task id | `system ui` (Reviews: Accept or Reject), MCP `board_task` |
 
 - **The events** are part of this change, each additive: `approvals.requested` names the request,
   its class, expiry, requester component, and project; `approvals.resolved` its state, cause, and
@@ -57,9 +58,15 @@ it. Its row is off by default; the operator turns it on
   making; a request that expires within the lead time is told once, as it opens. An
   `approvals.resolved` entry read before the reminder is due cancels it. A reminder due after its
   request expired is dropped.
+- **A review held for the operator** (T99 D6) makes no notice when it starts (the Reviews list on
+  `/ui`, Home, `system status`, and the report show it); its reminder, kept under `review:<task>`,
+  comes `expiryLeadMinutes` before the hold expires, or at once when the hold is shorter than that,
+  and a `board.review.ended` read first cancels it. Unanswered, the review expires and the task
+  waits for input (`review-expired`), which nothing revives, so this is the notice that matters.
+  It is `notification@1.1`, the record that names the kind.
 - **Content** is made by code from ids, classes, kinds, and times. A value the event gives that is
   not an id (`common@1`) or a word is left out, never quoted; each field is cut to its bound, and
-  the notice validated against `notification@1.0` before it is queued (one that fails is a defect,
+  the notice validated against `notification@1.x` before it is queued (one that fails is a defect,
   logged, never sent). Its egress classification is `operator-shared`. The `link` is the `/ui`
   page without its token: it opens where the browser already holds one, and `system ui` prints
   the link with it. A `link` configured with a fragment, a user, or a password is refused at start.
@@ -118,7 +125,7 @@ never holds a secret.
   run without a shell, given only the environment it needs to reach the session's notification
   daemon (`PATH`, `HOME`, the locale, `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`,
   `XDG_RUNTIME_DIR`), `--` before the title and the body (the text, each command, the link).
-  `approval.expiring` is `critical`, the rest `normal`. Without `notify-send` the sink is a no-op:
+  `approval.expiring` and `review.expiring` are `critical`, the rest `normal`. Without `notify-send` the sink is a no-op:
   `unavailable` recorded at start and each notice `failed`, so health says so; on a headless host
   the operator turns it off (`desktop: false`) and uses the webhook.
 - **webhook** (`webhook.enabled`, off by default): a JSON `POST` of the `notification@1.0` record,

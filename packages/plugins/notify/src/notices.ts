@@ -8,13 +8,13 @@
  */
 import type { SystemEvent } from '@tsuuanmi/system-event-log'
 
-/** The notice kinds, in the order the design names them (`notification@1.0` `kind`). */
-export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined'] as const
+/** The notice kinds, in the order the design names them (`notification@1.x` `kind`; `review.expiring` since 1.1). */
+export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined', 'review.expiring'] as const
 export type Kind = (typeof KINDS)[number]
 
-/** `notification@1.0`; the schema in `schemas/` is canonical. */
+/** `notification@1.0`, `@1.1` for a `review.expiring` notice; the schema in `schemas/` is canonical. */
 export interface Notice {
-  schema: 'notification@1.0'
+  schema: 'notification@1.0' | 'notification@1.1'
   id: string
   kind: Kind
   subject: string
@@ -26,18 +26,28 @@ export interface Notice {
   link?: string
 }
 
-/** A reminder an open approval request needs: made from its `approvals.requested` event. */
+/**
+ * A reminder an open approval request needs, made from its `approvals.requested` event; or, with
+ * `review`, one a board task's review held for the operator needs, made from its
+ * `board.review.held` event, keyed `review:<taskId>`.
+ */
 export interface Reminder {
+  /** The key the reminder is kept and forgotten by: the request id, or `review:<taskId>`. */
   requestId: string
   /** When the reminder is due: the expiry less the lead time. */
   remindMs: number
   expiresMs: number
-  /** The `approvals.requested` event it comes from. */
+  /** The event it comes from. */
   seq: number
   actionClass: string
   projectId?: string
   policyChange: boolean
+  /** A review held for the operator: the task it holds. */
+  review?: { taskId: string }
 }
+
+/** The key a review held for the operator is reminded under, beside the approval requests' ids. */
+const reviewKey = (taskId: string): string => `review:${taskId}`
 
 /** What one event means to the notifier: a notice, a reminder to keep, or a request to forget. */
 export interface Reading {
@@ -96,6 +106,21 @@ export function readEvent(event: SystemEvent, options: ReadOptions): Reading {
     case 'approvals.resolved': {
       const requestId = id(data.requestId)
       return requestId ? { resolved: requestId } : {}
+    }
+    case 'board.review.held': {
+      // A review only the operator may accept now: told `expiryLeadMinutes` before it expires, or at
+      // once when it expires sooner than that, since a hold has no notice of its own.
+      const taskId = id(data.taskId)
+      const expiresAt = time(data.expiresAt)
+      if (!taskId || !expiresAt) return {}
+      const projectId = id(data.projectId)
+      const expiresMs = Date.parse(expiresAt)
+      const remindMs = Math.max(expiresMs - options.leadMs, Date.parse(event.at))
+      return { remind: { requestId: reviewKey(taskId), remindMs, expiresMs, seq: event.seq, actionClass: 'review', ...(projectId ? { projectId } : {}), policyChange: false, review: { taskId } } }
+    }
+    case 'board.review.ended': {
+      const taskId = id(data.taskId)
+      return taskId ? { resolved: reviewKey(taskId) } : {}
     }
     case 'workflow.node.failed':
     case 'workflow.run.failed': {
@@ -172,11 +197,19 @@ export function readEvent(event: SystemEvent, options: ReadOptions): Reading {
   }
 }
 
-/** The reminder of an open request, made when it is due. */
+/** The reminder of an open request, or of a review held for the operator, made when it is due. */
 export function reminderNotice(reminder: Reminder, now: number, options: ReadOptions): Notice | undefined {
   const minutes = Math.max(1, Math.round((reminder.expiresMs - now) / 60_000))
   const expiresAt = new Date(reminder.expiresMs).toISOString()
   const of = reminder.projectId ? ` of project ${reminder.projectId}` : ''
+  if (reminder.review) {
+    const taskId = reminder.review.taskId
+    return make({ seq: reminder.seq, type: 'board.review.held', at: new Date(now).toISOString() }, options, 'review.expiring', taskId, {
+      title: `A review expires soon: board task ${clip(taskId, 60)}`,
+      text: `Board task ${taskId}${of} waits for your Accept or Reject, held for you until ${expiresAt}, in about ${minutes} min. Unanswered by then, the review expires: the task waits for input (review-expired), which nothing revives.`,
+      act: ['system ui', `MCP board_task {"taskId":"${taskId}"}`],
+    })
+  }
   return make({ seq: reminder.seq, type: 'approvals.requested', at: new Date(now).toISOString() }, options, 'approval.expiring', reminder.requestId, {
     title: reminder.policyChange ? 'A policy change expires soon' : `Approval expires soon: ${reminder.actionClass}`,
     text: `Request ${reminder.requestId}${of} (${reminder.actionClass}) is denied at ${expiresAt}, in about ${minutes} min, unless you answer it.`,
@@ -191,7 +224,7 @@ function make(event: Pick<SystemEvent, 'seq' | 'type' | 'at'>, options: ReadOpti
   const at = time(event.at)
   if (!at) return undefined
   return {
-    schema: 'notification@1.0', id: clip(`${kind}:${subject}:${event.seq}`, 300), kind, subject, at, event: { seq: event.seq, type: event.type },
+    schema: kind === 'review.expiring' ? 'notification@1.1' : 'notification@1.0', id: clip(`${kind}:${subject}:${event.seq}`, 300), kind, subject, at, event: { seq: event.seq, type: event.type },
     title: clip(body.title, 120), text: clip(body.text, 1000), act: body.act.slice(0, 4).map((line) => clip(line, 300)),
     ...(options.link ? { link: options.link } : {}),
   }

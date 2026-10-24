@@ -6,7 +6,7 @@ the CLI, what needs them, from **recorded events only**, and with the exact comm
 ([design](../../../docs/design/notifications.md)). It reads the core, decides nothing, and fails
 open: a notice that cannot be sent is recorded and shown in health, and nothing else changes.
 
-- **What it tells** (`notification@1.0` `kind`), from the event log:
+- **What it tells** (`notification@1.x` `kind`), from the event log:
 
   | Kind | From the event | Subject |
   |---|---|---|
@@ -17,13 +17,15 @@ open: a notice that cannot be sent is recorded and shown in health, and nothing 
   | `run.waiting` | `workflow.node.waiting` (ADR-0052 `wait`) | the run |
   | `pool.limited` | `resources.pool.limited` | the pool |
   | `worker.quarantined` | `agent-workers.account.quarantined` (PROP-0012 E) | the account (`<provider>:slot-<n>` with no id yet) |
+  | `review.expiring` (`@1.1`) | a board task's review held for the operator (`board.review.held`), `expiryLeadMinutes` before its hold expires, or at once when it expires sooner (none once `board.review.ended` names it) | the task |
 
 - **Content:** what happened, which request, run, pool, or account, and the commands to act
   (`system ui`, `system explain <runId>`, `system continue <runId> <nodeId>`, `system account
   verify …`, MCP `approvals_decide`), and the `/ui` link without its token. Ids, classes, kinds,
   and times only: never a secret, a prompt, an answer, or a request's summary or command
   (egress classification `operator-shared`). Every value it quotes is checked as an id or a word,
-  cut, and the notice validated against [`notification@1.0`](../../../schemas/notification.v1.json).
+  cut, and the notice validated against [`notification@1.x`](../../../schemas/notification.v1.json)
+  (`@1.1` for `review.expiring`, the kind it adds).
 - **Never blocks or alters a producer:** it reads the log after its own cursor on its own clock;
   a committed event (`system/event`) only wakes it. A pass moves the cursor, the reminders, and each
   notice's claim in one store transaction, and queues the notices after it commits.

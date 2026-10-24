@@ -540,10 +540,11 @@ The **`agents` Worker source**: agent runtimes as Workers
   The requests a gate opened are kept in `agent_tool_requests`: the session and
   exact call each is for, and when an approved one was used. Starting the later
   run once a request is approved is the work's owner's, not this source's: the
-  workflow engine continues a run that serves no board task by itself, once per
-  approval, finding the request from the `agent-workers.tool.deferred` event
-  ([a deferred tool call](../../../docs/design/workflow-engine.md#a-deferred-tool-call));
-  a board task's next attempt is the board's and the lead's.
+  workflow engine continues the session by itself, once per approval, finding
+  the request from the `agent-workers.tool.deferred` event (a board task's step
+  waits on it in its live run; a plain run fails until then), and withdraws the
+  requests a board task's attempt left open when it ends without a verdict
+  ([a deferred tool call](../../../docs/design/workflow-engine.md#a-deferred-tool-call)).
 - **Cancel (REQ-WRK-4):** a running agent is stopped, and a queued run never
   starts. Both fail as `aborted`. A run that started and that no process holds
   now (between two liveness looks after a restart) cannot be stopped from here:

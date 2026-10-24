@@ -11,6 +11,7 @@ import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type Too
 import StoreApprovals from '@tsuuanmi/system-approvals'
 import type { AutonomyPolicy } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import StoreBoard from '@tsuuanmi/system-board'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
@@ -27,6 +28,7 @@ import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
+import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 
 const WORKSPACE = mkdtempSync(join(tmpdir(), 'system-gate-ws-'))
 afterAll(() => rmSync(WORKSPACE, { recursive: true, force: true }))
@@ -785,5 +787,140 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     await vi.waitFor(() => expect(ctx.store.db.prepare('SELECT outcome FROM workflow_deferrals WHERE request_id = ?').get(request!.requestId)).toEqual({ outcome: 'rejected' }), { timeout: 15_000 })
     expect(ctx.workflow.get(run.runId)!.status).toBe('failed')
     expect(agent.runs).toHaveLength(1)
+  })
+})
+
+// A board task's run (docs/design/workflow-engine.md#a-deferred-tool-call; T99 D2): its step waits on
+// the request instead of failing the attempt, the same session goes on once the operator approves,
+// a rejection or an expiry ends the attempt for the operator, and an attempt that ends any other way
+// leaves no request open on a session no later attempt resumes.
+describe('a board task\'s step whose Worker stops at a deferred call', { timeout: 60_000 }, () => {
+  const CHANGE = [{ nodeId: 'change', objective: 'Change the code', prompt: '{{input}}', capabilities: ['develop', 'local-data'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer' }]
+  const WORKFLOW = { retryDelayMs: 50, approvalPollSeconds: 1, templates: { change: CHANGE } }
+
+  async function bootTask(agent: AgentRuntimeProvider) {
+    const dir = mkdtempSync(join(tmpdir(), 'system-gate-task-'))
+    const ctx = new Context()
+    const fibers = [
+      ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+      ctx.plugin(StoreApprovals, { policies: [policy()], sweepSeconds: 3600 }), ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(WorkerSessions, {}),
+      ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard' }] }),
+      ctx.plugin(StoreBoard, { sweepSeconds: 0 }),
+    ]
+    await Promise.all(fibers)
+    let engine = ctx.plugin(Workflow, WORKFLOW)
+    await engine
+    ctx.agentRuntimes.register(agent)
+    onTestFinished(async () => {
+      await engine.dispose()
+      for (const fiber of [...fibers].reverse()) await fiber.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    })
+    await activeProject(ctx)
+    const task = await readyTask(ctx, 'change')
+    const run = await ctx.workflow.start({ template: 'change', input: 'Make the tests pass', classification: 'operator-shared', task: { taskId: task.taskId } })
+    // Stop the engine alone and start it again over the same store (a restart).
+    const restart = async (): Promise<void> => {
+      await engine.dispose()
+      engine = ctx.plugin(Workflow, WORKFLOW)
+      await engine
+    }
+    return { ctx, task, run, restart }
+  }
+
+  const blockedOn = (ctx: Context, runId: string) => vi.waitFor(() => {
+    const view = ctx.workflow.get(runId)!
+    if (view.blocked?.kind !== 'tool-call') throw new Error(`run ${runId} is ${view.status}, not waiting on a tool call (${JSON.stringify(view.error ?? view.nodes)})`)
+    return view as typeof view & { blocked: { kind: 'tool-call'; nodeId: string; approvalRequest: string; until: string } }
+  }, { timeout: 30_000, interval: 50 })
+  const reportedRun = (ctx: Context, runId: string) => vi.waitFor(() => {
+    const view = ctx.workflow.get(runId)!
+    if (view.task?.phase !== 'reported') throw new Error(`run ${runId} is not reported yet (${view.status})`)
+    return view
+  }, { timeout: 30_000, interval: 50 })
+  const open = async (ctx: Context) => (await ctx.approvals.list({ states: ['open', 'batched'] })).filter((r) => r.requester.component === 'worker')
+
+  it('waits on the request instead of failing the attempt: the task keeps running, and once the operator approves, the same session makes the call once and the attempt completes', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const { ctx, task, run } = await bootTask(agent)
+    const waiting = await blockedOn(ctx, run.runId)
+    const [request] = await open(ctx)
+    // The run waits on exactly the request the Worker's gate opened, for that session; nothing failed.
+    expect(request).toMatchObject({ action: { class: 'command' }, requester: { component: 'worker', runId: waiting.nodes[0]!.executionId, sessionId: run.sessionId } })
+    expect(waiting).toMatchObject({ status: 'running', blocked: { nodeId: 'change', approvalRequest: request!.requestId, until: request!.expiresAt } })
+    expect(waiting.nodes).toEqual([expect.objectContaining({ nodeId: 'change', state: 'BLOCKED', attempt: 1 })])
+    expect(waiting.nodes[0]!.error).toBeUndefined()
+    expect(waiting.error).toBeUndefined()
+    const wait = ctx.workflow.explain(run.runId)!.nodes[0]!.decisions.at(-1)!
+    expect(wait).toMatchObject({ type: 'recovery', outcome: 'wait' })
+    expect((ctx.artifacts.get(wait.id)!.body as { decider: { id: string } }).decider.id).toBe('workflow.deferred-call')
+    // The task is still the run's, its attempt not spent: the run renews its lease while it waits.
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'running', run: { runId: run.runId }, attempts: { count: 1 } })
+    // A read of the queue while it is open continues nothing.
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(agent.runs).toHaveLength(1)
+
+    await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'approved' }])
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    expect(done.nodes).toEqual([expect.objectContaining({ nodeId: 'change', state: 'COMPLETED', attempt: 2 })])
+    // The same session, resumed, told the call was approved; the approved call ran, once.
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.resume).toBe(agent.runs[0]!.resume ?? 'h-1')
+    expect(agent.runs[1]!.prompt).toContain(`The operator approved the tool call you stopped at (approval request ${request!.requestId})`)
+    expect(agent.verdicts[1]).toEqual([{ decision: 'allow' }])
+    // One attempt of the task, done, and no request left open.
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(await open(ctx)).toEqual([])
+  })
+
+  it('ends the attempt for the operator when the request is rejected or expires: USER_ACTION, an attempt the board counts, nothing of the call run', async () => {
+    for (const how of ['rejected', 'expired'] as const) {
+      const agent = new GatedAgent([[bash('npm test')]])
+      const { ctx, task, run } = await bootTask(agent)
+      const waiting = await blockedOn(ctx, run.runId)
+      const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+      if (how === 'rejected') await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'rejected' }])
+      else await ctx.approvals.sweep(new Date(Date.parse(request.expiresAt) + 1000))
+      const ended = await reportedRun(ctx, run.runId)
+      expect(ended, how).toMatchObject({ status: 'failed', error: { kind: how === 'rejected' ? 'call_rejected' : 'call_expired', disposition: 'USER_ACTION' } })
+      expect(ended.nodes[0]!.error).toMatchObject({ disposition: 'USER_ACTION', message: expect.stringContaining(request.requestId) })
+      expect(ended.task?.outcome, how).toMatchObject({ status: 'reconciled', state: 'ready' })
+      expect(await ctx.board.task(task.taskId), how).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+      expect(agent.runs, how).toHaveLength(1)
+      // The notifier reads the step's failure as one only the operator resolves.
+      expect(ctx.eventLog.query({ type: 'workflow.node.failed', runId: run.runId }).at(-1)?.data, how).toMatchObject({ disposition: 'USER_ACTION', approvalRequest: request.requestId })
+    }
+  })
+
+  it('leaves no request open once the attempt has ended any other way: stopped while it waits, its request is withdrawn, so none is orphaned on a session no later attempt resumes', async () => {
+    const agent = new GatedAgent([[bash('npm test')]])
+    const { ctx, task, run } = await bootTask(agent)
+    const [request] = await vi.waitFor(async () => {
+      const opened = await open(ctx)
+      if (!opened.length) throw new Error('no request opened yet')
+      return opened
+    }, { timeout: 30_000, interval: 50 })
+    // While the step waits on it the run is live; the operator ends the attempt.
+    if (ctx.workflow.get(run.runId)!.status === 'running') await ctx.workflow.stop(run.runId, 'not needed')
+    const ended = await reportedRun(ctx, run.runId)
+    // The attempt is over and nothing waits on the request: it is withdrawn, never left open (T99 D2).
+    expect(await ctx.approvals.get(request!.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(await open(ctx)).toEqual([])
+    expect(ended).toMatchObject({ status: 'failed', error: { kind: 'stopped' }, task: { outcome: { status: 'reconciled', state: 'ready' } } })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+  })
+
+  it('keeps waiting on the same request across a restart of the engine, asking nothing twice, and goes on once it is approved (INV-4)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const { ctx, run, restart } = await bootTask(agent)
+    const waiting = await blockedOn(ctx, run.runId)
+    await restart()
+    expect((await blockedOn(ctx, run.runId)).blocked).toEqual(waiting.blocked)
+    expect(await open(ctx)).toHaveLength(1)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+    expect(await reportedRun(ctx, run.runId)).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted' } } })
+    expect(agent.runs).toHaveLength(2)
   })
 })

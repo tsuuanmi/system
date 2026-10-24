@@ -20,13 +20,17 @@ export interface BriefBudgetLine { pool: string; unit: 'tokens' | 'usd' | 'turns
 /** A file a Worker source writes into the run's own workspace before it starts: the text of `ref`, at `path` under `.system/`. */
 export interface BriefFile { path: string; ref: ContentId; note?: string }
 
+/** What checks an acceptance criterion (`board-task@1.x`): a kind of check a policy rule can require, or the operator. */
+export type BriefCheck = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review' | 'operator'
+
 export interface Brief {
-  schema: 'brief@1.0' | 'brief@1.1' | 'brief@1.2'
+  schema: 'brief@1.0' | 'brief@1.1' | 'brief@1.2' | 'brief@1.3'
   projectId?: string
   taskId?: string
   attempt?: number
   goal: string
-  acceptance: Array<{ id: string; statement: string }>
+  /** `check` (`@1.3`): what checks the criterion, as its board task names it. */
+  acceptance: Array<{ id: string; statement: string; check?: BriefCheck }>
   artifacts: BriefPointer[]
   /** `@1.1`: what the Worker is told, in order; pointers by index, never their content. */
   instructions?: BriefSegment[]
@@ -127,7 +131,7 @@ export interface RenderOptions { placesFiles?: boolean }
 function frame(brief: Brief, options: RenderOptions): string {
   const lines: string[] = []
   if (brief.taskId !== undefined) lines.push(`Board task ${brief.taskId} of project ${brief.projectId}${brief.attempt !== undefined ? `, attempt ${brief.attempt}` : ''}.`)
-  lines.push(`Goal: ${brief.goal}`, 'Acceptance criteria:', ...brief.acceptance.map((a) => `- ${a.id}: ${a.statement}`))
+  lines.push(`Goal: ${brief.goal}`, 'Acceptance criteria:', ...brief.acceptance.map((a) => `- ${a.id}: ${a.statement}${a.check ? ` (check: ${a.check})` : ''}`))
   if (brief.openQuestions?.length) lines.push('Open questions:', ...brief.openQuestions.map((q) => `- ${q}`))
   if (options.placesFiles && brief.files?.length) {
     lines.push('Files in your workspace, written by system before this run (read-only; edits are never read back):', ...brief.files.map((f) => `- ${f.path}${f.note ? `: ${f.note}` : ''}`))

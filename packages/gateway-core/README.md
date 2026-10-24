@@ -100,7 +100,10 @@ Tests: `tests/guard.spec.ts`.
   how long), and pools with their windows. The same input and time give the same
   record. A `client` scope gets no account label, in the record or in a name.
 - **`formatRoster(roster)`**: the record for a terminal, one block per Worker,
-  then the sources that did not answer and the usage entries no pool counts.
+  then the sources that did not answer and the usage entries no pool counts. A
+  silent source still describing for the first time (`describing`, `@1.4`) makes
+  the count read `so far` and is named `describing…`, so a first probe after a
+  start never reads as every Worker.
 
 The services are typed by shape (`RosterServices`), so this package still
 depends on `system-libs` alone; each surface passes the services it has
