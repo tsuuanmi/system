@@ -462,6 +462,8 @@ const depth = (path: string): number => path.split(sep).filter(Boolean).length
 interface Plan {
   /** Hidden roots that exist: no other hidden path contains them. */
   hidden: Array<{ path: string; dir: boolean }>
+  /** Every hidden path that exists, roots or not (real paths). */
+  hides: string[]
   binds: Array<{ path: string; writable: boolean }>
   /** Hide entries that do not exist on this host (a typo, or nothing to hide yet). */
   absent: string[]
@@ -486,23 +488,62 @@ function plan(confinement: Confinement): Plan {
   }
   const conflicts = [...binds.keys()].flatMap((bind) => [...hides.keys()].filter((h) => h === bind || under(h, bind)).map((h) => `binding back ${bind} would expose ${h}`))
   const hidden = [...hides].filter(([path]) => ![...hides.keys()].some((other) => other !== path && under(path, other))).map(([path, dir]) => ({ path, dir }))
-  return { hidden, binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts }
+  return { hidden, hides: [...hides.keys()], binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts }
+}
+
+/**
+ * More than the read confinement, for a command a Worker source runs itself rather than an agent
+ * (a run's worktree setup, docs/design/agent-runtimes.md#a-worktrees-setup). Every field is optional;
+ * none given, the command runs as an agent child does.
+ */
+export interface ConfinedCommandOptions {
+  /**
+   * The host's file system is read-only to the child: only the confinement's `writable` binds, the
+   * tmpfs that hides each hidden directory, and writable `views` can be written. Default: the host
+   * as writable as it is to the daemon.
+   */
+  readOnly?: boolean
+  /** `false`: no network, a network namespace of the child's own with only its loopback. Default: the host's network. */
+  network?: false
+  /** The directory the child starts in (absolute). */
+  chdir?: string
+  /**
+   * Host directories seen at another path, mounted in this order after every other mount: `source`
+   * at `path`, writable or read-only. Like a bind, a view whose source is, or holds, a hidden path
+   * is refused, and so is one whose source does not exist. A source inside a hidden directory is
+   * the caller's to choose, as a bind's is.
+   */
+  views?: ReadonlyArray<{ source: string; path: string; writable: boolean }>
 }
 
 /**
  * The command line that runs `command args` under `confinement`: its own PID namespace (with
  * its own /proc) and session, so nothing it starts outlives it and it cannot reach the
  * daemon's terminal; then the mounts, shallowest first, so a path bound back lies over the
- * tmpfs that hides its parent. Throws when a bind would re-expose a hidden path.
+ * tmpfs that hides its parent; then `options`' views. Throws when a bind or a view would
+ * re-expose a hidden path.
  */
-export function confinedCommand(command: string, args: readonly string[], confinement: Confinement): { command: string; args: string[] } {
-  const { hidden, binds, conflicts } = plan(confinement)
+export function confinedCommand(command: string, args: readonly string[], confinement: Confinement, options: ConfinedCommandOptions = {}): { command: string; args: string[] } {
+  const { hidden, hides, binds, conflicts } = plan(confinement)
   if (conflicts.length) throw new Error(`read confinement refused: ${conflicts[0]}`)
+  const views = (options.views ?? []).map((view) => {
+    const source = real(view.source)
+    if (!source) throw new Error(`read confinement refused: the view source ${view.source} does not exist`)
+    if (!isAbsolute(view.path)) throw new Error(`read confinement refused: the view path ${view.path} is not absolute`)
+    const exposed = hides.find((h) => h === source || under(h, source))
+    if (exposed) throw new Error(`read confinement refused: the view of ${source} would expose ${exposed}`)
+    return [view.writable ? '--bind' : '--ro-bind', source, view.path]
+  })
+  if (options.chdir !== undefined && !isAbsolute(options.chdir)) throw new Error(`read confinement refused: the start directory ${options.chdir} is not absolute`)
   const mounts = [
     ...hidden.map((h) => ({ path: h.path, args: h.dir ? ['--tmpfs', h.path] : ['--ro-bind', '/dev/null', h.path] })),
     ...binds.map((b) => ({ path: b.path, args: [b.writable ? '--bind' : '--ro-bind', b.path, b.path] })),
   ].sort((a, b) => depth(a.path) - depth(b.path))
-  const argv = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc', ...mounts.flatMap((m) => m.args)]
+  const root = options.readOnly ? ['--ro-bind', '/', '/', '--dev', '/dev'] : ['--dev-bind', '/', '/']
+  const argv = [
+    '--die-with-parent', '--unshare-pid', ...(options.network === false ? ['--unshare-net'] : []), '--new-session', ...root, '--proc', '/proc',
+    ...mounts.flatMap((m) => m.args), ...views.flat(), ...(options.chdir !== undefined ? ['--chdir', options.chdir] : []),
+  ]
   return { command: confinement.bwrap, args: [...argv, '--', command, ...args] }
 }
 
