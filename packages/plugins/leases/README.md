@@ -18,9 +18,8 @@
     (website turns, agent runs, workflow runs, model calls, digest requests). It acquires, renews
     on a heartbeat every third of the TTL the lease was granted, which `maxTtlMs` may cap below
     the TTL asked for (each renewal's grant sets the next beat), and releases when the body ends.
-    It aborts `lost` only
-    on a positive loss: a renewal that throws `LeaseLost`, or the lease's own expiry
-    passing with no renewal. A renewal that fails otherwise (the store busy or
+    It aborts `lost` only on a positive loss: a renewal that throws `LeaseLost`, or the lease's
+    own expiry passing with no renewal. A renewal that fails otherwise (the store busy or
     failing) is logged and tried again at the next beat, never later than the
     expiry ([ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)).
     While another holder's lease is live it runs nothing and returns
