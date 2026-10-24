@@ -21,7 +21,7 @@ let child: ChildProcess | undefined
 // alternative digest provider, which the operator swaps in for `digest` (Base exit criterion 6).
 // The rows the default composition has but turns off, and the DSH rows, whose packages ship no plugin
 // manifest, as the plugin host's configuration in the bundle allows.
-const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'digest-extractive', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
+const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'digest-extractive', 'notify', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
 const DSH_PACKAGES = ['@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai']
 /** The operator's patch that swaps the digest provider, as the bundle's evolution test applies it to the bundle's rows. */
 const SWAP_PATCH = fileURLToPath(new URL('../../system-bundle/tests/evolution/swap-digests.yml', import.meta.url))
