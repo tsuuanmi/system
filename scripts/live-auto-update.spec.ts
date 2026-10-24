@@ -151,9 +151,10 @@ describe('live-auto-update.sh', () => {
     const f = fixture()
     expect(pass(f, ['--settle', '30']).status).toBe(0)
     expect(lines(f).at(-1)).toMatch(/ wait: \w+ settles for 30 more minute\(s\)$/)
+    // Two hours ahead: the hour may turn before the pass reads it, and the next one is still outside.
     const hour = new Date().getHours()
     const pad = (h: number): string => String(h % 24).padStart(2, '0')
-    expect(pass(f, ['--hours', `${pad(hour + 1)}-${pad(hour + 2)}`]).status).toBe(0)
+    expect(pass(f, ['--hours', `${pad(hour + 2)}-${pad(hour + 3)}`]).status).toBe(0)
     expect(lines(f).at(-1)).toMatch(/ wait: outside the hours \d\d-\d\d$/)
     expect(pass(f, ['--hours', '7-9']).status).toBe(2)
     expect(f.git(f.check, 'rev-parse', 'HEAD')).toBe(f.from)
