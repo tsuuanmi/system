@@ -141,6 +141,51 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('routes work by its kind: a Worker given kinds takes only work of those kinds, a Worker given none takes any, and a refusal says so (REQ-WRK-11, ADR-0056)', async () => {
+      const code = worker('w:code', { schema: 'capability-descriptor@1.6', kinds: ['code'], proves: ['develop'] })
+      const docs = worker('w:docs', { schema: 'capability-descriptor@1.6', kinds: ['docs', 'tests'], proves: ['develop', 'validate'] })
+      const kinded = (kind: string): WorkRequirement => requirement({ schema: 'work-requirement@1.2', kind, capabilities: ['develop'] })
+      await withWorkers([code, docs], async (ctx) => {
+        // Each kind lands on the Worker given it, whatever the order would otherwise choose.
+        const admitted = await ctx.workers.route(kinded('code'))
+        expect(admitted.worker.worker).toBe('w:code')
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'w:docs')!.reasons).toEqual(['takes docs, tests work only; this work is code work'])
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.selected)!.reasons).toContain('takes code work, one of its kinds')
+        expect((await ctx.workers.route(kinded('tests'))).worker.worker).toBe('w:docs')
+        // A kind no Worker is given: refused, fail closed, saying no Worker takes it although they prove the capabilities.
+        const failure = await ctx.workers.route(kinded('brainstorm')).catch((e: unknown) => e) as AdmissionFailure
+        expect(failure).toBeInstanceOf(AdmissionFailure)
+        expect(failure.rejections.map((r) => [r.worker, r.failed])).toEqual([
+          ['w:code', [{ check: 'capability', reason: 'takes code work only; this work is brainstorm work' }]],
+          ['w:docs', [{ check: 'capability', reason: 'takes docs, tests work only; this work is brainstorm work' }]],
+        ])
+        expect(body(ctx, failure.decision).candidates.find((c) => c.selected)!.reasons).toEqual(['no Worker that proves develop takes brainstorm work'])
+        // Work that names no kind is not taken by a Worker given kinds.
+        const plain = await ctx.workers.route(requirement({ capabilities: ['develop'] })).catch((e: unknown) => e) as AdmissionFailure
+        expect(plain.message).toMatch(/no Worker that proves develop takes work that names no kind/)
+        // A kind never proves a capability: the Worker given tests still needs what the work needs.
+        const missing = await ctx.workers.route(requirement({ schema: 'work-requirement@1.2', kind: 'code', capabilities: ['validate'] })).catch((e: unknown) => e) as AdmissionFailure
+        expect(missing.rejections.find((r) => r.worker === 'w:code')!.failed).toEqual([{ check: 'capability', reason: 'does not prove validate' }])
+      })
+      // A Worker given no kinds takes work of every kind, and work that names none.
+      await withWorkers([worker('w:any', { proves: ['develop'] })], async (ctx) => {
+        const admitted = await ctx.workers.route(kinded('docs'))
+        expect(admitted.worker.worker).toBe('w:any')
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.selected)!.reasons).toContain('takes work of any kind')
+        expect((await ctx.workers.route(requirement({ capabilities: ['develop'] }))).worker.worker).toBe('w:any')
+      })
+    })
+
+    it('refuses kinds below the schema version that carries them: a descriptor below @1.6, a requirement below @1.2 (ADR-0056)', async () => {
+      await withWorkers([worker('w:early', { schema: 'capability-descriptor@1.5', kinds: ['code'] })], async (ctx) => {
+        await expect(ctx.workers.route(requirement())).rejects.toThrow(/capability-descriptor@1\.5/)
+      })
+      await withWorkers([worker('w:a')], async (ctx) => {
+        await expect(ctx.workers.route(requirement({ schema: 'work-requirement@1.1', kind: 'code' }))).rejects.toThrow(/work-requirement@1\.1/)
+        await expect(ctx.workers.route(requirement({ schema: 'work-requirement@1.2', kind: 'Code Work' }))).rejects.toThrow()
+      })
+    })
+
     it('chooses the lowest admissible tier at or above the minimum, within the maximum, and records a tier decision (QA-12)', async () => {
       const workers = [worker('w:eco', { tier: 'economy' }), worker('w:std', { tier: 'standard' }), worker('w:top', { tier: 'frontier' })]
       await withWorkers(workers, async (ctx) => {

@@ -1,0 +1,23 @@
+{
+  "schema": "work-requirement@1.2",
+  "objective": "Test one hypothesis toward the task: state it, and change the code to try it",
+  "capabilities": [
+    "develop",
+    "local-data",
+    "persistent-conversation"
+  ],
+  "kind": "code",
+  "data": {
+    "classification": "operator-shared",
+    "refs": []
+  },
+  "egressPolicy": "egress.classification-and-secrets",
+  "tier": {
+    "min": "standard",
+    "source": "profile"
+  },
+  "acceptance": {
+    "contract": "acceptance.answer",
+    "maxEscalations": 1
+  }
+}

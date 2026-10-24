@@ -22,10 +22,11 @@ Worker states, and the same requirement always give the same result
 ## Work requirement
 
 ```ts
-WorkRequirement {                    // work-requirement@1.1
+WorkRequirement {                    // work-requirement@1.2
   objective: string;
   capabilities: Capability[];        // all must be proven
   scope?: "review-member";           // the kind of work, for offers scoped to it (below)
+  kind?: WorkKind;                   // the operator's kind of work, e.g. "code" (work kinds, below)
   data: { classification: "public" | "operator-shared" | "local-private";
           refs: ArtifactRef[] };      // what the work must read
   egressPolicy: string;              // policy id from a trusted envelope (INV-6, INV-12)
@@ -86,13 +87,42 @@ ballot, debate) from the admitted spec, never from a template or model text (INV
 - A caller that reads descriptors itself (a board task deciding whether to resume a session)
   counts unscoped offers only.
 
+### Work kinds
+
+> Decision: [ADR-0056](../decisions/adr/0056-route-work-by-kind.md) (proposed), from the
+> operator's D35. Requirement: REQ-WRK-11.
+
+Capabilities say what work needs, never what it is about: a source-code change and a docs change
+both need `develop`. The operator routes them apart by **kind**, an opaque label
+(`^[a-z][a-z0-9-]{0,31}$`, such as `code`, `docs`, `tests`):
+
+- **A step names its kind.** A template step may set `kind`, and a variant may change it
+  ([templates](../reference/workflow-templates.md)); the engine puts it in the step's requirement
+  (`work-requirement@1.2` `kind`) from the admitted spec, never from model text (INV-6). A
+  planner's step has none; a remediation fix has the kind of the step whose change it fixes.
+- **The operator gives Workers kinds.** A descriptor may list `kinds` (`capability-descriptor@1.6`),
+  which its source takes from the operator's configuration (an agent Worker's `kinds`, or its
+  role's, [agent runtimes](agent-runtimes.md#workers--account--role)).
+- **The rule** (`takesKind`, part of the `capability` check). A Worker given kinds takes only
+  work that names one of them: never another kind, never work that names none (`takes code work
+  only; this work is docs work`). A Worker given none takes any work. A kind proves no capability.
+  With no Worker left, admission fails closed: `no Worker that proves develop takes docs work`.
+- **Equality only.** Kinds are never ordered or preferred; among the Workers that take a kind,
+  the order below decides as before. No routing, workflow, or profile code names a tool, model,
+  or family for a kind (INV-11): which runtime or account takes a kind is the Worker
+  configuration's and the assignments', where vendors are already named.
+- **Nothing changes without kinds.** With no Worker given kinds, every Worker takes every step,
+  whatever kinds the templates name. Once the operator gives a writer kinds, a step that names
+  none (a planner's step, `agent-review`) needs a Worker given none
+  ([route work by kind](../operations/runbooks.md#route-work-by-kind)).
+
 ## Algorithm
 
 ```mermaid
 flowchart TD
   A[every Worker every source describes now] --> B{inside the caller's restriction?}
   B -->|yes| X{"of no excluded provider family, when the caller excludes some?"}
-  X -->|yes| C{proves every required capability?}
+  X -->|yes| C{proves every required capability, and takes the work's kind?}
   C -->|yes| L{"takes the input's length, when it declares a bound?"}
   L -->|yes| D{local, when the data is local-private?}
   D -->|yes| E{state ready or busy?}
@@ -112,7 +142,8 @@ flowchart TD
 
 The checks, in order, are `restricted`, `excluded` (the Workers an earlier attempt failed on
 unsent, [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)),
-`diversity`, `capability`, `cooldown` (a usage limit on a capability the work needs),
+`diversity`, `capability` (with the work's kind, [above](#work-kinds)), `cooldown` (a usage limit
+on a capability the work needs),
 `assignment` (another account of an assigned group holds the work, [below](#assigned-accounts)),
 `input`, `locality`, `state`, and `tier`; a rejected Worker carries each check it failed, with its
 reason.

@@ -23,7 +23,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)). Each
   descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with
   `family`), `@1.2` (with `maxInputChars`), `@1.3` (with `load` and `cooldowns`), `@1.4` (an
-  offer's `scope`), or `@1.5` (its `account`). A Worker id that two sources describe is refused.
+  offer's `scope`), `@1.5` (its `account`), or `@1.6` (its `kinds`). A Worker id that two sources
+  describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;
   - it is of none of the provider families the caller excludes, if any
@@ -33,6 +34,10 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     (`scope`, [ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md))
     counts only for a requirement that names that scope, and a refusal says so
     (`does not prove reason (it proves reason only for review-member work)`);
+  - it takes the work's kind: a Worker the operator gives `kinds` takes only work whose
+    requirement names one of them (`capability`, [work kinds](../../../docs/design/routing.md#work-kinds),
+    [ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)), and says so (`takes code
+    work only; this work is docs work`); a Worker given none takes any work;
   - no usage limit is on a capability the work needs (`cooldown`, ADR-0034);
   - no other account of its group holds the work (`assignment`,
     [assigned accounts](../../../docs/design/routing.md#assigned-accounts)): while a Worker of an
@@ -57,14 +62,15 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   calls `release()` on the admitted Worker (idempotent), once the work is started or
   will not be.
 - **Decisions (INV-13).** The requirement is stored as an `objective` artifact
-  (`work-requirement@1.0`, or `@1.1` with a `scope`).
+  (`work-requirement@1.0`, `@1.1` with a `scope`, or `@1.2` with a `kind`).
   - **Success:** a `tier` decision, and a `route` decision whose candidates are
     every Worker. A rejected Worker carries its failed checks. An admitted Worker
     that was not chosen says what put the winner first.
   - **Failure:** an `admission` decision with outcome `none`, and
     `AdmissionFailure` carrying every rejection, including each Worker's state.
     A required capability that no Worker proves is named first
-    (`no Worker proves web-search`), as under the `api-first` preset. When every
+    (`no Worker proves web-search`), as under the `api-first` preset; then a kind no Worker
+    that proves it all takes (`no Worker that proves develop takes code work`). When every
     Worker refused only for its limit is on an assigned account, the failure's
     `limitUntil` is the earliest known reset, and the decision says when the first is back.
 - **Acceptance (REQ-WRK-3).** `contract(id, check)` registers a deterministic
