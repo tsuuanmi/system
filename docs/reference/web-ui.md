@@ -145,6 +145,11 @@ page shows an asked change's own card, with **Approve** and **Deny**, at its top
 
 ## Autonomy policy
 
+The page says what is in force in words (the configuration, or the change you approved), the
+set's hash folded, and what each mode means (*auto* runs on its own, *notify* runs then tells
+you, *ask* waits for your approval, *forbid* never runs); its history's times read relative, the
+clock time beside.
+
 Served when `ctx.approvals` is present; without it, both routes answer `503`
 ([a policy change](../design/approvals.md#a-policy-change)).
 

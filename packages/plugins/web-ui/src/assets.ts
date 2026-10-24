@@ -34,6 +34,7 @@ th { color: var(--muted); font-weight: 500; }
 a { color: var(--accent); }
 .state { font-weight: 600; } .COMPLETED, .completed { color: var(--ok); } .FAILED, .failed { color: var(--bad); } .BLOCKED, .RUNNING, .running { color: var(--wait); }
 .ready { color: var(--ok); } .busy, .resting { color: var(--wait); } .unavailable, .quarantined { color: var(--bad); } .unknown { color: var(--muted); font-style: italic; }
+.panel, .request dd, .request p { overflow-wrap: anywhere; }
 .panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
 button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; margin-right: 8px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -222,6 +223,10 @@ export const APP_JS = `'use strict'
     const task = /^board-task:(.+):attempt:(\\d+)$/.exec(ref)
     const call = /^agent-tool-call:([^:]+):(.+)$/.exec(ref)
     const projectText = r.requester.projectId ? ' of project ' + name(r.requester.projectId) : ''
+    // A board task by its title when the board lists it, else by its id.
+    const titleOf = (taskId) => { for (const p of projects.values()) { const t = (p.tasks || []).find((x) => x.taskId === taskId); if (t) return t.title } return undefined }
+    const taskOf = (taskId) => titleOf(taskId) ? 'the task "' + titleOf(taskId) + '"' : 'task ' + taskId
+    const Task = (taskId) => { const t = taskOf(taskId); return t.charAt(0).toUpperCase() + t.slice(1) }
     let d
     if (r.action.class === 'charter' && charter) {
       const [, id, v] = charter
@@ -250,23 +255,23 @@ export const APP_JS = `'use strict'
       const [, taskId, attempt] = task
       const reason = r.subject.version || ''
       const what = r.action.summary.replace(/^(approval-needed|budget-spent|reconciliation-failed): /, '')
-      const subject = 'task ' + taskId + projectText + ', attempt ' + (Number(attempt) + 1)
+      const subject = taskOf(taskId) + projectText + ', attempt ' + (Number(attempt) + 1)
       d = reason.startsWith('funding') || r.action.class === 'funding' ? {
         title: 'Raise the budget of a task: ' + what.split('; ')[0], subject,
         yes: 'Approve: raise the budget', no: 'Deny: keep the budget',
-        next: 'The board applies it to task ' + taskId + ' on its next sweep, within a minute.',
+        next: 'The board applies it to ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       } : reason === 'reconciliation-failed' ? {
         title: 'Go on after a failed reconciliation: ' + what, subject,
-        approve: 'Task ' + taskId + ' tries again: its next attempt goes through the autonomy policy for ' + r.action.class + '.',
-        deny: 'Task ' + taskId + ' does not go on: it waits for your input until it is cancelled or its wait expires.',
+        approve: Task(taskId) + ' tries again: its next attempt goes through the autonomy policy for ' + r.action.class + '.',
+        deny: Task(taskId) + ' does not go on: it waits for your input until it is cancelled or its wait expires.',
         yes: 'Approve: try again', no: 'Deny: hold the task',
-        next: 'The board applies it to task ' + taskId + ' on its next sweep, within a minute.',
+        next: 'The board applies it to ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       } : {
         title: 'Allow a ' + r.action.class + ' step: ' + what, subject,
-        approve: 'Task ' + taskId + ' may do this ' + r.action.class + ' step: it becomes ready on the board\\'s next sweep (within a minute), for a Worker to claim.',
-        deny: 'Task ' + taskId + ' does not do it: it waits for your input until it is cancelled or its wait expires.',
+        approve: Task(taskId) + ' may do this ' + r.action.class + ' step: it becomes ready on the board\\'s next sweep (within a minute), for a Worker to claim.',
+        deny: Task(taskId) + ' does not do it: it waits for your input until it is cancelled or its wait expires.',
         yes: 'Approve: allow this ' + r.action.class, no: 'Deny: hold the task',
-        next: 'The board moves task ' + taskId + ' on its next sweep, within a minute.',
+        next: 'The board moves ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       }
     } else if (call) {
       d = { title: 'Allow a tool call: ' + r.action.summary, subject: 'the exact ' + call[2] + ' call of agent run ' + call[1], yes: 'Approve: allow this call', no: 'Deny: refuse this call',
@@ -281,7 +286,7 @@ export const APP_JS = `'use strict'
     } else {
       d = { title: r.action.summary, subject: r.subject.type + ' ' + ref }
     }
-    const by = r.requester.component === 'board' ? 'the board' + (r.requester.taskId ? ', for task ' + r.requester.taskId : '') + projectText
+    const by = r.requester.component === 'board' ? 'the board' + (r.requester.taskId ? ', for ' + taskOf(r.requester.taskId) : '') + projectText
       : r.requester.component === 'worker' ? 'agent run ' + (r.requester.runId || '?') + (r.requester.sessionId ? ' (session ' + r.requester.sessionId + ')' : '')
       : r.requester.component === 'workflow' ? 'run ' + (r.requester.runId || '?') + (r.requester.nodeId ? ', step ' + r.requester.nodeId : '')
       : r.requester.component === 'approvals' ? 'the approval queue, for policy change ' + (r.requester.policyChangeId || '?') + ' (Show change says who proposed it)'
@@ -843,16 +848,16 @@ export const APP_JS = `'use strict'
         await policyView()
       } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, error.message)) }
     }
-    const when = (t) => t ? new Date(t).toLocaleString() : '-'
+    const when = (t) => t ? ago(t) : '-'
     show(
       pageHead('policy'),
       askedCards.length ? el('section', { 'aria-label': 'Changes waiting for your verdict' },
         el('h3', {}, askedCards.length === 1 ? 'A change waits for your verdict' : askedCards.length + ' changes wait for your verdict'),
         el('p', { class: 'muted' }, 'A change applies only once you approve it, here or on Home.'),
         askedCards) : null,
-      set ? el('p', {}, 'In force: ', el('code', {}, set.hash), set.source === 'store'
-        ? ' — the change ' + set.changeId + ' the operator approved, kept while the configuration it came from is unchanged (' + set.configHash + ').'
-        : ' — the configuration.') : null,
+      set ? el('p', {}, set.source === 'store' ? 'In force: the change ' + set.changeId + ' you approved, kept while the configuration it came from is unchanged.' : 'In force: the configuration.',
+        el('details', {}, el('summary', {}, 'Exact set'), el('code', {}, set.hash), set.configHash ? el('div', { class: 'muted' }, 'configuration ', el('code', {}, set.configHash)) : null)) : null,
+      el('p', { class: 'muted' }, 'auto: it runs on its own · notify: it runs, then tells you · ask: it waits for your approval on Home · forbid: it never runs.'),
       table(['Action class'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => el('td', {}, (e.effective.find((x) => x.actionClass === c) || {}).mode || '-')))), 'queue'),
       el('h3', {}, 'Policies'),
       table(['Policy', 'Scope', 'Version'], policies.map((p) => el('tr', {}, el('td', {}, el('code', {}, p.id)), el('td', {}, p.scope + (p.projectId ? ' ' + p.projectId : '')), el('td', {}, String(p.version))))),
@@ -871,7 +876,7 @@ export const APP_JS = `'use strict'
         el('td', {}, c.policy.id + ' ' + (c.previous ? c.previous.version + ' → ' : '') + c.policy.version + (c.origin ? ' (proposed by the queue)' : '')),
         el('td', { class: 'state' }, c.state === 'asked' ? decideLink(c.requestId, 'waiting for your verdict') : c.state + (c.declined ? ' (' + c.declined.cause + ')' : '')),
         el('td', { class: 'muted' }, when(c.proposedAt)),
-        el('td', { class: 'muted' }, c.applied ? when(c.applied.at) + (c.retired ? ' until ' + when(c.retired.at) : '') : '-'),
+        el('td', { class: 'muted' }, c.applied ? [when(c.applied.at), c.retired ? [' until ', when(c.retired.at)] : null] : '-'),
         el('td', {}, c.effect.length ? c.effect.map((e) => (e.projectId || 'studio') + ' ' + e.actionClass + ' ' + e.from + '→' + e.to).join('; ') : '-'),
       ))) : null,
       changes && changes.length ? el('details', {}, el('summary', {}, 'Diffs'), changes.map(changeView)) : null)

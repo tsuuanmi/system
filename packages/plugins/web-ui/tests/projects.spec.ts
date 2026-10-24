@@ -224,6 +224,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await expect.poll(() => page.locator('main').innerText()).toContain('wait for your approval')
     await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${waiting}`)
+    // The card names the task by its title, not its id.
+    expect(await page.locator(`#request-${waiting}`).innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
   it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
