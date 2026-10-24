@@ -230,9 +230,10 @@ export class TaskRuns {
       const record = error instanceof BoardError ? undefined : await board.task(task.taskId).catch(() => undefined)
       if (record?.run?.runId !== runId) {
         if (!(error instanceof BoardError) && record === undefined) {
-          // The board answers nothing: the run stays starting, and its first advance reconciles it.
+          // The board answers nothing: the run stays starting, and its first advance reconciles it (the
+          // failure names it, so no caller reads it as nothing started).
           e.schedule(runId)
-          throw new WorkflowFailure('overloaded', `the board did not answer the start of run ${runId} for task ${task.taskId} (${(error as Error).message}); the run starts only once the board shows it recorded`)
+          throw new WorkflowFailure('overloaded', `the board did not answer the start of run ${runId} for task ${task.taskId} (${(error as Error).message}); the run starts only once the board shows it recorded`, { runId })
         }
         this.discard(runId)
         const why = error instanceof BoardError ? refusal(error) : (error as Error).message

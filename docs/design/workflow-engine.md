@@ -623,7 +623,10 @@ is refused (`config_error`), and every other run is unaffected.
   the holder's generation), and only then is it opened and scheduled. A restart in between is
   decided by the board's record: recorded, the run goes on; still claimed under its generation,
   the start is asked again; otherwise the run is abandoned (`task_not_started`), nothing of it
-  having run.
+  having run. A board that does not answer the record (neither the start nor the read after it)
+  leaves the run `starting`, decided the same way at its first advance; `start` then fails
+  `overloaded`, its failure naming the run (`WorkflowFailure.runId`), so no caller reads it as
+  nothing started (T127): the web UI's Start answers `202` with the pending run.
 - **While it lives**, the engine renews the task's lease at a third of what the board granted
   (`leases.maxTtlMs` caps it), also while the run waits on a gate or a vote. When the board
   refuses the generation (the lease lapsed across a restart, say), a `recovery` decision

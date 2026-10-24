@@ -214,13 +214,15 @@ any step runs.
 | Route | Body | Answer |
 |---|---|---|
 | `GET tasks/<taskId>/start` | — | `{task {taskId, title, revision, template, attempts}, steps}`: what would run, each step's `nodeId`, `objective`, `capabilities`, least `tier`, and `kind`, `team {kind, members}`, `source`, or `plans` when it has them (`ctx.workflow.templateSteps`), and `workers`: the Workers that could likely take it now (`free`: ready, or busy with a slot free) or once one is (`busy`, resting at a limit included), at most 8 each, by id: those whose descriptor proves every capability the step needs, at its tier or above, taking its kind of work (`ctx.workers.list()`; no routing decision is made, and routing decides when the run starts), `{unknown}` when they cannot be read |
-| `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId}})`, its input the task's title and goal |
+| `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId}})`, its input the task's title and goal; or `202` `{pending: {runId, reason}}` when the engine admitted the run and the board did not answer when asked to record it: nothing of it ran, and it starts once the board shows it recorded, or is dropped with nothing run (the engine's failure names the run, `WorkflowFailure.runId`) |
 
 - An unknown task is `404`, a malformed body `400`. A task that is not ready, names no template
   (the lead then starts it with a template it chooses), names a template not served, changed since
   the page showed it (its revision), or names another template than the page sent is `409`, and
   nothing starts. A refusal by the engine (a paused project, a spent budget, a drained host) is
-  `409` with its reason.
+  `409` with its reason. A start the board did not answer is no refusal (`202`): the page says
+  *Not started yet:* with the run linked, that it starts once the board shows it recorded and the
+  task then moves to Working, or is dropped with nothing run, and that nothing more is needed (T127).
 - The card's **Start…** opens a confirmation that says what runs: the template, the attempt (*its
   attempt 1 of 3*), each step with the kind of Worker it runs on (*Do solo: a Worker of standard
   tier or above that can reason*) and who would likely take it, by display name with its account's

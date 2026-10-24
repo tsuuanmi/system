@@ -307,10 +307,11 @@ export const APP_JS = `'use strict'
   // What the operator's last verdict did, outside the refreshed page: it stays until dismissed.
   // A verdict that was not recorded is an alert, never only a line a refresh overwrites (INV-2).
   const outcome = document.getElementById('outcome')
+  // ok: true for done, false for refused, pending for asked and not done yet (neither).
   const report = (ok, title, lines) => {
     const dismiss = el('button', { onclick: () => outcome.replaceChildren() }, 'Dismiss')
-    outcome.replaceChildren(el('div', { class: 'panel ' + (ok ? 'ok' : 'bad'), role: ok ? 'status' : 'alert' },
-      el('h3', { class: ok ? 'state completed' : 'state failed' }, title),
+    outcome.replaceChildren(el('div', { class: 'panel' + (ok === 'pending' ? '' : ok ? ' ok' : ' bad'), role: ok === false ? 'alert' : 'status' },
+      el('h3', { class: ok === 'pending' ? 'state running' : ok ? 'state completed' : 'state failed' }, title),
       lines.filter(Boolean).map((line) => el('p', {}, line)),
       dismiss))
     outcome.scrollIntoView({ block: 'nearest' })
@@ -1062,8 +1063,10 @@ export const APP_JS = `'use strict'
         close.disabled = true
         yes.textContent = 'Starting…'
         try {
-          const { run } = await api('tasks/' + encodeURIComponent(t.taskId) + '/start', { revision: task.revision, template: task.template })
-          report(true, 'Started: ' + t.title, [['Run ', runLink(run), ' of the ' + task.template + ' template claimed the task: it is under Working on the Board, and its page shows each step as it runs.']])
+          const answer = await api('tasks/' + encodeURIComponent(t.taskId) + '/start', { revision: task.revision, template: task.template })
+          // Admitted, and the board did not answer when asked to record it: nothing of it ran yet, and it is not refused (T127).
+          if (answer.pending) report('pending', 'Not started yet: ' + t.title, [['Run ', runLink(answer.pending), ' of the ' + task.template + ' template took the task, and the board did not answer when asked to record it, so nothing of it has run. It starts once the board shows it recorded, and the task then moves to Working; if the board never records it, the run is dropped with nothing run. Nothing more is needed from you.'], 'What the system said: ' + answer.pending.reason])
+          else report(true, 'Started: ' + t.title, [['Run ', runLink(answer.run), ' of the ' + task.template + ' template claimed the task: it is under Working on the Board, and its page shows each step as it runs.']])
         } catch (error) {
           report(false, 'Not started: ' + t.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was started: the task is still ready.'])
         }

@@ -358,6 +358,34 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(ctx.workflow.usage(10).filter((r) => r.runId !== run.runId && (r as { task?: { taskId: string } }).task?.taskId === task.taskId)).toEqual([])
   })
 
+  it('says a start the board did not answer is not started yet, never refused: 202 names the run, which starts once the board shows it recorded (T127 item 13, INV-2)', async () => {
+    const { ctx, call, workers } = await boot()
+    await activeProject(ctx)
+    const task = await readyTask(ctx, 'Write the release notes', { template: 'solo' })
+    workers.reply = () => 'hold'
+    const original = { start: ctx.board.start.bind(ctx.board), task: ctx.board.task.bind(ctx.board) }
+    let asked = false
+    ctx.board.start = (async () => {
+      asked = true
+      throw new Error('the board store is busy')
+    }) as never
+    ctx.board.task = (async (taskId: string) => {
+      if (asked) throw new Error('the board store is busy')
+      return original.task(taskId)
+    }) as never
+    onTestFinished(() => {
+      ctx.board.start = original.start
+      ctx.board.task = original.task
+    })
+    const answer = await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' })
+    expect(answer.status, JSON.stringify(answer.value)).toBe(202)
+    expect(answer.value).toEqual({ pending: { runId: expect.stringMatching(/^run_/), reason: expect.stringMatching(/^the board did not answer the start of run run_\w+ for task \S+ \(the board store is busy\); the run starts only once the board shows it recorded$/) } })
+    // Admitted and waiting for the board's record, nothing of it run: not refused.
+    const runId = (answer.value.pending as { runId: string }).runId
+    expect(ctx.workflow.get(runId)).toMatchObject({ status: 'running', task: { taskId: task.taskId, phase: 'starting' } })
+    expect(workers.started).toEqual([])
+  })
+
   it.runIf(canRunBrowser)('starts a ready task from its Board card in a real browser after a confirmation that says what runs on which kind of Worker; the card moves to Working, and a task naming no template is refused with why (T116)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted

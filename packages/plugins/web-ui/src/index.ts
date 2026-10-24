@@ -431,6 +431,8 @@ export function apply(ctx: Context, config: Config = {}): void {
    * start binds to the task and template the page showed (INV-5): a task changed since, no longer
    * ready, or naming no template or another one is refused (`409`) and nothing starts. A refusal
    * by the engine (a paused project, a spent budget, an overloaded host) is `409` with its reason.
+   * A run the engine admitted and the board did not answer for is no refusal: `202` `{pending}`
+   * names it, which starts once the board shows it recorded (T127).
    */
   const tasks = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const board = ctx.get('board')
@@ -457,6 +459,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
       return json(res, 200, { run })
     } catch (error) {
+      // Admitted all the same: it starts once the board shows it recorded, so never said as nothing started.
+      const pending = (error as { runId?: unknown }).runId
+      if (typeof pending === 'string') return json(res, 202, { pending: { runId: pending, reason: (error as Error).message } })
       return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
     }
   }

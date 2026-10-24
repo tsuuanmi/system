@@ -257,6 +257,33 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'again', task: { taskId: task.taskId } }))).toMatch(/is done, not ready/)
   })
 
+  it('names in its failure the run a start the board did not answer admitted, which waits starting for the board\'s record, nothing of it run (T127 item 13, INV-2, INV-4)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'unanswered')
+    const original = { start: ctx.board.start.bind(ctx.board), task: ctx.board.task.bind(ctx.board) }
+    let asked = false
+    ctx.board.start = (async () => {
+      asked = true
+      throw new Error('the board store is busy')
+    }) as never
+    ctx.board.task = (async (taskId: string) => {
+      if (asked) throw new Error('the board store is busy')
+      return original.task(taskId)
+    }) as never
+    onTestFinished(() => {
+      ctx.board.start = original.start
+      ctx.board.task = original.task
+    })
+    const failure = await ctx.workflow.start({ template: 'solo', input: 'x', classification: 'public', task: { taskId: task.taskId } }).then(() => undefined, (error: unknown) => error as WorkflowFailure)
+    expect(failure).toBeInstanceOf(WorkflowFailure)
+    expect(failure).toMatchObject({ kind: 'overloaded', runId: expect.stringMatching(/^run_/), message: expect.stringMatching(/the run starts only once the board shows it recorded$/) })
+    expect(ctx.workflow.get(failure!.runId!)).toMatchObject({ status: 'running', task: { taskId: task.taskId, phase: 'starting' } })
+    expect(workers.started).toEqual([])
+    // A refusal names no run: nothing was admitted.
+    expect(await ctx.workflow.start({ template: 'solo', input: 'y', task: { taskId: 'task-unknown' } }).then(() => undefined, (error: unknown) => (error as WorkflowFailure).runId)).toBeUndefined()
+  })
+
   it('serves one attempt with one run: concurrent starts on one claim admit one run, and a repeated clientRequestId returns it (INV-15, INV-4)', async () => {
     const { ctx, workers } = await boot()
     await project(ctx)

@@ -543,13 +543,20 @@ export const TASK_WAIT_MS = 30_000
 export const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 export const now = (): string => new Date().toISOString()
 
-/** A workflow-level refusal, typed like a turn failure. */
+/**
+ * A workflow-level refusal, typed like a turn failure. `runId` names a run that was admitted all the
+ * same and still starts on its own (a board task's start the board did not answer: it starts once the
+ * board shows it recorded, or is dropped with nothing run), so a caller never reads the failure as
+ * "nothing was started" (T127).
+ */
 export class WorkflowFailure extends Error {
   readonly disposition: string
-  constructor(readonly kind: 'invalid_input' | 'overloaded' | 'config_error', message: string) {
+  readonly runId?: string
+  constructor(readonly kind: 'invalid_input' | 'overloaded' | 'config_error', message: string, options: { runId?: string } = {}) {
     super(message)
     this.name = 'WorkflowFailure'
     this.disposition = kind === 'overloaded' ? 'BACKOFF' : kind === 'config_error' ? 'CODE_FIX' : 'NONE'
+    if (options.runId !== undefined) this.runId = options.runId
   }
 }
 
