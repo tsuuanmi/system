@@ -450,8 +450,15 @@ export const APP_JS = `'use strict'
             el('details', {}, el('summary', {}, 'Exact result (' + r.artifacts.length + ' artifact(s))'), el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a)))))),
         el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input), yes, no))
     }
-    return el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
+    // A review held for the operator expires unseen, and its task then waits for input that nothing revives: say when the first does.
+    const mine = listed.filter((r) => r.heldFor === 'operator' && r.expiresAt)
+    const first = mine.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
+    const section = el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
+      first ? el('p', {}, mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
+        el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.') : null,
       listed.length ? listed.map(card) : el('p', { class: 'muted' }, 'No task waits for your review.'))
+    if (first) section.dataset.firstExpires = first
+    return section
   }
 
   // A run's steps in one line: how many completed, and the steps that failed, wait, or run, by name.
@@ -486,7 +493,8 @@ export const APP_JS = `'use strict'
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
     const waiting = [
       asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
-      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review')) : null,
+      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review'
+        + (reviewed.dataset.firstExpires ? '; the first held for you expires ' + relative(reviewed.dataset.firstExpires) : ''))) : null,
       look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts

@@ -17,10 +17,13 @@ current one marked (`aria-current`) and named in the window's title; a run's pag
 Each page opens with its title and one line of what it is for.
 
 **Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
-for review, and the runs that need a look, each linking to its section), the Workers at a glance
-(the roster's counts), the approval cards, the reviews as cards (what was asked, the checks not
-run, the run that made the result, the exact result folded; **Accept: mark it done** and
-**Reject: send it back**, each with its own note), the runs that need a look (failed, or waiting
+for review with when the first held for you expires, and the runs that need a look, each linking
+to its section), the Workers at a glance (the roster's counts), the approval cards, the reviews as
+cards, under a line saying how many are held for you and when the first expires, marked when
+within the hour, since an unanswered one expires and its task waits for input that nothing
+revives (what was asked, the checks not run, the run that made the result, the exact result
+folded; **Accept: mark it done** and **Reject: send it back**, each with its own note), the runs
+that need a look (failed, or waiting
 for a plan approval, a fix's verdict, or a deciding vote) with why and a link, and the 15 most
 recent runs.
 
