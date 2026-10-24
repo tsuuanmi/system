@@ -340,7 +340,11 @@ second execution path (INV-1).
     task's usage (`ctx.resources.usage`): for each spent line, what the task overdrew plus one
     attempt's share of the line, fixed on the run's row (`task.budget.funding`) before it blocks
     the task on the board with it (`budget-spent` with `funding`, which asks the policy about
-    `funding`; the operator's approval adds exactly those lines to the task's budget). The run
+    `funding`; the operator's approval adds exactly those lines to the task's budget). The holds of
+    the task's runs the ledger still does not release when asked once more, which still count
+    against the caps, are fixed beside the ask (`task.budget.unreleased`, at most 8, each run, step,
+    and expiry) and named in the block (board 1.3 `unreleased`) and the run's failure, so a request
+    with no lines still says why the step was refused (operator decision D31, ADR-0054). The run
     fails as `budget_spent`, its outcome `blocked`; the next attempt's brief points at the results
     of the steps it completed. On the task's last
     attempt nothing is asked, since no approval could serve it: a `gate` decision
@@ -366,7 +370,9 @@ second execution path (INV-1).
     ([a question from a run](../../../docs/design/workflow-engine.md#a-question-from-a-run));
   - every brief the run writes states the task, the attempt, its goal and acceptance criteria,
     its budget less the usage spent on it (the ledger's records that name the task, its runs, or
-    the executions they started, each once), and points at the accepted results of the
+    the executions they started, each once), read when each step starts, so a step's brief states
+    what is left after the steps before it (the budget the run was admitted with when the ledger
+    cannot count it), and points at the accepted results of the
     tasks it depends on and, on a later attempt, the previous attempt's result and the decision
     behind this one ([a board task's brief](../../../docs/design/workflow-engine.md#a-board-tasks-brief));
   - a task's next attempt, or the first of a task that depends on exactly one other, resumes the

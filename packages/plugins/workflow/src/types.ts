@@ -3,6 +3,7 @@
  * refusal. Shared by every module of the engine; nothing here touches the store.
  */
 import { randomBytes } from 'node:crypto'
+import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
 import type { ContentId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Classification, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
@@ -170,6 +171,13 @@ export interface TaskBudgetView {
   /** The lines the block asked to raise the task's budget by (empty: it asked only to go on), fixed before the block. */
   funding?: Array<{ pool: string; unit: 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'; amount: number }>
   /**
+   * The reservations of the task's runs the ledger did not release and that still count against
+   * its caps (the step that reserved each as `<nodeId>:<attempt>:<escalations>`, or `run` for an
+   * earlier engine's one reservation per run), fixed with `funding` before the block, which names
+   * them: the next attempt may be refused again until they expire (operator decision D31).
+   */
+  unreleased?: UnreleasedHold[]
+  /**
    * The spent run was its task's last attempt, so it asked for no funding: the engine's `gate`
    * decision (`workflow.task-funding`), kept with the run's failure; its report leaves the task
    * waiting for input (`retries-spent`).
@@ -188,6 +196,8 @@ export interface StepHold {
   reservationId: string
   /** The ledger's `budget` decision that reserved it. */
   decision: ArtifactRef
+  /** When the ledger stops counting it if it is not released (absent on a hold an earlier engine recorded). */
+  expiresAt?: string
 }
 
 /** A task run's budget as its row keeps it (`workflow_tasks.budget`): the task's lines (the caps), and its steps' reservations. */

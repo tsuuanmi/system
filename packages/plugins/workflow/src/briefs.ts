@@ -21,7 +21,8 @@ import { type NodeRecord, type NodeRow, type RunRow, type WorkflowError, Workflo
  * What a run for a board task adds to every brief it writes, fixed when the run is admitted: the
  * task, its attempt, its goal and acceptance criteria, what it points at (the results of the tasks
  * it depends on, its previous attempt's result, and the decision behind this attempt), and the
- * budget it may still draw.
+ * budget it could still draw then. A step's brief states the budget left when the step starts
+ * (`TaskRuns.budgetAt`); the admitted one stands in only when the ledger cannot count it.
  */
 export interface TaskFrame {
   projectId: string
