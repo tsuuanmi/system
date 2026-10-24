@@ -22,9 +22,11 @@ declare module '@deepseek-ai/cordis' {
 /**
  * The contract version this definition and its conformance suite describe. 1.1 adds the one
  * escalation: a request whose every claim failed the quote check is written once more on the
- * standard tier, never higher ({@link escalation}), named by the request's `escalation`.
+ * standard tier, never higher ({@link escalation}), named by the request's `escalation`. 1.2 adds
+ * the request's optional `check`, run on the request as it would be returned before it is recorded
+ * (ADR-0036: an additive, optional field).
  */
-export const DIGESTS_CONTRACT = '1.1' as const
+export const DIGESTS_CONTRACT = '1.2' as const
 
 /** A content id (`sha256:<hex>`) of an artifact. */
 export type ArtifactRef = `sha256:${string}`
@@ -41,6 +43,13 @@ export interface DigestRequest {
   sources: ArtifactRef[]
   /** Retry-safe key: the same key returns the same request; another request under it is refused. */
   key?: string | undefined
+  /**
+   * Sees the request as {@link Digests.request} would return it (a new one pending, or the one its
+   * key already names), inside the transaction that records it, before it commits (contract 1.2):
+   * one that throws records nothing, takes no key, and starts nothing, and its error is the call's.
+   * The `digests_request` tool checks its output with it.
+   */
+  check?: ((view: DigestView) => void) | undefined
 }
 
 /** A request as its provider holds it (`schemas/mcp-digests.v1.json` `$defs/request`). */
@@ -82,6 +91,16 @@ export interface DigestBody {
   confidence?: number
 }
 
+/**
+ * `view`, once the request's `check` (contract 1.2), if any, has seen it: a provider calls it inside
+ * the transaction that records the request, after the write and before the commit, so a check that
+ * throws leaves nothing recorded.
+ */
+export function checkedRequest(input: DigestRequest, view: DigestView): DigestView {
+  input.check?.(view)
+  return view
+}
+
 /** Why a request was refused. Nothing was recorded and nothing runs. */
 export type DigestFailure = 'invalid' | 'unknown-request' | 'overloaded'
 export class DigestError extends Error {
@@ -103,7 +122,8 @@ export abstract class Digests extends Service {
    * Ask for a digest of `sources`. Durable at once and settled in the background; the same `key`
    * returns the same request. Refused (a {@link DigestError}, nothing recorded) only for its input:
    * a source that is not a stored artifact, a key reused for other sources, or too many requests
-   * pending. A Worker that cannot serve it never refuses it: the request settles `bypassed`.
+   * pending. A Worker that cannot serve it never refuses it: the request settles `bypassed`. Its
+   * `check`, when given, runs before the request is recorded (contract 1.2).
    */
   abstract request(input: DigestRequest): Promise<DigestView>
 

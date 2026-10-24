@@ -608,6 +608,19 @@ The **`agents` Worker source**: agent runtimes as Workers
   when none is left)
   ([freeing what a run holds](../../../docs/design/agent-runtimes.md#freeing-what-a-run-holds),
   [runbook](../../../docs/operations/runbooks.md#a-runs-liveness-is-unknown)).
+- **The run worktrees, for the operator** (`runWorktrees`, `removeWorktrees`; MCP
+  `agent_worktrees` and `agent_worktrees_remove`, operator scope, `mcp-agent-runs@1.1`; `system
+  worktrees [remove]`): every worktree not removed, at most 100, oldest first, with its state
+  (`in-use`, `held`, `finished`), what it holds (`clean`, `uncommitted`, `gone`, `not-intact`), and
+  when the retention removes it; and the removal of the finished ones now, every one or one
+  workflow run's (`runId`), at most 50 a call: a worktree is removed only while no agent run of its
+  workflow run is unfinished or not known to be gone, and only when clean, or with `commitChanges`
+  once its changes are committed on its branch, exactly as the retention retires it. Recorded
+  first as the operator's `retention` decision (decider `operator.worktrees`) naming each planned,
+  stored on each removed; none removable, nothing decided. The tool checks its output on the plan
+  before anything is decided (T103's pattern)
+  ([the operator's removal](../../../docs/design/agent-runtimes.md#the-operators-removal-of-run-worktrees),
+  [runbook](../../../docs/operations/runbooks.md#remove-finished-run-worktrees)).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
   resume the agent's native session, on a runtime that reports `resume`; no
   other runtime is ever asked to resume one, and the session keeps no native

@@ -13,7 +13,7 @@ import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
-import { type ArtifactRef, DigestError, type DigestRequest, Digests, type DigestState, type DigestView, type EscalationDecision, escalation, type QuoteCheck, quoteCheck, registerDigestTools, settlement } from '@tsuuanmi/system-digest-core'
+import { type ArtifactRef, checkedRequest, DigestError, type DigestRequest, Digests, type DigestState, type DigestView, type EscalationDecision, escalation, type QuoteCheck, quoteCheck, registerDigestTools, settlement } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
@@ -164,7 +164,7 @@ export class StoreDigests extends Digests {
       const existing = key ? db.prepare('SELECT * FROM digest_requests WHERE request_key = ?').get(key) as Row | undefined : undefined
       if (existing) {
         if (existing.sources !== JSON.stringify(sources)) throw new DigestError('invalid', 'the request key was used for other sources; nothing was requested')
-        return view(existing)
+        return checkedRequest(input, view(existing))
       }
       const pending = (db.prepare("SELECT COUNT(*) AS n FROM digest_requests WHERE state = 'pending'").get() as { n: number }).n
       if (pending >= this.maxPending) throw new DigestError('overloaded', `${pending} digest requests are pending (limit ${this.maxPending}); ask again once one settles`)
@@ -175,8 +175,10 @@ export class StoreDigests extends Digests {
       }
       db.prepare(`INSERT INTO digest_requests (request_id, request_key, sources, classification, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
         .run(row.request_id, key, row.sources, classification, row.created_at, row.updated_at)
+      // Checked before it commits (contract 1.2): a check that throws records nothing and schedules nothing.
+      const made = checkedRequest(input, view(row))
       this.ctx.store.afterCommit(() => this.schedule(row.request_id))
-      return view(row)
+      return made
     })
   }
 

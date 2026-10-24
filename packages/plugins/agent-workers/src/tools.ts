@@ -5,8 +5,9 @@
  * `account_migrate` (plan, apply, or undo the move from hand-named Workers to account × role). Input
  * and output are checked against `mcp-agent-accounts@1.2` (ADR-0037), the output of a call that
  * changes anything before its change commits; nothing in them holds a principal or a token (INV-8).
- * Beside them, `agent_run_free` (`mcp-agent-runs@1.0`): the operator frees what a run that ended
- * with its liveness unknown holds (PROP-0013).
+ * Beside them, the run tools (`mcp-agent-runs@1.1`): `agent_run_free`, the operator frees what a
+ * run that ended with its liveness unknown holds (PROP-0013); and `agent_worktrees` and
+ * `agent_worktrees_remove`, the operator lists the run worktrees and removes the finished ones (D12).
  * @module
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -14,9 +15,10 @@ import { outline } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import zod from 'zod'
 import type { AgentAccount, AgentAccounts, Begun, SlotRef } from './accounts.ts'
+import type { WorktreeRemoval } from './index.ts'
 
 const TAG = 'mcp-agent-accounts@1.2'
-const RUNS_TAG = 'mcp-agent-runs@1.0'
+const RUNS_TAG = 'mcp-agent-runs@1.1'
 const schemas = new SchemaRegistry()
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
@@ -72,15 +74,19 @@ const refOf = (args: Record<string, unknown>): SlotRef => (typeof args.accountId
   ? { accountId: args.accountId }
   : { provider: String(args.provider), ...(typeof args.slot === 'number' ? { slot: args.slot } : {}) })
 
-/** What frees a run's holds, as the `agents` source does it. */
+/** What frees a run's holds, and lists and removes the run worktrees, as the `agents` source does it. */
 export interface Freer {
   free(input: { agentRun: string; agentGone: boolean; commitWorktree?: boolean; note?: string }): Promise<object>
+  runWorktrees(input: { limit?: number }): Promise<object>
+  removeWorktrees(input: { runId?: string; commitChanges?: boolean; note?: string }, check?: (planned: WorktreeRemoval) => void): Promise<object>
 }
 
 /**
- * The operator's tool that frees what an agent run that ended without being known to be gone holds
- * (PROP-0013, ADR-0056): `agent_run_free`, operator scope, its input and output checked against
- * `mcp-agent-runs@1.0`.
+ * The operator's run tools, operator scope, their input and output checked against
+ * `mcp-agent-runs@1.1`: `agent_run_free` frees what an agent run that ended without being known to
+ * be gone holds (PROP-0013, ADR-0056); `agent_worktrees` lists the workflow runs' worktrees, and
+ * `agent_worktrees_remove` removes the finished ones now, never discarding a change (D12), its
+ * output checked on its plan before anything is decided.
  */
 export function registerRunTools(ctx: Context, freer: Freer): void {
   ctx.mcp.tool('agent_run_free', {
@@ -99,6 +105,35 @@ export function registerRunTools(ctx: Context, freer: Freer): void {
     return [
       `${freed.again ? 'freed again' : 'freed'} ${freed.agentRun} (decision ${freed.decision})${freed.freed.length ? `: ${freed.freed.join(', ')}` : ''}`,
       ...freed.worktrees.map((w) => `  worktree ${w.path}: ${w.outcome}${w.commit ? ` (committed ${w.commit})` : ''}: ${w.why}`),
+    ].join('\n')
+  }))
+  ctx.mcp.tool('agent_worktrees', {
+    scope: 'operator',
+    description: 'Operator tool: list the worktrees of workflow runs (a worktree per run) not removed yet, oldest first: each with its run, branch, state (in-use while an agent run of its workflow run runs; held while one ended with its liveness unknown; finished otherwise), what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it.',
+    inputSchema: { limit: zod.number().int().min(1).max(100).optional().describe('At most this many (default and most 100)') },
+  }, async (args) => checked(RUNS_TAG, 'agent_worktrees', args, async () => ({ ...await freer.runWorktrees(typeof args.limit === 'number' ? { limit: args.limit } : {}) }), (out) => {
+    const listing = out as { retentionHours: number; total: number; worktrees: Array<{ runId: string; path: string; branch: string; state: string; changes: string; retiresAt?: string }> }
+    return [
+      `${listing.total} run worktree(s); the retention removes a finished one ${listing.retentionHours ? `${listing.retentionHours} h after its last agent run` : 'never (worktreeRetentionHours 0)'}`,
+      ...listing.worktrees.map((w) => `  ${w.runId}  ${w.state}, ${w.changes}${w.retiresAt ? `, retires ${w.retiresAt}` : ''}  ${w.path} (${w.branch})`),
+    ].join('\n')
+  }))
+  ctx.mcp.tool('agent_worktrees_remove', {
+    scope: 'operator',
+    description: 'Operator tool: remove finished run worktrees now instead of waiting for the retention, every one or those of one workflow run (runId). One is removed only while no agent run of its workflow run is unfinished or held, and only when it holds nothing uncommitted, or with commitChanges after its changes are committed on its branch: nothing is discarded, and the branch stays. Recorded as your retention decision; a worktree it cannot remove stays, and why.',
+    inputSchema: {
+      runId: zod.string().max(128).optional().describe('Only this workflow run\'s worktrees'),
+      commitChanges: zod.boolean().optional().describe('Commit a finished worktree\'s uncommitted changes on its branch, then remove it'),
+      note: zod.string().max(1000).optional().describe('Why, kept on the decision'),
+    },
+  }, async (args) => checked(RUNS_TAG, 'agent_worktrees_remove', args, async (check) => ({ ...await freer.removeWorktrees({
+    ...(typeof args.runId === 'string' ? { runId: args.runId } : {}), commitChanges: args.commitChanges === true, ...(typeof args.note === 'string' ? { note: args.note } : {}),
+  }, (planned) => check({ ...planned })) }), (out) => {
+    const removal = out as { decision?: string; more: number; worktrees: Array<{ runId: string; path: string; outcome: string; why: string; commit?: string }> }
+    return [
+      removal.decision ? `removed finished run worktrees (decision ${removal.decision})` : 'no finished run worktree to remove; nothing was decided',
+      ...removal.worktrees.map((w) => `  ${w.runId} ${w.path}: ${w.outcome}${w.commit ? ` (committed ${w.commit})` : ''}: ${w.why}`),
+      ...(removal.more ? [`  ${removal.more} more not looked at: run it again`] : []),
     ].join('\n')
   }))
 }

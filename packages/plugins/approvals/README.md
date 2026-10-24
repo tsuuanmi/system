@@ -138,7 +138,10 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   structured output is validated against
   [`schemas/mcp-approvals.v1.json`](../../../schemas/mcp-approvals.v1.json) `$defs/<tool>-input`
   and `-output`; a refused input does nothing, a refusal is an MCP error naming the
-  `ApprovalsError`.
+  `ApprovalsError`. `approvals_decide` and `approvals_policy_propose` check the output they would
+  give before their change commits (`decide` and `proposePolicy` take an optional `check`; with
+  it, a call's verdicts apply in one transaction): an output its schema refuses (a defect) is
+  refused with no verdict applied and no change stored.
 - **Config:** `policies` (required): `autonomy-policy@1.x` records, exactly one studio policy
   and project policies that narrow it; `sweepSeconds` (1 to 3600, default 60); `supersedes`
   (optional): the `sha256:` hash of the stored set this configuration replaces, read only at a

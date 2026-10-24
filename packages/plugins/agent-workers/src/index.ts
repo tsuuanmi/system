@@ -63,7 +63,7 @@ import {
 } from './roles.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
-import { notKnownGone, RUN_ID, type RepositoryCheck, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
+import { notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -296,6 +296,10 @@ const MAX_LOOK_MS = 15 * 60_000
 const RECONCILE_RULE = { type: 'rule', id: 'agent-workers.reconcile', version: '2' } as const
 /** The operator's word that a run's agent is gone, freeing what the run held (INV-13). */
 const FREE_DECIDER = { type: 'operator', id: 'operator.free', version: '1' } as const
+/** The operator who removes finished run worktrees before the retention would (D12). */
+const WORKTREES_DECIDER = { type: 'operator', id: 'operator.worktrees', version: '1' } as const
+/** The most run worktrees one listing shows (INV-9). */
+const MAX_LISTED_WORKTREES = 100
 /** A run ended without being known to be gone, and what it held stays held. */
 const UNKNOWN_EVENT = 'agent-workers.run.unknown'
 /** The operator freed what such a run held. */
@@ -1411,6 +1415,59 @@ export class AgentWorkers extends Service {
     return { agentRun: row.run_id, worker: row.worker, decision, again, freed: again ? [] : holds, worktrees: released }
   }
 
+  /**
+   * The workflow runs' worktrees not removed (D12): each with its state (in use, held, or finished),
+   * what it holds, and when the retention removes it; at most `limit` (default and most 100), oldest
+   * first, and how many there are in all (`agent_worktrees`, `system worktrees`).
+   */
+  async runWorktrees(input: { limit?: number } = {}): Promise<WorktreeListing> {
+    const limit = input.limit ?? MAX_LISTED_WORKTREES
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LISTED_WORKTREES) throw new ProviderError('invalid_input', `limit is a whole number from 1 to ${MAX_LISTED_WORKTREES}`)
+    const retentionHours = this.config.worktreeRetentionHours ?? 168
+    return { retentionHours, ...await this.worktrees.list(retentionHours, limit) }
+  }
+
+  /**
+   * The operator removes finished worktrees now instead of waiting for the retention (D12), every one
+   * or those of one workflow run (`runId`): a worktree is removed only while no agent run of its
+   * workflow run is unfinished or ended without being known to be gone, and only when it holds
+   * nothing uncommitted, or, with `commitChanges`, once its changes are committed on its branch, as
+   * the retention does: nothing is ever discarded, and the branch always stays. Recorded first as the
+   * operator's `retention` decision (INV-13), naming each worktree planned; with none to remove,
+   * nothing is decided. `check` sees the output the plan would give before anything is decided: one
+   * that throws decides and removes nothing. At most 50 worktrees a call (the sweep's batch; INV-9).
+   */
+  async removeWorktrees(input: { runId?: string; commitChanges?: boolean; note?: string } = {}, check?: (planned: WorktreeRemoval) => void): Promise<WorktreeRemoval> {
+    if (input.runId !== undefined && !RUN_ID.test(input.runId)) throw new ProviderError('invalid_input', `${String(input.runId).slice(0, 80)} is not a workflow run id; nothing was removed`)
+    const commit = input.commitChanges === true
+    const { plans, more } = await this.worktrees.planRemoval(input.runId, commit)
+    const removing = plans.filter((p) => p.outcome === 'remove')
+    // What the call would answer if every planned removal went through: checked before anything is decided.
+    check?.({ worktrees: plans.map((p) => (p.outcome === 'remove' ? { ...p, outcome: 'removed' } : p)), more })
+    if (!removing.length) return { worktrees: plans, more }
+    const note = input.note?.trim().slice(0, 1000)
+    const decision = this.ctx.artifacts.recordDecision({
+      schema: 'decision@1.3', decisionType: 'retention',
+      question: `Are ${removing.length} finished run worktree(s) removed now, on the operator's word, before the retention would?`,
+      inputs: [],
+      candidates: [
+        { option: 'remove', selected: true, reasons: [`the operator asked to remove the finished worktrees${input.runId ? ` of workflow run ${input.runId}` : ''}${note ? `: ${note}` : ''}`, ...removing.map((p) => `worktree ${p.path} of ${p.runId}: ${p.why}`)] },
+        { option: 'keep', selected: false, reasons: ['not kept: no agent run of their workflow runs is unfinished or held, and each holds nothing uncommitted or has its changes committed on its branch first, so nothing is lost; the branch stays'] },
+      ],
+      decider: WORKTREES_DECIDER,
+      outcome: { option: 'remove', detail: { commitChanges: commit, ...(input.runId ? { runId: input.runId } : {}), worktrees: removing.map((p) => ({ runId: p.runId, path: p.path, branch: p.branch })) } },
+      ...(note ? { rationale: note } : {}),
+      deterministic: false,
+    }, { producer: { type: 'operator', ref: 'operator' }, ...(input.runId ? { runId: input.runId } : {}), classification: 'operator-shared' }).id as ContentId
+    const done: RunWorktreeRelease[] = []
+    for (const runId of new Set(plans.map((p) => p.runId))) {
+      const ofRun = plans.filter((p) => p.runId === runId)
+      for (const released of await this.worktrees.release(runId, decision, commit, ofRun, null)) done.push({ runId, ...released })
+    }
+    this.ctx.logger.info(`agent Workers: the operator removed finished worktrees (decision ${decision}): ${done.map((w) => `${w.path} ${w.outcome}`).join(', ')}`)
+    return { decision, worktrees: done, more }
+  }
+
   private recover(): void {
     if (this.stopped.signal.aborted) return
     const rows = this.ctx.store.db.prepare("SELECT run_id FROM agent_runs WHERE status IN ('queued', 'running') ORDER BY created_at").all() as Array<{ run_id: string }>
@@ -2366,6 +2423,24 @@ export interface FreeOutcome {
   worktrees: WorktreeRelease[]
 }
 
+/** The run worktrees not removed (`agent_worktrees`): the retention in force, at most 100 of them, and how many in all. */
+export interface WorktreeListing {
+  retentionHours: number
+  worktrees: RunWorktree[]
+  total: number
+}
+
+/**
+ * What the operator's removal of finished worktrees did (`agent_worktrees_remove`): their `retention`
+ * decision, when one was removable; each worktree removed or kept, and why; and how many it did not
+ * look at (more than 50).
+ */
+export interface WorktreeRemoval {
+  decision?: ContentId
+  worktrees: RunWorktreeRelease[]
+  more: number
+}
+
 /** A stored JSON column's value, or undefined when it holds nothing readable. */
 function parsed(json: string | null | undefined): unknown {
   if (!json) return undefined
@@ -2449,5 +2524,5 @@ function usageOf(metering: RunMetering | undefined): Pick<UsageRecord, 'usage' |
   return { usage: { ...metering.usage }, ...(models ? { models: models.map((m) => ({ model: m.model, usage: { ...m.usage }, ...(m.costUsd !== undefined ? { costUsd: m.costUsd } : {}) })) } : {}) }
 }
 
-export type { SweepOutcome } from './worktrees.ts'
+export type { RunWorktree, RunWorktreeRelease, SweepOutcome } from './worktrees.ts'
 export default AgentWorkers

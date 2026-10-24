@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -306,6 +306,41 @@ describe('system usage and explain output', () => {
       'freed arun_00000000000000aa (decision sha256:0f): session ses_1; worktree /w/run_1 (branch system/run/run_1)',
       '  worktree /w/run_1: removed, its changes committed on system/run/run_1 as c0ffee (its uncommitted changes are committed on system/run/run_1, which stays, then it is removed)',
     ])
+  })
+
+  it('lists the run worktrees with their state and retirement, and asks to remove the finished ones with the operator\'s options, printing each removed or kept (D12)', () => {
+    expect(formatWorktrees({
+      retentionHours: 24, total: 3,
+      worktrees: [
+        { runId: 'run_1', path: '/w/run_1', branch: 'system/run/run_1', state: 'finished', changes: 'clean', lastActivityAt: '2026-10-24T07:19:40Z', retiresAt: '2026-10-25T07:19:40Z' },
+        { runId: 'run_2', path: '/w/run_2', branch: 'system/run/run_2', state: 'held', changes: 'uncommitted', lastActivityAt: '2026-10-24T07:31:05Z', failure: 'git could not remove it' },
+      ],
+    })).toEqual([
+      '3 run worktree(s); the retention removes a finished one 24 h after its last agent run; the oldest 2 shown',
+      '  run_1  finished, clean  last activity 2026-10-24T07:19:40Z, retires 2026-10-25T07:19:40Z',
+      '    /w/run_1  (system/run/run_1)',
+      '  run_2  held, uncommitted  last activity 2026-10-24T07:31:05Z',
+      '    /w/run_2  (system/run/run_2)',
+      '    last retirement failed: git could not remove it',
+    ])
+    expect(formatWorktrees({ retentionHours: 0, total: 0, worktrees: [] })).toEqual(['0 run worktree(s); the retention removes none (worktreeRetentionHours 0)'])
+    expect(parseWorktreesRemove([])).toEqual({})
+    expect(parseWorktreesRemove(['--run', 'run_1', '--commit-changes', 'merged', 'to', 'main'])).toEqual({ runId: 'run_1', commitChanges: true, note: 'merged to main' })
+    expect(() => parseWorktreesRemove(['--run'])).toThrow(/--run names a workflow run/)
+    expect(() => parseWorktreesRemove(['--force'])).toThrow(/unknown option --force/)
+    expect(formatWorktreesRemoved({
+      decision: 'sha256:0f', more: 2,
+      worktrees: [
+        { runId: 'run_1', path: '/w/run_1', branch: 'system/run/run_1', outcome: 'removed', why: 'its uncommitted changes are committed on system/run/run_1, which stays, then it is removed', commit: 'c0ffee' },
+        { runId: 'run_2', path: '/w/run_2', branch: 'system/run/run_2', outcome: 'kept', why: 'an agent run of workflow run run_2 is unfinished' },
+      ],
+    })).toEqual([
+      'removed finished run worktrees (decision sha256:0f)',
+      '  run_1  /w/run_1: removed, its changes committed on system/run/run_1 as c0ffee (its uncommitted changes are committed on system/run/run_1, which stays, then it is removed)',
+      '  run_2  /w/run_2: kept (an agent run of workflow run run_2 is unfinished)',
+      '  2 more not looked at: run it again',
+    ])
+    expect(formatWorktreesRemoved({ more: 0, worktrees: [] })).toEqual(['no finished run worktree could be removed; nothing was decided'])
   })
 
   it('prints an artifact\'s header, its classification first among its facts, then the window; one not stored as its note', () => {

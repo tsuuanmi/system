@@ -219,6 +219,13 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(workers.filter((w) => w.sandbox === 'workspace-write').map((w) => [w.id, w.runtime, w.kinds])).toEqual([['claude-code', 'claude-agent-sdk', ['code']], ['codex-writer', 'codex-sdk', ['docs', 'tests']]])
     const system = workers.filter((w) => w.workspace === '/home/tan/workspaces/system')
     expect(system.every((w) => w.worktreePerRun === true)).toBe(true)
+    // T99 D5: a digest asks for a read-only Worker on the economy tier only, never one of the
+    // standard reviewers: exactly one such Worker, given no kinds and no review team seat, and
+    // outside the repository (its sources come in its brief); the reviewers stay standard.
+    expect(workers.filter((w) => w.sandbox === 'read-only' && w.tier === 'economy').map((w) => [w.id, w.runtime, w.kinds, w.reviewMember, w.worktreePerRun, w.workspace])).toEqual([
+      ['claude-digest', 'claude-agent-sdk', undefined, undefined, undefined, '/home/tan/experiments/review-member/empty'],
+    ])
+    expect(workers.filter((w) => w.sandbox === 'read-only' && w.id !== 'claude-digest').every((w) => w.tier === 'standard')).toBe(true)
     expect(checkConfig({ workers: system.map((w) => (w.id === 'codex-review' ? { ...w, worktreePerRun: false } : w)) })).toEqual([expect.stringMatching(/share the workspace \/home\/tan\/workspaces\/system, and only one of them works in a worktree per run/)])
     expect(checkConfig({ workers: [{ ...system[0]!, kinds: ['Code'] }] })).toEqual([expect.stringMatching(/kinds "Code" is not a kind of work/)])
     expect(checkConfig({ roles: [ROLE('code', { kinds: [] })], assignments: [{ account: ACC1, roles: ['code'] }] })).toEqual([expect.stringMatching(/kinds must list 1 to 16/)])

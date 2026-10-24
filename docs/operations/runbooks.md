@@ -430,8 +430,15 @@ the system repository with a worktree per run. The rows are in
    - `codex-writer`: the same on Codex, `kinds: [docs, tests]`: it writes in the `docs` and `tests`
      variants and runs `validate:1`.
    - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
-     every review and digest. Each now sets `worktreePerRun: true`: every Worker on a workspace must
+     every review. Each now sets `worktreePerRun: true`: every Worker on a workspace must
      agree, so a reviewer reads the writer's worktree, and the load refuses a row that disagrees.
+   - `claude-digest`: read-only, on the **economy** tier, given no kinds, in the review member's
+     empty directory. It writes the digests of task results: a digest asks for a read-only Worker on
+     the economy tier only (the `digest` row's `tier`), so with only the standard reviewers every
+     task's digest is bypassed ("no Worker can write it (a read-only Worker on the economy tier)",
+     T99 D5). Optionally give it the runtime's lighter model (`model:`). Instead of this Worker, you
+     may set the `digest` row's `tier: standard`, an explicit choice: digests then run on a standard
+     reviewer and are never escalated ([digests](../design/digests.md#the-worker)).
    - `claude-member` keeps its empty directory, never a worktree.
 3. **The approval policy that gates the writers' commands** (ADR-0038) is the bundle's studio
    policy, unchanged: reads and edits run (`workspace-write` is `auto`, with `tests` and `lint`
@@ -2382,7 +2389,38 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
 - **A path that is not the run's:** a path that already exists and is not that run's worktree is
   never taken over (`config_error`). Move it away.
 - **Disk:** each worktree is a full checkout, kept a week by default. Lower
-  `worktreeRetentionHours` when disk is short.
+  `worktreeRetentionHours` when disk is short, or remove the finished ones sooner
+  ([below](#remove-finished-run-worktrees)).
+
+### Remove finished run worktrees
+
+Seen as worktrees and `system/run/*` branches piling up under `~/.dsh/system/worktrees` (one per
+attempt of a task, each a full checkout). Who removes them: the retention, on its own,
+`worktreeRetentionHours` after the last agent run of each workflow run ended (at start and hourly),
+whatever became of the attempt: failed, rejected, accepted, or still held for your review. Until
+then each stays, so a held review's pending checks can run in it. You can remove the finished ones
+sooner; nothing is ever discarded.
+
+1. **See them:** `system worktrees` lists every one not removed yet, oldest first: its run, its
+   state (`in-use` while an agent run of the run is queued or running; `held` while one ended with
+   its liveness unknown; `finished`), what it holds (`clean`, `uncommitted`, `gone` from disk, or
+   `not-intact`), its path and branch, and when the retention removes it.
+2. **Keep the work you want:** for a result you accepted, merge its branch (`git -C <repository>
+   merge system/run/<runId>`), or commit in the worktree first ([recover work](#a-runs-worktree)).
+   A worktree a review of its task still waits on holds the exact tree that review is bound to:
+   decide the review before removing it.
+3. **Remove them:** `system worktrees remove [note]` removes every `finished` one that holds
+   nothing uncommitted; `--run <runId>` only that run's. Add `--commit-changes` to remove a finished
+   one with uncommitted changes too: they are committed on its branch first, as the retention does.
+   It is recorded first as your `retention` decision (`system explain <decision>`), and prints each
+   worktree removed or kept, and why. A `held` one stays until you free its run
+   ([a run's liveness is unknown](#a-runs-liveness-is-unknown)); an `in-use` one stays until its
+   agent run ends; a `not-intact` one is yours to inspect ([a `.git` file changed by the
+   agent](#a-runs-worktree)). At most 50 a call: run it again while it says more are left.
+4. **The branches stay:** `system` never deletes a branch. Delete the ones whose work is merged,
+   which git refuses for one that is not: `git -C <repository> branch -d system/run/<runId>`
+   (`git -C <repository> branch --merged main --list 'system/run/*'` lists them). A run continued
+   after its worktree was removed gets it again from its branch.
 
 ## A run's liveness is unknown
 

@@ -2,7 +2,9 @@
  * The `digests_*` MCP tools (docs/design/digests.md), client scope, which every provider of
  * `ctx.digests` serves the same way: a lead asks for a digest of raw artifacts and reads it as it
  * settles. Each call's input and structured output are validated against
- * `schemas/mcp-digests.v1.json` `$defs/<tool>-input` and `-output`; a refused input does nothing.
+ * `schemas/mcp-digests.v1.json` `$defs/<tool>-input` and `-output`; a refused input does nothing,
+ * and `digests_request` checks the output it would give through the request's `check` (contract
+ * 1.2), before the request is recorded, so an output its schema refuses (a defect) records nothing.
  * The tools belong to the seam, not to a provider, so replacing the provider keeps them.
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -40,14 +42,19 @@ const DESCRIPTIONS: Record<DigestTool, string> = {
   digests_get: 'Read a digest request as it stands: pending, written (with its digest), not-written, or bypassed, with why.',
 }
 
-type Handler = (args: Record<string, unknown>) => Promise<DigestView>
+/** Checks the output a call would give: `digests_request` runs it before its request is recorded. */
+export type OutputCheck = (output: DigestView) => void
+type Handler = (args: Record<string, unknown>, check: OutputCheck) => Promise<DigestView>
+
+/** The output a call would give, refused by its schema before its request was recorded. */
+class RefusedOutput extends Error {}
 
 /** The tools' behavior, over any provider; exported so tests call it as a client would. */
 export function digestToolHandlers(digests: Digests): Record<DigestTool, Handler> {
   const settled = async (view: DigestView, args: Record<string, unknown>): Promise<DigestView> =>
     (typeof args.waitSeconds === 'number' && args.waitSeconds > 0 ? digests.wait(view.requestId, args.waitSeconds * 1000) : view)
   return {
-    digests_request: async (args) => settled(await digests.request({ sources: args.sources as ArtifactRef[], ...(typeof args.clientRequestId === 'string' ? { key: args.clientRequestId } : {}) }), args),
+    digests_request: async (args, check) => settled(await digests.request({ sources: args.sources as ArtifactRef[], ...(typeof args.clientRequestId === 'string' ? { key: args.clientRequestId } : {}), check }), args),
     digests_get: async (args) => {
       const view = await digests.get(String(args.requestId))
       if (!view) throw new DigestError('unknown-request', `no digest request ${String(args.requestId)}`)
@@ -56,7 +63,12 @@ export function digestToolHandlers(digests: Digests): Record<DigestTool, Handler
   }
 }
 
-/** Wrap a handler: validate the input first and the structured output last, and report a refusal as an MCP error. */
+/**
+ * Wrap a handler: validate the input first; give it the check of its output, which
+ * `digests_request` runs before its request is recorded; validate the structured output once more
+ * last (all a read needs, and the request as it stands after a wait); and report a refusal as an MCP
+ * error.
+ */
 export function digestTool(name: DigestTool, handler: Handler): ToolHandler {
   return async (args) => {
     try {
@@ -64,16 +76,24 @@ export function digestTool(name: DigestTool, handler: Handler): ToolHandler {
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
+    const check: OutputCheck = (output) => {
+      try {
+        schemas.assertDef('mcp-digests@1.0', defOf(name, 'output'), output)
+      } catch (error) {
+        throw new RefusedOutput((error as Error).message)
+      }
+    }
     let output: DigestView
     try {
-      output = await handler(args)
+      output = await handler(args, check)
     } catch (error) {
+      if (error instanceof RefusedOutput) return refused(`digests: ${name} would make an output its schema refuses (a defect), so nothing changed: ${error.message}`)
       return refused(error instanceof DigestError ? `${error.failure}: ${error.message}` : `digests: ${(error as Error).message}`)
     }
     try {
       schemas.assertDef('mcp-digests@1.0', defOf(name, 'output'), output)
     } catch (error) {
-      return refused(`digests: ${name} made an output its schema refuses (a defect; the request itself is recorded): ${(error as Error).message}`)
+      return refused(`digests: ${name} made an output its schema refuses (a defect${name === 'digests_request' ? '; the request was recorded before it was waited on' : ''}): ${(error as Error).message}`)
     }
     return reply(output, outline(output))
   }

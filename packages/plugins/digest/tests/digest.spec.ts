@@ -6,7 +6,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, digestTool, digestToolHandlers, type DigestView } from '@tsuuanmi/system-digest-core'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { type Brief, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { type Brief, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -182,5 +182,27 @@ describe('ctx.digests on the store', () => {
     expect((await call('digests_get', { requestId: view.requestId })).structuredContent).toEqual(view)
     expect(await call('digests_get', { requestId: 'dig-unknown' })).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^unknown-request/) }] })
     expect(await call('digests_request', { sources: [log], clientRequestId: 'r1' })).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^invalid/) }] })
+  })
+
+  it('checks digests_request\'s output before its request is recorded: one its schema refuses (a defect) records nothing and starts no Worker (contract 1.2, INV-2, INV-14)', async () => {
+    const { ctx, worker, log, bench } = await boot((r) => () => ({ text: draft(r.log, r.bench) }))
+    const behavior = digestToolHandlers(ctx.digests)
+    const call = (args: Record<string, unknown>) => digestTool('digests_request', behavior.digests_request)(args, { scope: 'client' })
+    // A defect: the request's output is one its schema refuses.
+    const assertDef = SchemaRegistry.prototype.assertDef
+    const spy = vi.spyOn(SchemaRegistry.prototype, 'assertDef').mockImplementation(function (this: SchemaRegistry, tag, def, value) {
+      if (tag.startsWith('mcp-digests@') && def === 'digests-request-output') throw new SchemaError(`${tag}#/$defs/${def}`, [], 'a defect')
+      assertDef.call(this, tag, def, value)
+    })
+    onTestFinished(() => spy.mockRestore())
+    const refused = await call({ sources: [log, bench], clientRequestId: 'r-defect' })
+    expect([refused.isError, (refused.content[0] as { text: string }).text]).toEqual([true, expect.stringMatching(/^digests: digests_request would make an output its schema refuses \(a defect\), so nothing changed/)])
+    expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM digest_requests').get()).toEqual({ n: 0 })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(worker.started).toHaveLength(0)
+    // Once the output checks, the same key makes the request.
+    spy.mockRestore()
+    const made = await call({ sources: [log, bench], clientRequestId: 'r-defect', waitSeconds: 30 })
+    expect(made.structuredContent).toMatchObject({ state: 'written' })
   })
 })

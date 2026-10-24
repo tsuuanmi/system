@@ -3,16 +3,18 @@
  * lead's are client scope; `board_pause`, `board_resume`, and `board_close` are operator scope,
  * because a project's state moves only from the operator's channel (INV-6). Each call's input and
  * structured output are validated against `schemas/mcp-board.v1.json` (1.1) `$defs/<tool>-input`
- * and `-output`; a refused input executes nothing. No tool starts, submits, accepts, blocks, or
+ * and `-output`; a refused input executes nothing, and a tool that changes the board checks the
+ * output it would give inside the move's store transaction, before it commits, so an output its
+ * schema refuses (a defect) leaves the board as it was. No tool starts, submits, accepts, blocks, or
  * reconciles a task: the workflow run that serves an attempt does, as its owner (MCP `run` with
  * `task`), so one attempt has one writer (INV-15).
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { BoardError, type BoardTask, type CharterInput, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
+import { BoardError, type BoardTask, type CharterInput, type Claim, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
 import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
-import type { StoreBoard } from './index.ts'
+import type { Chartered, Checked, Closed, Renewed, StoreBoard } from './index.ts'
 
 export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close'] as const
 export type BoardTool = typeof BOARD_TOOLS[number]
@@ -117,7 +119,18 @@ const operatorOnly = (scope: ToolScope, move: string): void => {
 }
 
 type Args = Record<string, unknown>
-type Handler = (args: Args, context: ToolContext) => Promise<object>
+/**
+ * Checks the output a call would give: a tool that changes the board passes it, through what it
+ * builds that output from, into the move, which runs it before it commits.
+ */
+export type OutputCheck = (output: object) => void
+type Handler = (args: Args, context: ToolContext, check: OutputCheck) => Promise<object>
+
+/** The output a call would give, refused by its schema before its move committed. */
+class RefusedOutput extends Error {}
+
+/** `check` on the output `out` builds from what a move returns. */
+const sees = <T>(check: OutputCheck, out: (value: T) => object): Checked<T> => (value) => check(out(value))
 
 /** The tools' behavior, over a board; exported so tests call it as a client would. */
 export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Record<BoardTool, Handler> {
@@ -129,11 +142,11 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
         ...(next ? { next } : {}),
       }
     },
-    board_charter: async (args) => {
+    board_charter: async (args, _context, check) => {
       const input = args as unknown as CharterInput & { clientRequestId?: string }
       const { clientRequestId, ...charter } = input
-      const { project, approvalRequest, charterVersion } = await board.charterProject(charter, new Date(), clientRequestId)
-      return { projectId: project.projectId, state: project.state, charterVersion, approvalRequest }
+      const out = ({ project, approvalRequest, charterVersion }: Chartered) => ({ projectId: project.projectId, state: project.state, charterVersion, approvalRequest })
+      return out(await board.charterProject(charter, new Date(), clientRequestId, sees(check, out)))
     },
     board_brief: async (args) => {
       const projectId = String(args.projectId)
@@ -164,16 +177,15 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
       if (!task) throw new BoardError('unknown-task', `no task ${String(args.taskId)}`)
       return { task }
     },
-    board_propose: async (args) => {
+    board_propose: async (args, _context, check) => {
       const { clientRequestId, ...input } = args as unknown as TaskInput & { clientRequestId?: string }
-      const task = board.proposeTask(input, new Date(), clientRequestId)
-      return { taskId: task.taskId, state: task.state, revision: task.revision }
+      return moved(board.proposeTask(input, new Date(), clientRequestId, sees(check, moved)))
     },
-    board_claim: async (args) => {
-      const claim = await board.claim(String(args.taskId), String(args.owner), (typeof args.ttlSeconds === 'number' ? args.ttlSeconds : options.leaseTtlSeconds) * 1000)
-      return { taskId: claim.taskId, state: 'claimed', generation: claim.generation, leaseExpiresAt: claim.leaseExpiresAt }
+    board_claim: async (args, _context, check) => {
+      const out = (claim: Claim) => ({ taskId: claim.taskId, state: 'claimed', generation: claim.generation, leaseExpiresAt: claim.leaseExpiresAt })
+      return out(await board.claim(String(args.taskId), String(args.owner), (typeof args.ttlSeconds === 'number' ? args.ttlSeconds : options.leaseTtlSeconds) * 1000, new Date(), sees(check, out)))
     },
-    board_update: async (args) => {
+    board_update: async (args, _context, check) => {
       const taskId = String(args.taskId)
       const answers = args.answers as Array<{ question: number; answer: string }> | undefined
       if (answers && args.generation !== undefined) throw new BoardError('invalid', 'board_update renews a lease (generation) or answers questions (answers), not both')
@@ -184,34 +196,42 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
           ordered[question] = answer
         }
         if (ordered.length !== answers.length) throw new BoardError('invalid', 'answer the questions by index, from 0, each once')
-        const task = await board.answer(taskId, ordered)
-        return { taskId, state: task.state, revision: task.revision }
+        return moved(await board.answer(taskId, ordered, new Date(), sees(check, moved)))
       }
       if (typeof args.generation !== 'number') throw new BoardError('invalid', 'board_update needs the generation you hold (to renew the lease) or answers')
-      const claim = await board.heartbeat(taskId, args.generation)
-      const task = (await board.task(taskId))!
-      return { taskId, state: task.state, revision: task.revision, leaseExpiresAt: claim.leaseExpiresAt }
+      const out = ({ task, leaseExpiresAt }: Renewed) => ({ taskId, state: task.state, revision: task.revision, leaseExpiresAt })
+      let renewed: Renewed | undefined
+      await board.heartbeat(taskId, args.generation, new Date(), (value) => {
+        check(out(value))
+        renewed = value
+      })
+      return out(renewed!)
     },
-    board_cancel: async (args, { scope }) => {
+    board_cancel: async (args, { scope }, check) => {
       // Who cancelled is who called: the operator's token, else the lead's (a client).
-      const task = await board.cancel(String(args.taskId), scope === 'operator' ? 'operator' : 'lead', typeof args.note === 'string' ? args.note : undefined)
-      return { taskId: task.taskId, state: 'cancelled', revision: task.revision }
+      const out = (task: BoardTask) => ({ taskId: task.taskId, state: 'cancelled', revision: task.revision })
+      return out(await board.cancel(String(args.taskId), scope === 'operator' ? 'operator' : 'lead', typeof args.note === 'string' ? args.note : undefined, new Date(), sees(check, out)))
     },
-    board_pause: async (args, { scope }) => {
+    board_pause: async (args, { scope }, check) => {
       operatorOnly(scope, 'pauses')
-      const project = await board.pause(String(args.projectId))
-      return { projectId: project.projectId, state: 'paused', revision: project.revision, decision: project.lastDecision }
+      const out = (project: Project) => ({ projectId: project.projectId, state: 'paused', revision: project.revision, decision: project.lastDecision })
+      return out(await board.pause(String(args.projectId), new Date(), sees(check, out)))
     },
-    board_resume: async (args, { scope }) => {
+    board_resume: async (args, { scope }, check) => {
       operatorOnly(scope, 'resumes')
-      const project = await board.resume(String(args.projectId))
-      return { projectId: project.projectId, state: 'active', revision: project.revision, decision: project.lastDecision }
+      const out = (project: Project) => ({ projectId: project.projectId, state: 'active', revision: project.revision, decision: project.lastDecision })
+      return out(await board.resume(String(args.projectId), new Date(), sees(check, out)))
     },
-    board_close: async (args, { scope }) => {
+    board_close: async (args, { scope }, check) => {
       operatorOnly(scope, 'closes')
-      const { project, cancelled } = await board.closeProject(String(args.projectId), args.outcome as 'achieved' | 'stopped')
-      return { projectId: project.projectId, state: 'closed', outcome: project.closure!.outcome, revision: project.revision, decision: project.closure!.decision, cancelled }
+      const out = ({ project, cancelled }: Closed) => ({ projectId: project.projectId, state: 'closed', outcome: project.closure!.outcome, revision: project.revision, decision: project.closure!.decision, cancelled })
+      return out(await board.closeProject(String(args.projectId), args.outcome as 'achieved' | 'stopped', new Date(), sees(check, out)))
     },
+  }
+
+  /** A task's output after a move: its id, state, and revision. */
+  function moved(task: BoardTask): object {
+    return { taskId: task.taskId, state: task.state, revision: task.revision }
   }
 
   function pageOf(args: Args): { limit?: number; after?: string } {
@@ -224,7 +244,11 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
   }
 }
 
-/** Wrap a handler: validate the input first and the structured output last, and report a refusal as an MCP error. */
+/**
+ * Wrap a handler: validate the input first; give it the check of its output, which a tool that
+ * changes the board runs before its move commits; validate the structured output once more last
+ * (all a read needs); and report a refusal as an MCP error.
+ */
 export function tool(name: BoardTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
@@ -232,16 +256,24 @@ export function tool(name: BoardTool, handler: Handler): ToolHandler {
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
+    const check: OutputCheck = (output) => {
+      try {
+        schemas.assertDef('mcp-board@1.1', defOf(name, 'output'), output)
+      } catch (error) {
+        throw new RefusedOutput((error as Error).message)
+      }
+    }
     let output: object
     try {
-      output = await handler(args, context)
+      output = await handler(args, context, check)
     } catch (error) {
+      if (error instanceof RefusedOutput) return refused(`board: ${name} would make an output its schema refuses (a defect), so nothing changed: ${error.message}`)
       return refused(error instanceof BoardError ? `${error.failure}: ${error.message}` : `board: ${(error as Error).message}`)
     }
     try {
       schemas.assertDef('mcp-board@1.1', defOf(name, 'output'), output)
     } catch (error) {
-      return refused(`board: ${name} made an output its schema refuses (a defect; the move itself is recorded): ${(error as Error).message}`)
+      return refused(`board: ${name} made an output its schema refuses (a defect): ${(error as Error).message}`)
     }
     return reply(output, outline(output))
   }

@@ -304,6 +304,37 @@ deleted, nothing is forced, and a worktree that cannot be committed or removed s
 next sweep. The [`agent-workers` README](../../packages/plugins/agent-workers/README.md)
 has the configuration and every rule.
 
+The retention reads the agent runs only, never the board: a task's attempt ends its runs, and its
+worktree retires `worktreeRetentionHours` after the last of them ended, whether the attempt failed
+or its result was accepted, rejected, or is still held for the operator's review. Until then each
+attempt keeps a worktree of its own.
+
+### The operator's removal of run worktrees
+
+The operator sees every worktree not removed yet with `agent_worktrees` (operator scope,
+`mcp-agent-runs@1.1`; `system worktrees`): its workflow run, branch, state (`in-use` while an agent
+run of its workflow run is queued or running, `held` while one ended without being known to be
+gone, `finished` otherwise), what it holds (`clean`, `uncommitted`, `gone`, or `not-intact`), and
+when the retention removes it. At most 100, oldest first, with the count of all
+([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)).
+
+With `agent_worktrees_remove` (`system worktrees remove`) they remove the finished ones now instead
+of waiting, every one or one workflow run's:
+
+- **Never discarding a change.** A worktree is removed only while it is `finished` and holds nothing
+  uncommitted, or, with `commitChanges`, once its changes are committed on its branch as the
+  retention commits them. One in use or held stays (a held run is freed first, [freeing what a run
+  holds](#freeing-what-a-run-holds)), and so does one not intact: git is not run there. The branch
+  always stays; nothing is forced.
+- **Recorded first** ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)):
+  one `retention` decision of the operator's (decider `operator.worktrees`, not deterministic, the
+  note as its rationale) names every worktree planned for removal, and is stored on each one
+  removed. With none to remove, nothing is decided. Each is looked at again alone before it is
+  removed, as the retention does, so one an agent run took meanwhile stays.
+- **Bounded:** at most 50 worktrees a call; the output says how many it did not look at.
+- **Its output is checked on its plan before anything is decided**: an output its schema refuses
+  (a defect) decides and removes nothing.
+
 ## Credentials and egress
 
 - **Environment** ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)).

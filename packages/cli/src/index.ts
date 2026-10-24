@@ -1112,6 +1112,62 @@ export function formatFreed(freed: Freed): string[] {
   ]
 }
 
+/** What `agent_worktrees` answers (`mcp-agent-runs@1.1`). */
+export interface Worktrees {
+  retentionHours: number
+  total: number
+  worktrees: Array<{ runId: string; path: string; branch: string; state: 'in-use' | 'held' | 'finished'; changes: 'clean' | 'uncommitted' | 'gone' | 'not-intact'; lastActivityAt: string; retiresAt?: string; failure?: string }>
+}
+
+/** What `agent_worktrees_remove` answers (`mcp-agent-runs@1.1`). */
+export interface WorktreesRemoved {
+  decision?: string
+  more: number
+  worktrees: Array<{ runId: string; path: string; branch: string; outcome: 'removed' | 'kept'; why: string; commit?: string }>
+}
+
+/** What `system worktrees` prints: the retention, then each worktree with its state, what it holds, and when it retires. */
+export function formatWorktrees(listing: Worktrees): string[] {
+  const retention = listing.retentionHours ? `the retention removes a finished one ${listing.retentionHours} h after its last agent run` : 'the retention removes none (worktreeRetentionHours 0)'
+  return [
+    `${listing.total} run worktree(s); ${retention}${listing.total > listing.worktrees.length ? `; the oldest ${listing.worktrees.length} shown` : ''}`,
+    ...listing.worktrees.flatMap((w) => [
+      `  ${w.runId}  ${w.state}, ${w.changes}  last activity ${w.lastActivityAt}${w.retiresAt ? `, retires ${w.retiresAt}` : ''}`,
+      `    ${w.path}  (${w.branch})`,
+      ...(w.failure ? [`    last retirement failed: ${w.failure}`] : []),
+    ]),
+  ]
+}
+
+/**
+ * `system worktrees remove [--run <runId>] [--commit-changes] [note...]`: the operator removes the
+ * finished run worktrees now (D12); nothing is discarded.
+ */
+export function parseWorktreesRemove(args: readonly string[]): { runId?: string; commitChanges?: true; note?: string } {
+  const out: { runId?: string; commitChanges?: true; note?: string } = {}
+  const note: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!
+    if (arg === '--run') {
+      const runId = args[++i]
+      if (!runId || runId.startsWith('--')) throw new Error('system worktrees remove: --run names a workflow run (run_…)')
+      out.runId = runId
+    } else if (arg === '--commit-changes') out.commitChanges = true
+    else if (arg.startsWith('--')) throw new Error(`system worktrees remove: unknown option ${arg}`)
+    else note.push(arg)
+  }
+  return { ...out, ...(note.length ? { note: note.join(' ') } : {}) }
+}
+
+/** What `system worktrees remove` prints: the decision, then each worktree removed or kept, and why. */
+export function formatWorktreesRemoved(removed: WorktreesRemoved): string[] {
+  return [
+    removed.decision ? `removed finished run worktrees (decision ${removed.decision})` : 'no finished run worktree could be removed; nothing was decided',
+    ...removed.worktrees.map((w) => `  ${w.runId}  ${w.path}: ${w.outcome}${w.commit ? `, its changes committed on ${w.branch} as ${w.commit}` : ''} (${w.why})`),
+    ...(removed.more ? [`  ${removed.more} more not looked at: run it again`] : []),
+  ]
+}
+
 /** What the `artifact` tool returns (the artifacts service's read). */
 export type ArtifactRead =
   | { id: string; state: 'stored'; kind: string; bodySchema: string; classification: string; runId?: string; nodeId?: string; createdAt: string; inputs: string[]

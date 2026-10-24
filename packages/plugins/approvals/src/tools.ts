@@ -4,10 +4,12 @@
  * `approvals_policy_propose` are operator scope, because a verdict or a policy change comes only
  * from the operator's channel (INV-6). Each call's input and structured output are validated
  * against `schemas/mcp-approvals.v1.json` (1.2) `$defs/<tool>-input` and `-output`; a refused input
- * executes nothing.
+ * executes nothing, and a tool that changes the queue checks the output it would give inside the
+ * store transaction that records the change, before it commits, so an output its schema refuses (a
+ * defect) leaves the queue as it was.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { ApprovalsError, type AutonomyPolicy, type RequestState, type Verdict } from '@tsuuanmi/system-approvals-core'
+import { ApprovalsError, type AutonomyPolicy, type RequestState, type Verdict, type VerdictResult } from '@tsuuanmi/system-approvals-core'
 import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
@@ -63,7 +65,15 @@ const DESCRIPTIONS: Record<ApprovalTool, string> = {
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
 type Args = Record<string, unknown>
-type Handler = (args: Args, context: ToolContext) => Promise<object>
+/** Checks the output a call would give: a tool that changes the queue runs it before its change commits. */
+export type OutputCheck = (output: object) => void
+type Handler = (args: Args, context: ToolContext, check: OutputCheck) => Promise<object>
+
+/** The output a call would give, refused by its schema before its change committed. */
+class RefusedOutput extends Error {}
+
+/** `approvals_decide`'s output from the verdicts' results. */
+const decided = (results: VerdictResult[]) => ({ results: results.map((r) => ({ requestId: r.requestId, state: r.state, ...(r.approval ? { approval: r.approval } : {}), ...(r.refused ? { refused: r.refused } : {}) })) })
 
 /** The tools' behavior, over a queue; exported so tests call it as a client would. */
 export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handler> {
@@ -77,22 +87,25 @@ export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handle
       if (!request) throw new ApprovalsError('unknown-request', `no approval request ${String(args.requestId)}`)
       return { request }
     },
-    approvals_decide: async (args, { scope }) => {
+    approvals_decide: async (args, { scope }, check) => {
       // The host lists and serves this tool to the operator only; a verdict from any other caller is never taken (INV-6).
       if (scope !== 'operator') throw new ApprovalsError('invalid', 'verdicts come only from the operator')
-      const results = await approvals.decide(args.verdicts as Verdict[], new Date())
-      return { results: results.map((r) => ({ requestId: r.requestId, state: r.state, ...(r.approval ? { approval: r.approval } : {}), ...(r.refused ? { refused: r.refused } : {}) })) }
+      return decided(await approvals.decide(args.verdicts as Verdict[], new Date(), (results) => check(decided(results))))
     },
     approvals_policy: async (args) => approvals.policy(typeof args.projectId === 'string' ? args.projectId : undefined),
-    approvals_policy_propose: async (args, { scope }) => {
+    approvals_policy_propose: async (args, { scope }, check) => {
       // Listed and served to the operator only; a policy change from any other caller is never taken (INV-6).
       if (scope !== 'operator') throw new ApprovalsError('invalid', 'policy changes come only from the operator')
-      return approvals.proposePolicy({ policy: args.policy as AutonomyPolicy, ...(typeof args.note === 'string' ? { note: args.note } : {}) }, new Date())
+      return approvals.proposePolicy({ policy: args.policy as AutonomyPolicy, ...(typeof args.note === 'string' ? { note: args.note } : {}) }, new Date(), check)
     },
   }
 }
 
-/** Wrap a handler: validate the input first and the structured output last, and report a refusal as an MCP error. */
+/**
+ * Wrap a handler: validate the input first; give it the check of its output, which a tool that
+ * changes the queue runs before its change commits; validate the structured output once more last
+ * (all a read needs); and report a refusal as an MCP error.
+ */
 export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
@@ -100,16 +113,24 @@ export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
+    const check: OutputCheck = (output) => {
+      try {
+        schemas.assertDef('mcp-approvals@1.2', defOf(name, 'output'), output)
+      } catch (error) {
+        throw new RefusedOutput((error as Error).message)
+      }
+    }
     let output: object
     try {
-      output = await handler(args, context)
+      output = await handler(args, context, check)
     } catch (error) {
+      if (error instanceof RefusedOutput) return refused(`approvals: ${name} would make an output its schema refuses (a defect), so nothing changed: ${error.message}`)
       return refused(error instanceof ApprovalsError ? `${error.failure}: ${error.message}` : `approvals: ${(error as Error).message}`)
     }
     try {
       schemas.assertDef('mcp-approvals@1.2', defOf(name, 'output'), output)
     } catch (error) {
-      return refused(`approvals: ${name} made an output its schema refuses (a defect; anything it decided is recorded): ${(error as Error).message}`)
+      return refused(`approvals: ${name} made an output its schema refuses (a defect): ${(error as Error).message}`)
     }
     return reply(output, outline(output))
   }

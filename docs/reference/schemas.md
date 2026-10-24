@@ -20,7 +20,7 @@ guesses.
 |---|---|---|
 | store write | every record before commit | the write is rejected (typed error) |
 | store read | every record after load | the record is quarantined; the node becomes `BLOCKED` with `CODE_FIX_REQUIRED` |
-| MCP tool input and output | each call | MCP error to the client; nothing is executed |
+| MCP tool input and output | each call; a `board_*`, `approvals_*`, or `digests_request` call that changes anything checks its output inside its store transaction, before the change commits | MCP error to the client; nothing is executed, or nothing changed |
 | Worker structured output | the result against `acceptance.resultSchema` | an `acceptance` decision with outcome `rejected`, then escalation policy |
 | decision model input and output | each call | `decision: unavailable` path (PROP-0002) |
 | config bundles and patches | at startup | startup fails with the exact path (REQ-HOST-2) |
@@ -953,6 +953,8 @@ guesses.
 | Tool | Scope | Does |
 |---|---|---|
 | `agent_run_free` | operator | free the session and worktree an agent run holds because it ended without being known to be gone, on the operator's word that its agent is gone ([freeing what a run holds](../design/agent-runtimes.md#freeing-what-a-run-holds)) |
+| `agent_worktrees` | operator | 1.1: the workflow runs' worktrees not removed yet, with their state, what they hold, and when the retention removes them ([the operator's removal](../design/agent-runtimes.md#the-operators-removal-of-run-worktrees)) |
+| `agent_worktrees_remove` | operator | 1.1: remove the finished run worktrees now, never discarding a change ([the operator's removal](../design/agent-runtimes.md#the-operators-removal-of-run-worktrees)) |
 
 - Input and output: [`mcp-agent-runs.v1.json`](../../schemas/mcp-agent-runs.v1.json)
   `$defs/agent-run-free-input` and `agent-run-free-output` (`mcp-agent-runs@1.0`). `agentRun` is an
@@ -968,6 +970,27 @@ guesses.
   another started run of its session or worktree not finished, its lease held, or its holder or
   agent process present on this host. Example:
   [`mcp-agent-runs.free.json`](../../schemas/examples/mcp-agent-runs.free.json).
+- `agent_worktrees` (1.1; `$defs/agent-worktrees-input`, `-output`): `limit` 1 to 100 (default
+  100). The output gives `retentionHours` (agent-workers `worktreeRetentionHours`), `total` (every
+  worktree not removed), and at most 100 of them, oldest first: `runId`, `repository`, `path`,
+  `branch`, `createdAt`, `lastActivityAt` (when its workflow run's last agent run ended, else when it
+  was made), `state` (`in-use` while an agent run of its workflow run is queued or running; `held`
+  while one ended without being known to be gone; `finished` otherwise), `changes` (`clean`,
+  `uncommitted`, `gone` from disk, or `not-intact`: its `.git` file or branch is not what it was
+  made with, so git is not run there), `retiresAt` once finished with a retention above 0, and the
+  last retirement's `failure`. Example:
+  [`mcp-agent-runs.worktrees.json`](../../schemas/examples/mcp-agent-runs.worktrees.json).
+- `agent_worktrees_remove` (1.1; `$defs/agent-worktrees-remove-input`, `-output`): `runId` (a
+  workflow run id) narrows it to that run's worktrees; `commitChanges` has a finished worktree's
+  uncommitted changes committed on its branch before it is removed; `note` (at most 1,000
+  characters) is the decision's rationale. The output names the operator's `retention` decision
+  (decider `operator.worktrees`), recorded before any worktree was removed and absent when none
+  could be (then nothing is decided); each worktree looked at (at most 50), `removed` (with the
+  `commit` that kept its changes, if any) or `kept`, and `why`; and `more`, those not looked at. A
+  worktree is removed only while it is `finished` and holds nothing uncommitted, or with
+  `commitChanges`; the branch always stays. Its output is checked on its plan before anything is
+  decided: an output its schema refuses (a defect) decides and removes nothing. Example:
+  [`mcp-agent-runs.worktrees-remove.json`](../../schemas/examples/mcp-agent-runs.worktrees-remove.json).
 
 ### MCP tool: `report`
 
