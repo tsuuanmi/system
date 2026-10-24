@@ -203,6 +203,9 @@ pointers, never content: the accepted results of the tasks it depends on (their 
 they have one, role `input`), and on a later attempt the previous attempt's result (`prior`; for
 an attempt a spent budget stopped between steps, the result of each step it completed) and
 the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
+A run whose worktree starts from the previous attempt's work points first at the decision that
+carried it (`prior`, its note saying the worktree already holds that change;
+[below](#starting-from-the-previous-attempts-work)).
 
 **Usage spent on a task.** The [ledger](resources.md) counts usage by run: a record names the
 task (or the run was reserved for it), the workflow run, or the Worker's own execution (an agent
@@ -611,6 +614,11 @@ is refused (`config_error`), and every other run is unaffected.
   project ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
 - **Briefs.** Every execution of the run is briefed from the task
   ([a board task's brief](#a-board-tasks-brief)); its next attempt may resume this run's session.
+- **The previous attempt's work.** When the attempt before this one completed its writing step and
+  failed only after it, for a reason that says nothing about the change (a later step's Worker or
+  session, a limit, a timeout), this run's worktree starts from that change, carried before its
+  first step, and its writing step builds on it
+  ([below](#starting-from-the-previous-attempts-work)).
 - **Run first, then work.** The run is written `starting`, the board records it (`start`, with
   the holder's generation), and only then is it opened and scheduled. A restart in between is
   decided by the board's record: recorded, the run goes on; still claimed under its generation,
@@ -644,8 +652,9 @@ is refused (`config_error`), and every other run is unaffected.
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
 - **Explained.** These decisions are the run's, not a step's: `explain` lists them first, in the
-  order they were made (REQ-ART-3), before each step's own: the task's admission and session, a
-  lost holder, the result's subject and acceptance, the report, a funding gate, and the digest.
+  order they were made (REQ-ART-3), before each step's own: the task's admission and session,
+  whether the run starts from the previous attempt's work and what was carried, a lost holder, the
+  result's subject and acceptance, the report, a funding gate, and the digest.
 - **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
   worktree ([below](#tasksmd-in-a-runs-workspace)).
 - **A question.** A step may answer with questions instead of a result; the task then waits for
@@ -828,6 +837,72 @@ person's answer. The protocol is the brief's: every brief of a board task's run 
   (`input-expired`), and the attempts are the board's.
 - Only a run for a board task offers it: a plain run's brief has no `ask`, and its answers are
   results whatever they say.
+
+### Starting from the previous attempt's work
+
+> Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
+> (proposed), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (`src/carries.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> ([carrying an earlier run's work](agent-runtimes.md#carrying-an-earlier-runs-work)).
+
+An attempt whose writing step completed and whose next step then failed for its own reasons (T110a:
+the review reached its turn limit) leaves a change no review judged. The board counts the attempt
+and decides the next one, a new run, as always; that run's worktree starts from the change instead
+of HEAD, and its writing step builds on it rather than making it again.
+
+```mermaid
+stateDiagram-v2
+  [*] --> none: no earlier writing step in a worktree (nothing decided)
+  [*] --> fresh: admission decision fresh (a bound does not hold)
+  [*] --> due: admission decision carry
+  due --> carried: first turn, before any step: the source carried it (gate decision carry)
+  due --> fresh: refused, no source, a source that cannot answer, a lost holder (gate decision fresh)
+  carried --> [*]
+  fresh --> [*]
+  none --> [*]
+```
+
+| Step | Records | On failure |
+|---|---|---|
+| decided | when the run is admitted, before the task is taken, if the task's previous attempt left a writing step's result (a step that proves `develop`, completed, an agent's result naming a git working tree and its subject): an `admission` decision (rule `workflow.task-worktree`) whose inputs are that result, `carry` when every bound below holds, else `fresh` naming the first that does not; `carry` on the run's `workflow_tasks` row (`due` or `fresh`), in the run's admission | — |
+| carried | at the run's first turn, after the board recorded it and before any step is promoted or routed: `ctx.workers.carry` with the run, the earlier run's worktree and the subject its writing step left, and a commit message naming the task, both runs, and the step; then a `gate` decision of the same rule, its inputs the admission decision and the result: `carry` naming the earlier run, the commit on its branch, the base, and the run's worktree, or `fresh` with why; the row `carried` or `fresh`, and `workflow.task.carry` in the same transaction | no `carry` on `ctx.workers`, no source that holds the tree, a refusal (`moved`, `gone`, `busy`, `base-moved`, `exists`, `empty`, `failed`), a source that cannot answer (the seam's `failed` refusal), or a run whose holder was lost: `fresh`, recorded with why, and the run's worktree is cut from HEAD at its first agent run, as for any attempt |
+| briefed | every brief of a carried run points first at the `gate` decision (role `prior`), its note: the worktree already holds the change the step made (the commit, its branch, the base): build on it, do not make it again | — |
+
+The bounds, each a reason for `fresh` (INV-2: any doubt starts from HEAD):
+
+- **Only the attempt just before.** The task's latest run the board recorded must have served
+  attempt `attempts.count`; a chain carries from the one before each time, never further back.
+- **Only a later step's failure.** That run failed (a completed run's result went to the board,
+  which judged it), and it and each of its failed steps failed as `session_broken`,
+  `provider_stalled`, `timeout`, `network`, `overloaded`, `quota_exhausted`, `reauth_required`,
+  `challenge`, `reconciliation_failed`, `config_error`, `internal`, `budget_spent`, or
+  `holder_lost`. A review's or a person's verdict (`plan_rejected`, `gate_timeout`,
+  `call_rejected`, `call_expired`, `stopped`, `aborted`), a moved subject (`stale_subject`), a
+  denied egress, or a kind not listed is not.
+- **Only a change no one judged.** Nothing in the run was grown (a remediation cycle, a plan), no
+  exact-subject review of it judged the change other than `approve`, and no step asked questions
+  ([a question from a run](#a-question-from-a-run)).
+- **Only on the subject the task writes** (INV-15): the task writes a `git-head` subject, the run
+  was admitted to write the same one, and the writing step's tree is on its commit. A task that
+  writes nothing never carries.
+- **Only that exact tree, onto the same base** (INV-5), checked by the source when it carries:
+  nothing of the earlier workflow run still runs or is not known to be gone, its worktree is intact
+  and still exactly the subject its writing step left, and the repository's HEAD is still the
+  commit that tree is on, where a fresh worktree would be cut from.
+
+- **What the run then does.** Its worktree's HEAD is that commit, with the earlier change on top,
+  staged, as if it had been made there: the writing step runs as in any attempt, the review is
+  shown and binds to the whole change, and the result is on the subject the task writes; its
+  landing commits the whole change on the run's branch ([below](#landing-an-accepted-result)). The
+  earlier run's branch keeps the system's carry commit, which is never merged.
+- **Restart** (INV-4): `due` is on the row, so a restart carries before any step as the first turn
+  would, and the source finds its own commit and worktree and says so (`carried: false`); a worktree
+  it cut and had not yet given the tree is never run in, and is given it, or put back to its base
+  when it can no longer be.
+- **Seams:** only the optional `carry` on the `workers` seam is new
+  ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md));
+  with a provider that has none, every attempt starts from HEAD as before, and the board reads
+  nothing new.
 
 ### A digest of a task's result
 

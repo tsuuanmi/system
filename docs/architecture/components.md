@@ -138,7 +138,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   ([workspaces](../design/agent-runtimes.md#workspaces)). On the engine's ask it lands an
   accepted result made there: committed on the run's branch, then merged into the repository's
   checked-out branch on the operator's `merge` approval
-  ([landing a worktree](../design/agent-runtimes.md#landing-a-worktree)).
+  ([landing a worktree](../design/agent-runtimes.md#landing-a-worktree)); and it starts a board
+  task's next attempt's worktree from the tree the previous attempt left, committed on that
+  attempt's branch ([carrying an earlier run's work](../design/agent-runtimes.md#carrying-an-earlier-runs-work)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), ACP agents, and the Antigravity CLI (its installed `agy`, only on a version verified
   live, every tool call held by its PreToolUse hook, bridged to the run)
@@ -258,7 +260,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   queue](../design/workflow-engine.md#remediation-on-the-approval-queue)). A board task's result
   accepted in its run's worktree is landed: committed on the run's branch, then merged on a
   `merge` request, both through the `workers` seam's optional `land`
-  ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result)).
+  ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result)). A board
+  task's next attempt starts from the work its previous attempt left when that one failed only
+  after its writing step, through the optional `carry`, decided and recorded by the engine
+  ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).

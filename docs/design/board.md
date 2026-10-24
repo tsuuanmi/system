@@ -380,7 +380,10 @@ surfaces to tell the operator before it expires:
 ### Attempts
 
 A task makes at most `attempts.max` attempts, each a run that serves it (a rejected review
-included). The proposal names it (`maxAttempts`, 1 to 10; MCP `board_propose` since `mcp-board`
+included). The engine may start an attempt from the work the attempt before it left, when that one
+failed only after its writing step
+([starting from the previous attempt's work](workflow-engine.md#starting-from-the-previous-attempts-work));
+the board decides and counts attempts as always, and reads nothing new. The proposal names it (`maxAttempts`, 1 to 10; MCP `board_propose` since `mcp-board`
 1.2); else the provider's configuration for the task's template (`templateAttempts`, by template
 name), else its `maxAttempts` (3). The lead names more where one attempt tests one hypothesis and a
 few may miss; the count never changes once the task is proposed.

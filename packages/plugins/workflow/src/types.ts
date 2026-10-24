@@ -339,7 +339,7 @@ export interface Explanation {
   specHash: ContentId
   /**
    * The engine's decisions on the run as a whole, which no step holds, in the order they were made:
-   * a board task's admission and session, its holder, the result's subject and acceptance, the
+   * a board task's admission, session, and start from its previous attempt's work, its holder, the result's subject and acceptance, the
    * report, the funding gate, and the digest. Only when there are any.
    */
   decisions?: ExplainedDecision[]

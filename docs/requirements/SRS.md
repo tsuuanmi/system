@@ -203,6 +203,14 @@
   while both heads are where the approval saw them, and a conflict changes nothing; never a force
   or a push. Each step is a recorded decision.
 
+- **REQ-WF-14** A board task's next attempt starts from the work its immediately previous attempt
+  left when that attempt's writing step completed and the attempt failed only for a later step's
+  Worker, session, limit, budget, timeout, or holder, no review judged the change, and the change
+  is on the commit the task writes: its worktree, cut at that commit, holds the change, carried
+  only while the earlier tree is exactly what its writing step left and the repository's HEAD has
+  not moved; the writing step builds on it and the review reviews the whole change. Anything else
+  starts from HEAD. Each choice is a recorded decision.
+
 ## Artifacts and schemas (`REQ-ART`)
 
 - **REQ-ART-1** Every decision (admission, route, tier, escalation, egress,
