@@ -174,7 +174,12 @@ installed.
   model turn starts; no tool (`tools: []`), no settings, no MCP server, no hook,
   and no session written (`persistSession: false`). The answer is read, the
   session closed. Read: `rate_limits_available: true` with `rate_limits` an
-  object; each window of it that is `{ utilization, resets_at }` with a numeric
+  object; a window of it is told by its shape, an object with a `utilization`
+  (the endpoint's body adds entries without a new Claude Code version, T111):
+  arrays (`model_scoped`, `limits`), objects without one (`spend`), booleans
+  (`member_dashboard_available`), strings, nulls (`pace`), and `extra_usage` are
+  skipped. Each window that is `{ utilization, resets_at }` (more fields
+  ignored, as `limit_dollars`) with a numeric
   `utilization` (0 to 100) is an observation of its name (`five_hour`,
   `seven_day`, `seven_day_oauth_apps`, and the per-model weekly windows: the
   names a `rate_limit_event` uses), `usedPercentage` its utilization (above 100
@@ -182,11 +187,12 @@ installed.
   `resets_at` is an ISO time within 400 days (and ahead, for a rejection). A
   window whose utilization is null is no reading. `rate_limits_available: false`
   (an API key, a third-party provider) is `unreadable`; so is any window not in
-  that shape (a number, a reset as Unix seconds, a share as text, a negative
-  share): nothing in such an answer is believed. Not read: `session`,
-  `subscription_type`, `model_scoped`, `extra_usage`, `behaviors`. A window at
-  100 % closes even when the account's extra usage could pay past it. Fixtures:
-  `tests/fixtures/claude-get-usage.json`; the provider passes the usage report
+  that shape (an entry that is a number, a reset as Unix seconds, a share as
+  text, a negative share): nothing in such an answer is believed. Not read:
+  `session`, `subscription_type`, `behaviors`. A window at 100 % closes even
+  when the account's extra usage could pay past it. Fixtures:
+  `tests/fixtures/claude-get-usage.json` and `claude-get-usage-live.json` (a
+  live answer's shape of 2026-10-24); the provider passes the usage report
   suite.
 - **Config:** `executable` (default: `claude` on PATH; keep it outside the
   hidden paths, `~/.claude/local` among them; to pin a version its reader

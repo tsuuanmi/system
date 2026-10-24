@@ -1,0 +1,20 @@
+{
+  "description": "A get_usage answer in the shape a live account's answered on 2026-10-24 (T111): the usage endpoint's body changed under Claude Code 2.1.310, with no model_scoped, a window carrying limit_dollars, a null seven_day, and entries that are not windows (limits, an array; spend, an object without utilization; member_dashboard_available, a boolean; pace, null). Synthetic values; no account was read.",
+  "observedAt": "2026-10-24T14:05:00.000Z",
+  "answer": {
+    "session": { "total_cost_usd": 0, "total_api_duration_ms": 0, "total_duration_ms": 160, "total_lines_added": 0, "total_lines_removed": 0, "model_usage": {} },
+    "subscription_type": "max",
+    "rate_limits_available": true,
+    "rate_limits": {
+      "five_hour": { "utilization": 9, "resets_at": "2026-10-24T16:30:00.303688+00:00", "limit_dollars": 0 },
+      "seven_day": null,
+      "limits": [{ "kind": "session" }, { "kind": "weekly_scoped" }],
+      "spend": { "amount": 0 },
+      "member_dashboard_available": true,
+      "pace": null,
+      "seven_day_breakdown": null,
+      "weekly_scoped_shares": null
+    },
+    "behaviors": null
+  }
+}

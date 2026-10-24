@@ -76,6 +76,24 @@ describe('claude-agent-sdk: an account\'s usage report from get_usage (ADR-0059)
     }
   })
 
+  it('reads the live answer of 2026-10-24 (T111): its windows by their shape, skipping the entries that are not windows', () => {
+    const live = JSON.parse(readFileSync(new URL('./fixtures/claude-get-usage-live.json', import.meta.url), 'utf8')) as { observedAt: string; answer: { rate_limits: Record<string, unknown> } }
+    const at = Date.parse(live.observedAt)
+    // five_hour at 9 % with its reset (its limit_dollars ignored); seven_day null is no window; limits, spend, the flag, and pace are skipped.
+    expect(limitsFromUsage(live.answer, at)).toEqual({
+      limits: [{ window: 'five_hour', status: 'allowed', resetsAt: '2026-10-24T16:30:00.303Z', usedPercentage: 9, observedAt: '2026-10-24T14:05:00.000Z' }],
+    })
+    // A window object still in the wrong shape keeps the whole answer unreadable.
+    const garbled = { ...live.answer, rate_limits: { ...live.answer.rate_limits, five_hour: { utilization: '9', resets_at: '2026-10-24T16:30:00.303688+00:00', limit_dollars: 0 } } }
+    expect(limitsFromUsage(garbled, at)).toEqual({ unreadable: expect.stringContaining('its window five_hour is not in the checked shape') })
+    const late = { ...live.answer, rate_limits: { ...live.answer.rate_limits, seven_day: { utilization: 3, resets_at: 1761315600 } } }
+    expect(limitsFromUsage(late, at)).toEqual({ unreadable: expect.stringContaining('its window seven_day is not in the checked shape') })
+    // Each kind of entry that is not a window, alone, reads as no window.
+    for (const entry of [[], [{ utilization: 50 }], true, false, 'weekly', { amount: 5 }, {}]) {
+      expect(limitsFromUsage({ rate_limits_available: true, rate_limits: { other: entry } }, at), JSON.stringify(entry)).toEqual({ limits: [] })
+    }
+  })
+
   it('asks get_usage in a session sent no message, with no tool, settings, MCP server, or session kept, under the confinement in the account\'s home, then closes it', async () => {
     const sessions: Session[] = []
     const spawned: Array<{ command: string; args: string[]; env: Record<string, string | undefined> }> = []
