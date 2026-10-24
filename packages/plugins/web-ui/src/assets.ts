@@ -715,7 +715,7 @@ export const APP_JS = `'use strict'
       let preview
       try { preview = await api('tasks/' + encodeURIComponent(t.taskId) + '/start') } catch (error) {
         shown.replaceChildren(el('div', { class: 'panel bad', role: 'alert', 'aria-label': 'Cannot start ' + t.title },
-          el('h3', {}, 'It cannot start from here: ' + t.title), el('p', {}, error.message.replace(/^[a-z_]+: /, '')), close))
+          el('h3', {}, 'It cannot start from here: "' + t.title + '"'), el('p', {}, error.message.replace(/^[a-z_]+: /, '')), close))
         close.focus()
         return
       }
@@ -734,7 +734,7 @@ export const APP_JS = `'use strict'
         await settle()
       })
       shown.replaceChildren(el('div', { class: 'panel', role: 'group', 'aria-label': 'Confirm start of ' + t.title },
-        el('h3', {}, 'Start ' + t.title),
+        el('h3', {}, 'Start "' + t.title + '"'),
         el('ul', {},
           el('li', {}, 'It runs the ' + task.template + ' template for this task, its attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ': the run claims the task, which moves to Working.'),
           el('li', {}, steps.length === 1 ? 'Its step, and the kind of Worker it runs on:' : 'Its ' + steps.length + ' steps, in order, and the kind of Worker each runs on:',
