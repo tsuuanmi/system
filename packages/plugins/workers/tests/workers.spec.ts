@@ -4,9 +4,29 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Store from '@tsuuanmi/system-store'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { requirement, source, worker, workersConformance } from '../../../workers-core/conformance/workers.ts'
 import WorkerRouter, { type Config } from '../src/index.ts'
+
+// The router's describe deadline waits on node:timers/promises, which fake timers do not reach:
+// here it waits on the global setTimeout, which they replace, so a test can pass the 5 s deadline
+// at once. With real timers it behaves as node's does (a rejection on abort, which the router ignores).
+vi.mock('node:timers/promises', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:timers/promises')>(),
+  setTimeout: <T>(ms: number, value?: T, options: { signal?: AbortSignal } = {}): Promise<T> => new Promise<T>((resolve, reject) => {
+    const { signal } = options
+    if (signal?.aborted) return reject(signal.reason)
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolve(value as T)
+    }, ms)
+    const abort = (): void => {
+      clearTimeout(timer)
+      reject(signal!.reason)
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+  }),
+}))
 
 async function boot(config: Config = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workers-'))
@@ -124,6 +144,8 @@ describe('ctx.workers: configured preferences', () => {
 
   it('keeps the read that started last as a source\'s last read, whichever ends first', async () => {
     const { ctx, dispose } = await boot()
+    // The 5 s describe deadline and the slow source's own wait run on fake time.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       // The first read is slow and silent; the second, started later, answers at once.
       let calls = 0
@@ -133,14 +155,18 @@ describe('ctx.workers: configured preferences', () => {
         return [worker('w:s')]
       }))
       const first = ctx.workers.list()
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await vi.advanceTimersByTimeAsync(50)
       expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:s'])
+      // Past the deadline, the first read counts the slow source as silent, then the source answers late.
+      await vi.advanceTimersByTimeAsync(5000)
       expect(await first).toEqual([])
+      await vi.advanceTimersByTimeAsync(500)
       expect(ctx.workers.sources!()).toEqual([{ source: 'slow', state: 'described', at: expect.any(String), workers: 1 }])
     } finally {
+      vi.useRealTimers()
       await dispose()
     }
-  }, 20_000)
+  })
 
   it('refuses a source that describes an invalid or duplicate Worker', async () => {
     const { ctx, dispose } = await boot()

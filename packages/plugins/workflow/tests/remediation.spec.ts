@@ -71,10 +71,13 @@ class TreeWorkers extends ScriptedWorkers {
 class TestApprovals extends StoreApprovals {
   forge?: (request: ApprovalRequest) => ApprovalRequest
   unreadable = false
+  /** Requests read, so a test waits for the engine's next reads of the queue, never for a fixed time. */
+  reads = 0
 
   override async get(requestId: string): Promise<ApprovalRequest | undefined> {
     if (this.unreadable) throw new Error('the approval queue cannot be read')
     const request = await super.get(requestId)
+    this.reads++
     return request && this.forge ? this.forge(request) : request
   }
 
@@ -232,8 +235,9 @@ describe('remediation on the approval queue', () => {
     // The queue is the one channel for this verdict: the operator's plan approval is refused, and changes nothing.
     expect(() => ctx.workflow.approve(run.runId, { verdict: 'approved', plan: waiting.blocked.plan })).toThrow(/waits on approval request .* in the approval queue/)
     expect(ctx.workflow.get(run.runId)!.blocked).toMatchObject({ kind: 'gate' })
-    // Polling again asks nothing new.
-    await new Promise((resolve) => setTimeout(resolve, 2500))
+    // Polling again asks nothing new: the waiting run reads its request twice more (every approvalPollSeconds).
+    const reads = queueOf(ctx).reads
+    await vi.waitFor(() => expect(queueOf(ctx).reads).toBeGreaterThanOrEqual(reads + 2), { timeout: 15_000 })
     expect(await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).toHaveLength(1)
     await decide(ctx, request, 'approved')
     const done = await finished(ctx, run.runId)

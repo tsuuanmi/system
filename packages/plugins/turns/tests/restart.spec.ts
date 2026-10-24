@@ -89,10 +89,13 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)
     // A crash: the dead process's lease on the first turn stays live for a while after the restart.
+    const deadUntil = Date.now() + 3000
     const db = new DatabaseSync(join(dir, 'system.db'))
-    db.prepare("UPDATE leases SET owner = 'dead:1:x', token = 'dead', expires_at = ? WHERE resource = ?").run(Date.now() + 15_000, `turn:${t1.turnId}`)
+    db.prepare("UPDATE leases SET owner = 'dead:1:x', token = 'dead', expires_at = ? WHERE resource = ?").run(deadUntil, `turn:${t1.turnId}`)
     db.close()
     const second = await boot({ dir, shared: first.fake })
+    // The restarted runtime took both turns up while that lease still held the first one.
+    expect(Date.now()).toBeLessThan(deadUntil)
     const one = await second.ctx.turns.wait(t1.turnId, 90_000)
     const two = await second.ctx.turns.wait(t2.turnId, 90_000)
     expect([one.answer, two.answer]).toEqual(['answer to one', 'answer to two'])
