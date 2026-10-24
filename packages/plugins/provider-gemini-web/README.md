@@ -123,30 +123,67 @@ driver, its operations are data: a UI map,
   - `checkAuth` is `signed-in` when the Google Account control is visible, and
     `signed-out` on Google's sign-in page, or with a visible "Sign in" entry and
     no account control (a "Sign in" offer beside the account is still signed in).
+    Google's traffic check and a terms notice come first: each is `challenge`
+    whether or not the account shows (Readiness, below).
   - `identity` reads the account from that control's name; only its hash is
     stored.
   - Accounts are signed in with `system account login <id>` (remote desktop),
     then saved encrypted, as for ChatGPT.
 - **Readiness:** pages get 60 s to render, since the live app took over 30 s
-  several times. A conversation that does not open in time fails before
-  sending, or is reported as not observed. A page that shows neither the
-  signed-in account nor a sign-in page in time (a dialog or interstitial, say)
-  is outlined as a `ui.drift` of `auth.account`, so `system evidence` shows what
-  it showed instead, and fails the turn as `ui_drift` once (never three retries
-  of 60 s on the same account). Google's unusual-traffic check (a form holding a
-  reCAPTCHA, `auth.challenge`, seen live on 2026-10-16) is `challenge`: the turn
-  stops at once, and the turn runtime marks the account `challenge`. So is a
-  notice of updated terms over the input (`site.terms-notice`, seen live on
-  2026-10-17), which covers the textbox and the mode switcher: it is never
-  clicked, and the operator acknowledges it in the login profile.
+  several times.
+  - The wait ends at the first thing the page shows of itself: the account, a
+    sign-in page, Google's unusual-traffic check, a terms notice, or the app (its
+    composer or a conversation's turns, map state `page.rendered`). Once the app
+    has rendered, the account gets `accountMs` more (15 s), never the whole 60 s:
+    the Google bar that holds it comes before the app in the page (live
+    2026-10-24, a new chat that rendered and never showed its account was waited
+    on for 60 s).
+  - A conversation that does not open in time fails before sending, or is
+    reported as not observed.
+  - A page that shows neither the signed-in account nor a sign-in page in time is
+    outlined as a `ui.drift` of `auth.account`, with the page's path and what
+    each candidate found (`matches`: the button on the page but hidden, or gone),
+    so `system evidence` and the event show what it showed instead. It fails the
+    turn as `ui_drift` once (never three retries of 60 s on the same account),
+    saying whether the app rendered, whether the account's button is there but
+    hidden, whether a dialog or menu is open, and where a bound conversation's
+    page went instead.
+  - Google's unusual-traffic check (a form holding a reCAPTCHA, `auth.challenge`,
+    seen live on 2026-10-16) is `challenge`: the turn stops at once, and the turn
+    runtime marks the account `challenge`.
+  - So is a notice of updated terms over the input (`site.terms-notice`: "Keep in
+    mind", with its own "Got it", seen live on 2026-10-16, 2026-10-17, and twice
+    on 2026-10-24), which covers the textbox and the mode switcher: it is never
+    clicked, and the operator acknowledges it in the login profile. Its message
+    is that step of the [runbook](../../../docs/operations/runbooks.md#account-re-auth),
+    the same from an action's guard (the map's error rule) and from the sign-in
+    check (`TERMS_NOTICE_MESSAGE`). It is looked for before the account, so a
+    notice that shows while the account does not resolve (live 2026-10-16) is the
+    operator's at once, never drift after 60 s. One that appears mid-session (on a
+    kept page, or under a turn that failed there, which the turn runtime checks
+    again) is the same `challenge`.
 - **The site's own error as an answer** (`answer.site-error`, live 2026-10-17: "I seem to be
   encountering an error. Can I try something else for you?"), read only in a short answer, fails
   the turn as `overloaded` before any acceptance judges it. The prompt was sent, so it is not
   resent ([INV-4](../../../docs/architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
+  That is the honest outcome as far as the site shows, and nothing in it is recovered:
+  - Live on 2026-10-24 the site answered "Sorry, something went wrong. Please try your request
+    again." 6 s after the conversation got its id, and reopened 30 minutes later the conversation's
+    page showed an empty new chat, neither the prompt nor the error: no answer came later to be
+    read.
+  - The site's own retry (Redo on that turn, or trying again as it asks) runs the prompt again on
+    the site. That is a resend, which reconciliation allows only on positive evidence that the
+    prompt left no trace (RESUBMIT); a page that shows nothing of it is not that evidence
+    (AMBIGUOUS). One bounded resend after a site's error is a separate decision
+    ([roadmap](../../../docs/proposals/roadmap.md#follow-ups-from-the-reliability-review)).
+  - What the operator does is in the
+    [runbook](../../../docs/operations/runbooks.md#a-review-member-fails-on-a-website).
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence
-  ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence)).
+  ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence)). The
+  outline masks the account's own name and address, read from its button even
+  while the page hides it.
 - **Fixtures:** [`fixtures/fake-gemini.ts`](fixtures/fake-gemini.ts) is a local
   stand-in built from the signed-in page read live on 2026-10-12, with no
   private data. It reproduces the live traps:
@@ -156,8 +193,11 @@ driver, its operations are data: a UI map,
   - a Deep research plan that already has Copy, and its Start research turn;
   - a chat's own menu, its "Delete chat?" dialog, and a deleted chat's
     "Unable to load" notice (`deleted` records each deletion).
-  - a terms notice over the input (`termsNotice`, from the live outline of
-    2026-10-17).
+  - a terms notice over the input (`termsNotice`, "Keep in mind", from the live
+    outlines of 2026-10-16 and 2026-10-17); its markup is exported
+    (`TERMS_NOTICE`), so a test shows it on a page already open, as mid-session;
+  - an account button in the page but hidden (`accountHidden`), as the live
+    page's did not resolve on 2026-10-24.
   - a thinking answer (`thinkMs`): Stop shown and the `model-response` there with
     no text, its thinking summary (`model-thoughts`) changing its words every
     400 ms, or, with `thoughts: false`, nothing in it changing; with

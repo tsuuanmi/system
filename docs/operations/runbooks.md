@@ -783,7 +783,7 @@ a second family is used whenever one is admitted.
 
 ## A review member fails on a website
 
-A team member's step (`review:m<k>:propose`, a ballot, or a debate) fails on a website Worker, or
+A team member's step (`review:m<k>:propose`, `brainstorm:m<k>:propose`, a ballot, or a debate) fails on a website Worker, or
 for want of one. `system explain <runId>` shows the step's decisions, and its error says which
 case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
 
@@ -818,6 +818,38 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
     stdin): `system continue <runId>` sends the prompt again, into the same conversation.
   - A finished answer with no Copy, or the site's own error, is the site or its map, not the
     bound ([a provider UI change](playbooks.md#a-provider-ui-change)).
+- **The site's own error** (`overloaded`: `the site answered with its own error instead of an
+  answer ("Sorry, something went wrong. Please try your request again."); the prompt was sent, so
+  it is not resent`). The site took the prompt and answered with an error of its own, so `system`
+  never sends it again on its own (INV-4), and the run fails `USER_ACTION`. When it was seen live,
+  nothing came later to be read: on 2026-10-24 (Gemini, within 6 s of the conversation getting its
+  id) the conversation, reopened 30 minutes later, showed an empty new chat, neither the prompt nor
+  the error. The site's own way to retry (its Redo, or trying again as it asks) sends the prompt
+  again.
+  - Look at what the site kept, sending nothing: `system conversations` names the member's
+    conversation (the failed turn's binding), and `system conversation inspect <account>
+    <binding>` outlines it. To read an answer it shows, open it in the login profile (`system
+    account login <id>`, then Cancel). If it holds a finished answer to the prompt, take it with
+    `system supersede <runId> <nodeId> -` (the answer on stdin).
+  - If it holds nothing, `continue` cannot help a team member: its conversation has nothing to
+    continue, and a member is never given a fresh one, so its step fails again, unsent
+    (`conversation_lost` when the site sends the page elsewhere). Start the run again. For a one-shot `ask`, `system continue <runId>` sends
+    the prompt again in a new Temporary chat: that resend is your decision.
+- **The page showed neither the account nor a sign-in page** (`ui_drift`: `the app rendered, but
+  neither the signed-in account nor a sign-in page showed within 15 s …`, or `the page showed
+  neither the app, …`, each `(outlined as a ui.drift of auth.account)`). Nothing was sent. The
+  message says what the page showed: whether the app rendered, whether the account's button is on
+  the page but hidden, whether a dialog or menu is open, and where a bound conversation's page went
+  instead (`the page is at /app, not conversation …`). `system events --type ui.drift` gives the
+  drift's `url` and `matches` (one entry per candidate: `found` above `shown` means hidden, `found:
+  0` everywhere means renamed or removed), and `system evidence <outline>` its outline.
+  - `system account verify <id>` checks the sign-in again, sending nothing. If it signs in, the page
+    of that turn showed something else; `continue` runs the step again.
+  - A button that is there but hidden is the site's layout or an overlay: look at the page in the
+    login profile (`system account login <id>`, then Cancel) for what hides it. A renamed one needs
+    the map changed ([a provider UI change](playbooks.md#a-provider-ui-change)).
+  - A terms notice or Google's traffic check is never this: each fails as `challenge`, with its
+    step ([account re-auth](#account-re-auth)).
 - **Rejected and not escalated** (`acceptance_rejected`: `…; not escalated: session … stays on its
   Worker model:… (standard), none at tier frontier or above, …`). The member's answer failed its
   contract, and its session, which keeps one Worker for the team's lifetime, has none at the next
@@ -911,6 +943,11 @@ A turn that fails with `reauth_required` or `challenge` (disposition
   - A notice of updated terms over the input (Gemini) is handled the same way: `system` never
     acknowledges it. In the login browser, open a new chat, press the notice's own button (not a
     link in it) until the notice is gone, then press Save. Save is refused while it still shows.
+    Gemini titles it "Keep in mind", its button "Got it" (live 2026-10-16 to 2026-10-24). It can
+    come back after you acknowledged it (twice on 2026-10-24), and it can show mid-session, on a
+    page a session keeps or under a turn that failed there: either way the turn fails as
+    `challenge` with this step in its message (`a notice of updated terms ("Keep in mind") covers
+    the input; …`), nothing more is sent, and it is never reported as `ui_drift`.
 
 - **A session-bound account** (Gemini and ChatGPT;
   [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) works in

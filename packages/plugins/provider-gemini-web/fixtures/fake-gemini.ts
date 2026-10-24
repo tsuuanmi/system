@@ -88,6 +88,11 @@ export interface FakeOptions {
    * container covering the textbox and the mode switcher, until its button is pressed.
    */
   termsNotice?: boolean
+  /**
+   * The Google Account button is in the page but hidden, so it does not resolve while the app
+   * renders (live 2026-10-24: a new chat whose account never showed; 2026-10-16: with a terms notice).
+   */
+  accountHidden?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -415,6 +420,13 @@ if (options.draftPersist) {
 }
 `
 
+/**
+ * The terms notice as the live outlines show it (2026-10-16, 2026-10-17): a banner in the input
+ * container, its title ("Keep in mind"), a body, and its own button, which removes it and shows the
+ * textbox it covered again. Exported so a test can show it on a page already open, as mid-session.
+ */
+export const TERMS_NOTICE = '<input-container><condensed-tos-disclaimer><gem-banner class="variant-overlay has-title"><h3 class="banner-title">Keep in mind</h3><div class="body">We updated our terms. Review them to keep using Gemini.</div><button class="banner-action-button" onclick="this.closest(\'input-container\').remove();document.querySelector(\'rich-textarea\').hidden=false">Got it</button></gem-banner></condensed-tos-disclaimer></input-container>'
+
 const SIGNED_OUT = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title></head><body><header><a href="/signin">Sign in</a></header><main><h1>Meet Gemini</h1></main></body></html>'
 
 /**
@@ -434,7 +446,7 @@ function html(options: Required<FakeOptions>, missing = false, history: string[]
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
-<header><a href="#" aria-label="Google Account: Test User (test@example.test)">T</a>${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
+<header><a href="#" aria-label="Google Account: Test User (test@example.test)"${options.accountHidden ? ' hidden' : ''}>T</a>${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
 <bard-sidenav><ol aria-label="Recent chats">${history.map((id) => `<li><a href="/app/${id}">chat</a><button class="row-options" data-id="${id}" aria-label="Open menu for conversation actions" aria-haspopup="menu">⋮</button></li>`).join('')}</ol></bard-sidenav>
 <bard-sidenav-content>
 <nav><button aria-label="Temporary chat" id="temp">t</button>${options.paneMenu ? '<button aria-label="Open menu for conversation actions" aria-haspopup="menu" id="conv-options" hidden>⋮</button>' : ''}</nav>
@@ -446,7 +458,7 @@ ${missing ? '<div role="alert" id="missing">Unable to load this conversation</di
 <main>
   <div class="description" id="notice" hidden> <a href="#">Temporary chats</a> don't appear in recent chats <a href="#">and</a> aren't used to improve Google AI.</div>
   <section id="log"></section>
-  ${options.termsNotice ? '<input-container><condensed-tos-disclaimer><gem-banner class="variant-overlay has-title"><div class="title">Terms update</div><div class="body">We updated our terms. Review them to keep using Gemini.</div><button class="banner-action-button" onclick="this.closest(\'input-container\').remove();document.querySelector(\'rich-textarea\').hidden=false">Got it</button></gem-banner></condensed-tos-disclaimer></input-container>' : ''}
+  ${options.termsNotice ? TERMS_NOTICE : ''}
   <div class="input-area">
     <rich-textarea${options.termsNotice ? ' hidden' : ''}><div contenteditable="true" role="textbox" aria-label="Enter a prompt for Gemini" id="input"></div></rich-textarea>
     <button type="button" aria-label="Upload &amp; tools" aria-haspopup="menu" id="tools">+</button>
@@ -493,7 +505,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, thinkMs: 0, thoughts: true, thinkTimer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, thinkMs: 0, thoughts: true, thinkTimer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, accountHidden: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, researchHidesLevels: false, planHangs: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, researchActivity: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }

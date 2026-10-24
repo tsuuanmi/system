@@ -256,6 +256,20 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(gone.drift.filter((d) => d.kind === 'unresolved')).toEqual([expect.objectContaining({ element: 'composer.send', outline: expect.objectContaining({ root: 'composer.form' }) })])
   })
 
+  it('says, for an unresolved target, what each candidate found, hidden matches apart, and where the page was: a hidden control is told from a renamed one', async () => {
+    const hidden = await open(CURRENT.replace('aria-label="Send prompt" data-send>', 'aria-label="Send prompt" data-send hidden>'))
+    await expect(hidden.engine.act('composer.send', {}, { allowFallback: false })).rejects.toMatchObject({ kind: 'ui_drift' })
+    // Both candidates find the button, and neither shows it: the page hides it.
+    expect(hidden.drift.find((d) => d.kind === 'unresolved')).toMatchObject({ element: 'composer.send', url: '/', matches: [{ found: 1, shown: 0 }, { found: 1, shown: 0 }] })
+    const renamed = await open(AMBIGUOUS)
+    await expect(renamed.engine.act('composer.send', {}, { allowFallback: false })).rejects.toMatchObject({ kind: 'ui_drift' })
+    // Neither finds anything, shown or not: the control was renamed or removed.
+    expect(renamed.drift.find((d) => d.kind === 'unresolved')).toMatchObject({ url: '/', matches: [{ found: 0, shown: 0 }, { found: 0, shown: 0 }] })
+    // Where it resolves, the counts say so; a scope that does not resolve counts nothing.
+    expect(await (await open(CURRENT)).engine.matches('composer.send')).toEqual([{ found: 1, shown: 1 }, { found: 1, shown: 1 }])
+    expect(await (await open(page('<div contenteditable role="textbox"></div>'))).engine.matches('composer.send')).toBeUndefined()
+  })
+
   it('masks any value that holds an email address or the account\'s own name, and keeps labels short', async () => {
     const stuck = loadUiMap(MAP.replace("verify: { attr: { of: composer.input, name: data-filled, present: true } }", "verify: { attr: { of: composer.input, name: data-never, present: true } }\n    timeouts: { verifyMs: 300 }"))
     const extra = '<button data-testid="who" aria-label="Signed in as ann.lee@example.org">A</button><button data-testid="profile" aria-label="Profile of Ann Lee">P</button>'

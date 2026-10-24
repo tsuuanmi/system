@@ -175,6 +175,15 @@ so a stale element can be mapped again without opening the operator's browser:
 - **Redaction:** any value that holds an email address, or the account's own
   name or address as its driver reads them from the page, is masked whole as
   `[redacted]`. An outline carries no identity by construction.
+- **Where and what was found:** the event names the page's path (`url`, never its query, as a
+  stall's does), so a page the site sent elsewhere shows. For an unresolved element it also gives
+  `matches`: per candidate, in the map's order, how many elements it finds where the element is
+  looked for (its scope, or the page), hidden ones too (`found`), and how many of those are
+  visible (`shown`). Counts only. A candidate that finds the element and shows none of it means
+  the page hides the control; none found means it was renamed or removed. The outline alone cannot
+  tell these apart for a control with no text, such as an account button that is a link (live
+  2026-10-24: Gemini's account button was in the outline, the same as on working pages, and still
+  did not resolve).
 - **Bounds:** only nodes that carry one of those marks (wrappers are skipped),
   like siblings folded into one node with a count, at most 200 nodes and 12
   levels.

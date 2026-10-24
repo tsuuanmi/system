@@ -13,13 +13,18 @@ export function localizedRegex(names: Localized, locales: readonly string[]): Re
 
 type AriaRole = Parameters<Page['getByRole']>[0]
 
-export function toLocator(root: Root, candidate: Candidate, locales: readonly string[]): Locator {
+/**
+ * A candidate's locator. `includeHidden` also lets a role candidate find what the accessibility
+ * tree hides (an element not rendered, or under `aria-hidden`); every other kind finds those anyway.
+ */
+export function toLocator(root: Root, candidate: Candidate, locales: readonly string[], options: { includeHidden?: boolean } = {}): Locator {
   if ('testId' in candidate) return root.getByTestId(candidate.testId)
   if ('role' in candidate) {
     const role = candidate.role as AriaRole
+    const hidden = options.includeHidden ? { includeHidden: true } : {}
     return candidate.name
-      ? root.getByRole(role, { name: localizedRegex(candidate.name, locales), exact: candidate.exact ?? false })
-      : root.getByRole(role)
+      ? root.getByRole(role, { name: localizedRegex(candidate.name, locales), exact: candidate.exact ?? false, ...hidden })
+      : root.getByRole(role, hidden)
   }
   if ('label' in candidate) return root.getByLabel(localizedRegex(candidate.label, locales))
   if ('text' in candidate) return root.getByText(localizedRegex(candidate.text, locales))

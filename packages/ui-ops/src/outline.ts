@@ -157,9 +157,9 @@ export interface EvidenceStore {
 /**
  * The `ui.drift` event's data for a drift report. The outline goes to the store as a
  * local-private `evidence` artifact (it never leaves the machine, INV-12) and the event names it,
- * since an event carries no page detail.
+ * since an event carries no page structure: only the page's path and counts (`url`, `matches`).
  */
-export function driftData(event: { provider: string; element: string; kind: string; candidate: number; source?: string; mapHash: string; outline?: UiOutline; readback?: object }, store?: EvidenceStore): Record<string, unknown> {
+export function driftData(event: { provider: string; element: string; kind: string; candidate: number; source?: string; mapHash: string; url?: string; matches?: object[]; outline?: UiOutline; readback?: object }, store?: EvidenceStore): Record<string, unknown> {
   return evidenceData(event, store)
 }
 

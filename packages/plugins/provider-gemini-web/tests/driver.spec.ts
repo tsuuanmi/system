@@ -13,6 +13,7 @@ import type { ProviderDriver } from '@tsuuanmi/system-provider-core'
 import type { Browser, Page } from 'patchright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
+import { TERMS_NOTICE_MESSAGE } from '../src/driver.ts'
 import { GeminiWebDriver, shippedMap } from '../src/index.ts'
 import * as GeminiWebPlugin from '../src/index.ts'
 import { PRESETS } from './site.ts'
@@ -27,6 +28,14 @@ describe('the Gemini Web UI map and driver contract', () => {
     expect(map.provider).toBe('gemini-web')
     expect(() => new SchemaRegistry().assert('ui-map@1.1', { ...map, elements: map.elements })).toBeDefined()
     expect(Object.keys(map.states)).toEqual(expect.arrayContaining(['auth.signed-in', 'auth.signed-out', 'turn.running']))
+  })
+
+  it('tells the operator the same step for a terms notice whether an action\'s guard or the sign-in check finds it', () => {
+    const rule = shippedMap().errors.find((e) => 'state' in e.when && e.when.state === 'site.terms-notice')
+    expect(rule).toMatchObject({ kind: 'challenge', message: TERMS_NOTICE_MESSAGE })
+    expect(TERMS_NOTICE_MESSAGE).toMatch(/system account login/)
+    // Within what an account's challenge reason keeps (account.challenged holds 200 characters).
+    expect(TERMS_NOTICE_MESSAGE.length).toBeLessThanOrEqual(200)
   })
 
   it('proves reasoning and persistent conversations, and offers Deep research as an account feature', async () => {
