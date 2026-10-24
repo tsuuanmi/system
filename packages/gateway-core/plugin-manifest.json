@@ -2,7 +2,7 @@
   "schema": "plugin-manifest@1.1",
   "name": "@tsuuanmi/system-gateway-core",
   "version": "0.0.0",
-  "description": "Gateway definitions: ctx.mcp (the MCP tool registry plugins contribute tools to) and the request guard every client endpoint shares",
+  "description": "Gateway definitions: ctx.mcp (the MCP tool registry plugins contribute tools to), the request guard every client endpoint shares, and the roster every surface serves",
   "class": {
     "kind": "family",
     "family": "surface"

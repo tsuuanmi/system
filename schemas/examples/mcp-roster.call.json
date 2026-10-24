@@ -1,0 +1,146 @@
+{
+  "tool": "roster",
+  "input": {},
+  "output": {
+    "asOf": "2026-10-24T09:30:00.000Z",
+    "workers": {
+      "value": [
+        {
+          "worker": "agent:claude-agent-sdk:1f0c2b7e9a5d3c41/review",
+          "provider": "claude-agent-sdk",
+          "family": { "value": "claude-agent-sdk" },
+          "account": {
+            "value": {
+              "id": "claude-agent-sdk:1f0c2b7e9a5d3c41",
+              "group": "claude-agent-sdk",
+              "mode": "assigned",
+              "record": { "value": { "kind": "agent", "label": { "value": "t***@example.com" }, "status": "ready", "slot": 1 } }
+            }
+          },
+          "role": { "value": "review" },
+          "tier": "standard",
+          "quotaClass": "agent-plan",
+          "locality": "local",
+          "state": "busy",
+          "observedAt": "2026-10-24T09:29:58.000Z",
+          "availability": { "state": "busy", "summary": "busy 1 of 1", "running": 1, "slots": 1 },
+          "load": { "value": { "running": 1, "queued": 0, "pending": 0, "slots": 1 } },
+          "limits": [],
+          "siblings": { "value": ["agent:claude-agent-sdk:1f0c2b7e9a5d3c41/develop"] },
+          "work": {
+            "value": {
+              "items": [
+                {
+                  "runId": "run_7Hc2",
+                  "template": "agent-review",
+                  "nodeId": "review:1",
+                  "attempt": 1,
+                  "task": { "taskId": "task-42", "board": { "value": { "projectId": "studio", "title": "Review the parser change", "state": "running" } } }
+                }
+              ],
+              "more": 0
+            }
+          },
+          "pools": {
+            "value": [
+              {
+                "pool": "claude-plan/claude-agent-sdk:1f0c2b7e9a5d3c41",
+                "kind": "interactive",
+                "available": true,
+                "windows": [
+                  {
+                    "id": "five-hour",
+                    "kind": "rolling",
+                    "seconds": 18000,
+                    "state": "ok",
+                    "used": { "value": 37.5 },
+                    "resets": { "value": "2026-10-24T13:00:00Z" },
+                    "observedAt": "2026-10-24T09:20:00Z",
+                    "source": "runtime-result"
+                  },
+                  {
+                    "id": "weekly",
+                    "kind": "rolling",
+                    "seconds": 604800,
+                    "state": "unknown",
+                    "used": { "unknown": "no reading yet" },
+                    "resets": { "unknown": "no reading yet" }
+                  }
+                ],
+                "unknownUsage": { "value": { "runs": 1, "kinds": { "not-reported": 1 } } }
+              }
+            ]
+          }
+        },
+        {
+          "worker": "agent:codex-sdk:04aa5c1e9b7d3f20/review",
+          "provider": "codex-sdk",
+          "family": { "value": "codex-sdk" },
+          "account": {
+            "value": {
+              "id": "codex-sdk:04aa5c1e9b7d3f20",
+              "group": "codex-sdk",
+              "mode": "assigned",
+              "record": {
+                "value": {
+                  "kind": "agent",
+                  "label": { "unknown": "its runtime shows no hint for this account" },
+                  "status": "quarantined",
+                  "slot": 2,
+                  "quarantine": { "reason": "changed", "since": "2026-10-24T08:00:00Z", "decision": "sha256:5d1f0c2b7e9a5d3c415d1f0c2b7e9a5d3c415d1f0c2b7e9a5d3c415d1f0c2b7e" }
+                }
+              }
+            }
+          },
+          "role": { "value": "review" },
+          "tier": "standard",
+          "quotaClass": "agent-plan",
+          "locality": "local",
+          "state": "unavailable",
+          "observedAt": "2026-10-24T09:29:58.000Z",
+          "availability": { "state": "quarantined", "summary": "quarantined: changed, since 2026-10-24T08:00:00Z", "reason": "changed", "since": "2026-10-24T08:00:00Z", "decision": "sha256:5d1f0c2b7e9a5d3c415d1f0c2b7e9a5d3c415d1f0c2b7e9a5d3c415d1f0c2b7e" },
+          "load": { "value": { "running": 0, "queued": 0, "pending": 0, "slots": 1 } },
+          "limits": [],
+          "siblings": { "value": [] },
+          "work": { "value": { "items": [], "more": 0 } },
+          "pools": { "value": [] }
+        },
+        {
+          "worker": "worker:chatgpt-plus/standard",
+          "provider": "chatgpt-web",
+          "family": { "value": "chatgpt-web" },
+          "account": {
+            "value": {
+              "id": "chatgpt-plus",
+              "group": "chatgpt-web",
+              "mode": "assigned",
+              "limitUntil": "2026-10-24T11:00:00Z",
+              "record": { "value": { "kind": "website", "label": { "value": "Studio Plus" }, "status": "ready" } }
+            }
+          },
+          "role": { "value": null },
+          "tier": "standard",
+          "quotaClass": "subscription-chat",
+          "locality": "remote",
+          "state": "quota-exhausted",
+          "observedAt": "2026-10-24T09:29:58.000Z",
+          "availability": { "state": "resting", "summary": "resting at a limit until 2026-10-24T11:00:00Z", "until": { "value": "2026-10-24T11:00:00Z" } },
+          "load": { "value": { "running": 0, "queued": 0, "pending": 0, "slots": 2 } },
+          "limits": [],
+          "siblings": { "value": ["worker:chatgpt-plus/frontier"] },
+          "work": { "value": { "items": [], "more": 0 } },
+          "pools": { "value": [] }
+        }
+      ]
+    },
+    "unlisted": 0,
+    "counts": { "ready": 0, "busy": 1, "resting": 1, "unavailable": 0, "quarantined": 1 },
+    "sources": {
+      "value": [
+        { "source": "agents", "state": "described", "at": "2026-10-24T09:29:58.000Z", "workers": 2 },
+        { "source": "website", "state": "described", "at": "2026-10-24T09:29:58.000Z", "workers": 1 }
+      ]
+    },
+    "unknownUsage": { "value": { "unreadable": 0, "unconfigured": [] } }
+  }
+}

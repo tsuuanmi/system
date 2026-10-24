@@ -2,7 +2,7 @@
 
 Gateway **seam definitions**
 ([plugin model](../../docs/architecture/plugin-model.md#seam-catalog), plugin rule 2),
-and the **request guard** every client endpoint shares.
+the **request guard** every client endpoint shares, and the **roster** every surface serves.
 
 | Seam | Definition | Provider |
 |---|---|---|
@@ -18,7 +18,7 @@ provider-runtime layer never imports the gateway's implementation:
 | `workflow` | `ask`, `research`, `run`, `approve`, `stop`, `drain`, `resume`, `continue`, `delete`, `supersede`, `result`, `usage`, `explain` |
 | `worker-sessions` | `session_send`, `session_inbox` |
 | `resources` | `resources_pools`, `resources_usage` |
-| `mcp-server` itself | `status` |
+| `mcp-server` itself | `status`, `roster` |
 
 Each tool declares the scope that may call it; one that declares none is
 operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The exact
@@ -61,6 +61,36 @@ MCP endpoint, both protocol gateways (through
   `undefined`, invalid is `400`, too large is `413`.
 
 Tests: `tests/guard.spec.ts`.
+
+## The roster
+
+`roster.ts` holds the one read model of every Worker
+([roster](../../docs/design/roster.md), REQ-HOST-8), which MCP `roster` (in
+[`mcp-server`](../plugins/mcp-server/README.md)), `system roster`, and the
+[web UI](../plugins/web-ui/README.md)'s Roster page serve:
+
+- **`readRoster(services, { scope, now? })`** reads each service it is given
+  once, bounded (`ROSTER_BOUNDS`): the Worker registry (`list`, `sources`,
+  `siblings`), the agent accounts (`agentAccounts.list`, `workersIn`), the
+  website accounts (`list`, `duplicateIdentities`), the resource ledger
+  (`pools`, `usage`), the event log (`usage.unknown`, counted by
+  `countUnknownUsage` in [`libs`](../libs/README.md)), the workflow engine
+  (`usage`), and the board (`task`). A service not given, or whose read
+  throws, makes only its own fields `{ unknown: why }`. The record is checked
+  against `mcp-roster@1.0` before it is returned; one its schema refuses
+  throws (a defect).
+- **`projectRoster(input, { scope, now })`** is the pure projection of what was
+  read: Workers in id order, each with its account and the account's record,
+  role, availability (`ready`, `busy` N of M, `resting` until its reset,
+  `unavailable` with why, `quarantined`), load, limits, siblings, current
+  work, and pools with their windows. The same input and time give the same
+  record. A `client` scope gets no account label.
+- **`formatRoster(roster)`**: the record for a terminal, one block per Worker,
+  then the sources that did not answer and the usage entries no pool counts.
+
+The services are typed by shape (`RosterServices`), so this package still
+depends on `system-libs` alone; each surface passes the services it has
+mounted, and its manifest names them. Tests: `tests/roster.spec.ts`.
 
 ## Dependency direction
 

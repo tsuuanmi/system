@@ -2,13 +2,19 @@
  * Gateway definitions. `ctx.mcp` is the MCP tool registry: plugins contribute tools for their
  * own lifetime; `@tsuuanmi/system-mcp-server` provides it over Streamable HTTP. Contributors
  * depend on this definition only, never on the gateway's implementation. The request guard is
- * shared by every client endpoint (MCP and the protocol gateways).
+ * shared by every client endpoint (MCP and the protocol gateways), and the roster (./roster.ts) by
+ * every surface that shows the Workers.
  * @module @tsuuanmi/system-gateway-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ZodRawShape } from 'zod'
 
+export {
+  type Availability, type AvailabilityState, formatRoster, type Known, projectRoster, readRoster, type Roster, type RosterAccount, type RosterAccountRecord, type RosterAgentAccount, ROSTER_BOUNDS, ROSTER_SCHEMA,
+  type RosterDescriptor, type RosterEntry, type RosterInput, type RosterPool, type RosterPoolView, type RosterRun, type RosterScope, type RosterServices, type RosterSourceRead, type RosterTask,
+  type RosterWebsiteAccount, type RosterWindow, type RosterWork,
+} from './roster.ts'
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
 
 declare module '@deepseek-ai/cordis' {
