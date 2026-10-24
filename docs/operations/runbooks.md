@@ -2556,7 +2556,8 @@ before failed only after its writing step completed, for a reason that says noth
 (T110a: the review reached its turn limit; a Worker or a session failed, a limit, the budget, a
 timeout), no review judged the change, and the task writes a commit the change is on
 ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work),
-[ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
+[ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md),
+proposed: the carry is on by default, pending the operator's acceptance (D59)).
 Nothing is asked of you: the board decides and counts the attempt as always.
 
 1. **Read why.** `system explain <runId>` lists, among the run's own decisions, the
@@ -2581,8 +2582,19 @@ Nothing is asked of you: the board decides and counts the attempt as always.
 
 A worktree cut for the work and not given it (a crash at that moment) is never run in: its first
 agent run fails `config_error` ("…that work is not in it"); the next carry gives it the work or puts
-it back to its base. One the source could not put back is yours: read it, then
-`git -C <repository> worktree remove --force <path>`.
+it back to its base, and so do the retention and your removal (`system worktrees remove`) before
+they retire it, so nothing of it is committed on its branch. One the source could not put back (its
+`failure` in `system worktrees` says why: not intact, or files its base does not hold, which a
+reading cut short wrote) is yours: read it, then `git -C <repository> worktree remove --force
+<path>`, and close its record with `system worktrees remove --run <runId>`.
+
+A run's agent that fails `config_error` with "system/run/<runId> ends in <sha>, the retention's
+commit of the worktree cut to start from the work of run <earlier>, which never got into it" met a
+branch that a retention before this rule committed such a tree on: that commit deletes every file
+the tree never got (`git -C <repository> show --stat <sha>`) and holds no run's work, so no worktree
+is added from it. The run's attempt fails, and the task's next attempt is a new run on its own
+branch. Once you have read the commit, delete the branch (`git -C <repository> branch -D
+system/run/<runId>`); the system never deletes a branch.
 
 ## A run's liveness is unknown
 

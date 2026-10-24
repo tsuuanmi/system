@@ -1,6 +1,7 @@
 # ADR-0061: A board task's next attempt starts from the work its previous attempt left
 
-- **Status:** Proposed
+- **Status:** Proposed. The carry is on by default in the code, pending the operator's acceptance
+  (D59); until then its decisions are recorded as for any other.
 - **Date:** 2026-10-25
 - **Related:** T112 (from T110a), [PROP-0010](../../proposals/0010-base-version.md) (B4, B8),
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
@@ -108,7 +109,12 @@ Options 5 and 7.
 5. **Restart is reconciliation** (INV-4). The carry's state is on the run's `workflow_tasks` row
    (`due` until settled); the source finds a commit and a worktree it made and says so; a worktree
    cut and not yet given the tree is never run in, and is given it when asked again, or put back to
-   its base, a fresh worktree, when the tree can no longer be given.
+   its base, a fresh worktree, when the tree can no longer be given. What such a worktree holds is
+   no run's work (its index empty, every file of its base staged as deleted), so the retention and
+   the operator's removal put it back to its base before they retire it and never commit it; one
+   that cannot be put back to exactly its base stays, marked, for the operator. A run's branch
+   whose tip is a retention's commit of such a tree, made before this rule (T127 review item 2), is
+   never added again as a worktree.
 6. **Seams.** `workers` gains the optional `carry(step)` and `WorkerSource.carry` (additive,
    ADR-0036; its conformance suite gains the case). Nothing else changes: the `workflow` contract
    (1.6) and the board's are as they were, as for landing (ADR-0060), since a `ctx.workers`

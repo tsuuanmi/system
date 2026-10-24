@@ -13,30 +13,33 @@ Every route is under `/ui/api` and passes the shared request guard first
 ## Home
 
 One navigation on every page, **Home**, **Board**, **Workers**, **Autonomy policy**, and **Help**, the
-current one marked (`aria-current`) and named in the window's title, which counts what waits for
-the operator first (requests for a verdict, reviews, runs that need a look): *(3) system — Home*;
-a run's page counts as Home's.
+current one marked (`aria-current`) and named in the window's title, which counts first what
+waits for the operator and they can act on: *(3) system — Home*; a run's page counts as Home's.
+Every page reads the count from one route, `GET waiting` ([below](#what-waits-for-you)), and
+Home's *Waiting for you* lists the same: the requests open for a verdict, the reviews held for the
+operator, and the runs that need a look. A count that could not be read whole reads *(3+)*, or
+*(?)* with nothing known.
 Each page opens with its title and one line of what it is for. On a narrow screen (600 px) no
 page is wider than the screen: the navigation wraps whole links with the refresh line under it,
 the Board's columns stack, each card the screen's width with its **Start…** across it, and the
 tables keep their first columns.
 
-**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
-for review with when the first held for you expires, and the runs that need a look, each linking
-to its section), the Workers at a glance (the roster's counts, then each account's capacity in one
+**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting for
+your review, those held for you, with when the first expires, and the runs that need a look, each linking to its section, and
+what of it could not be read), the Workers at a glance (the roster's counts, then each account's capacity in one
 line, its 5 h bar beside it: *Claude Code · science: 5 h used 42 %, resets 03:08*, with *resting
 until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*), the approval cards, the reviews as
 cards, under a line saying how many are held for you and when the first expires, marked when
 within the hour, since an unanswered one expires and its task waits for input that nothing
 revives (what was asked, the checks not run, the run that made the result, the exact result
 folded; **Accept: mark it done** and **Reject: send it back**, each with its own note), the runs
-that need a look (failed, or waiting
-for a plan approval, a fix's verdict, or a deciding vote) with why and a link, and the 15 most
+that need a look (waiting for a plan approval or a deciding vote, or outside the board and failed
+since you last marked Home as seen) with why and a link, and the 15 most
 recent runs, each by its task's title (else its template) with its id under it, and each step with
 its Worker's roster `name`.
 
 *Since you last looked*, under *Waiting for you*, says what happened since the operator last marked
-Home as seen, one line each with a link, the latest first, at most 20: the runs that finished or
+Home as seen, one line each with a link, the latest first, at most 20 (a part that holds more than it read says *More runs ended than the 50 read here.*, and one that cannot be read says so): the runs that finished or
 failed (with why), the tasks that moved (accepted, merged, waiting for a review, an approval, or
 input, cancelled), the requests that expired unanswered (counted as denied), and the Workers that
 started resting, came back, became unavailable, or are available again. **Mark as seen** starts it
@@ -46,7 +49,28 @@ again from now. When and each Worker's status then are kept in this browser only
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`: the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`), and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), each the latest 50; a part that cannot be read is `{unknown}`. A missing or invalid `since` is `400` |
+| `GET waiting?since=<ISO time>` | — | `{asOf, since?, requests, reviews, runs, count, partial?}`, each part `{value}` or `{unknown}` with why ([what waits for you](#what-waits-for-you)); `count` adds the known parts, and `partial` says a part is unknown or holds more than it read. An invalid `since` is `400` |
+| `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`, each part `{value, more?}` or `{unknown}` with why when it cannot be read (never empty in its place): the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), read by state and by when their state changed (`ctx.workflow.usage` with a filter, contract 1.7), so a run that started long ago is there; the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`); and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), read newest first (`ctx.eventLog`, contract 1.1), at most 5 pages of 1,000. Each part lists at most 50, the latest first; `more` says it holds more than it lists, or that a read stopped at its bound before the end. A missing or invalid `since` is `400` |
+
+### What waits for you
+
+The one count of what waits for the operator and they can act on (T127), read by every page for
+the window's title and by Home for *Waiting for you*:
+
+- `requests`: the approval requests open for a verdict (`ctx.approvals.list()`). A tool call, a
+  fix, a merge, a funding raise, or a task's approval that a run or the board waits on is one of
+  them, so it is counted once, here.
+- `reviews`: the board tasks in review held for the operator (`operator-review`), with
+  `firstExpires`; a review a run's reviewer still holds is not the operator's yet.
+- `runs`: the runs that wait for the operator's own move and ask no request (a tie's deciding vote,
+  a plan's approval), whenever they started; and the runs outside the board that failed since
+  `since`, when the operator last marked Home as seen (this browser's `system.seen`), which they
+  may continue. A board task's failed run is not counted: the board decides its next attempt. At
+  most 50 listed, each state read by state (at most 100, as the list of runs reads), `more` past them.
+
+A run that failed before the operator last marked Home as seen is seen: it stays in the recent runs,
+and no longer counts. A queue or board the composition does not mount holds nothing that waits (0,
+as the page shows it not running); a read that fails is `{unknown}`.
 
 ## Help
 
@@ -90,7 +114,7 @@ A running task's Board card says the same in one line.
 | `POST runs/<runId>/vote` | `{decision, option, rationale}`: the tie decision the page shows, an option or `inconclusive` | `{run}`; the vote is the operator's |
 | `POST runs/<runId>/stop` | `{reason?}` | `{run}` |
 | `POST runs/<runId>/continue` | `{nodeId?}` | `{run}` |
-| `GET runs/live` | — | `{asOf, runs}`: the running runs (at most 50), each with `runId`, `template`, `startedAt`, `taskId`, its running `steps` (`nodeId`, `attempt`, `worker`, `since`: when the attempt started), `lastEvent` (the run's latest event's `type` and `at`, read forward from its oldest running step's start, at most 5 pages, else `{unknown}`), and `stalled` (`{value: {since}}` when `ctx.workers.liveness` tells a stalled run of it, `{value: null}` when not, `{unknown}` when nothing tells) |
+| `GET runs/live` | — | `{asOf, runs}`, `runs` being `{value, more?}` or `{unknown}` with why: the running runs, read by state however long ago they started, the latest started first, at most 50 (`more` past them), each with `runId`, `template`, `startedAt`, `taskId`, its running `steps` (`nodeId`, `attempt`, `worker`, `since`: when the attempt started, the step's latest `workflow.node.started` when it is this attempt's), `lastEvent` (the run's latest event's `type` and `at`, one entry read newest first, else `{unknown}` with why: no event, or the event log not mounted, failing, or not reading newest first), and `stalled` (`{value: {since}}` when `ctx.workers.liveness` tells a stalled run of it, `{value: null}` when not, `{unknown}` when nothing tells) |
 | `GET runs/<runId>/review` | — | `{runId, change, assessments, report?, landing?}`: what the operator reads before a review verdict ([below](#what-a-review-shows)); `404` for an unknown run |
 
 A refused action is `400` (a malformed body) or `409` (the engine refused it).
@@ -152,7 +176,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), and its `revision`, `template` (when it names one), and `attempts {count, max}`, per state the most recently changed first, at most 50 each, `more` counting the rest per state |
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, head?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), and its `revision`, `template` (when it names one), and `attempts {count, max}`, per state the most recently changed first, at most 50 each, `more` counting the rest per state |
 | `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
 | `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
 | `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
@@ -191,13 +215,15 @@ any step runs.
 | Route | Body | Answer |
 |---|---|---|
 | `GET tasks/<taskId>/start` | — | `{task {taskId, title, revision, template, attempts}, steps}`: what would run, each step's `nodeId`, `objective`, `capabilities`, least `tier`, and `kind`, `team {kind, members}`, `source`, or `plans` when it has them (`ctx.workflow.templateSteps`), and `workers`: the Workers that could likely take it now (`free`: ready, or busy with a slot free) or once one is (`busy`, resting at a limit included), at most 8 each, by id: those whose descriptor proves every capability the step needs, at its tier or above, taking its kind of work (`ctx.workers.list()`; no routing decision is made, and routing decides when the run starts), `{unknown}` when they cannot be read |
-| `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId}})`, its input the task's title and goal |
+| `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId, revision}})`, its input the task's title and goal at the revision read, which the engine refuses (`409`) when the task moved since (workflow contract 1.7), so the input and the run's briefs come from one reading; or `202` `{pending: {runId, reason}}` when the engine admitted the run and the board did not answer when asked to record it: nothing of it ran, and it starts once the board shows it recorded, or is dropped with nothing run (the engine's failure names the run, `WorkflowFailure.runId`) |
 
 - An unknown task is `404`, a malformed body `400`. A task that is not ready, names no template
   (the lead then starts it with a template it chooses), names a template not served, changed since
   the page showed it (its revision), or names another template than the page sent is `409`, and
   nothing starts. A refusal by the engine (a paused project, a spent budget, a drained host) is
-  `409` with its reason.
+  `409` with its reason. A start the board did not answer is no refusal (`202`): the page says
+  *Not started yet:* with the run linked, that it starts once the board shows it recorded and the
+  task then moves to Working, or is dropped with nothing run, and that nothing more is needed (T127).
 - The card's **Start…** opens a confirmation that says what runs: the template, the attempt (*its
   attempt 1 of 3*), each step with the kind of Worker it runs on (*Do solo: a Worker of standard
   tier or above that can reason*) and who would likely take it, by display name with its account's

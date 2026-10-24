@@ -457,8 +457,10 @@ export const workflowSuite = defineSuite<Boot>({
   // member avoids every Worker on an account another member holds (its siblings), and is refused
   // when that account cannot be told apart (REQ-TEAM-4). 1.6: a task's next attempt never resumes a
   // session its Worker source holds (`held`: blocked on an approval, or its latest run not finished
-  // or not known to be gone), and starts fresh, saying why (ADR-0056).
-  contract: '1.6',
+  // or not known to be gone), and starts fresh, saying why (ADR-0056). 1.7: `usage` lists runs by state,
+  // whenever they started, and by when their state changed, the latest changed first; a start bound to
+  // the revision of its task the caller read is refused once the task moved (T127).
+  contract: '1.7',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1237,5 +1239,36 @@ export const workflowSuite = defineSuite<Boot>({
       expect(refused.error).toMatchObject({ kind: 'config_error' })
       expect(workers.started).toHaveLength(1)
     }, {}, '1.5'),
+    scenario('task-revision', 'refuses before anything is written a start bound to a revision its task no longer has, so the run\'s input and every brief come from one reading of the task; one bound to the revision it has is admitted (T127, INV-5)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      const task = await readyTask(ctx, 'revised')
+      expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', task: { taskId: task.taskId, revision: task.revision + 1 } }))).toBe('invalid_input')
+      expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', task: { taskId: task.taskId, revision: -1 } }))).toBe('invalid_input')
+      expect(workers.started).toHaveLength(0)
+      expect(ctx.workflow.usage()).toHaveLength(0)
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+      const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId, revision: task.revision } })
+      expect(run.task).toMatchObject({ taskId: task.taskId, claim: 'own' })
+      expect((await settled(ctx, run.runId)).status).toBe('completed')
+    }, {}, '1.7'),
+    scenario('usage-by-state', 'lists runs by state whenever they started, and by when their state changed, the latest changed first, at most the limit asked: a long run is never past the limit for being old (T127, INV-9)', async ({ ctx, workers }) => {
+      workers.reply = (request) => (request.prompt.includes('long') ? 'hold' : { text: 'done' })
+      const long = start(ctx, 'solo', 'long')
+      await until(() => nodeOf(ctx, long.runId, 'solo')?.state === 'RUNNING', 'the long run running')
+      await settled(ctx, start(ctx, 'solo', 'early').runId)
+      await pause(10)
+      const mark = new Date().toISOString()
+      await pause(10)
+      const later: string[] = []
+      for (const input of ['later 1', 'later 2', 'later 3']) later.push((await settled(ctx, start(ctx, 'solo', input).runId)).runId)
+      // By when they started alone, the long run is past the latest three.
+      expect(ctx.workflow.usage(3).map((r) => r.runId)).toEqual([...later].reverse())
+      expect(ctx.workflow.usage(3, { status: ['running'] }).map((r) => r.runId)).toEqual([long.runId])
+      expect(ctx.workflow.usage(50, { status: ['completed', 'failed'], changedSince: mark }).map((r) => r.runId)).toEqual([...later].reverse())
+      expect(ctx.workflow.usage(2, { status: ['completed'], changedSince: mark }).map((r) => r.runId)).toEqual([later[2], later[1]])
+      expect(ctx.workflow.usage(50, { status: ['failed'] })).toEqual([])
+      expect(ctx.workflow.usage(50, { status: [] })).toEqual([])
+      expect(() => ctx.workflow.usage(5, { changedSince: 'yesterday' })).toThrow()
+    }, {}, '1.7'),
   ],
 })

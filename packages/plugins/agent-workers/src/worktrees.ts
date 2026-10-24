@@ -22,7 +22,10 @@
  * when that attempt failed only after its writing step. On the engine's ask, the earlier worktree is
  * committed on its branch, only while it is still exactly the tree its writing step left, and the new
  * run's worktree is cut at that tree's base, only while the base is still the repository's HEAD,
- * holding the committed tree as its change: what a fresh worktree is, plus the earlier work.
+ * holding the committed tree as its change: what a fresh worktree is, plus the earlier work. A worktree
+ * cut for that work and never given it (a crash between the two) holds no run's work: no agent runs in
+ * it, and the carry asked again, the retention, and the operator's removal put it back to its base
+ * before anything else, so nothing of it is ever committed.
  *
  * git runs with fixed argument lists, always with `-C <path>`, no shell, no hooks, no system or
  * global configuration (as the subject capture, `captureGitSubject`), and bounded time. Inside a
@@ -53,6 +56,8 @@ export const SYSTEM_AUTHOR = { name: 'system', email: 'system@localhost' } as co
 export const SUBJECT_TRAILER = 'System-Subject'
 /** The trailer the commit of a carried tree carries: the workflow run whose worktree starts from it (ADR-0061). */
 export const CARRIED_TRAILER = 'System-Carried-To'
+/** The first line of the commit by which the retention keeps a worktree's uncommitted work on its branch. */
+export const keptSubject = (runId: string): string => `system: keep the uncommitted work of workflow run ${runId}`
 
 /**
  * A worktree cut from an earlier run's work (ADR-0061): that workflow run, and the commit on its
@@ -224,6 +229,14 @@ interface WorktreeRow {
   carried_commit: string | null
 }
 
+/**
+ * A worktree cut to hold an earlier run's work that never got into it (ADR-0061): a crash between its
+ * cut and the reading of the tree leaves its index empty, every file of its base shown as deleted, or
+ * part of that tree written. What it holds is no run's work, so nothing of it is ever committed, and
+ * no agent runs in it.
+ */
+const halfCarried = (row: WorktreeRow): boolean => row.carried_from !== null && row.carried_commit === null
+
 export type RepositoryCheck = { repository: string } | { problem: string }
 
 /**
@@ -340,7 +353,7 @@ export class Worktrees {
       const branch = branchOf(runId)
       if (row && row.removed_at === null && existsSync(row.path)) {
         // Cut to hold an earlier run's work that never got into it (ADR-0061): no agent runs in a tree half made.
-        if (row.carried_from !== null && row.carried_commit === null) throw new WorktreeError(`${row.path} was cut to start from the work of run ${row.carried_from}, and that work is not in it; nothing runs there, and it is left for the operator`)
+        if (halfCarried(row)) throw new WorktreeError(`${row.path} was cut to start from the work of run ${row.carried_from}, and that work is not in it; nothing runs there, and it is left for the operator`)
         await this.verify(row)
         return row.path
       }
@@ -354,6 +367,14 @@ export class Worktrees {
       // Something else is there: it is never taken over.
       if (lstatSync(path, { throwIfNoEntry: false })) throw new WorktreeError(`${path} exists and is not the worktree of run ${runId}; nothing was changed`)
       const exists = await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).then(() => true, () => false)
+      if (exists && row && halfCarried(row)) {
+        // Retired while cut for work it never got: a retention before the put-back committed what such a tree
+        // held (every file of its base deleted) on its branch, and that commit is no run's work (INV-2).
+        const [tip, author, subject] = (await git(repository, ['log', '-1', '--format=%H%n%an <%ae>%n%s', `refs/heads/${branch}`])).split('\n')
+        if (author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` && subject === keptSubject(runId)) {
+          throw new WorktreeError(`${branch} ends in ${tip}, the retention's commit of the worktree cut to start from the work of run ${row.carried_from}, which never got into it: that commit holds no run's work (the files it did not get are deleted), so no worktree is added from it; the branch is left for the operator`)
+        }
+      }
       await git(repository, exists ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path, 'HEAD'])
       const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
       const gitdir = pointer(path)
@@ -565,6 +586,8 @@ export class Worktrees {
     } catch (error) {
       return { ...base, outcome: 'kept', why: (error as Error).message }
     }
+    // What it holds is no run's work: never committed, with or without the commit flag (ADR-0061).
+    if (halfCarried(row)) return { ...base, outcome: 'remove', why: `it was cut to start from the work of run ${row.carried_from}, which never got into it, so it holds no run's work: it is put back to its base, nothing of it is committed, and it is removed; its branch stays` }
     const pending = (await git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, 'status', '--porcelain', '--untracked-files=all'])).trim()
     if (!pending) return { ...base, outcome: 'remove', why: 'it holds nothing uncommitted: it is removed, and its branch stays' }
     if (commit) return { ...base, outcome: 'remove', why: `its uncommitted changes are committed on ${row.branch}, which stays, then it is removed` }
@@ -764,7 +787,9 @@ export class Worktrees {
     } finally {
       // Cut for the work and never given it (a failure, or a restart that finds the work can no longer be given): made fresh again.
       const cut = this.row(repository, step.runId)
-      if (carried?.outcome !== 'carried' && cut && cut.removed_at === null && cut.carried_from === from.workflow_run_id && !cut.carried_commit) await this.unmark(cut, base)
+      if (carried?.outcome !== 'carried' && cut && cut.removed_at === null && cut.carried_from === from.workflow_run_id && !cut.carried_commit) {
+        await this.putBack(cut).catch((error: unknown) => this.ctx.logger.warn(`agent Workers: ${(error as Error).message}`))
+      }
     }
     return carried
   }
@@ -847,16 +872,25 @@ export class Worktrees {
   }
 
   /**
-   * A worktree cut to hold an earlier run's work that it was never given: its index and files are put
-   * back to the base it was cut at, and it is a fresh worktree a run may work in. No agent has run in
-   * it ({@link acquire} refuses one so marked). One that cannot be put back stays marked, and nothing
-   * runs in it.
+   * A worktree cut to hold an earlier run's work that it was never given ({@link halfCarried}): its index
+   * and files are put back to its HEAD, the base it was cut at (its branch was made there, and nothing
+   * commits on it while it is so marked), and, once it then holds nothing else, it is a fresh worktree
+   * a run may work in, unmarked. No agent has run in it ({@link acquire} refuses one so marked). One that
+   * is not intact, cannot be put back, or still holds files that are not its base's (what a reading cut
+   * short wrote) stays marked, nothing of it committed, and nothing runs in it: throws a
+   * {@link WorktreeError} saying so, for the operator.
    */
-  private async unmark(cut: WorktreeRow, base: string): Promise<void> {
-    const restored = pointer(cut.path) === cut.gitdir
-      && await git(cut.path, [`--git-dir=${cut.gitdir}`, `--work-tree=${cut.path}`, 'read-tree', '-u', '--reset', base]).then(() => true, () => false)
-    if (restored) this.ctx.store.transaction((db) => void db.prepare('UPDATE agent_worktrees SET carried_from = NULL WHERE repository = ? AND workflow_run_id = ?').run(cut.repository, cut.workflow_run_id))
-    else this.ctx.logger.warn(`agent Workers: the worktree ${cut.path} of run ${cut.workflow_run_id} was cut for the work of run ${cut.carried_from} and could not be put back to ${base}; nothing runs in it, and it is left for the operator`)
+  private async putBack(cut: WorktreeRow): Promise<void> {
+    const fail = (why: string): never => {
+      throw new WorktreeError(`the worktree ${cut.path} of run ${cut.workflow_run_id} was cut to start from the work of run ${cut.carried_from}, which never got into it, and ${why}: nothing of it is committed, nothing runs in it, and it is left for the operator`)
+    }
+    await this.verify(cut).catch((error: unknown) => fail(`is not intact (${(error as Error).message})`))
+    const inside = (args: string[]): Promise<string> => git(cut.path, [`--git-dir=${cut.gitdir}`, `--work-tree=${cut.path}`, ...args])
+    await inside(['read-tree', '-u', '--reset', 'HEAD']).catch((error: unknown) => fail(`could not be put back to its base (${(error as Error).message})`))
+    const left = (await inside(['status', '--porcelain', '--untracked-files=all'])).trim()
+    if (left) fail(`still holds files its base does not after it was put back (${left.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')})`)
+    this.ctx.store.transaction((db) => void db.prepare('UPDATE agent_worktrees SET carried_from = NULL WHERE repository = ? AND workflow_run_id = ?').run(cut.repository, cut.workflow_run_id))
+    this.ctx.logger.info(`agent Workers: the worktree ${cut.path} of run ${cut.workflow_run_id}, cut for the work of run ${cut.carried_from} and never given it, is put back to its base: a fresh worktree`)
   }
 
   /** Commit the worktree's changes on its branch, while it is still exactly the accepted subject. */
@@ -989,7 +1023,11 @@ export class Worktrees {
     return decision
   }
 
-  /** Commit what the worktree holds on its branch, then remove it (never forced). Returns the new commit, if any. */
+  /**
+   * Commit what the worktree holds on its branch, then remove it (never forced). Returns the new commit,
+   * if any. A worktree cut for an earlier run's work it never got ({@link halfCarried}) is put back to its
+   * base first, so nothing of it is committed, or stays when it cannot be ({@link putBack} throws).
+   */
   private async retire(row: WorktreeRow): Promise<string | undefined> {
     if (!existsSync(row.path)) {
       // Removed by hand: nothing is left to keep, once git no longer lists it either.
@@ -1001,12 +1039,13 @@ export class Worktrees {
     const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
     // system's own workspace files are never part of the work: gone before the commit.
     await this.clearSystem(row, inside)
+    if (halfCarried(row)) await this.putBack(row)
     let commit: string | undefined
     if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) {
       await inside(['add', '--all'])
       const staged = await inside(['diff', '--cached', '--quiet']).then(() => false, () => true)
       if (staged) {
-        await inside(['commit', '--quiet', '--no-verify', '-m', `system: keep the uncommitted work of workflow run ${row.workflow_run_id}\n\nCommitted by system before the run's worktree was removed.`])
+        await inside(['commit', '--quiet', '--no-verify', '-m', `${keptSubject(row.workflow_run_id)}\n\nCommitted by system before the run's worktree was removed.`])
         commit = (await inside(['rev-parse', 'HEAD'])).trim()
       }
     }

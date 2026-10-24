@@ -122,6 +122,23 @@ const span = (seconds: number): string => {
 
 const ok = (name: string, detail: string): HealthCheck => ({ name, state: 'ok', detail })
 
+/** Items a check's detail names from one list at most, and the characters of each; the rest are counted (INV-9). */
+export const NAMED_ITEMS = 20
+const ITEM_CHARS = 300
+/**
+ * The characters of a check's detail at most, whatever it names: each list is bounded where it is
+ * joined, and this backstop keeps a reply well under what `mcp-status@1.0` allows (32,768).
+ */
+export const DETAIL_CHARS = 8000
+
+const clip = (text: string, chars: number): string => (text.length > chars ? `${text.slice(0, chars - 1)}…` : text)
+
+/** At most {@link NAMED_ITEMS} of `items`, each cut to {@link ITEM_CHARS}, joined by `separator`, then how many more. */
+export function listOf(items: readonly string[], separator = ', '): string {
+  const shown = items.slice(0, NAMED_ITEMS).map((item) => clip(item, ITEM_CHARS)).join(separator)
+  return items.length > NAMED_ITEMS ? `${shown}${separator}and ${items.length - NAMED_ITEMS} more` : shown
+}
+
 /** A check that throws is reported as down with why, never as a failed report. */
 async function guarded(name: string, run: () => HealthCheck | Promise<HealthCheck>): Promise<HealthCheck> {
   try {
@@ -141,7 +158,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
     checks.push(await guarded('plugins', () => {
       const broken = sources.plugins!()
       return broken.length
-        ? { name: 'plugins', state: 'down', detail: `${broken.map((p) => `${p.name} ${p.state}: ${p.detail}`).join('; ')}. See the daemon's log, fix the configuration, and restart (docs/operations/runbooks.md)` }
+        ? { name: 'plugins', state: 'down', detail: `${listOf(broken.map((p) => `${p.name} ${p.state}: ${p.detail}`), '; ')}. See the daemon's log, fix the configuration, and restart (docs/operations/runbooks.md)` }
         : ok('plugins', 'every plugin of the composition is active')
     }))
   }
@@ -153,18 +170,18 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const plugins = sources.manifests!()
       const found = plugins.filter((p) => p.findings.length)
       if (found.length) {
-        return { name: 'manifests', state: 'down', detail: `${found.map((p) => `${p.name}: ${p.findings.join('; ')}`).join('; ')}. The plugin host cannot keep a row from running: turn the row off, or fix or allow its package, and restart (docs/operations/runbooks.md#the-manifest-check-found-a-plugin)` }
+        return { name: 'manifests', state: 'down', detail: `${listOf(found.map((p) => `${p.name}: ${listOf(p.findings, '; ')}`), '; ')}. The plugin host cannot keep a row from running: turn the row off, or fix or allow its package, and restart (docs/operations/runbooks.md#the-manifest-check-found-a-plugin)` }
       }
       const refused = plugins.filter((p) => p.state === 'refused')
       if (refused.length) {
-        return { name: 'manifests', state: 'degraded', detail: `${refused.map((p) => `${p.name}: ${p.reason ?? ''}`).join('; ')}: its row is off, and its lifecycle is not recorded until its package ships a valid manifest (docs/operations/runbooks.md#the-manifest-check-found-a-plugin)` }
+        return { name: 'manifests', state: 'degraded', detail: `${listOf(refused.map((p) => `${p.name}: ${p.reason ?? ''}`), '; ')}: its row is off, and its lifecycle is not recorded until its package ships a valid manifest (docs/operations/runbooks.md#the-manifest-check-found-a-plugin)` }
       }
       const allowed = plugins.filter((p) => p.mounted && p.state === 'absent').map((p) => p.name)
       const off = plugins.filter((p) => !p.mounted && p.state === 'absent').map((p) => p.name)
       return ok('manifests', [
         'every plugin a row mounts passes the manifest check',
-        ...(allowed.length ? [`${allowed.length} of them run with no manifest, as the plugin host's configuration allows: ${allowed.join(', ')}`] : []),
-        ...(off.length ? [`${off.length} row(s) that are off have none: ${off.join(', ')}`] : []),
+        ...(allowed.length ? [`${allowed.length} of them run with no manifest, as the plugin host's configuration allows: ${listOf(allowed)}`] : []),
+        ...(off.length ? [`${off.length} row(s) that are off have none: ${listOf(off)}`] : []),
       ].join('; '))
     }))
   }
@@ -172,7 +189,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
     checks.push(await guarded('templates', () => {
       const refused = sources.templates!()
       return refused.length
-        ? { name: 'templates', state: 'degraded', detail: `${refused.length} configured template(s) refused, every other one works: ${refused.map((t) => `${t.name} (${t.reason})`).join('; ')}` }
+        ? { name: 'templates', state: 'degraded', detail: `${refused.length} configured template(s) refused, every other one works: ${listOf(refused.map((t) => `${t.name} (${t.reason})`), '; ')}` }
         : ok('templates', 'every configured template passed its check')
     }))
   }
@@ -213,8 +230,9 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const waiting = (await accounts()).filter((a) => a.status === 'reauth-required' || a.status === 'challenge')
       const duplicates = (await sources.duplicateAccounts?.()) ?? []
       const problems = [
-        ...(waiting.length ? [`${waiting.map((a) => `${a.id} (${a.status})`).join(', ')}: sign in again (system account login <id>)`] : []),
-        ...duplicates.map((ids) => `${ids.join(' and ')} are signed in as the same person, so none of them takes work: sign all but one in as another person, or remove them from the catalog (docs/operations/runbooks.md#two-accounts-sign-in-as-one-person)`),
+        ...(waiting.length ? [`${listOf(waiting.map((a) => `${a.id} (${a.status})`))}: sign in again (system account login <id>)`] : []),
+        ...duplicates.slice(0, NAMED_ITEMS).map((ids) => `${ids.join(' and ')} are signed in as the same person, so none of them takes work: sign all but one in as another person, or remove them from the catalog (docs/operations/runbooks.md#two-accounts-sign-in-as-one-person)`),
+        ...(duplicates.length > NAMED_ITEMS ? [`and ${duplicates.length - NAMED_ITEMS} more group(s) signed in as one person (system account list)`] : []),
       ]
       return problems.length
         ? { name: 'accounts', state: 'degraded', detail: problems.join('; ') }
@@ -226,10 +244,10 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   if (agentAccounts) {
     checks.push(await guarded('agent-accounts', () => {
       const all = agentAccounts()
-      const named = (a: (typeof all)[number]) => `${a.accountId ?? `slot ${a.slot} of ${a.provider}`} (${a.status}${a.reason ? `: ${a.reason}` : ''})`
+      const named = (a: (typeof all)[number]): string => `${a.accountId ?? `slot ${a.slot} of ${a.provider}`} (${a.status}${a.reason ? `: ${a.reason}` : ''})`
       const waiting = all.filter((a) => a.status !== 'ready')
       return waiting.length
-        ? { name: 'agent-accounts', state: 'degraded', detail: `take no work: ${waiting.map(named).join(', ')}; see system account list, and resolve each (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)` }
+        ? { name: 'agent-accounts', state: 'degraded', detail: `take no work: ${listOf(waiting.map(named))}; see system account list, and resolve each (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)` }
         : ok('agent-accounts', `${all.length} enrolled, every one ready`)
     }))
   }
@@ -243,9 +261,9 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       // none of its Workers: never ok while one is (INV-2).
       const unheard = (sources.workerSources?.() ?? []).filter((s) => s.state !== 'described')
       // A source whose first describe has not landed is still describing: its Workers are not known yet, so no count reads as all of them (T99 D8).
-      const named = unheard.map((s) => (s.describing
+      const named = listOf(unheard.map((s) => (s.describing
         ? `source ${s.source} describing… (its first describe since it registered has not landed, at ${s.at})`
-        : `source ${s.source} ${s.detail ?? s.state} (at ${s.at})`)).join('; ')
+        : `source ${s.source} ${s.detail ?? s.state} (at ${s.at})`)), '; ')
       const runbook = '(docs/operations/runbooks.md#a-worker-source-does-not-answer)'
       if ('error' in listed) {
         if (!unheard.length) throw listed.error
@@ -254,7 +272,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const unheardNote = unheard.length ? `${named}: routing sees none of ${unheard.length === 1 ? 'its' : 'their'} Workers until it answers ${runbook}` : ''
       const { workers } = listed
       const waiting = workers.filter((w) => !AVAILABLE.has(w.state))
-      const cannot = waiting.map((w) => `${w.worker} (${w.state})`).join(', ')
+      const cannot = listOf(waiting.map((w) => `${w.worker} (${w.state})`))
       if (waiting.length === workers.length && (workers.length || unheard.length)) {
         return { name: 'workers', state: 'down', detail: `no Worker can take work: ${[cannot, unheardNote].filter(Boolean).join('; ')}` }
       }
@@ -299,7 +317,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       }
       const held = line('unknown', 'ended without being known to be gone, their session and worktree held')
       const others = [line('looking', 'being looked at after their holder stopped'), line('stalled', 'stalled (nothing is sent to them; their deadline ends them)')].filter(Boolean)
-      const unread = told.unread.map((u) => `source ${u.source} cannot tell (${u.detail})`)
+      const unread = told.unread.length ? [listOf(told.unread.map((u) => `source ${u.source} cannot tell (${u.detail})`), '; ')] : []
       const runbook = '(docs/operations/runbooks.md#a-runs-liveness-is-unknown)'
       if (held || unread.length) {
         return { name: 'liveness', state: 'degraded', detail: `${[held, ...unread, ...others].filter(Boolean).join('; ')}. system explain <run> says why and what to do; free a run once its agent is gone: system free <run> --agent-gone ${runbook}` }
@@ -316,10 +334,11 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const count = await countUnknownUsage(unknownUsage, (sources.now ?? Date.now)())
       if (!count.pools.length) return ok('usage', 'no resource pool is configured')
       const open: string[] = []
-      for (const { pool, seconds, runs, kinds } of count.pools) {
+      for (const { pool, seconds, runs, kinds } of count.pools.slice(0, NAMED_ITEMS)) {
         if (runs) open.push(`${pool}: ${runs} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${Object.entries(kinds).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(', ')})`)
       }
-      if (count.unconfigured.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${count.unconfigured.map((u) => `${u.pool} ${u.runs}`).join(', ')}), so no window counts them`)
+      if (count.pools.length > NAMED_ITEMS) open.push(`and ${count.pools.length - NAMED_ITEMS} more pool(s) not named here (system usage)`)
+      if (count.unconfigured.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${listOf(count.unconfigured.map((u) => `${u.pool} ${u.runs}`))}), so no window counts them`)
       const { unreadable } = count
       if (unreadable) open.push(`${unreadable} usage.unknown entr${unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record, so no pool counts ${unreadable === 1 ? 'it' : 'them'}`)
       if (count.unread) open.push(`more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here`)
@@ -386,7 +405,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const failed = undeleted()
       const accounts = [...new Set(failed.map((c) => c.account))].sort()
       return failed.length
-        ? { name: 'conversations', state: 'degraded', detail: `${failed.length} website conversation(s) of ${accounts.join(', ')} could not be deleted: see system conversations --state failed, and the playbook (docs/operations/playbooks.md)` }
+        ? { name: 'conversations', state: 'degraded', detail: `${failed.length} website conversation(s) of ${listOf(accounts)} could not be deleted: see system conversations --state failed, and the playbook (docs/operations/playbooks.md)` }
         : ok('conversations', 'every released website conversation was deleted or is due')
     }))
   }
@@ -396,12 +415,12 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
     checks.push(await guarded('login-profiles', () => {
       const states = profiles()
       const blocked = states.filter((p) => p.blocked)
-      if (blocked.length) return { name: 'login-profiles', state: 'degraded', detail: blocked.map((p) => `${p.account}: ${p.blocked}`).join('; ') }
+      if (blocked.length) return { name: 'login-profiles', state: 'degraded', detail: listOf(blocked.map((p) => `${p.account}: ${p.blocked}`), '; ') }
       const reserved = states.filter((p) => p.reserved).map((p) => p.account)
       const open = states.filter((p) => p.open).map((p) => (p.kept ? `${p.account} (${p.kept} kept tab(s))` : p.account))
       return ok('login-profiles', [
-        reserved.length ? `held by a remote login: ${reserved.join(', ')} (their operations fail as overloaded and are retried until it ends)` : '',
-        open.length ? `open for work${sources.browserCap ? ` (${open.length} of at most ${sources.browserCap})` : ''}: ${open.join(', ')}` : '',
+        reserved.length ? `held by a remote login: ${listOf(reserved)} (their operations fail as overloaded and are retried until it ends)` : '',
+        open.length ? `open for work${sources.browserCap ? ` (${open.length} of at most ${sources.browserCap})` : ''}: ${listOf(open)}` : '',
       ].filter(Boolean).join('; ') || 'no login profile is open for work')
     }))
   }
@@ -420,7 +439,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const count = drifted.size + failed.size
       const named = [...new Set(drifted.values())].sort()
       return count
-        ? { name: 'ui-drift', state: 'degraded', detail: `${count} provider UI change(s) seen recently${named.length ? ` (${named.join(', ')})` : ''}: update the UI map (docs/operations/playbooks.md)` }
+        ? { name: 'ui-drift', state: 'degraded', detail: `${count} provider UI change(s) seen recently${named.length ? ` (${listOf(named)})` : ''}: update the UI map (docs/operations/playbooks.md)` }
         : ok('ui-drift', 'no provider UI change seen recently')
     }))
   }
@@ -439,5 +458,5 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   }
 
   const state = checks.reduce<HealthState>((worst, check) => (RANK[check.state] > RANK[worst] ? check.state : worst), 'ok')
-  return { state, checks }
+  return { state, checks: checks.map((c) => (c.detail.length > DETAIL_CHARS ? { ...c, detail: clip(c.detail, DETAIL_CHARS) } : c)) }
 }

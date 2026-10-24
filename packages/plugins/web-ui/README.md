@@ -2,12 +2,18 @@
 
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
-- **Home**, a dashboard: what waits for the operator (approvals, reviews, runs that need a look,
-  each linked, and counted in the window's title: *(3) system — Home*), what happened since the
+- **Home**, a dashboard: what waits for the operator and they can act on (open approval requests,
+  reviews held for them, runs that wait for their own move or failed outside the board since they
+  last looked, each linked, and counted in the window's title on every page from one route,
+  `GET waiting`: *(3) system — Home*), what happened since the
   operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`), the
   Workers at a glance, then those decisions and the recent runs by their tasks' titles, each step
   with its Worker's name; a running run's page and Board card say where it is now (its step, Worker,
-  last event, and a stall; `GET runs/live`), and a start names who would likely take each step;
+  last event, and a stall; `GET runs/live`), and a start names who would likely take each step.
+  Both reads are bounded per request and read the newest first: the runs by state and by when
+  their state changed (`ctx.workflow.usage` with a filter), however long ago they started, and the
+  event log newest first (`ctx.eventLog`, contract 1.1), each part with `more` past its bound and
+  `{unknown}` with why when it cannot be read (T127);
 
 - **Help** (`?view=help`): how System works in plain words, with links into the pages, and a
   glossary; a **?** beside each such word on the pages opens its sentence in place by keyboard or

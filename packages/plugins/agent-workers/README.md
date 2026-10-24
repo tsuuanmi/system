@@ -402,7 +402,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   through the worktree's own administrative directory with `--no-optional-locks`, after the
   landing's check that the worktree is intact; one that is not throws.
 - **Carrying** (`carry` on the `workers` seam, [ADR-0061](../../../docs/decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-  proposed, [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
+  proposed: the carry is on by default, pending the operator's acceptance (D59), [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
   workflow engine asks it before the first step of a board task's next attempt, for the earlier
   attempt's worktree (by workflow run and path; any other is undefined), one change at a time per
   repository:
@@ -422,8 +422,14 @@ The **`agents` Worker source**: agent runtimes as Workers
     is recorded last (`carried_commit`). A worktree cut and not yet given the tree (a crash, or a
     failure there) is never run in (`acquire` refuses it, `config_error`); the carry asked again
     gives it the tree, or, when the tree can no longer be given, puts it back to the base, a fresh
-    worktree; one that cannot be put back stays marked for the operator. A carry asked again after
-    it was done answers `carried: false`. Never a force, a reset of a branch, a deletion, or a push.
+    worktree. The retention and the operator's removal put it back too before they retire it, so
+    what it holds (its index empty, every file of its base staged as deleted) is never committed;
+    put back is `read-tree -u --reset HEAD`, then nothing left over, and one that is not intact or
+    still holds files its base does not (a reading cut short) stays marked, nothing committed, for
+    the operator (`failure` says why). `acquire` refuses to add such a worktree again from a branch
+    whose tip is an earlier retention's commit of that tree (by the system, `system: keep the
+    uncommitted work of workflow run <runId>`). A carry asked again after it was done answers
+    `carried: false`. Never a force, a reset of a branch, a deletion, or a push.
 - **Metering** ([resources](../../../docs/design/resources.md)), for a Worker
   with a `pool`, through `ctx.resources` (optional: read when present, never
   injected):

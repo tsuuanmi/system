@@ -623,7 +623,10 @@ is refused (`config_error`), and every other run is unaffected.
   the holder's generation), and only then is it opened and scheduled. A restart in between is
   decided by the board's record: recorded, the run goes on; still claimed under its generation,
   the start is asked again; otherwise the run is abandoned (`task_not_started`), nothing of it
-  having run.
+  having run. A board that does not answer the record (neither the start nor the read after it)
+  leaves the run `starting`, decided the same way at its first advance; `start` then fails
+  `overloaded`, its failure naming the run (`WorkflowFailure.runId`), so no caller reads it as
+  nothing started (T127): the web UI's Start answers `202` with the pending run.
 - **While it lives**, the engine renews the task's lease at a third of what the board granted
   (`leases.maxTtlMs` caps it), also while the run waits on a gate or a vote. When the board
   refuses the generation (the lease lapsed across a restart, say), a `recovery` decision
@@ -841,7 +844,7 @@ person's answer. The protocol is the brief's: every brief of a board task's run 
 ### Starting from the previous attempt's work
 
 > Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-> (proposed), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (proposed: the carry is on by default, pending the operator's acceptance (D59)), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
 > (`src/carries.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > ([carrying an earlier run's work](agent-runtimes.md#carrying-an-earlier-runs-work)).
 

@@ -212,4 +212,24 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect(carry.decisions.map((d) => decisionOf(b.ctx, d))).toEqual([expect.objectContaining({ decisionType: 'admission', decider: expect.objectContaining({ id: 'workflow.task-worktree' }), outcome: expect.objectContaining({ option: 'fresh' }) })])
     expect(b.carrier.steps).toEqual([])
   })
+
+  it('decides nothing for a start whose claim the board refuses, and starts from HEAD, recorded with why, when the previous attempt\'s record cannot be read (T127 item 12, INV-2, INV-13)', async () => {
+    const b = await boot()
+    const { task, first } = await failedOnce(b, 'refused then unread', BROKEN)
+    const decided = (): number => b.ctx.artifacts.list({ kind: 'decision', limit: 1000 }).filter((a) => (a.body as Decision).decider.id === 'workflow.task-worktree').length
+    // A claim handed for a task that is ready, not claimed: refused before anything is decided about the worktree.
+    const before = decided()
+    await expect(b.ctx.workflow.start({ template: 'relay', input: 'change a.c', classification: 'public', task: { taskId: task.taskId, holder: 'lead:someone', generation: 7 } })).rejects.toThrow(/not claimed, so there is no claim to hand to the run; nothing was started/)
+    expect(decided()).toBe(before)
+
+    // The previous run's record no longer parses: the start goes on, from HEAD, and says why.
+    b.ctx.store.db.prepare('UPDATE workflow_tasks SET frame = ? WHERE run_id = ?').run('{"attempt": 1', first.runId)
+    const second = await attempt(b.ctx, task)
+    expect(second.status).toBe('completed')
+    const carry = carryOf(b.ctx, second.runId)!
+    expect(carry).toEqual({ state: 'fresh', decisions: [expect.any(String)], reason: expect.stringMatching(new RegExp(`^the engine's record of attempt 1 \\(run ${first.runId}\\) could not be read \\(.+\\), so its work is not carried$`)), at: expect.any(String) })
+    expect(decisionOf(b.ctx, carry.decisions[0]!)).toMatchObject({ decisionType: 'admission', decider: { id: 'workflow.task-worktree' }, outcome: { option: 'fresh', detail: { taskId: task.taskId, attempt: 2, fromAttempt: 1 } } })
+    expect(b.carrier.steps).toEqual([])
+    expect(decided()).toBe(before + 1)
+  })
 })

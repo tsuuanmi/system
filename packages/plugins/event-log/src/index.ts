@@ -135,10 +135,21 @@ export class EventLog extends Service {
     return event
   }
 
-  /** Read entries after `afterSeq` in order, optionally filtered; at most 1000 per call. */
-  query(filter: { afterSeq?: number; type?: string; runId?: string; nodeId?: string; sessionId?: string; turnId?: string; since?: string; limit?: number } = {}): SystemEvent[] {
+  /**
+   * Read entries after `afterSeq` in order, optionally filtered; at most 1000 per call. Contract 1.1:
+   * only entries before `beforeSeq` too, and with `order: 'desc'` the newest first, so a reader takes
+   * the latest of them and pages back by `beforeSeq` instead of reading everything forward. A value
+   * it cannot honour is refused, never ignored (INV-2).
+   */
+  query(filter: { afterSeq?: number; beforeSeq?: number; order?: 'asc' | 'desc'; type?: string; runId?: string; nodeId?: string; sessionId?: string; turnId?: string; since?: string; limit?: number } = {}): SystemEvent[] {
+    if (filter.order !== undefined && filter.order !== 'asc' && filter.order !== 'desc') throw new RangeError(`order is asc or desc, not ${String(filter.order)}`)
+    if (filter.beforeSeq !== undefined && !Number.isSafeInteger(filter.beforeSeq)) throw new RangeError(`beforeSeq is not a seq: ${String(filter.beforeSeq)}`)
     const clauses = ['seq > ?']
     const params: (string | number)[] = [filter.afterSeq ?? 0]
+    if (filter.beforeSeq !== undefined) {
+      clauses.push('seq < ?')
+      params.push(filter.beforeSeq)
+    }
     for (const [column, value] of [['type', filter.type], ['run_id', filter.runId], ['node_id', filter.nodeId], ['session_id', filter.sessionId], ['turn_id', filter.turnId]] as const) {
       if (value !== undefined) {
         clauses.push(`${column} = ?`)
@@ -153,7 +164,7 @@ export class EventLog extends Service {
       params.push(since.toISOString())
     }
     const limit = clampLimit(filter.limit)
-    const rows = this.ctx.store.db.prepare(`SELECT entry FROM events WHERE ${clauses.join(' AND ')} ORDER BY seq LIMIT ${limit}`).all(...params) as { entry: string }[]
+    const rows = this.ctx.store.db.prepare(`SELECT entry FROM events WHERE ${clauses.join(' AND ')} ORDER BY seq ${filter.order === 'desc' ? 'DESC' : 'ASC'} LIMIT ${limit}`).all(...params) as { entry: string }[]
     return rows.map((row) => JSON.parse(row.entry) as SystemEvent)
   }
 }

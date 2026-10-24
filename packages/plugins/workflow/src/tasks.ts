@@ -186,6 +186,7 @@ export class TaskRuns {
     const board = e.board
     if (!board) throw new WorkflowFailure('config_error', `no board is loaded: a run for board task ${claim.taskId} needs ctx.board (its bundle row on, over the approval queue); nothing was started`)
     if ((claim.holder === undefined) !== (claim.generation === undefined)) throw new WorkflowFailure('invalid_input', 'a claim handed to a run names its holder and its generation, both or neither')
+    if (claim.revision !== undefined && (!Number.isSafeInteger(claim.revision) || claim.revision < 0)) throw new WorkflowFailure('invalid_input', 'a task\'s revision is a whole number of at least 0')
     const again = this.repeated(plain, prepared)
     if (again) {
       if (this.row(again.run_id)?.task_id !== claim.taskId) throw new WorkflowFailure('invalid_input', 'clientRequestId was reused with a different request')
@@ -195,6 +196,8 @@ export class TaskRuns {
     e.bounded()
     const task = await board.task(claim.taskId)
     if (!task) throw new WorkflowFailure('invalid_input', `unknown board task ${claim.taskId}; nothing was started`)
+    // The caller's input came from its own reading of the task: one that moved since is refused, so the input and every brief agree (INV-5).
+    if (claim.revision !== undefined && task.revision !== claim.revision) throw new WorkflowFailure('invalid_input', `board task ${task.taskId} changed since it was read (revision ${task.revision}, not ${String(claim.revision)}); nothing was started`)
     if (task.template !== undefined && task.template !== plain.template) {
       throw new WorkflowFailure('invalid_input', `board task ${task.taskId} runs template ${task.template}, not ${plain.template}; nothing was started`)
     }
@@ -207,11 +210,13 @@ export class TaskRuns {
     // before it; both settled before the task is taken, so a failure here claims nothing.
     const frame = await this.frameOf(board, task, project, classification)
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
-    // Whether its worktree starts from the work the previous attempt left, carried at its first turn (ADR-0061).
-    const carry = this.carries.plan(task, runId)
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
+    // Whether its worktree starts from the work the previous attempt left, carried at its first turn
+    // (ADR-0061): decided once the run holds the task, so a refused claim decides nothing for a run
+    // that never exists; a record of the earlier attempt it cannot read starts the run from HEAD, recorded.
+    const carry = this.carries.plan(task, runId)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
       ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}),
@@ -228,9 +233,10 @@ export class TaskRuns {
       const record = error instanceof BoardError ? undefined : await board.task(task.taskId).catch(() => undefined)
       if (record?.run?.runId !== runId) {
         if (!(error instanceof BoardError) && record === undefined) {
-          // The board answers nothing: the run stays starting, and its first advance reconciles it.
+          // The board answers nothing: the run stays starting, and its first advance reconciles it (the
+          // failure names it, so no caller reads it as nothing started).
           e.schedule(runId)
-          throw new WorkflowFailure('overloaded', `the board did not answer the start of run ${runId} for task ${task.taskId} (${(error as Error).message}); the run starts only once the board shows it recorded`)
+          throw new WorkflowFailure('overloaded', `the board did not answer the start of run ${runId} for task ${task.taskId} (${(error as Error).message}); the run starts only once the board shows it recorded`, { runId })
         }
         this.discard(runId)
         const why = error instanceof BoardError ? refusal(error) : (error as Error).message

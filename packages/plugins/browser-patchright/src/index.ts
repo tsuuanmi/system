@@ -105,6 +105,7 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
       closeAfterMs: () => this.config.closeAfterMs ?? 30 * 60_000,
       maxBrowsers: () => this.config.maxBrowsers ?? 0,
       report: (type, data) => void this.ctx.get('eventLog')?.append({ type, data }),
+      warn: (message) => this.ctx.logger.warn(`browser: ${message}`),
     })
     ctx.effect(() => async () => {
       this.disposed = true

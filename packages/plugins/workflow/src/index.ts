@@ -28,13 +28,13 @@ import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
-import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep } from './types.ts'
+import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageFilter } from './types.ts'
 import { explain, usage } from './views.ts'
 
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskCarry, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskCarry, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -246,9 +246,13 @@ export class Workflow extends Service {
     return this.engine.wait(runId, timeoutMs)
   }
 
-  /** Recent runs and, per node, which Worker, tier, and quota class served it (usage report). */
-  usage(limit = 50): RunView[] {
-    return usage(this.engine, limit)
+  /**
+   * Recent runs and, per node, which Worker, tier, and quota class served it (usage report): the latest
+   * started first, at most `limit`. Contract 1.7: with `filter`, by state, whenever they started, and by
+   * when their state changed, the latest changed first (./views.ts).
+   */
+  usage(limit = 50, filter: UsageFilter = {}): RunView[] {
+    return usage(this.engine, limit, filter)
   }
 
   /** The decision chain of a run, per node: egress, tier, route (or admission), acceptance (REQ-ART-3). */

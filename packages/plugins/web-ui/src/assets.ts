@@ -270,7 +270,7 @@ export const APP_JS = `'use strict'
         el('ul', {},
           el('li', {}, el('strong', {}, 'Requests. '), 'An ', termLink('approval', 'approval request'), ' asks your yes or no before something the policy does not let run alone. Each button says what it does. Unanswered by its time, a request counts as no.'),
           el('li', {}, el('strong', {}, 'Reviews. '), 'A finished task waits for you to accept it or send it back. Unanswered by its time, the task waits for input.'),
-          el('li', {}, el('strong', {}, 'Runs that need a look. '), 'A run that failed, or waits for your vote or approval, says why and what you can do.')),
+          el('li', {}, el('strong', {}, 'Runs that need a look. '), 'A run that waits for your vote or your approval of its plan, or a run outside the board that failed since you last marked Home as seen, says why and what you can do. A board task\\'s failed run is the board\\'s: it decides the next attempt.')),
         el('p', {}, '“Since you last looked” on Home tells what happened while you were away.')),
       section('help-policy', 'What runs without asking',
         el('p', {}, 'The ', termLink('policy', 'autonomy policy'), ' gives each kind of action a ', termLink('mode', 'mode'), ': ', el('strong', {}, 'auto'), ' runs on its own, ', el('strong', {}, 'notify'), ' runs then tells you, ', el('strong', {}, 'ask'), ' waits for you, ', el('strong', {}, 'forbid'), ' never runs.'),
@@ -307,10 +307,11 @@ export const APP_JS = `'use strict'
   // What the operator's last verdict did, outside the refreshed page: it stays until dismissed.
   // A verdict that was not recorded is an alert, never only a line a refresh overwrites (INV-2).
   const outcome = document.getElementById('outcome')
+  // ok: true for done, false for refused, pending for asked and not done yet (neither).
   const report = (ok, title, lines) => {
     const dismiss = el('button', { onclick: () => outcome.replaceChildren() }, 'Dismiss')
-    outcome.replaceChildren(el('div', { class: 'panel ' + (ok ? 'ok' : 'bad'), role: ok ? 'status' : 'alert' },
-      el('h3', { class: ok ? 'state completed' : 'state failed' }, title),
+    outcome.replaceChildren(el('div', { class: 'panel' + (ok === 'pending' ? '' : ok ? ' ok' : ' bad'), role: ok === false ? 'alert' : 'status' },
+      el('h3', { class: ok === 'pending' ? 'state running' : ok ? 'state completed' : 'state failed' }, title),
       lines.filter(Boolean).map((line) => el('p', {}, line)),
       dismiss))
     outcome.scrollIntoView({ block: 'nearest' })
@@ -694,15 +695,15 @@ export const APP_JS = `'use strict'
   const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.kind === 'tool-call' ? 'a Worker\\'s tool call waits for your verdict' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
     : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
   const RECENT = 15
-  // How many things wait for the operator, named in the window's title ("(3) system — Home"), on every page.
-  let waitingCount = 0
-  const countWaiting = async () => {
-    let n = 0
-    try { n += (await api('approvals')).batches.reduce((m, b) => m + b.requests.length, 0) } catch {}
-    try { n += (await api('reviews')).reviews.length } catch {}
-    try { n += (await api('runs')).runs.filter(needsLook).length } catch {}
-    return n
+  // What waits for the operator and they can act on, from one read on every page (GET waiting, T127): the
+  // window's title counts it ("(3) system — Home"), and Home's "Waiting for you" lists it. A failed run counts
+  // until the operator marks Home as seen; a count that could not be read whole is shown as at least, or "?".
+  let waits = null
+  const readWaiting = async () => {
+    const seen = seenOf()
+    try { return await api('waiting' + (seen ? '?since=' + encodeURIComponent(seen.at) : '')) } catch (error) { return { unknown: error.message } }
   }
+  const badge = () => !waits ? '' : waits.unknown ? '(?) ' : waits.count ? '(' + waits.count + (waits.partial ? '+' : '') + ') ' : waits.partial ? '(?) ' : ''
 
   // "Since you last looked" (T124): kept in this browser only (localStorage), never on the server: when
   // the operator last marked Home as seen, and each Worker's status then, to tell what changed since.
@@ -715,7 +716,7 @@ export const APP_JS = `'use strict'
   const sinceItems = (activity, roster, seen, titles) => {
     const items = []
     const task = (id) => titles.get(id)
-    for (const r of activity.runs) {
+    if ('value' in activity.runs) for (const r of activity.runs.value) {
       const what = task(r.taskId) ? '"' + task(r.taskId) + '"' : 'a ' + r.template + ' run'
       items.push({ at: r.at, line: el('span', { class: r.status === 'failed' ? 'state failed' : '' }, r.status === 'failed' ? 'Failed: ' + what + (r.error ? ' — ' + r.error : '') + ' ' : 'Finished: ' + what + ' '), link: runLink({ runId: r.runId }, 'open the run') })
     }
@@ -763,8 +764,12 @@ export const APP_JS = `'use strict'
       el('h3', {}, 'Since you last looked ', el('span', { class: 'muted' }, relative(seen.at) + ' (' + clockOf(seen.at) + ')')),
       items.length ? el('ul', { class: 'since' }, items.slice(0, SINCE_SHOWN).map((i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at))))) : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
       items.length > SINCE_SHOWN ? el('p', { class: 'muted' }, (items.length - SINCE_SHOWN) + ' older not shown.') : null,
+      'value' in activity.runs ? null : el('p', { class: 'unknown' }, 'The runs that ended are unknown (' + activity.runs.unknown + ').'),
       'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
       'value' in activity.expired ? null : el('p', { class: 'unknown' }, 'The requests that expired are unknown (' + activity.expired.unknown + ').'),
+      // A part that holds more than it lists, or than one read goes through, says so (T127).
+      [['runs', 'runs ended'], ['tasks', 'tasks moved'], ['expired', 'requests may have expired']].filter(([k]) => activity[k].more)
+        .map(([k, words]) => el('p', { class: 'muted' }, 'More ' + words + ' than the ' + activity[k].value.length + ' read here.')),
       el('div', { class: 'actions' }, mark, el('span', { class: 'muted' }, 'kept in this browser only')))
   }
 
@@ -774,7 +779,10 @@ export const APP_JS = `'use strict'
     'workflow.node.blocked': 'a step waits for you', 'agent-workers.tool.notified': 'a tool call ran', 'agent-workers.tool.checks-pending': 'a tool call ran, its checks pending',
     'agent-workers.tool.denied': 'a tool call was denied', 'agent-workers.tool.deferred': 'a tool call waits for your verdict', 'agent-workers.run.stalled': 'its agent stalled',
   }
-  const liveOf = async () => { try { return new Map((await api('runs/live')).runs.map((r) => [r.runId, r])) } catch { return undefined } }
+  // The running runs as they move, by id, or why they are unknown: a failed read is said, never shown as nothing running (T127).
+  const liveOf = async () => {
+    try { const { runs } = await api('runs/live'); return 'value' in runs ? { runs: new Map(runs.value.map((r) => [r.runId, r])) } : { unknown: runs.unknown } } catch (error) { return { unknown: error.message } }
+  }
   const lastText = (r) => 'value' in r.lastEvent ? 'last event: ' + (EVENT_WORDS[r.lastEvent.value.type] || r.lastEvent.value.type) + ', ' + relative(r.lastEvent.value.at) : 'last event unknown (' + r.lastEvent.unknown + ')'
   const stalledOf = (r) => 'value' in r.stalled && r.stalled.value ? el('div', { class: 'state failed', role: 'alert' }, 'Stalled since ' + clockOf(r.stalled.value.since) + ': no activity past its source\\'s bound. Stop run ends it.') : null
 
@@ -792,17 +800,20 @@ export const APP_JS = `'use strict'
     // A run's task by its title, from the Board's cards.
     const titles = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, t.title])))
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
-    const asked = queued ? queued.querySelectorAll('article.request').length : 0
-    const toReview = reviewed ? Number(reviewed.dataset.count || 0) : 0
-    const look = runs.filter(needsLook)
-    waitingCount = asked + toReview + look.length
+    waits = await readWaiting()
+    const part = (name) => waits.unknown ? { unknown: waits.unknown } : waits[name]
+    const asked = 'value' in part('requests') ? part('requests').value : 0
+    const toReview = 'value' in part('reviews') ? part('reviews').value : 0
+    const look = 'value' in part('runs') ? part('runs').value : []
+    const unread = ['requests', 'reviews', 'runs'].filter((name) => 'unknown' in part(name))
     const since = await sinceView(roster, titles)
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
     const waiting = [
       asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
       toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review'
-        + (reviewed.dataset.firstExpires ? '; the first held for you expires ' + relative(reviewed.dataset.firstExpires) : ''))) : null,
-      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look')) : null,
+        + (part('reviews').firstExpires ? '; the first held for you expires ' + relative(part('reviews').firstExpires) : ''))) : null,
+      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look' + (part('runs').more ? ', and more' : ''))) : null,
+      unread.length ? el('li', { class: 'unknown' }, 'What else waits is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts
     // A source still describing its Workers for the first time: the counts are so far.
@@ -854,7 +865,7 @@ export const APP_JS = `'use strict'
     const evidence = run.status === 'running' ? undefined : await reviewOf(runId, run.updatedAt)
     const landing = evidence && !evidence.error ? evidence.landing : undefined
     const moving = run.status === 'running' ? await liveOf() : undefined
-    const now = moving && moving.get(runId)
+    const now = moving && moving.runs && moving.runs.get(runId)
     let roster = null
     try { roster = await api('roster') } catch {}
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
@@ -907,6 +918,7 @@ export const APP_JS = `'use strict'
       now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now', whatIs('step')),
         now.steps.map((st) => el('div', {}, 'Step ' + st.nodeId + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
         el('div', { class: 'muted' }, lastText(now)), stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
+      moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
@@ -1051,8 +1063,10 @@ export const APP_JS = `'use strict'
         close.disabled = true
         yes.textContent = 'Starting…'
         try {
-          const { run } = await api('tasks/' + encodeURIComponent(t.taskId) + '/start', { revision: task.revision, template: task.template })
-          report(true, 'Started: ' + t.title, [['Run ', runLink(run), ' of the ' + task.template + ' template claimed the task: it is under Working on the Board, and its page shows each step as it runs.']])
+          const answer = await api('tasks/' + encodeURIComponent(t.taskId) + '/start', { revision: task.revision, template: task.template })
+          // Admitted, and the board did not answer when asked to record it: nothing of it ran yet, and it is not refused (T127).
+          if (answer.pending) report('pending', 'Not started yet: ' + t.title, [['Run ', runLink(answer.pending), ' of the ' + task.template + ' template took the task, and the board did not answer when asked to record it, so nothing of it has run. It starts once the board shows it recorded, and the task then moves to Working; if the board never records it, the run is dropped with nothing run. Nothing more is needed from you.'], 'What the system said: ' + answer.pending.reason])
+          else report(true, 'Started: ' + t.title, [['Run ', runLink(answer.run), ' of the ' + task.template + ' template claimed the task: it is under Working on the Board, and its page shows each step as it runs.']])
         } catch (error) {
           report(false, 'Not started: ' + t.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was started: the task is still ready.'])
         }
@@ -1080,7 +1094,7 @@ export const APP_JS = `'use strict'
         t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
         t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
-        (t.state === 'running' || t.state === 'claimed') && t.run && moving && moving.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.get(t.run.runId))), stalledOf(moving.get(t.run.runId))] : null,
+        (t.state === 'running' || t.state === 'claimed') && t.run && moving.runs && moving.runs.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.runs.get(t.run.runId))), stalledOf(moving.runs.get(t.run.runId))] : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
         t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
         t.landing ? landingLine(t.landing) : null,
@@ -1489,16 +1503,16 @@ export const APP_JS = `'use strict'
       if (name === page || (page === 'run' && name === 'home')) link.setAttribute('aria-current', 'page')
       else link.removeAttribute('aria-current')
     }
-    document.title = (waitingCount ? '(' + waitingCount + ') ' : '') + 'system — ' + PAGES[page][0] + (current ? ' ' + current : '')
+    document.title = badge() + 'system — ' + PAGES[page][0] + (current ? ' ' + current : '')
   }
   async function refresh() {
     mark()
     // Help reads nothing from the server: it shows with or without a token.
-    if (view === 'help') { helpView(); if (token) waitingCount = await countWaiting(); mark(); return }
+    if (view === 'help') { helpView(); if (token) waits = await readWaiting(); mark(); return }
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
-    // Home counts what waits as it renders; any other page asks.
-    if (view || current) waitingCount = await countWaiting()
+    // Home reads what waits as it renders; any other page reads the same.
+    if (view || current) waits = await readWaiting()
     mark()
   }
   refresh()

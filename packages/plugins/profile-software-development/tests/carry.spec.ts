@@ -75,7 +75,7 @@ describe('a board task\'s next attempt starts from the previous attempt\'s work 
       decisionType: 'gate', decider: { id: 'workflow.task-worktree' },
       outcome: { option: 'carry', detail: { from: first.runId, commit, fromBranch: branch, base: pilot.head, branch: `system/run/${runId}`, source: 'agents', carried: true } },
     })
-    expect(carried!.inputs).toEqual(expect.arrayContaining([carry.decisions[0], carry.from.result]))
+    expect(carried!.inputs).toEqual(expect.arrayContaining([carry.decisions[0], carry.from!.result]))
     expect(ctx.workflow.explain(runId)!.decisions!.map((d) => d.id)).toEqual(expect.arrayContaining(carry.decisions))
     expect(ctx.eventLog.query({ type: 'workflow.task.carry', runId }).map((e) => [e.data?.['state'], e.data?.['commit']])).toEqual([['carried', commit]])
 

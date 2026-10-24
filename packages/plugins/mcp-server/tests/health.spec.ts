@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { MAX_UNKNOWN_ENTRIES } from '@tsuuanmi/system-libs'
-import { type HealthSources, healthReport } from '../src/health.ts'
+import { DETAIL_CHARS, type HealthSources, healthReport, NAMED_ITEMS } from '../src/health.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'system-health-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
@@ -17,6 +17,34 @@ const paged = (entries: Array<{ at: string; data?: Record<string, unknown> }>) =
   entries.slice(afterSeq, afterSeq + limit).map((e, i) => ({ seq: afterSeq + i + 1, ...e }))
 
 describe('host health (REQ-HOST-6)', () => {
+  it('names at most 20 items of a list, each cut, counting the rest, and never gives a detail longer than 8,000 characters, whatever its sources hold (T127 item 5, INV-9)', async () => {
+    const long = 'x'.repeat(10_000)
+    const many = <T>(n: number, of: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => of(i))
+    const report = await healthReport(base({
+      plugins: () => many(30, (i) => ({ name: `p${i}`, state: 'failed' as const, detail: long })),
+      manifests: () => many(30, (i) => ({ name: `m${i}`, mounted: true, state: 'valid' as const, findings: many(40, () => long) })),
+      templates: () => many(30, (i) => ({ name: `t${i}`, reason: long })),
+      accounts: async () => many(500, (i) => ({ id: `a${i}-${long}`, status: 'reauth-required' })),
+      duplicateAccounts: async () => many(30, (i) => [`d${i}`, `e${i}`]),
+      workers: async () => [{ worker: 'w0', state: 'ready' }, ...many(500, (i) => ({ worker: `w${i + 1}`, state: 'unavailable' }))],
+      events: (type) => (type === 'ui.drift' ? many(300, (i) => ({ data: { provider: 'site', element: `e${i}`, mapHash: 'h' } })) : []),
+    }))
+    for (const c of report.checks) expect(c.detail.length, c.name).toBeLessThanOrEqual(DETAIL_CHARS)
+    const detail = (name: string): string => report.checks.find((c) => c.name === name)!.detail
+    expect(detail('plugins')).toMatch(/^p0 failed: x+…; p1 failed: /)
+    expect(detail('plugins')).toContain('; p19 failed: ')
+    expect(NAMED_ITEMS).toBe(20)
+    expect(detail('plugins')).not.toContain(`p${NAMED_ITEMS} failed`)
+    expect(detail('plugins')).toMatch(/; and 10 more\. See the daemon's log/)
+    expect(detail('manifests')).toMatch(/; and 10 more\. The plugin host cannot keep a row from running/)
+    expect(detail('templates')).toMatch(/; and 10 more$/)
+    expect(detail('workers')).toMatch(/^cannot take work: w1 \(unavailable\), .*, w20 \(unavailable\), and 480 more \(system explain shows why\)$/)
+    expect(detail('ui-drift')).toMatch(/^300 provider UI change\(s\) seen recently \(site e0, .*, and 280 more\): update the UI map/)
+    // Too many lists in one check for even their bounds: cut as a whole.
+    expect(detail('accounts')).toHaveLength(DETAIL_CHARS)
+    expect(detail('accounts').endsWith('…')).toBe(true)
+  })
+
   it('is ok when every check is, and names each check', async () => {
     const report = await healthReport(base())
     expect(report.state).toBe('ok')

@@ -1124,10 +1124,15 @@ guesses.
 - Unasked, `plugins` lists only the plugins that need a look and `pluginsOmitted` counts the rest;
   `plugins: true` lists every one (operator only). `liveness` is the operator's, only when a run
   needs a look or a source cannot tell.
-- The reply is computed on each call and never stored, so it carries no `schema` tag. It is
-  validated before it is sent: a reply its schema refuses is a defect, and the call is an error
-  (fail closed; `system health` then reports the host `down` with why). Example:
-  [`mcp-status.call.json`](../../schemas/examples/mcp-status.call.json).
+- The reply is computed on each call and never stored, so it carries no `schema` tag. Each check's
+  `detail` is bounded where the check is made (a list names at most 20 items, each at most 300
+  characters, and counts the rest; a detail is at most 8,000 characters), so it stays within the
+  schema's 32,768. The reply is validated before it is sent: a reply its schema still refuses is a
+  defect, logged and never sent as health; the call then gives a valid reply with only
+  `health.state` and the name and state of each check that is not `ok` (with `okOmitted`), no
+  detail, `plugins`, or `liveness`, and its text says the full reply was not valid and why. Only a
+  reply that is not valid even so is an error (fail closed; `system health` then reports the host
+  `down` with why). Example: [`mcp-status.call.json`](../../schemas/examples/mcp-status.call.json).
 
 ### `plugin-manifest`
 

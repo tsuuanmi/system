@@ -99,6 +99,15 @@ export interface RunView {
  * run's `result` already gives (its answer, result and brief ids, what it waits for, errors, its
  * task), so a page of recent runs stays small.
  */
+/**
+ * Which runs `usage` lists (contract 1.7, optional): only runs in these states, whenever they started; and
+ * only runs whose state changed after `changedSince` (an ISO time), the latest changed first.
+ */
+export interface UsageFilter {
+  status?: readonly RunStatus[]
+  changedSince?: string
+}
+
 export interface UsageRunView extends Pick<RunView, 'runId' | 'template' | 'status' | 'sessionId' | 'createdAt' | 'updatedAt'> {
   nodes: Array<Omit<NodeView, 'result' | 'brief' | 'error'>>
 }
@@ -115,12 +124,15 @@ export interface StartInput extends CallerOptions {
 /**
  * The board task a run serves, one attempt of it (docs/design/board.md): its id, and the claim a
  * lead holds when it hands that claim to the run (`holder` and `generation`, both or neither).
- * Without a claim, the run claims the ready task itself.
+ * Without a claim, the run claims the ready task itself. With `revision` (contract 1.7), the task's
+ * revision the caller read its input from: a start whose task has moved since is refused before
+ * anything is written, so the run's input and every brief come from one reading of the task (INV-5).
  */
 export interface TaskClaim {
   taskId: string
   holder?: string | undefined
   generation?: number | undefined
+  revision?: number | undefined
 }
 
 /**
@@ -179,8 +191,12 @@ export interface TaskView {
  */
 export interface TaskCarry {
   state: 'due' | 'carried' | 'fresh'
-  /** The previous attempt: its run, its number, its writing step and that step's result, and the tree it left. */
-  from: { runId: string; attempt: number; nodeId: string; result: ArtifactRef; workspace: string; subject: { ref: string; version: string } }
+  /**
+   * The previous attempt: its run, its number, its writing step and that step's result, and the tree it
+   * left. Absent only from a `fresh` carry decided because the engine's record of that attempt could not
+   * be read (`reason` says so).
+   */
+  from?: { runId: string; attempt: number; nodeId: string; result: ArtifactRef; workspace: string; subject: { ref: string; version: string } }
   /** The admission decision, then the `gate` decision that records what the source did (rule `workflow.task-worktree`). */
   decisions: ArtifactRef[]
   /** Once carried: where, and the commit on the earlier run's branch the run's worktree holds. */
@@ -530,13 +546,20 @@ export const TASK_WAIT_MS = 30_000
 export const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 export const now = (): string => new Date().toISOString()
 
-/** A workflow-level refusal, typed like a turn failure. */
+/**
+ * A workflow-level refusal, typed like a turn failure. `runId` names a run that was admitted all the
+ * same and still starts on its own (a board task's start the board did not answer: it starts once the
+ * board shows it recorded, or is dropped with nothing run), so a caller never reads the failure as
+ * "nothing was started" (T127).
+ */
 export class WorkflowFailure extends Error {
   readonly disposition: string
-  constructor(readonly kind: 'invalid_input' | 'overloaded' | 'config_error', message: string) {
+  readonly runId?: string
+  constructor(readonly kind: 'invalid_input' | 'overloaded' | 'config_error', message: string, options: { runId?: string } = {}) {
     super(message)
     this.name = 'WorkflowFailure'
     this.disposition = kind === 'overloaded' ? 'BACKOFF' : kind === 'config_error' ? 'CODE_FIX' : 'NONE'
+    if (options.runId !== undefined) this.runId = options.runId
   }
 }
 

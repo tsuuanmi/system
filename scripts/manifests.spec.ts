@@ -37,8 +37,8 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   })
 
   it('derives each version from the conformance contract, each class from the seam catalog, and each consumer\'s range from its provider', () => {
-    expect(of('workflow').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, provides: [{ seam: 'workflow', version: '1.6.0' }] })
-    expect(of('web-ui').manifest.consumes).toContainEqual({ seam: 'workflow', range: '^1.6.0' })
+    expect(of('workflow').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, provides: [{ seam: 'workflow', version: '1.7.0' }] })
+    expect(of('web-ui').manifest.consumes).toContainEqual({ seam: 'workflow', range: '^1.7.0' })
     expect(of('board-core').manifest).toMatchObject({ schema: 'plugin-manifest@1.1', class: { kind: 'core', component: 'work-state-machine' }, provides: [], defines: [{ seam: 'board', version: '1.3.0' }] })
     expect(of('experiments-core').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, defines: [{ seam: 'experiments', version: '1.0.0' }] })
     expect(of('evaluations-core').manifest).toMatchObject({ class: { kind: 'core', component: 'gate' }, defines: [{ seam: 'evaluations', version: '1.0.0' }] })
@@ -101,11 +101,11 @@ describe('the check catches each kind of disagreement', () => {
 
   it('a version that disagrees with the conformance contract, of a provider, a definition, or a consumer\'s range', () => {
     expect(check(of('workflow'), shipped('workflow', (m) => { m.provides[0].version = '1.2.0' })))
-      .toEqual([expect.stringMatching(/provides ctx\.workflow at 1\.2\.0, but its conformance run pins contract 1\.6 \(packages\/plugins\/workflow\/tests\/conformance\.spec\.ts\), so it is at 1\.6\.0/)])
+      .toEqual([expect.stringMatching(/provides ctx\.workflow at 1\.2\.0, but its conformance run pins contract 1\.7 \(packages\/plugins\/workflow\/tests\/conformance\.spec\.ts\), so it is at 1\.7\.0/)])
     expect(check(of('approvals-core'), shipped('approvals-core', (m) => { m.defines[0].version = '1.0.0' })))
       .toEqual([expect.stringMatching(/defines ctx\.approvals at 1\.0\.0, but its suite is at contract 1\.1/)])
     expect(check(of('web-ui'), shipped('web-ui', (m) => { m.consumes.find((c: { seam: string }) => c.seam === 'workflow').range = '^2.0.0' })))
-      .toEqual([expect.stringMatching(/consumes ctx\.workflow in the range \^2\.0\.0, which its version in this workspace \(1\.6\.0, workflow\) does not satisfy/)])
+      .toEqual([expect.stringMatching(/consumes ctx\.workflow in the range \^2\.0\.0, which its version in this workspace \(1\.7\.0, workflow\) does not satisfy/)])
     expect(check(of('web-ui'), shipped('web-ui', (m) => { m.consumes.find((c: { seam: string }) => c.seam === 'workflow').range = '>=1' })))
       .toEqual([expect.stringMatching(/not a caret range/)])
   })

@@ -2168,5 +2168,63 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
       expect((await run(ctx, 'agent:dev', 'k-r-2', 'run_r')).status).toBe('completed')
       expect(agent.runs.at(-1)!.workspace).toBe(carried.worktree)
     })
+
+    it('never commits a worktree cut for work it never got: the retention and the operator\'s removal put it back to its base first, and a branch an earlier retention committed such a tree on is never added again (T127 item 2, INV-2, INV-4)', async () => {
+      const repo = repository()
+      const head = git(repo, 'rev-parse', 'HEAD')
+      const seen: string[] = []
+      const agent = developer({ act: (spec) => (seen.push(readFileSync(join(spec.workspace, 'calc.py'), 'utf8')), writes(spec)) })
+      const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+      /** The new worktree as a crash between its `worktree add --no-checkout` and the reading of the tree leaves it: marked, its index empty, no file, every file of its base staged as deleted. */
+      const cutOnly = async (runId: string, from: string): Promise<string> => {
+        const { worktree } = await carry(ctx, runId, await wrote(ctx, agent, from)) as { worktree: string }
+        ctx.store.db.prepare('UPDATE agent_worktrees SET carried_commit = NULL WHERE workflow_run_id = ?').run(runId)
+        git(worktree, 'read-tree', '--empty')
+        for (const name of readdirSync(worktree)) if (name !== '.git') rmSync(join(worktree, name), { recursive: true, force: true })
+        expect(git(worktree, 'status', '--porcelain')).toBe('D  calc.py')
+        return worktree
+      }
+
+      // Past the retention: put back to its base and removed; its branch is still at the base, holding no commit of the deletions.
+      const swept = await cutOnly('run_r', 'run_p')
+      expect((await ctx.agentWorkers.sweepWorktrees(LATER())).removed).toContain(swept)
+      expect(existsSync(swept)).toBe(false)
+      expect(git(repo, 'rev-parse', 'system/run/run_r')).toBe(head)
+      expect(rowOf(ctx, 'run_r')).toEqual({ carried_from: null, carried_commit: null })
+      // The run's agent, later, works in a fresh worktree added again from that branch: the base's files.
+      expect((await run(ctx, 'agent:dev', 'k-r', 'run_r')).status).toBe('completed')
+      expect(agent.runs.at(-1)!.workspace).toBe(swept)
+      expect(seen.at(-1)).toBe(ORIGINAL)
+
+      // The operator's removal with the commit flag: the same, said, and nothing committed.
+      const removed = await cutOnly('run_s', 'run_q')
+      expect(await ctx.agentWorkers.removeWorktrees({ runId: 'run_s', commitChanges: true })).toMatchObject({
+        worktrees: [{ path: removed, outcome: 'removed', why: 'it was cut to start from the work of run run_q, which never got into it, so it holds no run\'s work: it is put back to its base, nothing of it is committed, and it is removed; its branch stays' }],
+      })
+      expect(git(repo, 'rev-parse', 'system/run/run_s')).toBe(head)
+
+      // Files a reading cut short wrote, which the base does not hold: the worktree stays, marked, and nothing of it is committed.
+      const partial = await cutOnly('run_v', 'run_w')
+      writeFileSync(join(partial, 'half.py'), 'half written\n')
+      expect((await ctx.agentWorkers.sweepWorktrees(LATER())).kept).toContain(partial)
+      expect(git(repo, 'rev-parse', 'system/run/run_v')).toBe(head)
+      expect(rowOf(ctx, 'run_v')).toEqual({ carried_from: 'run_w', carried_commit: null })
+      expect(git(partial, 'status', '--porcelain', '--untracked-files=all')).toBe('?? half.py')
+      expect((await run(ctx, 'agent:dev', 'k-v', 'run_v')).status).toBe('failed')
+
+      // A branch an earlier retention committed such a tree on (every file deleted): no worktree is added from it again.
+      const kept = await cutOnly('run_t', 'run_u')
+      git(kept, '-c', 'user.name=system', '-c', 'user.email=system@localhost', 'commit', '-q', '-m', 'system: keep the uncommitted work of workflow run run_t\n\nCommitted by system before the run\'s worktree was removed.')
+      git(repo, 'worktree', 'remove', kept)
+      ctx.store.db.prepare("UPDATE agent_worktrees SET removed_at = ? WHERE workflow_run_id = 'run_t'").run(new Date().toISOString())
+      const tip = git(repo, 'rev-parse', 'system/run/run_t')
+      expect(git(repo, 'ls-tree', '--name-only', tip)).toBe('')
+      const before = agent.runs.length
+      expect(await run(ctx, 'agent:dev', 'k-t', 'run_t')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(new RegExp(`system/run/run_t ends in ${tip}, the retention's commit of the worktree cut to start from the work of run run_u, which never got into it: that commit holds no run's work`)) } })
+      expect(agent.runs).toHaveLength(before)
+      expect(existsSync(kept)).toBe(false)
+      expect(git(repo, 'rev-parse', 'system/run/run_t')).toBe(tip)
+      untouched(repo, head)
+    })
   })
 })

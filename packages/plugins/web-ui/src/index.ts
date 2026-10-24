@@ -45,11 +45,17 @@ const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-sr
 const MAX_BODY = 16_384
 /** A proposed policy record is larger than a verdict: up to 64 rules and 200 commands of 200 characters. */
 const MAX_POLICY_BODY = 131_072
-/** Items of each part of "since you last looked", the latest first; pages of events one read goes through; running runs the live view shows. */
+/** Items of each part of "since you last looked", the latest first; pages of events one read goes through, newest first; running runs the live view shows. */
 export const ACTIVITY_SHOWN = 50
 const ACTIVITY_PAGES = 5
 const ACTIVITY_STATES: TaskState[] = ['done', 'review', 'waiting-for-input', 'waiting-for-approval', 'cancelled']
 export const LIVE_RUNS = 50
+/**
+ * Runs "Waiting for you" lists at most, and runs of each state one count reads at most (INV-9): as many
+ * as the page's list of runs reads on each refresh; past them the count says it is partial.
+ */
+export const WAITING_RUNS = 50
+const WAITING_READ = 100
 /** Workers named per step of a start's preview, free and busy each. */
 export const LIKELY_WORKERS = 8
 /** Accepted results on their way into the repository that the reviews list, the latest first. */
@@ -66,6 +72,20 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const SUBJECT_TYPES: ReadonlyArray<Subject['type']> = ['content', 'git-head', 'pull-request', 'artifact', 'external']
 /** A task's states before it is done or cancelled: what a pause holds or lets go on, and what a close cancels or is refused by. */
 const OPEN_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
+
+/**
+ * What the activity and the live view read of the event log (`ctx.eventLog`, contract 1.1): the newest
+ * entries first, before a cursor, so a read takes the latest of a run or a type and never the log forward.
+ */
+interface EventReads {
+  query(filter: { type?: string; runId?: string; nodeId?: string; since?: string; beforeSeq?: number; order: 'desc'; limit: number }): Array<{ seq: number; at: string; type: string; nodeId?: string; data?: unknown }>
+}
+
+/** Entries a newest-first read gave, checked to be newest first: a log that read them in another order is refused, never shown as the latest (INV-2). */
+function newestFirst<E extends { seq: number }>(entries: E[]): E[] {
+  for (let i = 1; i < entries.length; i++) if (entries[i]!.seq >= entries[i - 1]!.seq) throw new Error('it did not read newest first (event log contract 1.1)')
+  return entries
+}
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const noteOf = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim().slice(0, 2000) : undefined
@@ -414,6 +434,8 @@ export function apply(ctx: Context, config: Config = {}): void {
    * start binds to the task and template the page showed (INV-5): a task changed since, no longer
    * ready, or naming no template or another one is refused (`409`) and nothing starts. A refusal
    * by the engine (a paused project, a spent budget, an overloaded host) is `409` with its reason.
+   * A run the engine admitted and the board did not answer for is no refusal: `202` `{pending}`
+   * names it, which starts once the board shows it recorded (T127).
    */
   const tasks = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const board = ctx.get('board')
@@ -437,9 +459,12 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (task.revision !== body.revision) return json(res, 409, { error: `task ${taskId} changed since the page showed it (revision ${task.revision}, not ${String(body.revision)}); nothing was started` })
       if (task.template !== body.template) return json(res, 409, { error: `task ${taskId} runs template ${task.template}, not ${String(body.template)}; nothing was started` })
       // The task's own words are the run's input, as the requested change; a repeated press starts no second run.
-      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
+      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId, revision: task.revision }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
       return json(res, 200, { run })
     } catch (error) {
+      // Admitted all the same: it starts once the board shows it recorded, so never said as nothing started.
+      const pending = (error as { runId?: unknown }).runId
+      if (typeof pending === 'string') return json(res, 202, { pending: { runId: pending, reason: (error as Error).message } })
       return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
     }
   }
@@ -475,7 +500,9 @@ export function apply(ctx: Context, config: Config = {}): void {
    * looked": the runs that ended since (completed or failed), the board tasks that moved since into a
    * state the operator cares about (done, in review, waiting, cancelled) or whose accepted result
    * moved on its way in, and the approval requests that expired unanswered (\`approvals.resolved\`
-   * events). Each part is bounded and the latest first; one that cannot be read is \`{unknown}\`.
+   * events). Each part is read newest first and bounded per request: at most {@link ACTIVITY_SHOWN},
+   * with \`more\` when it holds more than it shows or than it read (T127); one that cannot be read is
+   * \`{unknown}\` with why, never empty (INV-2).
    */
   const activity = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
@@ -483,10 +510,16 @@ export function apply(ctx: Context, config: Config = {}): void {
     const since = new Date(raw)
     if (!raw || Number.isNaN(since.getTime())) return json(res, 400, { error: 'since must be an ISO time' })
     const at = since.toISOString()
-    const latest = <T extends { at: string }>(list: T[]): T[] => list.sort((a, b) => b.at.localeCompare(a.at)).slice(0, ACTIVITY_SHOWN)
-    const runs = latest(ctx.workflow.usage(100).filter((r) => r.status !== 'running' && r.updatedAt > at).map((r) => ({
-      runId: r.runId, template: r.template, status: r.status, at: r.updatedAt, ...(r.task ? { taskId: r.task.taskId } : {}), ...(r.error ? { error: r.error.message.slice(0, 300) } : {}),
-    })))
+    const shown = <T>(list: T[], more = false): { value: T[]; more?: true } => ({ value: list.slice(0, ACTIVITY_SHOWN), ...(more || list.length > ACTIVITY_SHOWN ? { more: true as const } : {}) })
+    let runs: Record<string, unknown>
+    try {
+      // By state and when it changed, not among the latest started: a long run that ended since is found.
+      runs = shown(ctx.workflow.usage(ACTIVITY_SHOWN + 1, { status: ['completed', 'failed'], changedSince: at }).map((r) => ({
+        runId: r.runId, template: r.template, status: r.status, at: r.updatedAt, ...(r.task ? { taskId: r.task.taskId } : {}), ...(r.error ? { error: r.error.message.slice(0, 300) } : {}),
+      })))
+    } catch (error) {
+      runs = { unknown: `the runs could not be read: ${(error as Error).message.slice(0, 200)}` }
+    }
     const board = ctx.get('board')
     let tasks: Record<string, unknown>
     if (!board) tasks = { unknown: 'the board is not running' }
@@ -504,33 +537,40 @@ export function apply(ctx: Context, config: Config = {}): void {
               ...(task.run ? { run: { runId: task.run.runId } } : {}), ...landingCard(landing) })
           }
         }
-        tasks = { value: latest(moved) }
+        tasks = shown(moved.sort((a, b) => b.at.localeCompare(a.at)))
       } catch (error) {
         tasks = { unknown: `the board could not be read: ${(error as Error).message.slice(0, 200)}` }
       }
     }
-    const eventLog = ctx.get('eventLog' as never) as { query(filter: { type: string; since: string; afterSeq: number; limit: number }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
+    const eventLog = ctx.get('eventLog' as never) as EventReads | undefined
     const approvals = ctx.get('approvals')
     let expired: Record<string, unknown>
     if (!eventLog) expired = { unknown: 'the event log (ctx.eventLog) is not mounted' }
     else {
-      const found: Array<{ requestId: string; at: string; summary?: string }> = []
-      let after = 0
-      for (let page = 0; page < ACTIVITY_PAGES; page++) {
-        const entries = eventLog.query({ type: 'approvals.resolved', since: at, afterSeq: after, limit: 1000 })
-        for (const e of entries) {
-          const data = e.data as { requestId?: unknown; cause?: unknown } | undefined
-          if (data?.cause === 'expired' && typeof data.requestId === 'string') found.push({ requestId: data.requestId, at: e.at })
+      try {
+        // Newest first, a bounded number of pages: the latest that expired, never the oldest.
+        const found: Array<{ requestId: string; at: string; summary?: string }> = []
+        let before: number | undefined
+        let read = false
+        for (let page = 0; page < ACTIVITY_PAGES && found.length <= ACTIVITY_SHOWN; page++) {
+          const entries = newestFirst(eventLog.query({ type: 'approvals.resolved', since: at, order: 'desc', limit: 1000, ...(before !== undefined ? { beforeSeq: before } : {}) }))
+          for (const e of entries) {
+            const data = e.data as { requestId?: unknown; cause?: unknown } | undefined
+            if (data?.cause === 'expired' && typeof data.requestId === 'string') found.push({ requestId: data.requestId, at: e.at })
+          }
+          read = entries.length < 1000
+          if (read) break
+          before = entries.at(-1)!.seq
         }
-        if (entries.length < 1000) break
-        after = entries.at(-1)!.seq
+        const part = shown(found, !read && found.length <= ACTIVITY_SHOWN)
+        for (const item of part.value) {
+          const request = await approvals?.get(item.requestId).catch(() => undefined)
+          if (request) item.summary = request.action.summary
+        }
+        expired = part
+      } catch (error) {
+        expired = { unknown: `the event log could not be read: ${(error as Error).message.slice(0, 200)}` }
       }
-      const shown = latest(found)
-      for (const item of shown) {
-        const request = await approvals?.get(item.requestId).catch(() => undefined)
-        if (request) item.summary = request.action.summary
-      }
-      expired = { value: shown }
     }
     return json(res, 200, { since: at, asOf: new Date().toISOString(), runs, tasks, expired })
   }
@@ -538,10 +578,13 @@ export function apply(ctx: Context, config: Config = {}): void {
   /**
    * The running runs as they move (\`GET runs/live\`, T124): each running step, its Worker, when its
    * attempt started, the run's last event and when, and whether the Worker's source says it stalled
-   * (\`ctx.workers.liveness\`, its own bound). A read only, bounded.
+   * (\`ctx.workers.liveness\`, its own bound). A read only, bounded per request (T127): the running
+   * runs by state, however long ago they started, at most {@link LIVE_RUNS} with \`more\` past them;
+   * each run's latest event and each step's start read newest first, one entry each; a read that
+   * fails is \`{unknown}\` with why, never a failed reply.
    */
   const live = async (res: ServerResponse): Promise<void> => {
-    const eventLog = ctx.get('eventLog' as never) as { query(filter: { type?: string; runId?: string; nodeId?: string; since?: string; afterSeq: number; limit: number }): Array<{ seq: number; at: string; type: string; nodeId?: string; data?: unknown }> } | undefined
+    const eventLog = ctx.get('eventLog' as never) as EventReads | undefined
     const registry = ctx.get('workers' as never) as { liveness?: () => Promise<{ runs: Array<{ runId?: string; state: string; since: string }> }> } | undefined
     let stalled: Map<string, string> | string = new Map()
     if (registry?.liveness) {
@@ -551,34 +594,97 @@ export function apply(ctx: Context, config: Config = {}): void {
         stalled = `the Workers' liveness could not be read: ${(error as Error).message.slice(0, 200)}`
       }
     } else stalled = 'no Worker source tells liveness'
-    const runs = ctx.workflow.usage(100).filter((r) => r.status === 'running').slice(0, LIVE_RUNS).map((r) => {
-      const steps = r.nodes.filter((n) => n.state === 'RUNNING').map((n) => {
-        const started = eventLog?.query({ type: 'workflow.node.started', runId: r.runId, nodeId: n.nodeId, afterSeq: 0, limit: 100 })
-          .filter((e) => (e.data as { attempt?: unknown } | undefined)?.attempt === n.attempt).at(-1)?.at
-        return { nodeId: n.nodeId, attempt: n.attempt, ...(n.worker ? { worker: n.worker } : {}), ...(started ? { since: started } : {}) }
-      })
-      // The run's latest event, read forward from its oldest running step's start, a bounded number of pages.
-      let last: { type: string; at: string; nodeId?: string } | undefined
-      let more = false
-      if (eventLog) {
-        let after = 0
-        const from = steps.map((s) => s.since).filter((x): x is string => !!x).sort()[0] ?? r.createdAt
-        for (let page = 0; page < ACTIVITY_PAGES; page++) {
-          const entries = eventLog.query({ runId: r.runId, since: from, afterSeq: after, limit: 1000 })
-          const end = entries.at(-1)
-          if (end) last = { type: end.type, at: end.at, ...(end.nodeId ? { nodeId: end.nodeId } : {}) }
-          if (entries.length < 1000) break
-          after = end!.seq
-          more = page === ACTIVITY_PAGES - 1
-        }
+    let running: ReturnType<typeof ctx.workflow.usage>
+    try {
+      // By state, not among the latest started: a run that has been running for hours is still live.
+      running = ctx.workflow.usage(LIVE_RUNS + 1, { status: ['running'] })
+    } catch (error) {
+      return json(res, 200, { asOf: new Date().toISOString(), runs: { unknown: `the running runs could not be read: ${(error as Error).message.slice(0, 200)}` } })
+    }
+    /** The newest entry a read gives, or why there is none to give. */
+    const newest = (filter: Omit<Parameters<EventReads['query']>[0], 'order' | 'limit'>): { entry?: ReturnType<EventReads['query']>[number] } | { unknown: string } => {
+      if (!eventLog) return { unknown: 'the event log (ctx.eventLog) is not mounted' }
+      try {
+        const [entry] = newestFirst(eventLog.query({ ...filter, order: 'desc', limit: 1 }))
+        return entry ? { entry } : {}
+      } catch (error) {
+        return { unknown: `the event log could not be read: ${(error as Error).message.slice(0, 200)}` }
       }
+    }
+    const runs = running.slice(0, LIVE_RUNS).map((r) => {
+      const steps = r.nodes.filter((n) => n.state === 'RUNNING').map((n) => {
+        // When its attempt started: the step's latest start, if it is this attempt's.
+        const started = newest({ type: 'workflow.node.started', runId: r.runId, nodeId: n.nodeId })
+        const since = 'entry' in started && started.entry && (started.entry.data as { attempt?: unknown } | undefined)?.attempt === n.attempt ? started.entry.at : undefined
+        return { nodeId: n.nodeId, attempt: n.attempt, ...(n.worker ? { worker: n.worker } : {}), ...(since ? { since } : {}) }
+      })
+      const last = newest({ runId: r.runId })
       return {
         runId: r.runId, template: r.template, startedAt: r.createdAt, ...(r.task ? { taskId: r.task.taskId } : {}), steps,
-        lastEvent: !eventLog ? { unknown: 'the event log (ctx.eventLog) is not mounted' } : more ? { unknown: 'the run has more events than a page reads' } : last ? { value: last } : { unknown: 'no event of it since its step started' },
+        lastEvent: 'unknown' in last ? last : last.entry ? { value: { type: last.entry.type, at: last.entry.at, ...(last.entry.nodeId ? { nodeId: last.entry.nodeId } : {}) } } : { unknown: 'no event of it was recorded' },
         stalled: typeof stalled === 'string' ? { unknown: stalled } : { value: stalled.has(r.runId) ? { since: stalled.get(r.runId)! } : null },
       }
     })
-    return json(res, 200, { asOf: new Date().toISOString(), runs })
+    return json(res, 200, { asOf: new Date().toISOString(), runs: { value: runs, ...(running.length > LIVE_RUNS ? { more: true } : {}) } })
+  }
+
+  /**
+   * What waits for the operator now (\`GET waiting?since=<ISO time>\`, T127): the one count the window's
+   * title gives on every page and Home's "Waiting for you" lists, of what the operator can act on only:
+   * - the approval requests open for a verdict (every tool call, fix, merge, or task approval a run or
+   *   the board waits on is one of them);
+   * - the reviews held for the operator (\`operator-review\`), not those a run's reviewer still holds;
+   * - the runs that wait for the operator's own move and ask no request (a tie's deciding vote, a plan's
+   *   approval), whenever they started; and the runs outside the board that failed since \`since\`, when
+   *   the operator last marked Home as seen, which they may continue (a board task's run is not: the
+   *   board decides its next attempt).
+   * Each part is read by state, bounded; one that cannot be read is \`{unknown}\` with why, and \`count\`
+   * then says \`partial\`, never a smaller count read as all (INV-2). A queue or board the composition
+   * does not mount holds nothing that waits: 0, as the page shows it not running.
+   */
+  const waiting = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+    const raw = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since')
+    const since = raw === null ? undefined : new Date(raw)
+    if (since && Number.isNaN(since.getTime())) return json(res, 400, { error: 'since must be an ISO time' })
+    const why = (what: string, error: unknown): { unknown: string } => ({ unknown: `${what} could not be read: ${(error as Error).message.slice(0, 200)}` })
+    const approvals = ctx.get('approvals')
+    let requests: { value: number } | { unknown: string }
+    try {
+      // A queue the composition does not mount holds no request (the page shows it as not running).
+      requests = { value: approvals ? (await approvals.list()).length : 0 }
+    } catch (error) {
+      requests = why('the approval queue', error)
+    }
+    const board = ctx.get('board')
+    let reviews: { value: number; firstExpires?: string } | { unknown: string }
+    // A board the composition does not mount holds no review.
+    if (!board) reviews = { value: 0 }
+    else {
+      try {
+        const held: string[] = []
+        for (const project of await board.projects()) {
+          for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) if (task.waiting?.reason === 'operator-review') held.push(task.waiting.expiresAt)
+        }
+        held.sort()
+        reviews = { value: held.length, ...(held[0] ? { firstExpires: held[0] } : {}) }
+      } catch (error) {
+        reviews = why('the board', error)
+      }
+    }
+    let runs: { value: unknown[]; more?: true } | { unknown: string }
+    try {
+      const running = ctx.workflow.usage(WAITING_READ, { status: ['running'] })
+      const failed = ctx.workflow.usage(WAITING_READ, { status: ['failed'], ...(since ? { changedSince: since.toISOString() } : {}) })
+      const look = [...running.filter((r) => r.blocked && !('approvalRequest' in r.blocked && r.blocked.approvalRequest)), ...failed.filter((r) => !r.task)]
+      runs = { value: look.slice(0, WAITING_RUNS), ...(look.length > WAITING_RUNS || running.length === WAITING_READ || failed.length === WAITING_READ ? { more: true as const } : {}) }
+    } catch (error) {
+      runs = why('the runs', error)
+    }
+    const parts = [requests, reviews, runs]
+    const count = (('value' in requests) ? requests.value : 0) + (('value' in reviews) ? reviews.value : 0) + (('value' in runs) ? runs.value.length : 0)
+    const partial = parts.some((p) => 'unknown' in p) || ('more' in runs && runs.more === true)
+    return json(res, 200, { asOf: new Date().toISOString(), ...(since ? { since: since.toISOString() } : {}), requests, reviews, runs, count, ...(partial ? { partial: true } : {}) })
   }
 
   /**
@@ -650,6 +756,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'projects' || path.startsWith('projects/')) return projects(req, res, path)
     if (path.startsWith('tasks/')) return tasks(req, res, path)
     if (path === 'activity') return activity(req, res)
+    if (path === 'waiting') return waiting(req, res)
     if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })

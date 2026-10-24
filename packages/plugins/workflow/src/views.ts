@@ -7,7 +7,7 @@ import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
 import { tieOf, type TeamRound } from './teams.ts'
-import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, UsageRunView, WorkflowError } from './types.ts'
+import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
   const rows = e.nodeRows(run.run_id)
@@ -77,9 +77,30 @@ function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
   }
 }
 
-/** Recent runs and, per node, which Worker, tier, and quota class served it (usage report), and whether its usage could be counted. */
-export function usage(e: Engine, limit: number): RunView[] {
-  const rows = e.ctx.store.db.prepare('SELECT * FROM workflow_runs ORDER BY created_at DESC LIMIT ?').all(Math.min(Math.max(1, limit), 500)) as unknown as RunRow[]
+/**
+ * Recent runs and, per node, which Worker, tier, and quota class served it (usage report), and whether its
+ * usage could be counted: the latest started first, at most `limit` (1 to 500). With `filter.status`, only
+ * runs in those states, whenever they started (a long run is never past the limit for being old); with
+ * `filter.changedSince`, only runs whose state changed after that time, the latest changed first. A time
+ * that is not one is refused (INV-2).
+ */
+export function usage(e: Engine, limit: number, filter: UsageFilter = {}): RunView[] {
+  const clauses: string[] = []
+  const params: string[] = []
+  if (filter.status !== undefined) {
+    if (!filter.status.length) return []
+    clauses.push(`status IN (${filter.status.map(() => '?').join(', ')})`)
+    params.push(...filter.status)
+  }
+  if (filter.changedSince !== undefined) {
+    const since = new Date(filter.changedSince)
+    if (Number.isNaN(since.getTime())) throw new RangeError(`changedSince is not a time: ${filter.changedSince}`)
+    clauses.push('updated_at > ?')
+    params.push(since.toISOString())
+  }
+  const order = filter.changedSince !== undefined ? 'updated_at DESC, created_at DESC' : 'created_at DESC'
+  const rows = e.ctx.store.db.prepare(`SELECT * FROM workflow_runs ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY ${order} LIMIT ?`)
+    .all(...params, Math.min(Math.max(1, limit), 500)) as unknown as RunRow[]
   return rows.map((r) => withUnknownUsage(e, view(e, r)))
 }
 

@@ -52,6 +52,8 @@ export interface ProfileHost {
   maxBrowsers(): number
   /** An operator-visible event (an orphaned browser stopped, say). */
   report(type: string, data: Record<string, unknown>): void
+  /** A warning for the daemon's log (a bound that was hit, say). */
+  warn(message: string): void
 }
 
 export interface ProfileTurn {
@@ -273,7 +275,7 @@ export class ProfileContexts {
       const kept = keep === undefined ? undefined : held.kept.get(keep)
       if (kept) held.kept.delete(keep!)
       const fresh = kept !== undefined && !kept.page.isClosed() && Date.now() - kept.at <= MAX_KEPT_IDLE_MS
-      if (kept && !fresh) await closePageWithin(kept.page)
+      if (kept && !fresh) await this.closePage(kept.page, account)
       if (kept && fresh) {
         page = kept.page
         reused = true
@@ -300,8 +302,8 @@ export class ProfileContexts {
       ended = true
       signal?.removeEventListener('abort', onAbort)
       page.off('close', onClose)
-      if (keepIt && keep !== undefined && !page.isClosed() && this.held.get(account) === held) await this.keepTab(held, keep, page)
-      else await closePageWithin(page)
+      if (keepIt && keep !== undefined && !page.isClosed() && this.held.get(account) === held) await this.keepTab(account, held, keep, page)
+      else await this.closePage(page, account)
       this.release(account, held)
     }
     const onClose = (): void => void end(false)
@@ -315,11 +317,16 @@ export class ProfileContexts {
     const tab = held?.kept.get(keep)
     if (!held || !tab) return
     held.kept.delete(keep)
-    await closePageWithin(tab.page)
+    await this.closePage(tab.page, account)
+  }
+
+  /** Close a page within its bound ({@link closePageWithin}): a close the browser did not confirm is a warning, naming the account. */
+  private closePage(page: Page, account: string): Promise<boolean> {
+    return closePageWithin(page, (message) => this.host.warn(`${message} (the login profile of ${account})`))
   }
 
   /** Keep `page` as the session's tab, least recently used last out; past the bound, the oldest closes. */
-  private async keepTab(held: Held, keep: string, page: Page): Promise<void> {
+  private async keepTab(account: string, held: Held, keep: string, page: Page): Promise<void> {
     const closing: Page[] = []
     const previous = held.kept.get(keep)?.page
     held.kept.delete(keep)
@@ -338,7 +345,7 @@ export class ProfileContexts {
       held.kept.delete(oldest)
       closing.push(tab.page)
     }
-    await Promise.all(closing.map((tab) => closePageWithin(tab)))
+    await Promise.all(closing.map((tab) => this.closePage(tab, account)))
   }
 
   /**
@@ -355,7 +362,7 @@ export class ProfileContexts {
         try {
           return await run(page, held.context)
         } finally {
-          await closePageWithin(page)
+          await this.closePage(page, account)
         }
       } finally {
         this.release(account, held)

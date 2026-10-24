@@ -66,7 +66,7 @@ holds no engine code and no rules of its own.
   each step (the fix, and the `docs` variant's) on the writer of its kind.
   [`tests/landing.spec.ts`](tests/landing.spec.ts) lands an accepted result (ADR-0060), and
   [`tests/carry.spec.ts`](tests/carry.spec.ts) starts a task's next attempt from the work its
-  previous attempt left (ADR-0061): T110a's attempt, whose review's session broke after
+  previous attempt left (ADR-0061, proposed: the carry is on by default, pending the operator's acceptance (D59)): T110a's attempt, whose review's session broke after
   `develop:1`, carried and landed; a review that asked for changes, a result the board rejected, a
   tree off the commit the task writes or onto a moved HEAD, and a changed or removed worktree, never
   carried.
