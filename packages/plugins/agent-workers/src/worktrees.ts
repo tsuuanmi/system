@@ -211,6 +211,39 @@ export interface SweepOutcome {
   kept: string[]
 }
 
+/**
+ * A workflow run's worktree as the operator's listing shows it (`agent_worktrees`, `system
+ * worktrees`): where it is, whether an agent run still holds it, what it holds, and when the
+ * retention removes it.
+ */
+export interface RunWorktree {
+  runId: string
+  repository: string
+  path: string
+  branch: string
+  createdAt: string
+  /** When its workflow run's last agent run ended, or when it was made while none has. */
+  lastActivityAt: string
+  /**
+   * `in-use`: an agent run of its workflow run is queued or running; `held`: one ended without being
+   * known to be gone (free it: `system free`); `finished`: neither, so it may be removed.
+   */
+  state: 'in-use' | 'held' | 'finished'
+  /**
+   * `clean`: nothing uncommitted, its work is on its branch; `uncommitted`: changes not committed;
+   * `gone`: no longer on disk (only its record is left); `not-intact`: its `.git` file or branch is
+   * not what it was made with, so git is not run there and it is left for the operator.
+   */
+  changes: 'clean' | 'uncommitted' | 'gone' | 'not-intact'
+  /** When the retention removes it, once finished; absent while it is in use or held, or with a retention of 0. */
+  retiresAt?: string
+  /** Why the last attempt to retire it failed, when one did. */
+  failure?: string
+}
+
+/** A worktree as the operator's removal plans or leaves it, with its workflow run. */
+export type RunWorktreeRelease = WorktreeRelease & { runId: string }
+
 export class Worktrees {
   private readonly queues = new Map<string, Promise<unknown>>()
   private version: [number, number] | undefined
@@ -426,11 +459,69 @@ export class Worktrees {
     return plans
   }
 
-  /** {@link plan} of one worktree, `freeing` the agent run the operator frees (not counted as holding it). */
-  private async planOne(row: WorktreeRow, commit: boolean, freeing: string): Promise<WorktreeRelease> {
+  /**
+   * The worktrees not removed, oldest first, at most `limit`, each with its state, what it holds, and
+   * when the retention removes it (`retentionHours`, 0: never); and how many there are in all. Reads
+   * only: git runs in a worktree only while it is intact, one repository at a time.
+   */
+  async list(retentionHours: number, limit: number): Promise<{ worktrees: RunWorktree[]; total: number }> {
+    const total = Number((this.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM agent_worktrees WHERE removed_at IS NULL').get() as { n: number }).n)
+    const rows = this.ctx.store.db.prepare(`SELECT w.*,
+      EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.status IN ('queued', 'running')) AS busy,
+      EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.status NOT IN ('queued', 'running') AND ${notKnownGone('r.')}) AS held,
+      COALESCE((SELECT MAX(r.updated_at) FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id), w.created_at) AS last
+      FROM agent_worktrees w WHERE removed_at IS NULL ORDER BY created_at, workflow_run_id LIMIT ?`).all(limit) as unknown as Array<WorktreeRow & { busy: number; held: number; last: string }>
+    const worktrees: RunWorktree[] = []
+    for (const row of rows) {
+      const state = row.busy ? 'in-use' : row.held ? 'held' : 'finished'
+      worktrees.push({
+        runId: row.workflow_run_id, repository: row.repository, path: row.path, branch: row.branch, createdAt: row.created_at, lastActivityAt: row.last, state,
+        changes: await this.exclusive(row.repository, () => this.changesOf(row)),
+        ...(state === 'finished' && retentionHours > 0 ? { retiresAt: new Date(Date.parse(row.last) + retentionHours * 60 * 60_000).toISOString() } : {}),
+        ...(row.failure ? { failure: row.failure } : {}),
+      })
+    }
+    return { worktrees, total }
+  }
+
+  /**
+   * What the operator's removal of finished worktrees would do now (`agent_worktrees_remove`), before
+   * their decision is recorded (INV-13): every worktree not removed, or those of workflow run `runId`,
+   * oldest first, at most {@link SWEEP_BATCH}, each planned as {@link plan} plans it with no run
+   * excepted, so one in use or held stays; and how many were left for a later call.
+   */
+  async planRemoval(runId: string | undefined, commit: boolean): Promise<{ plans: RunWorktreeRelease[]; more: number }> {
+    const where = runId === undefined ? 'removed_at IS NULL' : 'removed_at IS NULL AND workflow_run_id = ?'
+    const args = runId === undefined ? [] : [runId]
+    const total = Number((this.ctx.store.db.prepare(`SELECT COUNT(*) AS n FROM agent_worktrees WHERE ${where}`).get(...args) as { n: number }).n)
+    const rows = this.ctx.store.db.prepare(`SELECT * FROM agent_worktrees WHERE ${where} ORDER BY created_at, workflow_run_id LIMIT ?`).all(...args, SWEEP_BATCH) as unknown as WorktreeRow[]
+    const plans: RunWorktreeRelease[] = []
+    for (const row of rows) plans.push({ runId: row.workflow_run_id, ...await this.exclusive(row.repository, () => this.planOne(row, commit, null)) })
+    return { plans, more: total - rows.length }
+  }
+
+  /** What a worktree holds, as {@link RunWorktree.changes} says it; git runs only in an intact one. */
+  private async changesOf(row: WorktreeRow): Promise<RunWorktree['changes']> {
+    if (!existsSync(row.path)) return 'gone'
+    try {
+      await this.verify(row)
+    } catch {
+      return 'not-intact'
+    }
+    const pending = await git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, 'status', '--porcelain', '--untracked-files=all']).catch(() => undefined)
+    return pending === undefined ? 'not-intact' : pending.trim() ? 'uncommitted' : 'clean'
+  }
+
+  /** {@link plan} of one worktree, `freeing` the agent run the operator frees (not counted as holding it), or none. */
+  private async planOne(row: WorktreeRow, commit: boolean, freeing: string | null): Promise<WorktreeRelease> {
     const base = { path: row.path, branch: row.branch }
     if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, freeing)) {
-      return { ...base, outcome: 'kept', why: `another agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so its worktree stays` }
+      return {
+        ...base, outcome: 'kept',
+        why: freeing === null
+          ? `an agent run of workflow run ${row.workflow_run_id} is unfinished, or ended without being known to be gone (free it first: system free), so its worktree stays`
+          : `another agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so its worktree stays`,
+      }
     }
     if (!existsSync(row.path)) return { ...base, outcome: 'remove', why: 'it is gone from disk already: only its record is closed' }
     try {
@@ -441,7 +532,7 @@ export class Worktrees {
     const pending = (await git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, 'status', '--porcelain', '--untracked-files=all'])).trim()
     if (!pending) return { ...base, outcome: 'remove', why: 'it holds nothing uncommitted: it is removed, and its branch stays' }
     if (commit) return { ...base, outcome: 'remove', why: `its uncommitted changes are committed on ${row.branch}, which stays, then it is removed` }
-    return { ...base, outcome: 'kept', why: `it holds uncommitted changes, so it stays (the retention commits them on ${row.branch} and removes it; or free again with the commit flag)` }
+    return { ...base, outcome: 'kept', why: `it holds uncommitted changes, so it stays (the retention commits them on ${row.branch} and removes it; or ${freeing === null ? 'remove it again with the commit flag' : 'free again with the commit flag'})` }
   }
 
   /**
@@ -449,7 +540,7 @@ export class Worktrees {
    * at again alone, then committed (when `commit`) and removed as the retention does, the decision
    * stored on its row; one whose state changed since, or that git cannot remove, stays, and why.
    */
-  async release(workflowRunId: string, decision: string, commit: boolean, plans: readonly WorktreeRelease[], freeing: string): Promise<WorktreeRelease[]> {
+  async release(workflowRunId: string, decision: string, commit: boolean, plans: readonly WorktreeRelease[], freeing: string | null): Promise<WorktreeRelease[]> {
     const done: WorktreeRelease[] = []
     for (const plan of plans) {
       const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ? AND removed_at IS NULL').get(workflowRunId, plan.path) as WorktreeRow | undefined

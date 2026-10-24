@@ -171,4 +171,40 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
     expect((ctx.artifacts.get(held.result!.artifacts[0]!)!.body as { text: string }).text).toContain('npm run bench: not run')
   })
+
+  it('retires each attempt\'s worktree after the retention, its result rejected or accepted, its work committed on its branch; the operator can list and remove them sooner (D12, INV-9)', async () => {
+    const pilot = await boot()
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const digested = (taskId: string) => until(async () => {
+      const t = await ctx.board.task(taskId)
+      return t?.result?.digest ? t : undefined
+    }, 'the digest on the task\'s result')
+    // Attempt 1, rejected by the operator: the task is ready for attempt 2.
+    const first = await attempt(ctx, task.taskId)
+    expect((await reported(ctx, first.runId)).status).toBe('completed')
+    await digested(task.taskId)
+    expect(await operatorAccepts(ctx, task.taskId, 'reject')).toMatchObject({ state: 'ready' })
+    // Attempt 2, accepted: done.
+    const second = await attempt(ctx, task.taskId)
+    expect((await reported(ctx, second.runId)).status).toBe('completed')
+    await digested(task.taskId)
+    expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
+    const worktreeOf = (runId: string): string => agent.runs.find((r) => r.role === 'develop' && basename(r.workspace) === runId)!.workspace
+    // Both are finished, each with its work uncommitted, and retire at the retention after their last agent run.
+    const listed = await ctx.agentWorkers.runWorktrees()
+    expect(listed.worktrees.map((w) => [w.runId, w.state, w.changes])).toEqual([[first.runId, 'finished', 'uncommitted'], [second.runId, 'finished', 'uncommitted']])
+    // The operator's removal never discards: without the commit flag, both stay.
+    expect((await ctx.agentWorkers.removeWorktrees()).worktrees.map((w) => w.outcome)).toEqual(['kept', 'kept'])
+    // The retention removes both once its hours have passed since their last agent run, the work kept on each branch.
+    expect(await ctx.agentWorkers.sweepWorktrees(Date.now() + 167 * 60 * 60_000)).toEqual({ removed: [], kept: [] })
+    expect(await ctx.agentWorkers.sweepWorktrees(Date.now() + 169 * 60 * 60_000)).toEqual({ removed: [worktreeOf(first.runId), worktreeOf(second.runId)], kept: [] })
+    for (const run of [first, second]) {
+      expect(existsSync(worktreeOf(run.runId))).toBe(false)
+      expect(pilot.git(pilot.repo, 'show', `system/run/${run.runId}:calc.py`)).toBe(FIXED.trim())
+    }
+    expect(await ctx.agentWorkers.runWorktrees()).toMatchObject({ total: 0, worktrees: [] })
+    untouched(pilot)
+  })
 })

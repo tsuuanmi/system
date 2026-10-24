@@ -1,0 +1,24 @@
+{
+  "tool": "agent_worktrees_remove",
+  "input": { "note": "merged attempt 3; attempts 1 and 2 are on their branches" },
+  "output": {
+    "decision": "sha256:4b2d6f8a0c1e3f5a7b9d1e3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c",
+    "worktrees": [
+      {
+        "runId": "run_027bb3c539af20eb",
+        "path": "/home/operator/.dsh/system/worktrees/project-1a2b3c4d5e6f/run_027bb3c539af20eb",
+        "branch": "system/run/run_027bb3c539af20eb",
+        "outcome": "removed",
+        "why": "it holds nothing uncommitted: it is removed, and its branch stays"
+      },
+      {
+        "runId": "run_ae7a86a59c68e5e6",
+        "path": "/home/operator/.dsh/system/worktrees/project-1a2b3c4d5e6f/run_ae7a86a59c68e5e6",
+        "branch": "system/run/run_ae7a86a59c68e5e6",
+        "outcome": "kept",
+        "why": "it holds uncommitted changes, so it stays (the retention commits them on system/run/run_ae7a86a59c68e5e6 and removes it; or remove it again with the commit flag)"
+      }
+    ],
+    "more": 0
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "tool": "agent_worktrees",
+  "input": {},
+  "output": {
+    "retentionHours": 24,
+    "total": 2,
+    "worktrees": [
+      {
+        "runId": "run_027bb3c539af20eb",
+        "repository": "/home/operator/workspaces/project",
+        "path": "/home/operator/.dsh/system/worktrees/project-1a2b3c4d5e6f/run_027bb3c539af20eb",
+        "branch": "system/run/run_027bb3c539af20eb",
+        "createdAt": "2026-10-24T07:17:02Z",
+        "lastActivityAt": "2026-10-24T07:19:40Z",
+        "state": "finished",
+        "changes": "clean",
+        "retiresAt": "2026-10-25T07:19:40Z"
+      },
+      {
+        "runId": "run_ae7a86a59c68e5e6",
+        "repository": "/home/operator/workspaces/project",
+        "path": "/home/operator/.dsh/system/worktrees/project-1a2b3c4d5e6f/run_ae7a86a59c68e5e6",
+        "branch": "system/run/run_ae7a86a59c68e5e6",
+        "createdAt": "2026-10-24T07:23:11Z",
+        "lastActivityAt": "2026-10-24T07:31:05Z",
+        "state": "finished",
+        "changes": "uncommitted",
+        "retiresAt": "2026-10-25T07:31:05Z"
+      }
+    ]
+  }
+}

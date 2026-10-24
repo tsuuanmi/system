@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -36,6 +36,12 @@ const USAGE = `Usage: system <command>
                             unknown, on your word that its agent is gone (recorded as your decision; refused while
                             its liveness is looked at or its agent is present); a dirty worktree stays unless
                             --commit-worktree commits its changes on its branch; the branch stays
+  worktrees [--json]        the workflow runs' worktrees not removed yet: each run's state (in-use, held, finished),
+                            what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it
+  worktrees remove [--run <runId>] [--commit-changes] [note...]
+                            remove the finished worktrees now (recorded as your decision): a clean one, or with
+                            --commit-changes one whose changes are first committed on its branch; nothing is
+                            discarded, one in use or held stays, and the branch stays
   continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
   delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
   supersede <runId> <nodeId> (<text...> | -)
@@ -377,6 +383,19 @@ async function main(argv: string[]): Promise<number> {
       const outcome = await callTool('agent_run_free', parseFree(rest))
       if (outcome.isError) throw new Error(outcome.text)
       console.log(formatFreed(outcome.structured as unknown as Freed).join('\n'))
+      return 0
+    }
+    case 'worktrees': {
+      if (rest[0] === 'remove') {
+        const outcome = await callTool('agent_worktrees_remove', parseWorktreesRemove(rest.slice(1)))
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(formatWorktreesRemoved(outcome.structured as unknown as WorktreesRemoved).join('\n'))
+        return 0
+      }
+      if (rest.some((a) => a !== '--json')) break
+      const outcome = await callTool('agent_worktrees', {})
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(rest.includes('--json') ? JSON.stringify(outcome.structured, null, 2) : formatWorktrees(outcome.structured as unknown as Worktrees).join('\n'))
       return 0
     }
     case 'model': {

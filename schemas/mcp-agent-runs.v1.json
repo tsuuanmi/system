@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-agent-runs:v1",
   "title": "MCP agent run tools",
-  "description": "Input and output of the operator's agent run tool `agent_run_free` (PROP-0013, ADR-0056): free the session and worktree an agent run holds because it ended without being known to be gone, on the operator's word that its agent is gone. The root describes one call (tool, input, structured output); the provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "description": "Input and output of the operator's agent run tools: `agent_run_free` (PROP-0013, ADR-0056) frees the session and worktree an agent run holds because it ended without being known to be gone, on the operator's word that its agent is gone. 1.1 adds `agent_worktrees`, the workflow runs' worktrees not removed yet, and `agent_worktrees_remove`, the operator removes the finished ones now, never discarding a change (D12). The root describes one call (tool, input, structured output); the provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
   "type": "object",
   "required": [
     "tool",
@@ -12,7 +12,9 @@
   "properties": {
     "tool": {
       "enum": [
-        "agent_run_free"
+        "agent_run_free",
+        "agent_worktrees",
+        "agent_worktrees_remove"
       ]
     },
     "input": {
@@ -38,6 +40,44 @@
           },
           "output": {
             "$ref": "#/$defs/agent-run-free-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "agent_worktrees"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/agent-worktrees-input"
+          },
+          "output": {
+            "$ref": "#/$defs/agent-worktrees-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "agent_worktrees_remove"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/agent-worktrees-remove-input"
+          },
+          "output": {
+            "$ref": "#/$defs/agent-worktrees-remove-output"
           }
         }
       }
@@ -152,6 +192,202 @@
             },
             "additionalProperties": false
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "runId": {
+      "description": "A workflow run, as it names its worktree and its branch `system/run/<runId>`.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "agent-worktrees-input": {
+      "description": "1.1.",
+      "type": "object",
+      "properties": {
+        "limit": {
+          "description": "At most this many worktrees, oldest first (default and most 100).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent-worktrees-output": {
+      "description": "1.1: the worktrees of workflow runs not removed yet, oldest first.",
+      "type": "object",
+      "required": [
+        "retentionHours",
+        "worktrees",
+        "total"
+      ],
+      "properties": {
+        "retentionHours": {
+          "description": "agent-workers `worktreeRetentionHours`: a finished worktree is removed this long after its workflow run's last agent run ended; 0 keeps every one.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "description": "How many worktrees are not removed, listed or not.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "worktrees": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "runId",
+              "repository",
+              "path",
+              "branch",
+              "createdAt",
+              "lastActivityAt",
+              "state",
+              "changes"
+            ],
+            "properties": {
+              "runId": {
+                "$ref": "#/$defs/runId"
+              },
+              "repository": {
+                "$ref": "#/$defs/path"
+              },
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "branch": {
+                "$ref": "#/$defs/branch"
+              },
+              "createdAt": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              },
+              "lastActivityAt": {
+                "description": "When its workflow run's last agent run ended, or when it was made while none has.",
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              },
+              "state": {
+                "description": "in-use: an agent run of its workflow run is queued or running; held: one ended without being known to be gone (`agent_run_free`); finished: neither.",
+                "enum": [
+                  "in-use",
+                  "held",
+                  "finished"
+                ]
+              },
+              "changes": {
+                "description": "clean: nothing uncommitted; uncommitted: changes not committed on its branch; gone: no longer on disk; not-intact: its .git file or branch is not what it was made with, so git is not run there.",
+                "enum": [
+                  "clean",
+                  "uncommitted",
+                  "gone",
+                  "not-intact"
+                ]
+              },
+              "retiresAt": {
+                "description": "When the retention removes it, once finished; absent while in use or held, or with a retention of 0.",
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              },
+              "failure": {
+                "description": "Why the last attempt to retire it failed.",
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent-worktrees-remove-input": {
+      "description": "1.1.",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "description": "Only this workflow run's worktrees; every finished one when absent.",
+          "$ref": "#/$defs/runId"
+        },
+        "commitChanges": {
+          "description": "A finished worktree that holds uncommitted changes has them committed on its branch, then is removed; without it such a worktree stays.",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "Why, in the operator's words: kept on the decision as its rationale.",
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent-worktrees-remove-output": {
+      "description": "1.1: each worktree looked at, removed or kept, and why.",
+      "type": "object",
+      "required": [
+        "worktrees",
+        "more"
+      ],
+      "properties": {
+        "decision": {
+          "description": "The operator's `retention` decision (decider `operator.worktrees`), recorded before any worktree was removed; absent when none could be.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "worktrees": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": [
+              "runId",
+              "path",
+              "branch",
+              "outcome",
+              "why"
+            ],
+            "properties": {
+              "runId": {
+                "$ref": "#/$defs/runId"
+              },
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "branch": {
+                "$ref": "#/$defs/branch"
+              },
+              "outcome": {
+                "enum": [
+                  "removed",
+                  "kept"
+                ]
+              },
+              "why": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "commit": {
+                "description": "The commit that kept the worktree's changes on its branch before it was removed.",
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "more": {
+          "description": "Worktrees not looked at: one call looks at 50 at most.",
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false

@@ -12,7 +12,8 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { captureGitSubject, processIdentity, SchemaRegistry, startPrompt, subjectId, usageUnknownOf } from '@tsuuanmi/system-libs'
+import type { ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { captureGitSubject, processIdentity, SchemaError, SchemaRegistry, startPrompt, subjectId, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type PoolConfig, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
@@ -22,8 +23,9 @@ import Workflow from '@tsuuanmi/system-workflow'
 import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { DEVELOP } from './develop.ts'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
+import { registerRunTools } from '../src/tools.ts'
 import { openDirectory } from '../src/worktrees.ts'
 
 /**
@@ -1825,6 +1827,90 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect((await run(ctx, 'agent:dev', 'k-1', 'run_kept')).status).toBe('completed')
     expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [] })
     expect(existsSync(agent.runs[0]!.workspace)).toBe(true)
+  })
+
+  it('lists each run worktree with its state, what it holds, and when it retires, and removes the finished ones on the operator\'s recorded word: a clean one, a dirty one only with its changes committed on its branch, never one held; the branch stays (D12, INV-13, INV-15)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), worktreeRetentionHours: 24 })
+    for (const runId of ['run_clean', 'run_dirty', 'run_held']) expect((await run(ctx, 'agent:dev', `k-${runId}`, runId)).status).toBe('completed')
+    const path = (runId: string): string => agent.runs.find((r) => basename(r.workspace) === runId)!.workspace
+    // run_clean's work committed on its branch by hand; run_dirty's left uncommitted; run_held's agent not known to be gone.
+    git(path('run_clean'), 'add', '--all')
+    git(path('run_clean'), 'commit', '-q', '-m', 'kept by hand')
+    ctx.store.db.prepare("UPDATE agent_runs SET status = 'failed', liveness_verdict = 'unknown', liveness_decision = ? WHERE workflow_run_id = 'run_held'").run(`sha256:${'1'.repeat(64)}`)
+
+    const listing = await ctx.agentWorkers.runWorktrees()
+    expect(listing).toMatchObject({ retentionHours: 24, total: 3 })
+    expect(listing.worktrees.map((w) => [w.runId, w.state, w.changes, w.branch])).toEqual([
+      ['run_clean', 'finished', 'clean', 'system/run/run_clean'], ['run_dirty', 'finished', 'uncommitted', 'system/run/run_dirty'], ['run_held', 'held', 'uncommitted', 'system/run/run_held'],
+    ])
+    const [clean, , held] = listing.worktrees
+    expect(Date.parse(clean!.retiresAt!) - Date.parse(clean!.lastActivityAt)).toBe(24 * 60 * 60_000)
+    expect(held!.retiresAt).toBeUndefined()
+    expect(await ctx.agentWorkers.runWorktrees({ limit: 1 })).toMatchObject({ total: 3, worktrees: [{ runId: 'run_clean' }] })
+
+    // Every finished one: the clean one removed, the dirty and the held ones kept, by one decision of the operator's.
+    const removed = await ctx.agentWorkers.removeWorktrees({ note: 'merged' })
+    expect(removed.worktrees.map((w) => [w.runId, w.outcome])).toEqual([['run_clean', 'removed'], ['run_dirty', 'kept'], ['run_held', 'kept']])
+    expect(removed.worktrees[1]!.why).toMatch(/holds uncommitted changes, so it stays/)
+    expect(removed.worktrees[2]!.why).toMatch(/ended without being known to be gone \(free it first: system free\)/)
+    expect(existsSync(path('run_clean'))).toBe(false)
+    expect(git(repo, 'log', '-1', '--format=%s', 'system/run/run_clean')).toBe('kept by hand')
+    expect(readFileSync(join(path('run_dirty'), 'calc.py'), 'utf8')).toBe(FIXED)
+    const decision = ctx.artifacts.get(removed.decision!)!
+    new SchemaRegistry().assertRecord(decision.body as { schema: string })
+    expect(decision).toMatchObject({ producer: { type: 'operator' }, body: {
+      decisionType: 'retention', decider: { type: 'operator', id: 'operator.worktrees' }, rationale: 'merged',
+      outcome: { option: 'remove', detail: { commitChanges: false, worktrees: [{ runId: 'run_clean', path: path('run_clean'), branch: 'system/run/run_clean' }] } },
+    } })
+    // The dirty one with its changes committed on its branch first: nothing is discarded.
+    const committed = await ctx.agentWorkers.removeWorktrees({ runId: 'run_dirty', commitChanges: true })
+    expect(committed.worktrees).toEqual([expect.objectContaining({ runId: 'run_dirty', outcome: 'removed', commit: expect.stringMatching(/^[0-9a-f]{40}$/) })])
+    expect(git(repo, 'show', 'system/run/run_dirty:calc.py')).toBe(FIXED.trim())
+    // Nothing left to remove: nothing is decided; the held one stays until the operator frees its run.
+    const decisions = ctx.artifacts.list({ kind: 'decision', decisionType: 'retention' }).length
+    expect(await ctx.agentWorkers.removeWorktrees({ commitChanges: true })).toEqual({ worktrees: [expect.objectContaining({ runId: 'run_held', outcome: 'kept' })], more: 0 })
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'retention' })).toHaveLength(decisions)
+    expect(existsSync(path('run_held'))).toBe(true)
+    await expect(ctx.agentWorkers.removeWorktrees({ runId: '../x' })).rejects.toThrow(/not a workflow run id/)
+    expect(git(repo, 'branch', '--list', '--format=%(refname:short)').split('\n').sort()).toEqual(['main', 'system/run/run_clean', 'system/run/run_dirty', 'system/run/run_held'])
+    untouched(repo, head)
+  })
+
+  it('serves the run worktree tools to the operator, each output as its schema says, and checks the removal\'s output on its plan before anything is decided: a defect removes nothing (D12, INV-2, INV-14)', async () => {
+    const repo = repository()
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect((await run(ctx, 'agent:dev', 'k-1', 'run_tool')).status).toBe('completed')
+    const workspace = agent.runs[0]!.workspace
+    git(workspace, 'add', '--all')
+    git(workspace, 'commit', '-q', '-m', 'done')
+    const tools = new Map<string, { scope?: string; handler: ToolHandler }>()
+    registerRunTools({ mcp: { tool: (name: string, spec: ToolSpec, handler: ToolHandler) => tools.set(name, { ...(spec.scope ? { scope: spec.scope } : {}), handler }) } } as unknown as Context, ctx.agentWorkers)
+    expect([...tools].map(([name, t]) => [name, t.scope])).toEqual([['agent_run_free', 'operator'], ['agent_worktrees', 'operator'], ['agent_worktrees_remove', 'operator']])
+    const call = (name: string, args: Record<string, unknown>) => tools.get(name)!.handler(args, { scope: 'operator' })
+    const listed = await call('agent_worktrees', {})
+    new SchemaRegistry().assertDef('mcp-agent-runs@1.1', 'agent-worktrees-output', listed.structuredContent)
+    expect(listed.content[0]).toMatchObject({ text: expect.stringContaining('run_tool  finished, clean, retires ') })
+    expect((await call('agent_worktrees_remove', { runId: 'run tool' })).content[0]).toMatchObject({ text: expect.stringMatching(/^invalid input, nothing done/) })
+    // A defect: the removal's output is one its schema refuses.
+    const assertDef = SchemaRegistry.prototype.assertDef
+    const spy = vi.spyOn(SchemaRegistry.prototype, 'assertDef').mockImplementation(function (this: SchemaRegistry, tag, def, value) {
+      if (def === 'agent-worktrees-remove-output') throw new SchemaError(`${tag}#/$defs/${def}`, [], 'a defect')
+      assertDef.call(this, tag, def, value)
+    })
+    onTestFinished(() => spy.mockRestore())
+    const refused = await call('agent_worktrees_remove', {})
+    expect([refused.isError, refused.content[0]]).toEqual([true, { type: 'text', text: expect.stringMatching(/^agent_worktrees_remove would make an output its schema refuses \(a defect\), so nothing changed/) }])
+    expect(existsSync(workspace)).toBe(true)
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'retention' })).toEqual([])
+    spy.mockRestore()
+    const removed = await call('agent_worktrees_remove', { note: 'merged' })
+    new SchemaRegistry().assertDef('mcp-agent-runs@1.1', 'agent-worktrees-remove-output', removed.structuredContent)
+    expect(removed.structuredContent).toMatchObject({ decision: expect.stringMatching(/^sha256:/), worktrees: [{ runId: 'run_tool', outcome: 'removed' }], more: 0 })
+    expect(existsSync(workspace)).toBe(false)
   })
 
   it('distrusts a worktree whose .git file the agent pointed elsewhere: the run fails, and git never runs there again', async () => {
