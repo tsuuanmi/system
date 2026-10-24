@@ -1190,7 +1190,7 @@
         },
         "answers": {
           "type": "array",
-          "description": "Answers to a waiting-for-input task's questions, by index; answering every one makes it ready again.",
+          "description": "Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{\"question\": 0, \"answer\": \"Use the v2 API\"}]. Answering every one sends the task through the gate for its next attempt.",
           "minItems": 1,
           "maxItems": 8,
           "items": {
@@ -1201,11 +1201,13 @@
             ],
             "properties": {
               "question": {
+                "description": "The question's index, from 0, in the task's waiting.questions (board_task).",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 7
               },
               "answer": {
+                "description": "Your answer, 1 to 2000 characters.",
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 2000

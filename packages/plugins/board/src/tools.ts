@@ -79,8 +79,11 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_update: {
     taskId: id(), generation: generation().optional(),
     note: zod.string().min(1).max(2000).optional().describe('A progress line; not stored: the result comes from the workflow run that serves the task'),
-    answers: zod.array(zod.strictObject({ question: zod.number().int().min(0).max(7), answer: zod.string().min(1).max(2000) })).min(1).max(8).optional()
-      .describe('Answers to a waiting-for-input task\'s questions, by index; answering every one makes it ready again'),
+    answers: zod.array(zod.strictObject({
+      question: zod.number().int().min(0).max(7).describe('The question\'s index, from 0, in the task\'s waiting.questions (board_task)'),
+      answer: zod.string().min(1).max(2000).describe('Your answer, 1 to 2000 characters'),
+    })).min(1).max(8).optional()
+      .describe('Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question\'s index from 0 in the task\'s waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt'),
   },
   board_cancel: { taskId: id(), note: shortText().optional() },
   board_pause: { projectId: id() },

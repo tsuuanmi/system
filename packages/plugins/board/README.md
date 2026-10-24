@@ -127,7 +127,9 @@ charters, and their tasks.
     starts lapses back to `ready`;
   - `board_update` renews the caller's lease for as long as it was claimed (a run that serves
     the task renews it itself), or answers every
-    question of a waiting task by index, not both; its `note` is not stored (no record holds
+    question of a waiting task by index, not both: `answers` holds one `{question, answer}` per
+    question, `question` its index from 0 in `waiting.questions`, which the tool's own description
+    says, so the generated reference shows it; its `note` is not stored (no record holds
     progress notes yet). Only a `question` wait takes answers: a `rejected`, `retries-spent`, or
     `review-expired` wait takes no input and only expires to cancelled, and answering the last
     attempt's questions leaves the task waiting for input (`retries-spent`), never ready with no

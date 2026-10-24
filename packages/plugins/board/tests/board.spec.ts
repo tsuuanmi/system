@@ -888,6 +888,11 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
       expect(zod.object(INPUTS[tool]).safeParse(input).success, name).toBe(true)
       schemas.assertDef('mcp-board@1.1', `${tool.replaceAll('_', '-')}-input`, input)
     }
+    // The shape of an answer is in the tool's own description, which the generated reference shows (T99 D7).
+    expect((INPUTS.board_update.answers as unknown as zod.ZodType).description).toContain('each item {question, answer}')
+    expect(zod.object(INPUTS.board_update).safeParse({ taskId: 'task-1', answers: [{ question: 0, answer: 'Use the v2 API' }] }).success).toBe(true)
+    expect(zod.object(INPUTS.board_update).safeParse({ taskId: 'task-1', answers: [{ index: 0, text: 'Use the v2 API' }] }).success).toBe(false)
+    schemas.assertDef('mcp-board@1.1', 'board-update-input', { taskId: 'task-1', answers: [{ question: 0, answer: 'Use the v2 API' }] })
     expect(zod.object(INPUTS.board_close).safeParse({ projectId: 'p2', outcome: 'abandoned' }).success).toBe(false)
     expect(zod.object(INPUTS.board_claim).safeParse({ taskId: 'task-1', owner: 'lead', ttlSeconds: 5 }).success).toBe(false)
     expect(zod.object(INPUTS.board_charter).safeParse({ ...example('mcp-board.charter').input, charter: { ...CHARTER, approval: `sha256:${'1'.repeat(64)}` } }).success).toBe(false)

@@ -410,7 +410,7 @@ Scope: `client`
 | `taskId` | string | yes |  |
 | `generation` | integer |  | The lease generation the caller holds (a fence, INV-4) |
 | `note` | string |  | A progress line; not stored: the result comes from the workflow run that serves the task |
-| `answers` | array |  | Answers to a waiting-for-input task's questions, by index; answering every one makes it ready again |
+| `answers` | array |  | Answers to a question wait (waiting-for-input, reason question), each item {question, answer}: question is the question's index from 0 in the task's waiting.questions (board_task), answer your text (1 to 2000 characters); every question once, e.g. [{"question": 0, "answer": "Use the v2 API"}]. Answering every one sends the task through the gate for its next attempt |
 
 ## `brainstorm`
 

@@ -252,7 +252,7 @@ work again as a new task.
 
 | `waiting.reason` | From | Revived by | Otherwise |
 |---|---|---|---|
-| `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
+| `question` | `block` with questions | `answer` (`board_update` `answers`, one `{question, answer}` per question, `question` its index from 0 in `waiting.questions`), every question once: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked (a policy that does not ask, or a funding ask past the bound) | nothing | expires: `input-expired` |
 | `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
 | `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
