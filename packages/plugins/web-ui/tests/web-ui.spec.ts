@@ -9,6 +9,7 @@ import { chromium } from 'patchright-core'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import * as WebUi from '../src/index.ts'
+import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
 
 const RUN = {
   runId: 'run_abc', template: 'investigate', status: 'running', specHash: 'sha256:00', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:01Z',
@@ -72,14 +73,7 @@ async function boot(options: { approvals?: boolean } = {}) {
 
 describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
-    const routes: unknown[] = []
-    class LanWebServer extends Service {
-      protocol = 'http:'
-      host = '192.0.2.10'
-      port = 47317
-      constructor(ctx: Context) { super(ctx, 'webServer') }
-      register(route: unknown): () => void { routes.push(route); return () => undefined }
-    }
+    const { LanWebServer, routes } = lanWebServer()
     const dir = mkdtempSync(join(tmpdir(), 'system-ui-lan-'))
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()

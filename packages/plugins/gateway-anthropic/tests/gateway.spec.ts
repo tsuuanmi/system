@@ -7,6 +7,7 @@ import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import * as Gateway from '../src/index.ts'
 import { type MessagesRequest, messageOf, streamEvents, systemText, turnsOf } from '../src/index.ts'
+import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
 
 describe('Messages ↔ neutral turns', () => {
   it('drops client billing metadata from the system prompt, and maps tool use and results', () => {
@@ -69,14 +70,7 @@ const TOOLS = [{ name: 'Read', description: 'Reads a file.', input_schema: { pro
 
 describe('Anthropic Messages gateway over HTTP', () => {
   it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
-    const routes: unknown[] = []
-    class LanWebServer extends Service {
-      protocol = 'http:'
-      host = '192.0.2.10'
-      port = 47317
-      constructor(ctx: Context) { super(ctx, 'webServer') }
-      register(route: unknown): () => void { routes.push(route); return () => undefined }
-    }
+    const { LanWebServer, routes } = lanWebServer()
     const ctx = new Context()
     const dir = mkdtempSync(join(tmpdir(), 'system-gw-lan-'))
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
