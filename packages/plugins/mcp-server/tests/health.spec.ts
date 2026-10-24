@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { type HealthSources, healthReport, MAX_UNKNOWN_ENTRIES } from '../src/health.ts'
+import { MAX_UNKNOWN_ENTRIES } from '@tsuuanmi/system-libs'
+import { type HealthSources, healthReport } from '../src/health.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'system-health-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
