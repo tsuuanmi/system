@@ -127,13 +127,9 @@ async function boot(options: { workflow?: Config; digests?: Drafter | 'held' | f
   }
 }
 
-const until = async (check: () => boolean | Promise<boolean>, what: string, ms = 30_000): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = (check: () => boolean | Promise<boolean>, what: string, ms = 30_000): Promise<void> => vi.waitFor(async () => {
+  if (!(await check())) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: ms, interval: 25 })
 
 /** The run's task once its digest settled: attached or bypassed. */
 const digested = async (ctx: Context, runId: string): Promise<TaskView> => {

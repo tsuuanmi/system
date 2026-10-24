@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { canRunBrowser, testChrome } from '../../../plugins/browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../../plugins/provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini } from '../../../plugins/provider-gemini-web/fixtures/fake-gemini.ts'
@@ -58,13 +58,9 @@ async function crash(e: Engine): Promise<void> {
   if (e.child.exitCode === null && e.child.signalCode === null) await new Promise((resolve) => e.child.once('exit', resolve))
 }
 
-const until = async (check: () => boolean, ms: number): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out')
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, ms: number): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error('timed out')
+}, { timeout: ms, interval: 20 })
 
 async function scenario(options: Partial<FakeOptions>, conversation: 'persist' | 'temporary', crashWhen: (fake: FakeChatGpt, dir: string) => boolean) {
   const fake = new FakeChatGpt({ answer: 'The answer, once.', ...options })

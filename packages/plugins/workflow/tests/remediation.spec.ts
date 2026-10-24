@@ -159,15 +159,11 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
   }
 }
 
-const until = async <T>(read: () => T | undefined | Promise<T | undefined>, what: string, ms = 30_000): Promise<T> => {
-  const deadline = Date.now() + ms
-  for (;;) {
-    const value = await read()
-    if (value) return value
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = <T>(read: () => T | undefined | Promise<T | undefined>, what: string, ms = 30_000): Promise<T> => vi.waitFor(async () => {
+  const value = await read()
+  if (!value) throw new Error(`timed out waiting for ${what}`)
+  return value
+}, { timeout: ms, interval: 25 })
 
 /** The run once it waits on the remediation gate's request in the queue. */
 const queued = (ctx: Context, runId: string): Promise<RunView & { blocked: { kind: 'gate'; approvalRequest: string; plan: ArtifactRef } }> =>

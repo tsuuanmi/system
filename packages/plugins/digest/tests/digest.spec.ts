@@ -53,13 +53,9 @@ async function boot(drafter: ((refs: { log: ArtifactRef; bench: ArtifactRef }) =
   }
 }
 
-const until = async (check: () => boolean, what: string): Promise<void> => {
-  const deadline = Date.now() + 30_000
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, what: string): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: 30_000, interval: 20 })
 
 describe('ctx.digests on the store', () => {
   it('starts its Worker with a brief recorded before the run, pointing at the sources by content id and never carrying their content, which the source renders verbatim', async () => {

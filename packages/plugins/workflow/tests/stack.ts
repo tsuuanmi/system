@@ -27,7 +27,7 @@ import Turns from '@tsuuanmi/system-turns'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
-import { onTestFinished } from 'vitest'
+import { onTestFinished, vi } from 'vitest'
 import { fileDisplay, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
@@ -56,13 +56,9 @@ export const answer = (prompt: string): string => (prompt.includes('<report>') ?
 /** The plan a run's gate waits on. */
 export const waitingPlan = (view: RunView): ArtifactRef => (view.blocked?.kind === 'gate' ? view.blocked.plan : (() => { throw new Error(`run ${view.runId} waits on no plan`) })())
 
-export const until = async (check: () => boolean, ms = 30_000, what = ''): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error(what ? `timed out waiting for ${what}` : 'timed out')
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-}
+export const until = (check: () => boolean, ms = 30_000, what = ''): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error(what ? `timed out waiting for ${what}` : 'timed out')
+}, { timeout: ms, interval: 100 })
 
 export interface BootOptions { fake?: FakeOptions; gemini?: FakeGeminiOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; sessions?: Record<string, unknown>; ready?: boolean; accounts?: string[] }
 

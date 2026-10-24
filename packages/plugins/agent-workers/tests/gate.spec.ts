@@ -700,15 +700,11 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     return Object.assign(ctx, { swept })
   }
 
-  const settledRun = async (ctx: Context, runId: string, status: 'completed' | 'failed') => {
-    const deadline = Date.now() + 30_000
-    for (;;) {
-      const view = ctx.workflow.get(runId)!
-      if (view.status === status) return view
-      if (Date.now() > deadline) throw new Error(`run ${runId} is ${view.status}, not ${status}`)
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    }
-  }
+  const settledRun = (ctx: Context, runId: string, status: 'completed' | 'failed') => vi.waitFor(() => {
+    const view = ctx.workflow.get(runId)!
+    if (view.status !== status) throw new Error(`run ${runId} is ${view.status}, not ${status}`)
+    return view
+  }, { timeout: 30_000, interval: 50 })
 
   it('continues the session once the operator approves the call it stopped at: one more attempt, whose brief says so, and the call runs once', async () => {
     const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])

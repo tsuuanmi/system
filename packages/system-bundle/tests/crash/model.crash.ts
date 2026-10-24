@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { fakeOpenAi } from '../../../plugins/models/tests/fake-openai.ts'
 
 const HARNESS = fileURLToPath(new URL('./model-harness.mjs', import.meta.url))
@@ -44,13 +44,9 @@ function engine(args: string[]): Engine {
   return { child, runId, done }
 }
 
-const until = async (check: () => boolean, ms: number): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out')
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, ms: number): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error('timed out')
+}, { timeout: ms, interval: 20 })
 
 describe('crash injection while a model Worker answers (QA-1, INV-4)', () => {
   it('after the call was sent, before the answer: the call is sent exactly once more and the run completes', async () => {

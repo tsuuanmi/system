@@ -18,7 +18,7 @@ import type { PoolTemplate } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { CapabilityDescriptor, WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { FakeAgentRuntime } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { planMigration } from '../src/migrate.ts'
@@ -133,13 +133,9 @@ const call = async (b: Booted, tool: string, args: Record<string, unknown>) => {
 const enrollments = (b: Booted) => (b.ctx.store.db.prepare("SELECT id FROM artifacts WHERE kind = 'decision' ORDER BY created_at, rowid").all() as Array<{ id: string }>)
   .map((row) => b.ctx.artifacts.get(row.id as `sha256:${string}`)!.body as { decisionType: string; question: string; inputs: string[]; decider: { id: string }; outcome: { option: string; detail: Record<string, unknown> } })
   .filter((d) => d.decisionType === 'enrollment')
-const until = async (check: () => boolean | Promise<boolean>, ms = 5000): Promise<void> => {
-  const end = Date.now() + ms
-  while (!(await check())) {
-    if (Date.now() > end) throw new Error('timed out')
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-}
+const until = (check: () => boolean | Promise<boolean>, ms = 5000): Promise<void> => vi.waitFor(async () => {
+  if (!(await check())) throw new Error('timed out')
+}, { timeout: ms, interval: 10 })
 
 const ROLE = (id: string, extra: Record<string, unknown> = {}) => ({ id, workspace: '/srv/ws', sandbox: 'read-only' as const, tier: 'standard' as const, ...extra })
 const ACC1 = `${A}:0123456789abcdef`

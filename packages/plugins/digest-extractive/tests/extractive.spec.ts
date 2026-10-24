@@ -72,13 +72,9 @@ async function boot(drafter: Drafter | undefined, config: Config = {}, before: (
   }
 }
 
-const until = async (check: () => boolean, what: string): Promise<void> => {
-  const deadline = Date.now() + 30_000
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, what: string): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: 30_000, interval: 20 })
 const settled = async (ctx: Context, view: DigestView): Promise<DigestView> => ctx.digests.wait(view.requestId, 30_000)
 const decisionInputs = (ctx: Context, view: DigestView): string[] => (ctx.artifacts.get(view.decision!)!.body as { inputs: string[] }).inputs
 

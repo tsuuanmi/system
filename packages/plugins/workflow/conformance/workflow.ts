@@ -24,7 +24,7 @@ import type { BoardTask, BudgetLine, TaskInput } from '@tsuuanmi/system-board-co
 import { captureGitSubject, SchemaRegistry, sha256, startPrompt } from '@tsuuanmi/system-libs'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import type { ArtifactRef, CapabilityDescriptor, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
-import { expect } from 'vitest'
+import { expect, vi } from 'vitest'
 import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
@@ -318,13 +318,9 @@ const settled = async (ctx: Context, runId: string): Promise<RunView> => {
   return view
 }
 
-const until = async (check: () => boolean, what: string, ms = 30_000): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = (check: () => boolean, what: string, ms = 30_000): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: ms, interval: 25 })
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 

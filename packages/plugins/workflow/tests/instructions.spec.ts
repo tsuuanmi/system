@@ -41,15 +41,11 @@ async function boot(templates: Record<string, NodeTemplate[]>): Promise<{ ctx: C
   return { ctx, workers }
 }
 
-const until = async <T>(read: () => T | undefined, what: string, ms = 30_000): Promise<T> => {
-  const deadline = Date.now() + ms
-  for (;;) {
-    const value = read()
-    if (value) return value
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = <T>(read: () => T | undefined, what: string, ms = 30_000): Promise<T> => vi.waitFor(() => {
+  const value = read()
+  if (!value) throw new Error(`timed out waiting for ${what}`)
+  return value
+}, { timeout: ms, interval: 25 })
 
 const finished = (ctx: Context, runId: string): Promise<RunView> => until(() => {
   const view = ctx.workflow.get(runId)

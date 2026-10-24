@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import { account, ask, turnsStack } from './stack.ts'
 
@@ -14,13 +14,9 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 4000, answer: 'answered while we were down' } })
     const turn = await ask(first.ctx, { prompt: 'survive a crash', persist: true })
-    const until = async (check: () => boolean): Promise<void> => {
-      const deadline = Date.now() + 30_000
-      while (!check()) {
-        if (Date.now() > deadline) throw new Error('timed out')
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-    }
+    const until = (check: () => boolean): Promise<void> => vi.waitFor(() => {
+      if (!check()) throw new Error('timed out')
+    }, { timeout: 30_000, interval: 100 })
     await until(() => first.ctx.turns.get(turn.turnId)?.binding !== undefined)
     await first.stop()
     // The provider keeps working while the host is down.
@@ -78,9 +74,9 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 4000, answer: (prompt: string) => `answer to ${prompt}` } })
     const t1 = await ask(first.ctx, { prompt: 'one', persist: true })
-    const settled = async (check: () => boolean): Promise<void> => {
-      for (let i = 0; i < 300 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 100))
-    }
+    const settled = (check: () => boolean): Promise<void> => vi.waitFor(() => {
+      if (!check()) throw new Error('timed out')
+    }, { timeout: 30_000, interval: 100 })
     await settled(() => first.ctx.turns.get(t1.turnId)?.binding !== undefined)
     const t2 = await ask(first.ctx, { prompt: 'two', sessionId: t1.sessionId! })
     expect(first.ctx.turns.get(t2.turnId)?.status).toBe('queued')
@@ -104,9 +100,9 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { researchMs: 120_000, report: 'late report' } })
     const turn = await ask(first.ctx, { research: true, prompt: 'long research' })
-    const settled = async (check: () => boolean, ms = 60_000): Promise<void> => {
-      for (let t = Date.now(); !check() && Date.now() - t < ms;) await new Promise((resolve) => setTimeout(resolve, 100))
-    }
+    const settled = (check: () => boolean, ms = 60_000): Promise<void> => vi.waitFor(() => {
+      if (!check()) throw new Error('timed out')
+    }, { timeout: ms, interval: 100 })
     await settled(() => first.ctx.turns.get(turn.turnId)?.binding !== undefined)
     await first.stop()
     const second = await boot({ dir, shared: first.fake })
@@ -206,15 +202,9 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 60_000 }, capacity: 1 })
     const submitted = await ask(first.ctx, { prompt: 'long one' })
-    await new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 30_000
-      const poll = (): void => {
-        if (first.fake.sent.length) return resolve()
-        if (Date.now() > deadline) return reject(new Error('never sent'))
-        setTimeout(poll, 100)
-      }
-      poll()
-    })
+    await vi.waitFor(() => {
+      if (!first.fake.sent.length) throw new Error('never sent')
+    }, { timeout: 30_000, interval: 100 })
     // Capacity 1: this turn waits behind the first one when the host goes down.
     const queuedTurn = await ask(first.ctx, { prompt: 'queued before the crash' })
     expect(first.ctx.turns.get(queuedTurn.turnId)).toMatchObject({ status: 'queued' })

@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const HARNESS = fileURLToPath(new URL('./agent-harness.mjs', import.meta.url))
 
@@ -44,13 +44,9 @@ function engine(args: string[]): Engine {
   return { child, runId, done }
 }
 
-const until = async (check: () => boolean, ms: number): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out')
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, ms: number): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error('timed out')
+}, { timeout: ms, interval: 20 })
 
 const starts = (dir: string): number => (existsSync(join(dir, 'agent-started')) ? readFileSync(join(dir, 'agent-started'), 'utf8').split('\n').filter(Boolean).length : 0)
 
