@@ -693,7 +693,9 @@ second execution path (INV-1).
     a task's next attempt never resumes a session its source holds: it starts fresh, given its
     brief, the decision saying why, and resumes it again once the source frees it;
   - since 1.7 (T127), `usage` lists runs by state whenever they started, and by when their state
-    changed, the latest changed first, at most the limit asked;
+    changed, the latest changed first, at most the limit asked; and a start bound to the revision
+    of its task the caller read (`task.revision`) is refused before anything is written once the
+    task moved, so the run's input and every brief come from one reading of it;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

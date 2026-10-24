@@ -124,12 +124,15 @@ export interface StartInput extends CallerOptions {
 /**
  * The board task a run serves, one attempt of it (docs/design/board.md): its id, and the claim a
  * lead holds when it hands that claim to the run (`holder` and `generation`, both or neither).
- * Without a claim, the run claims the ready task itself.
+ * Without a claim, the run claims the ready task itself. With `revision` (contract 1.7), the task's
+ * revision the caller read its input from: a start whose task has moved since is refused before
+ * anything is written, so the run's input and every brief come from one reading of the task (INV-5).
  */
 export interface TaskClaim {
   taskId: string
   holder?: string | undefined
   generation?: number | undefined
+  revision?: number | undefined
 }
 
 /**

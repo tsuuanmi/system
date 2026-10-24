@@ -456,7 +456,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (task.revision !== body.revision) return json(res, 409, { error: `task ${taskId} changed since the page showed it (revision ${task.revision}, not ${String(body.revision)}); nothing was started` })
       if (task.template !== body.template) return json(res, 409, { error: `task ${taskId} runs template ${task.template}, not ${String(body.template)}; nothing was started` })
       // The task's own words are the run's input, as the requested change; a repeated press starts no second run.
-      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
+      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId, revision: task.revision }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
       return json(res, 200, { run })
     } catch (error) {
       // Admitted all the same: it starts once the board shows it recorded, so never said as nothing started.

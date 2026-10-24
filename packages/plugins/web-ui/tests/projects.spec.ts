@@ -386,6 +386,25 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(workers.started).toEqual([])
   })
 
+  it('binds the run\'s input to the revision of the task it was read at: a task that moved between the page\'s read and the engine\'s is refused, nothing started (T127 item 13, INV-5)', async () => {
+    const { ctx, call, workers } = await boot()
+    await activeProject(ctx)
+    const task = await readyTask(ctx, 'Write the release notes', { template: 'solo' })
+    // The route reads the task, then the engine does: the second read finds it moved.
+    const read = ctx.board.task.bind(ctx.board)
+    let reads = 0
+    ctx.board.task = (async (taskId: string) => {
+      const found = await read(taskId)
+      reads += 1
+      return reads === 2 && found ? { ...found, revision: found.revision + 1, goal: 'another goal' } : found
+    }) as never
+    onTestFinished(() => void (ctx.board.task = read))
+    const refused = await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' })
+    expect([refused.status, refused.value.error]).toEqual([409, `board task ${task.taskId} changed since it was read (revision ${task.revision + 1}, not ${task.revision}); nothing was started`])
+    expect(workers.started).toEqual([])
+    expect(await read(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+  })
+
   it.runIf(canRunBrowser)('starts a ready task from its Board card in a real browser after a confirmation that says what runs on which kind of Worker; the card moves to Working, and a task naming no template is refused with why (T116)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted

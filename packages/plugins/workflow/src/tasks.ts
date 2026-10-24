@@ -186,6 +186,7 @@ export class TaskRuns {
     const board = e.board
     if (!board) throw new WorkflowFailure('config_error', `no board is loaded: a run for board task ${claim.taskId} needs ctx.board (its bundle row on, over the approval queue); nothing was started`)
     if ((claim.holder === undefined) !== (claim.generation === undefined)) throw new WorkflowFailure('invalid_input', 'a claim handed to a run names its holder and its generation, both or neither')
+    if (claim.revision !== undefined && (!Number.isSafeInteger(claim.revision) || claim.revision < 0)) throw new WorkflowFailure('invalid_input', 'a task\'s revision is a whole number of at least 0')
     const again = this.repeated(plain, prepared)
     if (again) {
       if (this.row(again.run_id)?.task_id !== claim.taskId) throw new WorkflowFailure('invalid_input', 'clientRequestId was reused with a different request')
@@ -195,6 +196,8 @@ export class TaskRuns {
     e.bounded()
     const task = await board.task(claim.taskId)
     if (!task) throw new WorkflowFailure('invalid_input', `unknown board task ${claim.taskId}; nothing was started`)
+    // The caller's input came from its own reading of the task: one that moved since is refused, so the input and every brief agree (INV-5).
+    if (claim.revision !== undefined && task.revision !== claim.revision) throw new WorkflowFailure('invalid_input', `board task ${task.taskId} changed since it was read (revision ${task.revision}, not ${String(claim.revision)}); nothing was started`)
     if (task.template !== undefined && task.template !== plain.template) {
       throw new WorkflowFailure('invalid_input', `board task ${task.taskId} runs template ${task.template}, not ${plain.template}; nothing was started`)
     }
