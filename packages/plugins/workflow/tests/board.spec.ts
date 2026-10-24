@@ -54,7 +54,7 @@ class AgentWorkers extends ScriptedWorkers {
     const execution = super.get(id)
     if (!execution?.result) return execution
     if (!this.results.has(id)) {
-      const text = (this.artifacts().get(execution.result)?.body as { text: string }).text
+      const text = (this.artifacts().get(execution.result)!.body as { text: string }).text
       const { subject } = captureGitSubject(this.workspace)!
       this.results.set(id, this.artifacts().put({
         kind: 'report', bodySchema: 'agent-result@1.1', classification: 'public', producer: { type: 'worker', ref: 'w:standard' },

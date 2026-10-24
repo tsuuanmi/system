@@ -97,7 +97,7 @@ describe('ctx.workers: configured preferences', () => {
       expect(ctx.workers.accept(put(`See https://a.example/x${'!'.repeat(100_000)}y and https://a.example/x?!.`), 'acceptance.cited')).toMatchObject({ reasons: ['the answer cites 2 source link(s)'] })
       expect(performance.now() - started).toBeLessThan(1000)
       // The losing option says why it lost (INV-13): the failed check, or that every check passed.
-      const candidates = (decision: string) => (ctx.artifacts.get(decision)?.body as { candidates: unknown[] }).candidates
+      const candidates = (decision: string) => (ctx.artifacts.get(decision)!.body as { candidates: unknown[] }).candidates
       expect(candidates(uncited.decision)).toEqual([
         { option: 'accept', selected: false, reasons: ['not accept: the answer cites no source link'] },
         { option: 'reject', selected: true, reasons: ['the answer cites no source link'] },
