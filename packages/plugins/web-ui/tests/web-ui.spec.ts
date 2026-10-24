@@ -372,6 +372,33 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByRole('alert').count()).toBe(0)
   }, 60_000)
 
+  it.runIf(canRunBrowser)('has one navigation on every page, the current page marked, and each page a title with one line of what it is for (T97)', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const nav = page.getByRole('navigation', { name: 'Pages' })
+    const current = () => nav.locator('[aria-current="page"]').innerText()
+    await expect.poll(() => page.getByRole('heading', { name: 'Home', exact: true }).count()).toBe(1)
+    expect(await current()).toBe('Home')
+    expect(await page.locator('p.lead').innerText()).toContain('What waits for your verdict')
+    for (const [link, purpose] of [['Board', 'Every project and its open tasks'], ['Workers', 'Every Worker: what it is for'], ['Autonomy policy', 'Which actions run on their own']] as const) {
+      await nav.getByRole('link', { name: link }).click()
+      await expect.poll(() => page.getByRole('heading', { name: link, exact: true }).count()).toBe(1)
+      expect(await current()).toBe(link)
+      expect(await page.locator('p.lead').innerText()).toContain(purpose)
+      expect(await page.title()).toBe(`system: ${link}`)
+    }
+    // Keyboard: the navigation is links, reached and followed without a pointer.
+    await nav.getByRole('link', { name: 'Home' }).focus()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => current()).toBe('Home')
+    await page.getByRole('link', { name: 'run_abc' }).click()
+    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    expect(await page.locator('main').innerText()).not.toContain('← ')
+  }, 60_000)
+
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
     const { origin, token, workflow } = await boot()
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })

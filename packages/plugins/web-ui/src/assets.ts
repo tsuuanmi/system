@@ -9,7 +9,7 @@ export const PAGE = `<!doctype html>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav aria-label="Pages"><a href="/ui/" id="home-link">Home</a> <a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
 <div id="outcome"></div>
 <main id="main"></main>
 <script src="/ui/app.js"></script>
@@ -23,7 +23,9 @@ export const APP_CSS = `
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
 header { display: flex; align-items: baseline; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; }
+header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; }
+header nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); } header nav a:hover { color: var(--accent); }
+h2.page { margin-bottom: 0; } p.lead { color: var(--muted); margin-top: 4px; }
 #status { color: var(--muted); }
 main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
@@ -128,7 +130,7 @@ export const APP_JS = `'use strict'
   let pressed = false
   let pending = null
   const show = (...parts) => {
-    const kept = parts.filter((part) => part !== null && part !== undefined)
+    const kept = parts.flat().filter((part) => part !== null && part !== undefined)
     if (pressed) pending = kept
     else { pending = null; main.replaceChildren(...kept) }
   }
@@ -143,6 +145,15 @@ export const APP_JS = `'use strict'
   document.addEventListener('pointercancel', release, true)
   document.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') press() }, true)
   document.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') release() }, true)
+  // Every page opens with its title and, in one line, what it is for.
+  const PAGES = {
+    home: ['Home', 'What waits for your verdict, what needs a look, how the Workers are doing, and the latest runs.'],
+    board: ['Board', 'Every project and its open tasks, and who works on them; pause, resume, or close a project.'],
+    workers: ['Workers', 'Every Worker: what it is for, what it does now, and when it is back if it rests at a limit.'],
+    policy: ['Autonomy policy', 'Which actions run on their own, which ask you first, and the changes proposed to that.'],
+    run: ['Run', 'One run: what it answered, its steps in order, and what you can do with it.'],
+  }
+  const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
   // What the operator's last verdict did, outside the refreshed page: it stays until dismissed.
@@ -419,7 +430,7 @@ export const APP_JS = `'use strict'
 
   async function list() {
     const { runs } = await api('runs')
-    show(await approvals(), await reviews(), el('h2', {}, 'Runs'), runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.map((run) => el('tr', {},
+    show(pageHead('home'), await approvals(), await reviews(), el('h2', {}, 'Runs'), runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.map((run) => el('tr', {},
       el('td', { class: 'nowrap' }, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
       el('td', { class: 'nowrap' }, run.template),
       el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
@@ -447,8 +458,8 @@ export const APP_JS = `'use strict'
     const vote = (option) => act('vote', () => ({ decision: tie.decision, option, rationale: rationale.value }))
     const decisions = new Map((explain ? explain.nodes : []).map((n) => [n.nodeId, n.decisions]))
     show(
-      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← all runs')),
-      el('h2', {}, run.runId + ' ', el('span', { class: 'state ' + run.status }, run.status)),
+      pageHead('run', 'Run ' + run.runId),
+      el('p', {}, el('span', { class: 'state ' + run.status }, run.status)),
       el('p', { class: 'muted' }, run.template + ' · spec ', el('code', {}, run.specHash)),
       run.error ? el('p', { class: 'state failed' }, run.error.kind + ': ' + run.error.message) : null,
       tie ? el('div', { class: 'panel' },
@@ -487,7 +498,7 @@ export const APP_JS = `'use strict'
   async function boardView() {
     let projects
     try { ({ projects } = await api('projects')) } catch (error) {
-      show(el('h2', {}, 'Board'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The board is not running.' : error.message))
+      show(pageHead('board'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The board is not running, so there are no projects to show.' : 'The board could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
       return
     }
     const count = (p, states) => states.reduce((n, s) => n + (p.open[s] || 0), 0)
@@ -545,8 +556,7 @@ export const APP_JS = `'use strict'
         asksOf(p).length ? el('div', {}, asksOf(p).length + ' task(s) wait for your approval: ', asksOf(p).flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])) : null)
     }
     show(
-      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
-      el('h2', {}, 'Board'),
+      pageHead('board'),
       projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet.'),
       projects.length ? table(['Project', 'State', 'Charter', 'Open tasks', 'Move'], projects.map((p) => el('tr', {},
         el('td', {}, el('strong', {}, p.title), el('div', { class: 'muted' }, p.projectId)),
@@ -624,7 +634,7 @@ export const APP_JS = `'use strict'
     const counts = [c.busy + ' working', c.ready + ' idle', c.resting + ' at a limit' + (resting ? ' (the first back ' + when(resting) + ')' : ''), c.unavailable + ' unavailable'].concat(c.quarantined ? [c.quarantined + ' quarantined'] : [])
     const unheard = isKnown(roster.sources) ? roster.sources.value.filter((s) => s.state !== 'described') : []
     show(
-      el('h2', {}, 'Workers'),
+      pageHead('workers'),
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
@@ -642,7 +652,7 @@ export const APP_JS = `'use strict'
   async function policyView() {
     let value
     try { value = await api('policy') } catch (error) {
-      show(el('h2', {}, 'Autonomy policy'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The approval queue is not running.' : error.message))
+      show(pageHead('policy'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The approval queue is not running, so there is no autonomy policy to show.' : 'The policy could not be read: ' + error.message + '. Reload the page to try again.'))
       return
     }
     const { set, policies, effective, changes, proposals } = value
@@ -687,8 +697,7 @@ export const APP_JS = `'use strict'
     }
     const when = (t) => t ? new Date(t).toLocaleString() : '-'
     show(
-      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
-      el('h2', {}, 'Autonomy policy'),
+      pageHead('policy'),
       askedCards.length ? el('section', { 'aria-label': 'Changes waiting for your verdict' },
         el('h3', {}, askedCards.length === 1 ? 'A change waits for your verdict' : askedCards.length + ' changes wait for your verdict'),
         el('p', { class: 'muted' }, 'A change applies only once you approve it, here or on Home.'),
@@ -747,11 +756,23 @@ export const APP_JS = `'use strict'
     history.pushState(null, '', '?view=' + name)
     refresh()
   })
+  document.getElementById('home-link').addEventListener('click', (e) => { e.preventDefault(); go() })
   nav('board-link', 'board')
   nav('workers-link', 'workers')
   nav('policy-link', 'policy')
   window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); confirming = false; refresh() })
+  // The page shown is marked in the navigation and named in the window's title.
+  const mark = () => {
+    const page = view === 'policy' || view === 'board' || view === 'workers' ? view : current ? 'run' : 'home'
+    for (const [id, name] of [['home-link', 'home'], ['board-link', 'board'], ['workers-link', 'workers'], ['policy-link', 'policy']]) {
+      const link = document.getElementById(id)
+      if (name === page || (page === 'run' && name === 'home')) link.setAttribute('aria-current', 'page')
+      else link.removeAttribute('aria-current')
+    }
+    document.title = 'system: ' + PAGES[page][0] + (current ? ' ' + current : '')
+  }
   async function refresh() {
+    mark()
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
   }

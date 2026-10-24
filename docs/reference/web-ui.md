@@ -10,6 +10,12 @@ Every route is under `/ui/api` and passes the shared request guard first
 (`content-type: application/json`, else `415`), of at most 16 KiB (else `413`; 128 KiB for
 `policy/propose`). Errors are `{error}`.
 
+## The page
+
+One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
+current one marked (`aria-current`) and named in the window's title; a run's page counts as Home's.
+Each page opens with its title and one line of what it is for.
+
 ## Runs
 
 | Route | Body | Answer |
