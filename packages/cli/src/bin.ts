@@ -119,7 +119,8 @@ const USAGE = `Usage: system <command>
   ui                        print the web UI link: Home (what waits for you), the approval queue (approve or deny one request or a batch),
                             reviews of board tasks (accept or reject), runs (approve, vote, stop, continue),
                             the Board page's projects (pause, resume, close; start a ready task), the Workers tab (the roster),
-                            and the Autonomy policy page (propose a change, which the queue asks for)
+                            the Autonomy policy page (propose a change, which the queue asks for),
+                            and Help (how System works in plain words, and a glossary)
   mcp-token --scope model   print the model gateways' token (for a model client's environment variable;
                             needs a gateway row)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
