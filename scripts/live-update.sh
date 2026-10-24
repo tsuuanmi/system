@@ -5,22 +5,24 @@
 # A dry run by default: it checks what it can without changing anything (the running profile is
 # only read) and prints the plan. With --apply it acts:
 #   1. capture what the running profile answers: its health, every run's explain and result; and
-#      how its daemon was started (directory, node, arguments, log), read from the process;
-#   2. `system shutdown --deadline <s>`, then wait until the daemon has exited (it is never killed);
+#      where its unit, system.service, sends the daemon's output;
+#   2. `systemctl --user stop system.service`: the unit's ExecStop drains (`system shutdown
+#      --deadline`), then stops the daemon (it is never killed); wait until it has exited;
 #   3. back up the store and the vault (`system backup`, verified by a restore preview) and the
 #      profile's files, into <backups>/<date>-before-base/;
 #   4. check out the target, install with the frozen lockfile, build, and read in the built lib the
 #      commit it was built from (packages/cli/lib/build-commit): the target's;
 #   5. link the profile's bundle from the live installation (`system init`, when it links another
 #      checkout), put the candidate profile patch in place (--patch), and `system check` the profile;
-#   6. start the daemon as it was started, and wait for /healthz;
+#   6. `systemctl --user start system.service`, and wait for /healthz;
 #   7. the upgrade checks (scripts/live-update-check.ts): no health check worse, every old run
 #      explains and answers as before, no migration backwards, every record valid; then
 #      `system plugins` and the MCP header helper.
-# A failure after step 2 rolls back: the new daemon stopped, the profile's files and the previous
-# commit put back, installed and built, the store and vault restored from step 3's backup when the
-# new code ran on them, and the daemon started again. Each step checks its outcome, and a step
-# already done is not done again: after an interruption, run the same command again.
+# The daemon runs only under its unit, with the unit's environment file: the script refuses a daemon
+# started any other way. A failure after step 2 rolls back: the unit stopped, the profile's files
+# and the previous commit put back, installed and built, the store and vault restored from step 3's
+# backup when the new code ran on them, and the unit started again. Each step checks its outcome,
+# and a step already done is not done again: after an interruption, run the same command again.
 set -Eeuo pipefail
 umask 077
 
@@ -28,14 +30,14 @@ usage() {
   cat <<'EOF'
 usage: scripts/live-update.sh <target sha> [--apply] [--check-with <built checkout of the target>]
          [--patch <candidate cordis.patch.yml>] [--from <sha>] [--live <checkout>] [--dsh-home <dir>]
-         [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--deadline <seconds>]
-         [--new-workers <prefix,...>]
+         [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--new-workers <prefix,...>]
 
 A dry run unless --apply. --apply needs --check-with: the profile is checked against the target's
-code before anything is stopped. The defaults are this host's live install: --from e218ae7,
+code before anything is stopped. The daemon runs under the user unit system.service, which is
+stopped and started (its ExecStop drains). The defaults are this host's live install: --from e218ae7,
 --live ~/workspaces/system-live, --dsh-home $DSH_HOME or ~/.dsh, --node-dir Node 24's bin,
 --pnpm-dir Node 22's bin (appended to PATH, for pnpm only), --backups ~/system-backups,
---deadline 600, --new-workers agent:.
+--new-workers agent:.
 Exit status: 0 done (or nothing to do), 1 stopped or rolled back, 2 usage, or a state to look at.
 EOF
 }
@@ -49,7 +51,6 @@ DSH_HOME_DIR=${DSH_HOME:-$HOME/.dsh}
 NODE_DIR=$HOME/.nvm/versions/node/v24.21.0/bin
 PNPM_DIR=$HOME/.nvm/versions/node/v22.23.2/bin
 BACKUPS=$HOME/system-backups
-DEADLINE=600
 NEW_WORKERS=agent:
 CHECK_WITH=''
 PATCH_CANDIDATE=''
@@ -57,7 +58,7 @@ PATCH_CANDIDATE=''
 while (($#)); do
   case $1 in
     --apply) APPLY=1 ;;
-    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --deadline | --new-workers)
+    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers)
       if (($# < 2)); then usage >&2; exit 2; fi
       case $1 in
         --check-with) CHECK_WITH=$2 ;;
@@ -68,7 +69,6 @@ while (($#)); do
         --node-dir) NODE_DIR=$2 ;;
         --pnpm-dir) PNPM_DIR=$2 ;;
         --backups) BACKUPS=$2 ;;
-        --deadline) DEADLINE=$2 ;;
         --new-workers) NEW_WORKERS=$2 ;;
       esac
       shift ;;
@@ -80,7 +80,7 @@ while (($#)); do
   esac
   shift
 done
-if [[ -z $TARGET_REF || ! $DEADLINE =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi
+if [[ -z $TARGET_REF ]]; then usage >&2; exit 2; fi
 
 # --- output and failure -------------------------------------------------------------------------
 
@@ -198,9 +198,17 @@ discovery_field() {
   node24 -e 'const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(d[process.argv[2]] ?? "")' "$DISCOVERY" "$1"
 }
 
-# Whether the profile's daemon runs from the live checkout: 0 yes, 1 no, 2 a process that is not the
-# live checkout's daemon holds the discovery file. Sets DAEMON_PID (the dsh process the discovery
-# file names) and WRAPPER_PID (its parent, when that is `system start`).
+# The daemon's unit, the one way it is stopped and started (docs/operations/runbooks.md#run-as-a-service).
+UNIT=system.service
+unit() { systemctl --user "$@"; }
+unit_show() { systemctl --user show -p "$1" --value "$UNIT"; }
+# active, inactive, failed, activating (a start, or a restart's wait), deactivating, …
+unit_state() { systemctl --user is-active "$UNIT" 2>/dev/null || true; }
+
+# Whether the profile's daemon runs from the live checkout under its unit: 0 yes, 1 no, 2 a process
+# that is not the live checkout's daemon holds the discovery file, 3 the live checkout's daemon runs
+# outside the unit. Sets DAEMON_PID (the dsh process the discovery file names) and WRAPPER_PID (its
+# parent `system start`, the unit's main process).
 DAEMON_PID=''
 WRAPPER_PID=''
 daemon_running() {
@@ -212,47 +220,28 @@ daemon_running() {
   args=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null) || return 1
   [[ $args == *"$LIVE/node_modules/"*"/@deepseek-ai/dsh/lib/bin.js --profile system"* ]] || return 2
   DAEMON_PID=$pid
-  parent=$(ppid_of "$pid") || return 0
-  if alive "$parent" && [[ $(tr '\0' ' ' <"/proc/$parent/cmdline" 2>/dev/null) == *"packages/cli/lib/bin.js start"* ]]; then
+  parent=$(ppid_of "$pid") || return 3
+  if alive "$parent" && [[ $(tr '\0' ' ' <"/proc/$parent/cmdline" 2>/dev/null) == *"packages/cli/lib/bin.js start"* ]] &&
+    [[ $(unit_show MainPID 2>/dev/null) == "$parent" ]]; then
     WRAPPER_PID=$parent
+    return 0
   fi
-  return 0
+  return 3
 }
 
-# How the running daemon was started: START_CWD, START_NODE, START_ARGS (after `start`), START_LOG.
+# How the unit runs the daemon, read from its main process: in the live checkout, on --node-dir's
+# Node, its output appended to a file (START_LOG, read on a failed start).
 read_start() {
-  local -a argv
-  local i
-  if [[ -z $WRAPPER_PID ]]; then
-    log "the daemon's parent is not \`system start\`: how it was started cannot be read"
-    return 1
-  fi
-  START_CWD=$(readlink "/proc/$WRAPPER_PID/cwd") || return 1
-  START_NODE=$(readlink "/proc/$WRAPPER_PID/exe") || return 1
+  local cwd exe
+  cwd=$(readlink "/proc/$WRAPPER_PID/cwd") || return 1
+  exe=$(readlink "/proc/$WRAPPER_PID/exe") || return 1
   START_LOG=$(readlink "/proc/$WRAPPER_PID/fd/1") || return 1
-  mapfile -d '' -t argv <"/proc/$WRAPPER_PID/cmdline" || return 1
-  START_ARGS=''
-  for ((i = 0; i + 1 < ${#argv[@]}; i++)); do
-    if [[ ${argv[i]} == *packages/cli/lib/bin.js && ${argv[i + 1]} == start ]]; then
-      START_ARGS=${argv[*]:i+2}
-      if (($(wc -w <<<"$START_ARGS") != ${#argv[@]} - i - 2)); then
-        log "an argument of the daemon's start holds a space: start it by hand"
-        return 1
-      fi
-      break
-    fi
-  done
-  if [[ $(realpath "$START_CWD") != "$LIVE" ]]; then log "the daemon was started in $START_CWD, not $LIVE"; return 1; fi
-  if [[ $(realpath "$START_NODE") != $(realpath "$NODE_DIR/node") ]]; then log "the daemon runs on $START_NODE, not $NODE_DIR/node (--node-dir)"; return 1; fi
-  if [[ $START_LOG != /* || ! -f $START_LOG ]]; then log "the daemon's output goes to $START_LOG, not a file"; return 1; fi
+  if [[ $(realpath "$cwd") != "$LIVE" ]]; then log "$UNIT runs the daemon in $cwd, not $LIVE"; return 1; fi
+  if [[ $(realpath "$exe") != $(realpath "$NODE_DIR/node") ]]; then log "$UNIT runs the daemon on $exe, not $NODE_DIR/node (--node-dir)"; return 1; fi
+  if [[ $START_LOG != /* || ! -f $START_LOG ]]; then log "$UNIT sends the daemon's output to $START_LOG, not a file (StandardOutput=append:)"; return 1; fi
 }
 
-load_start() {
-  START_CWD=$(state_get start_cwd)
-  START_NODE=$(state_get start_node)
-  START_ARGS=$(state_get start_args)
-  START_LOG=$(state_get start_log)
-}
+load_start() { START_LOG=$(state_get start_log); }
 
 wait_gone() {
   local until=$((SECONDS + $1)) pid any
@@ -268,22 +257,32 @@ wait_gone() {
   done
 }
 
-# `system shutdown` through a checkout's CLI, then wait until the daemon and its parent have exited.
+# `systemctl --user stop`: the unit's ExecStop drains (`system shutdown --deadline`), then stops the
+# daemon; systemctl returns once the unit is down. Then the daemon and its parent must be gone.
 stop_daemon() {
-  local checkout=$1
-  local -a pids
-  if ! daemon_running; then
-    log "the daemon is not running"
+  local state running=0
+  local -a pids=()
+  daemon_running || running=$?
+  if ((running == 0)); then
+    pids=("$DAEMON_PID" "$WRAPPER_PID")
+  fi
+  state=$(unit_state)
+  if ((running != 0)) && [[ $state == inactive || $state == failed ]]; then
+    log "the daemon is not running ($UNIT: $state)"
     return 0
   fi
-  pids=("$DAEMON_PID")
-  if [[ -n $WRAPPER_PID ]]; then pids+=("$WRAPPER_PID"); fi
-  log "system shutdown --deadline $DEADLINE (daemon ${pids[*]}): drains, then stops"
-  if ! cli "$checkout" shutdown --deadline "$DEADLINE" 2>&1 | tee -a "$LOG_FILE" >&2; then
-    log "shutdown reported a failure; waiting for the daemon to exit"
+  log "systemctl --user stop $UNIT (${pids[*]:-no daemon}; $state): its ExecStop drains, then stops"
+  if ! unit stop "$UNIT" 2>&1 | tee -a "$LOG_FILE" >&2; then
+    log "systemctl --user stop $UNIT failed"
+    return 1
   fi
-  if ! wait_gone 300 "${pids[@]}"; then
-    log "the daemon (${pids[*]}) has not exited 5 minutes after the shutdown (it is never killed)"
+  state=$(unit_state)
+  if [[ $state != inactive && $state != failed ]]; then
+    log "$UNIT is $state after its stop"
+    return 1
+  fi
+  if ((${#pids[@]})) && ! wait_gone 60 "${pids[@]}"; then
+    log "the daemon (${pids[*]}) has not exited after $UNIT stopped (it is never killed)"
     return 1
   fi
   log "the daemon has exited"
@@ -296,28 +295,57 @@ healthz_ok() {
   node24 -e 'fetch(new URL("/healthz", process.argv[1]), { signal: AbortSignal.timeout(5000) }).then(async (r) => process.exit(r.ok && (await r.text()).trim() === "ok" ? 0 : 1), () => process.exit(1))' "$url"
 }
 
-# Start the daemon the way it was started, in a session of its own, and wait for /healthz.
+# `systemctl --user start`, then wait for /healthz. A start that failed before (a crash loop that
+# reached the start limit) is reset first: a later start is this script's to make.
 start_daemon() {
-  # DSH_HOME named, so a value in the caller's environment never points the daemon elsewhere.
-  local -a args env=(PATH="$RUN_PATH" DSH_HOME="$DSH_HOME_DIR")
-  local from until
-  read -r -a args <<<"$START_ARGS"
+  local from until state
   from=$(stat -c %s "$START_LOG" 2>/dev/null || echo 0)
-  log "start: cd $LIVE && setsid nohup $START_NODE packages/cli/lib/bin.js start${START_ARGS:+ $START_ARGS} >> $START_LOG 2>&1 < /dev/null &"
-  # Without the update's lock (fd 9): the daemon outlives this script.
-  (cd "$LIVE" && exec env "${env[@]}" setsid nohup "$START_NODE" packages/cli/lib/bin.js start "${args[@]}" >>"$START_LOG" 2>&1 </dev/null 9>&-) &
+  unit reset-failed "$UNIT" 2>/dev/null || true
+  log "systemctl --user start $UNIT"
+  unit start "$UNIT" 2>&1 | tee -a "$LOG_FILE" >&2 || { log "systemctl --user start $UNIT failed"; return 1; }
   until=$((SECONDS + 180))
   while ((SECONDS < until)); do
     sleep 3
     if daemon_running && healthz_ok; then
-      log "the daemon is up: pid $DAEMON_PID${WRAPPER_PID:+ (system start: $WRAPPER_PID)}"
+      log "the daemon is up: pid $DAEMON_PID ($UNIT: $WRAPPER_PID)"
       return 0
     fi
-    if grep -q 'startup failed' < <(tail -c +"$((from + 1))" "$START_LOG"); then break; fi
+    state=$(unit_state)
+    if [[ $state == failed || $state == inactive ]]; then log "$UNIT is $state"; break; fi
+    if grep -q 'startup failed' < <(tail -c +"$((from + 1))" "$START_LOG" 2>/dev/null); then break; fi
   done
   log "the daemon did not come up; its log since the start:"
-  tail -c +"$((from + 1))" "$START_LOG" | tail -n 40 >&2 || true
+  tail -c +"$((from + 1))" "$START_LOG" 2>/dev/null | tail -n 40 >&2 || true
   return 1
+}
+
+# The unit runs the live checkout with an environment file of its own (one, required) naming this
+# DSH home. Sets ENV_FILE, or UNIT_PROBLEM when it does not.
+ENV_FILE=''
+UNIT_PROBLEM=''
+unit_ok() {
+  local files home
+  if [[ $(unit_show LoadState 2>/dev/null) != loaded ]]; then
+    UNIT_PROBLEM="there is no $UNIT user unit: run the daemon under it once (docs/operations/runbooks.md#run-the-live-daemon-under-systemservice)"
+    return 1
+  fi
+  if [[ $(realpath -m "$(unit_show WorkingDirectory)") != "$LIVE" ]]; then
+    UNIT_PROBLEM="$UNIT runs in $(unit_show WorkingDirectory), not in $LIVE (WorkingDirectory=)"
+    return 1
+  fi
+  files=$(unit_show EnvironmentFiles)
+  if [[ ! $files =~ ^(/[^ ]+)\ \(ignore_errors=no\)$ ]]; then
+    UNIT_PROBLEM="$UNIT must name one environment file, required (EnvironmentFile= without \"-\"); it names '$files'"
+    return 1
+  fi
+  ENV_FILE=${BASH_REMATCH[1]}
+  if [[ ! -f $ENV_FILE ]]; then UNIT_PROBLEM="no environment file $ENV_FILE ($UNIT)"; return 1; fi
+  home=$(sed -n 's/^[[:space:]]*DSH_HOME=//p' "$ENV_FILE" | tail -n 1)
+  home=${home%\"}; home=${home#\"}; home=${home%\'}; home=${home#\'}
+  if [[ -z $home || $(realpath -m "$home") != "$DSH_HOME_DIR" ]]; then
+    UNIT_PROBLEM="$ENV_FILE does not set DSH_HOME to $DSH_HOME_DIR (--dsh-home)"
+    return 1
+  fi
 }
 
 # --- state of an update -------------------------------------------------------------------------
@@ -477,7 +505,8 @@ build() {
 }
 
 # `system check` by a checkout's CLI on a scratch home that holds only the profile's files and the
-# patch to check: nothing else of the live home is read, nothing is written to it.
+# patch to check, with the unit's environment file: nothing else of the live home is read, nothing
+# is written to it.
 check_profile_with() {
   local checkout=$1 patch=$2 home
   if [[ -z $SCRATCH ]]; then SCRATCH=$(mktemp -d); fi
@@ -487,7 +516,7 @@ check_profile_with() {
   cp "$PROFILE_DIR/package.json" "$PROFILE_DIR/cordis.yml" "$home/profiles/system/" || return 1
   cp "$patch" "$home/profiles/system/cordis.patch.yml" || return 1
   if [[ -f $HOME_PATCH ]]; then cp "$HOME_PATCH" "$home/cordis.patch.yml" || return 1; fi
-  PATH=$RUN_PATH DSH_HOME=$home "$NODE_DIR/node" "$checkout/packages/cli/lib/bin.js" check 2>&1 | tee -a "$LOG_FILE" >&2
+  PATH=$RUN_PATH DSH_HOME=$home "$NODE_DIR/node" "$checkout/packages/cli/lib/bin.js" check --env-file "$ENV_FILE" 2>&1 | tee -a "$LOG_FILE" >&2
 }
 
 capture() {
@@ -604,7 +633,7 @@ rollback() {
   fi
   state_set phase rolling-back
   log "ROLLING BACK to ${FROM:0:12} (the update reached '$from_phase'): $reason"
-  if daemon_running; then stop_daemon "$LIVE" || fail "the updated daemon did not stop"; fi
+  stop_daemon || fail "the updated daemon did not stop"
   restore_profile || fail "the profile's files could not be put back"
   if [[ $(git -C "$LIVE" rev-parse HEAD) != "$FROM" || -n $(git -C "$LIVE" status --porcelain --untracked-files=no) ]] || ! built_at "$FROM"; then
     checkout "$FROM" || fail "git checkout of ${FROM:0:12} failed"
@@ -628,7 +657,7 @@ rollback() {
 preflight() {
   local problems=0 head untracked avail dir tool running=0
 
-  for tool in git setsid nohup flock sha256sum realpath df; do
+  for tool in git systemctl flock sha256sum realpath df; do
     if ! command -v "$tool" >/dev/null; then log "missing tool: $tool"; problems=$((problems + 1)); fi
   done
   if ! node24 -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit((a === 24 && b >= 18) || (a === 26 && b >= 5) || a > 26 ? 0 : 1)'; then
@@ -671,6 +700,8 @@ preflight() {
     die "the vault key is not in $STATE_DIR (it is kept elsewhere): this script restores with it there; update by hand"
   fi
   [[ -d $BACKUPS ]] || die "no backup directory $BACKUPS (--backups)"
+  unit_ok || die "$UNIT_PROBLEM"
+  log "$UNIT runs $LIVE, with the environment file $ENV_FILE"
   for dir in "$BACKUPS" "$LIVE" "$STATE_DIR"; do
     avail=$(df -Pk "$dir" | tail -n 1 | tr -s ' ' | cut -d' ' -f4)
     if ((avail < 5 * 1024 * 1024)); then log "less than 5 GiB free under $dir"; problems=$((problems + 1)); fi
@@ -696,8 +727,8 @@ preflight() {
     if [[ ! -f $CHECK_WITH/packages/cli/lib/bin.js || $(stamp_of "$CHECK_WITH") != "$(git -C "$CHECK_WITH" rev-parse HEAD)" ]]; then
       die "--check-with $CHECK_WITH is not built at its commit (pnpm install --frozen-lockfile && pnpm build there)"
     fi
-    log "system check: the profile$([[ -n $PATCH_CANDIDATE ]] && echo ', with the patch candidate,') against the target's code ($CHECK_WITH)"
-    check_profile_with "$CHECK_WITH" "${PATCH_CANDIDATE:-$LIVE_PATCH}" || die "the profile does not pass the target's checks: fix the patch, then check again"
+    log "system check: the profile$([[ -n $PATCH_CANDIDATE ]] && echo ', with the patch candidate,') and $ENV_FILE against the target's code ($CHECK_WITH)"
+    check_profile_with "$CHECK_WITH" "${PATCH_CANDIDATE:-$LIVE_PATCH}" || die "the profile does not pass the target's checks: fix the patch or the environment file, then check again"
   elif ((APPLY)); then
     die "--apply needs --check-with <a built checkout of the target>: the profile is checked against the new code before anything stops"
   else
@@ -706,9 +737,10 @@ preflight() {
 
   daemon_running || running=$?
   case $running in
-    0) log "the daemon runs: pid $DAEMON_PID${WRAPPER_PID:+ (system start: $WRAPPER_PID)}" ;;
+    0) log "the daemon runs under $UNIT: pid $DAEMON_PID (system start: $WRAPPER_PID)" ;;
     2) die "a process that is not $LIVE's daemon holds $DISCOVERY" ;;
-    *) log "the daemon is not running" ;;
+    3) die "the daemon (pid $DAEMON_PID) runs outside $UNIT: run it under the unit once (docs/operations/runbooks.md#run-the-live-daemon-under-systemservice)" ;;
+    *) log "the daemon is not running ($UNIT: $(unit_state))" ;;
   esac
   if ((problems)); then die "$problems problem(s) above"; fi
 }
@@ -716,8 +748,8 @@ preflight() {
 dry_run() {
   local runs='every run'
   if [[ -n $DAEMON_PID ]]; then
-    read_start || die "how the running daemon was started cannot be read"
-    log "the daemon was started as: cd $START_CWD && $START_NODE packages/cli/lib/bin.js start${START_ARGS:+ $START_ARGS} >> $START_LOG"
+    read_start || die "how $UNIT runs the daemon cannot be read"
+    log "$UNIT runs the daemon in $LIVE on $NODE_DIR/node, its output appended to $START_LOG"
     if [[ $HEAD_AT == from ]]; then
       if [[ -z $SCRATCH ]]; then SCRATCH=$(mktemp -d); fi
       capture "$SCRATCH/before.json" || die "the running profile is down, or cannot be captured (above)"
@@ -726,26 +758,27 @@ dry_run() {
     log "system health now:"
     cli "$LIVE" health >&2 || true
   elif [[ $HEAD_AT == from ]]; then
-    log "note: --apply refuses until the daemon runs: what it answers is captured first"
+    log "note: --apply refuses until the daemon runs (systemctl --user start $UNIT): what it answers is captured first"
   fi
   cat >&2 <<EOF
 
 Plan for --apply (this dry run changed nothing):
   1. capture: health, and the explain and result of $runs -> $BACKUPS/<date>-before-base/before.json
-  2. system shutdown --deadline $DEADLINE; wait for the daemon and system start to exit (never killed)
+  2. systemctl --user stop $UNIT (its ExecStop: system shutdown --deadline, a drain); the daemon and
+     system start exit (never killed)
   3. system backup <that directory>/store (store and vault, verified by a restore preview);
      $PROFILE_DIR -> <that directory>/profiles
   4. git -C $LIVE checkout --detach $TARGET
      pnpm install --frozen-lockfile && pnpm build (Node 24 first on PATH; pnpm from $PNPM_DIR)
      $STAMP_FILE must name ${TARGET:0:12}; every package of the bundle built
   5. $(if profile_linked; then echo 'the profile links its bundle from the live checkout already;'; else echo "system init: the profile links its bundle from $LIVE;"; fi)
-     $(if [[ -n $PATCH_CANDIDATE ]]; then echo "the patch candidate replaces $LIVE_PATCH;"; else echo 'the live patch stays;'; fi) system check must say ok
-  6. start as it was started; /healthz within 3 minutes
+     $(if [[ -n $PATCH_CANDIDATE ]]; then echo "the patch candidate replaces $LIVE_PATCH;"; else echo 'the live patch stays;'; fi) system check --env-file $ENV_FILE must say ok
+  6. systemctl --user start $UNIT; /healthz within 3 minutes
   7. checks: no health check worse (new Workers '$NEW_WORKERS' may be unavailable), every old run
      explains and answers as before, migrations forward, every record valid, system plugins, mcp-headers
-  A failure after step 2 rolls back: the updated daemon stopped, the profile's files put back,
-  ${FROM:0:12} checked out, installed, and built, system restore <that directory>/store --yes when the
-  updated code started, the daemon started, system health. Exit 1; 2 if the rollback fails too.
+  A failure after step 2 rolls back: $UNIT stopped, the profile's files put back, ${FROM:0:12}
+  checked out, installed, and built, system restore <that directory>/store --yes when the updated
+  code started, $UNIT started, system health. Exit 1; 2 if the rollback fails too.
 EOF
 }
 
@@ -772,13 +805,13 @@ if [[ -z $ATTEMPT ]] && ! find_attempt; then
     [[ -n $DAEMON_PID ]] || die "$LIVE is at the target, the daemon is not running, and no unfinished update is recorded: look before going on"
     built_at "$TARGET" || die "$LIVE is at the target, but its lib is not the target's build ($STAMP_FILE: '$(stamp_of "$LIVE")'): look before going on"
     if (($(started_at "$DAEMON_PID") < $(stat -c %Y "$LIVE/$STAMP_FILE"))); then
-      die "the daemon was started before $LIVE was built: it may run the previous code; restart it, or update by hand"
+      die "the daemon was started before $LIVE was built: it may run the previous code; systemctl --user restart $UNIT, or update by hand"
     fi
     log "the live install already runs ${TARGET:0:12}: nothing to update"
     cli "$LIVE" health >&2 || true
     exit 0
   fi
-  [[ -n $DAEMON_PID ]] || die "the daemon is not running: start it (system start), so what it answers can be captured, then run this again"
+  [[ -n $DAEMON_PID ]] || die "the daemon is not running: start it (systemctl --user start $UNIT), so what it answers can be captured, then run this again"
   new_attempt
 fi
 LOG_FILE=$ATTEMPT/live-update.log
@@ -797,11 +830,8 @@ if reached stopped && ! reached starting && [[ -n $DAEMON_PID ]]; then stuck "th
 
 if ! reached captured || { ! reached stopped && [[ -n $DAEMON_PID ]]; }; then
   [[ $HEAD_AT == from ]] || die "$LIVE is at the target before the daemon was stopped: look before going on"
-  [[ -n $DAEMON_PID ]] || die "the daemon is not running: start it (system start), so what it answers can be captured, then run this again"
-  read_start || die "how the running daemon was started cannot be read"
-  state_set start_cwd "$START_CWD"
-  state_set start_node "$START_NODE"
-  state_set start_args "$START_ARGS"
+  [[ -n $DAEMON_PID ]] || die "the daemon is not running: start it (systemctl --user start $UNIT), so what it answers can be captured, then run this again"
+  read_start || die "how $UNIT runs the daemon cannot be read"
   state_set start_log "$START_LOG"
   if [[ -f $ATTEMPT/candidate.cordis.patch.yml ]]; then
     # The patch that will run is the one checked: this update's copy, against the target's code.
@@ -815,7 +845,7 @@ fi
 
 STOPPED=1
 if ! reached stopped; then
-  stop_daemon "$LIVE" || fail "the daemon did not stop"
+  stop_daemon || fail "the daemon did not stop"
   set_phase stopped
 fi
 
@@ -848,8 +878,8 @@ if ! reached patched; then
 fi
 
 if ! reached checked; then
-  log "system check: the profile as it will start, against the built code"
-  cli "$LIVE" check 2>&1 | tee -a "$LOG_FILE" >&2 || fail "system check refused the profile"
+  log "system check: the profile as it will start, and $ENV_FILE, against the built code"
+  cli "$LIVE" check --env-file "$ENV_FILE" 2>&1 | tee -a "$LOG_FILE" >&2 || fail "system check refused the profile or its environment file"
   set_phase checked
 fi
 
@@ -857,6 +887,7 @@ if ! reached started; then
   running=0
   daemon_running || running=$?
   if ((running == 2)); then fail "a process that is not $LIVE's daemon holds $DISCOVERY"; fi
+  if ((running == 3)); then fail "the daemon (pid $DAEMON_PID) runs outside $UNIT: someone started it by hand"; fi
   if ((running == 1)); then
     set_phase starting
     start_daemon || fail "the updated daemon did not start"

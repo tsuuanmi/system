@@ -86,7 +86,7 @@ planned; website accounts are configuration ([`accounts`](configuration.md#accou
 | `system drain [--deadline <s>]` | admit no new runs and wait for running ones (default 600 s) |
 | `system resume` | admit new runs again after a drain |
 | `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start); with no workflow engine running, stop it directly once `/proc` proves it is this home's host |
-| `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem. A plugin the install ships that cannot be resolved or loaded is a problem; only a row whose package the install does not ship (DSH's own, a third party's) is passed over |
+| `system check [--env-file <file>]` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem. A plugin the install ships that cannot be resolved or loaded is a problem; only a row whose package the install does not ship (DSH's own, a third party's) is passed over. `--env-file` also checks the daemon unit's environment file ([below](#the-daemons-environment)); it prints names, never values |
 | `system health [--json]` | each health check (plugins, manifests, configured templates, runtime, store, disk, vault key, website and agent accounts, Workers and the sources that describe them, usage the resource ledger could not count, website conversations not deleted, login profiles, UI drift, retention, notifications that failed) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
 | `system roster [--json]` | every Worker, from MCP `roster` ([roster](../design/roster.md)): its availability (ready, busy N of M, resting at a limit until its reset, unavailable with why, quarantined), its account (id, label, and its enrolled or quarantined state), role, tier, quota class, family, load, the steps and board tasks it serves now, and its account's pools with each window's used share and reset and the runs whose usage the ledger could not count; a fact it could not read shows `unknown (why)`. `--json` prints the record (`mcp-roster@1.0`). Exit 1 when the profile does not answer or refuses |
 | `system plugins [--json]` | every plugin of the composition: its recorded lifecycle state (`default`, `candidate`, `retired`), whether a row runs it, its version and class, its rows, why its manifest is absent or refused, and each finding of the manifest check with the decision that recorded it ([plugin host](../design/plugin-host.md#the-manifest-check)) |
@@ -107,3 +107,31 @@ planned; website accounts are configuration ([`accounts`](configuration.md#accou
 Both gateway rows are off in the default composition (PROP-0004); Claude Code reaches `system`
 over MCP (`mcp-config`). A refused helper names the row and how to
 [turn it back on](../operations/runbooks.md#turn-an-off-row-back-on).
+
+## The daemon's environment
+
+The daemon runs under its user unit, `system.service`, whose `EnvironmentFile=`
+(`~/.config/system/daemon.env`) declares every variable it reads
+([Run as a service](../operations/runbooks.md#run-as-a-service)). `system check --env-file <file>`
+refuses a file that others can read or that you do not own, a line that is not `NAME=VALUE` (or a
+comment), a name set twice, a missing required name, a refused or unknown name, and a path that is
+not absolute (systemd expands no variable or `~` there). The list is `DAEMON_ENV` in
+[`packages/cli/src/index.ts`](../../packages/cli/src/index.ts).
+
+| Name | Role |
+|---|---|
+| `PATH` | **required**: absolute directories where the daemon finds git, Xvfb, bwrap, the VNC server and websockify (remote login), and an agent runtime named without a path |
+| `DSH_HOME` | **required**: the harness home, named so the unit never falls back to a default |
+| `DSH_AGENTS_HOME` | DSH's agents directory (default `~/.agents`) |
+| `CHROME_PATH` | a Chrome to use instead of the discovered or managed one |
+| `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS` | the daemon's Node options; an extra CA bundle (a TLS-inspecting proxy) |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase) | an egress proxy; agent runtimes keep it |
+| `LANG`, `LC_ALL`, `TZ`, `TMPDIR` | locale, time zone, temporary directory |
+| a row's `forwardEnv` names | a value an agent runtime forwards to its Workers by name, for example `SYSTEM_MCP_TOKEN` for a Codex Worker on the Responses gateway. A forwarded name the file lacks is a note: its Workers start without it |
+| a row's `apiKeyEnv` | a credential reference: allowed, with a note. Set in the environment it shadows the vault, and `system model key` refuses it; keep keys in the vault |
+
+Refused: `HOME`, `USER`, `LOGNAME`, `XDG_RUNTIME_DIR`, `CREDENTIALS_DIRECTORY` (systemd sets them);
+`DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, `SSH_AUTH_SOCK`,
+`GPG_AGENT_INFO` (a login session's: a service shows nothing, and an invisible display is the
+daemon's own Xvfb); `SYSTEM_CODEX_GATE_SOCKET`, `SYSTEM_CODEX_GATE_KEY` (the Codex runtime sets them
+for its tool gate); `DSH_TELEMETRY_DISABLED` (`system start` sets it).

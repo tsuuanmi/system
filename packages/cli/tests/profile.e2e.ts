@@ -1,7 +1,7 @@
 // Composition e2e (docs/engineering/testing.md): the shipped system profile, booted through
 // the real dsh launcher from built lib/, with only the external port overridden.
 import { type ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -84,6 +84,23 @@ describe('system profile (e2e through dsh)', () => {
     expect(mounted).toEqual(expect.arrayContaining(['gateway-anthropic', 'runtime-codex-sdk']))
     expect(mounted).not.toContain('gateway-responses')
     expect(mounted).not.toContain('runtime-acp')
+  }, 60_000)
+
+  it('checks the daemon unit\'s environment file with the profile, printing names, never values', () => {
+    const file = join(home, 'daemon.env')
+    writeFileSync(file, `PATH=/usr/local/bin:/usr/bin:/bin\nDSH_HOME=${home}\nTZ=UTC\n`, { mode: 0o600 })
+    const run = (...args: string[]) => spawnSync(process.execPath, [bin, 'check', ...args], { env, encoding: 'utf8' })
+    expect(run('--env-file', file)).toMatchObject({ status: 0, stdout: expect.stringMatching(/^ok: \d+ row\(s\) of the profile pass this code's checks, and so does its environment file$/m) })
+    writeFileSync(file, `PATH=/usr/bin\nDSH_HOME=${home}\nDISPLAY=:99-secret-value\n`)
+    chmodSync(file, 0o644)
+    const failed = run('--env-file', file)
+    expect(failed.status).toBe(1)
+    expect(failed.stderr).toContain(`${file} is readable by others (mode 644): chmod 600 ${file}`)
+    expect(failed.stderr).toContain('DISPLAY must not be set here')
+    expect(failed.stderr).toMatch(/2 problem\(s\): fix the profile patch or the environment file before starting this code/)
+    expect(`${failed.stdout}${failed.stderr}`).not.toContain('secret-value')
+    expect(run('--env-file').status).toBe(2)
+    expect(run('--other').status).toBe(2)
   }, 60_000)
 
   it('checks the profile against this code before a start: a removed team procedure and a bad config value are named, with exit 1', () => {

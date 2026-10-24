@@ -64,6 +64,10 @@ client helpers hand out narrower scopes
 HEAD`; a build outside a git checkout fails). The [live update](../../docs/operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)
 reads it to tell which commit a checkout's built code is.
 
+**Daemon environment.** `system check --env-file <file>` also checks the environment file of the
+daemon's unit against the names the daemon reads and the profile's rows name (`DAEMON_ENV`,
+[reference](../../docs/reference/cli.md#the-daemons-environment)), printing names, never values.
+
 The e2e tests boot the real profile and assert its exact row set:
 [`tests/profile.e2e.ts`](tests/profile.e2e.ts) the default composition, with the
 scope matrix, and [`tests/api-first.e2e.ts`](tests/api-first.e2e.ts) the
