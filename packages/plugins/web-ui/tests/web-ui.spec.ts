@@ -309,7 +309,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(none).toMatchObject({ workers: { unknown: 'the Worker registry (ctx.workers) is not mounted' } })
   })
 
-  it.runIf(canRunBrowser)('renders the Workers tab in a real browser: counts, one card per Worker by status, what it is for (or a derived line, marked), what it does now, its account and limits (T85)', async () => {
+  it.runIf(canRunBrowser)('renders the Workers tab in a real browser: counts, the Workers by account under its header, each card calm (what it is for, its status, what it does now) with every unknown, derived, or technical fact folded under its details (T85, T119)', async () => {
     const { origin, token } = await boot({ roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
@@ -318,24 +318,36 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByRole('link', { name: 'Workers' }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(new URL(page.url()).search).toBe('?view=workers')
-    expect(await page.getByLabel('Worker counts').innerText()).toMatch(/^1 working · 0 idle · 1 at a limit \(the first back .+\) · 0 unavailable$/)
-    const working = page.getByRole('region', { name: 'Working' })
-    const busy = working.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
-    const card = await busy.innerText()
-    // Its display name heads the card, its id under it.
-    expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('Chatgpt · Studio Plus · standard')
-    for (const said of ['Worker id worker:plus/standard', 'The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
-      'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote',
-      // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013).
-      'agent run arun_00000000000000a2 of run run_old ended without being known to be gone, holding session ses_9; free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)']) expect(card, said).toContain(said)
+    // The operator's words: free, and resting until a clock time.
+    expect(await page.getByLabel('Worker counts').innerText()).toMatch(/^1 working · 0 free · 1 resting \(the first until .+\) · 0 unavailable$/)
+    // The account once, its roles in its header, its rest said once for both.
+    const account = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
+    expect(await account.getByRole('heading', { level: 3 }).innerText()).toBe('Chatgpt · Studio Plus: frontier, standard')
+    expect(await account.innerText()).toMatch(/Its account is resting until .+ \((in|.* ago)/)
+    const busy = account.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
+    expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('standard')
+    const shown = await busy.innerText()
+    for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
+      'Running review run run_xyz, step review:m1:propose, since an unknown time',
+      // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013): never folded.
+      'agent run arun_00000000000000a2 of run run_old ended without being known to be gone, holding session ses_9; free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)']) expect(shown, said).toContain(said)
+    // Nothing technical or unknown up front: it is all under the card's details.
+    for (const folded of ['Worker id', 'worker:plus/standard', 'unknown (', 'family', 'role none', 'Load']) expect(shown, folded).not.toContain(folded)
+    await busy.getByText('details', { exact: true }).click()
+    const opened = await busy.innerText()
+    for (const said of ['Worker id', 'worker:plus/standard', 'plus · website account, ready', 'standard tier, subscription-chat, remote', '1 of 2 running']) expect(opened, said).toContain(said)
     await busy.getByRole('link', { name: 'Open run run_old' }).focus()
-    const resting = page.getByRole('region', { name: 'At a limit' }).getByRole('article', { name: 'Chatgpt · Studio Plus · frontier' })
+    // A reason that blocks work stays visible: resting until when.
+    const resting = account.getByRole('article', { name: 'Chatgpt · Studio Plus · frontier' })
     const rest = await resting.innerText()
-    expect(rest).toContain('derived')
-    expect(rest).toContain('chatgpt-web Worker, frontier tier, subscription-chat, remote (no description is configured)')
-    expect(rest).toMatch(/At a limit: back (in|.* ago)/)
-    expect(rest).toContain('unknown (the resource ledger (ctx.resources) is not mounted)')
-    // The run link opens its page.
+    expect(rest).toMatch(/Resting until .+ \((in|.* ago)/)
+    expect(rest).not.toContain('derived')
+    await resting.getByText('details', { exact: true }).click()
+    expect(await resting.innerText()).toContain('chatgpt-web Worker, frontier tier, subscription-chat, remote (no description is configured)')
+    // The account's quota that could not be read is folded under its own details.
+    expect(await account.innerText()).not.toContain('the resource ledger (ctx.resources) is not mounted')
+    await account.getByText('details', { exact: true }).first().click()
+    expect(await account.innerText()).toContain('unknown (the resource ledger (ctx.resources) is not mounted)')
     await busy.getByRole('link', { name: 'Open run run_xyz' }).focus()
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
@@ -346,7 +358,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=workers#token=${token}`)
-    const busy = page.getByRole('article', { name: 'worker:plus/standard' })
+    // The quota is the account's: shown once, under its header (T119).
+    const busy = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
     const line = (window: string) => busy.getByLabel(`window ${window} of plan/plus`)
     await expect.poll(() => line('five-hour').count()).toBe(1)
     expect(await line('five-hour').innerText()).toMatch(/^5 h: used 42 % — resets [^,()]+ \(read [^)]+\)$/)
@@ -356,9 +369,19 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await line('five-hour').locator('meter').getAttribute('value')).toBe('42')
     expect(await line('credit').locator('meter').count()).toBe(0)
     expect(await busy.locator('.window').evaluateAll((lines) => lines.map((l) => l.getAttribute('aria-label')))).toEqual(['window seven-day of plan/plus', 'window five-hour of plan/plus', 'window credit of plan/plus'])
-    expect(await busy.innerText()).toContain('plan/plus at a limit: closed, back in 1 h')
+    // The pool at its limit rests: said once, by its account (its limitUntil), not again by the pool.
+    expect(await page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' }).innerText()).toMatch(/Its account is resting until /)
+    // Each account's capacity on Home in one line, its 5 h bar beside it (T119).
+    await page.getByRole('link', { name: 'Home' }).click()
+    const capacity = page.getByLabel('Capacity of Chatgpt · Studio Plus')
+    await expect.poll(() => capacity.count()).toBe(1)
+    expect(await capacity.innerText()).toMatch(/^Chatgpt · Studio Plus: resting until .+; 5 h used 42 %, resets .+$/)
+    expect(await capacity.locator('meter').getAttribute('value')).toBe('42')
+    expect(await page.getByLabel('Capacity of Claude · slot 1').innerText()).toBe('Claude · slot 1: 5 h no reading yet')
+    await page.getByRole('link', { name: 'Workers' }).click()
+    await expect.poll(() => page.getByRole('article', { name: 'agent:acc-a/develop' }).count()).toBe(1)
     // No reading yet, with why its account's usage report could not be read, its time on the clock (T111).
-    const agent = page.getByRole('article', { name: 'agent:acc-a/develop' }).getByLabel('window five-hour of plan/agent')
+    const agent = page.getByRole('region', { name: 'Account Claude · slot 1' }).getByLabel('window five-hour of plan/agent')
     expect(await agent.innerText()).toMatch(/^5 h: no reading yet: its account's usage report could not be read at [^:]*\d\d:\d\d[^:]*: the runtime gave no answer within 30 s$/)
     expect(await agent.innerText()).not.toContain('2026-10-24T')
     expect(await page.locator('main').innerText()).not.toContain('null')
@@ -453,7 +476,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const waiting = page.getByRole('region', { name: 'Waiting for you' })
     await expect.poll(() => waiting.innerText()).toContain('3 requests wait for your verdict')
     expect(await waiting.innerText()).toContain('1 run needs a look')
-    expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 idle · 1 at a limit · 0 unavailable')
+    expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 free · 1 resting · 0 unavailable')
     // The blocked run is listed with why and where it is decided.
     const look = page.getByRole('region', { name: 'Runs that need a look' })
     expect(await look.innerText()).toContain('its plan waits for your approval')
@@ -476,7 +499,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await expect.poll(() => page.getByRole('heading', { name: 'Home', exact: true }).count()).toBe(1)
     expect(await current()).toBe('Home')
     expect(await page.locator('p.lead').innerText()).toContain('What waits for your verdict')
-    for (const [link, purpose] of [['Board', 'Every project and its open tasks'], ['Workers', 'Every Worker: what it is for'], ['Autonomy policy', 'Which actions run on their own']] as const) {
+    for (const [link, purpose] of [['Board', 'Every project and its open tasks'], ['Workers', 'Every account and its Workers: what each is for'], ['Autonomy policy', 'Which actions run on their own']] as const) {
       await nav.getByRole('link', { name: link }).click()
       await expect.poll(() => page.getByRole('heading', { name: link, exact: true }).count()).toBe(1)
       expect(await current()).toBe(link)
