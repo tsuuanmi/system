@@ -66,6 +66,10 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   lease can be taken, so it is never stranded until the next start. A lease that
   can be taken does not make a started run gone: it is reconciled only on a
   [liveness verdict](#liveness-verdict) of `dead`.
+- Model calls (`models`) hold a `model-call:<id>` lease. The answer, a failure,
+  and every decision recorded on the call are fenced; a call whose lease another
+  process holds, or whose lease was lost, is looked at again once the lease can
+  be taken.
 - Workflow executions use the same lease primitive with heartbeats. Target: on
   startup, a `RUNNING` node with an expired lease or a foreign owner moves to
   `RECOVERING`. Today a run advances under a `run:<id>` lease. A lost lease re-arms

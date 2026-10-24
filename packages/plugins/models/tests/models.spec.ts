@@ -192,11 +192,11 @@ const CATALOG_W: ModelEntry[] = [
   { id: 'strong', tier: 'frontier', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
 ]
 
-async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; workflow?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
+async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; workflow?: Record<string, unknown>; leases?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
   const dir = options.dir ?? temp('system-model-workers-')
   const ctx = new Context()
   const fibers = [
-    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, options.egress ?? {}),
+    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, options.leases ?? {}), ctx.plugin(Egress, options.egress ?? {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(FakeModels, { catalog: CATALOG_W, script: options.script ?? {} }),
     ctx.plugin(ModelWorkers, { callTimeoutMs: 5_000, ...options.workers }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, ...options.workflow }),
   ]
@@ -461,6 +461,17 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(slow).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'timeout' } })
     expect(slow.error!.message).toBe('model:fast did not finish within 50 ms (callTimeoutMs, the ceiling over every attempt); the call was stopped')
   })
+
+  // Real time, held for 2 s by design; the timeout leaves `settle` its 10 s, so a lease lost on the
+  // way fails the assertion (the call still running), not the test's clock.
+  it('holds a call\'s lease for as long as the call runs, renewed within the TTL it was granted: under a cap below the TTL asked for, a long call completes, sent once (INV-4)', async () => {
+    // leases.maxTtlMs at its floor grants 1 s of the 60 s a call asks for; the answer takes 2 s.
+    const { ctx, fake } = await boot({ script: { holdMs: 2_000 }, leases: { maxTtlMs: 1_000 } })
+    const source = ctx.workers.source('models')!
+    const call = await settle(ctx, source.start({ key: 'l-1', worker: 'model:fast', prompt: 'long', requirement: requirement(), decisions: DECISIONS }))
+    expect(call).toMatchObject({ status: 'completed', submitted: true })
+    expect(fake.calls).toHaveLength(1)
+  }, 15_000)
 
   it('maps a failure to its class: a refused key needs the operator, a rate limit backs off', async () => {
     const { ctx } = await boot({ script: { fail: ['credential', 'rate-limit'] } })

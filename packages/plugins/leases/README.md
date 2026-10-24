@@ -15,7 +15,7 @@
   - `invalidate`: fences every holder at once.
   - `current`.
   - `hold(resource, ttlMs, body)`: the one lease loop every durable runner uses
-    (website turns, agent runs, workflow runs, digest requests). It acquires, renews
+    (website turns, agent runs, workflow runs, model calls, digest requests). It acquires, renews
     on a heartbeat every third of the TTL the lease was granted, which `maxTtlMs` may cap below
     the TTL asked for (each renewal's grant sets the next beat), and releases when the body ends.
     It aborts `lost` only
