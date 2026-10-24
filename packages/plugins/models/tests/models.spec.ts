@@ -242,8 +242,8 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(workers['model:private']).toMatchObject({ quotaClass: 'local', locality: 'local', state: 'ready' })
     expect(workers['model:private']!.capabilities.map((c) => c.capability)).toEqual(['reason', 'persistent-conversation'])
     expect(workers['model:gone']).toMatchObject({ state: 'unavailable', capabilities: [] })
-    // The operator's description of an entry is its Worker's (capability-descriptor@1.6); an entry without one is described as before (T85).
-    expect(workers['model:fast']).toMatchObject({ schema: 'capability-descriptor@1.6', description: 'Quick answers for the lead' })
+    // The operator's description of an entry is its Worker's (capability-descriptor@1.7); an entry without one is described as before (T85).
+    expect(workers['model:fast']).toMatchObject({ schema: 'capability-descriptor@1.7', description: 'Quick answers for the lead' })
     expect(workers['model:private']).not.toHaveProperty('description')
   })
 

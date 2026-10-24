@@ -784,8 +784,8 @@ export class Turns extends Service {
       const mode = this.ctx.accounts.setting(account.provider).mode
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         // The site is who serves the work, so the account's provider is the Worker's family (ADR-0027).
-        // The operator's description of the account, with the tier this Worker serves (`@1.6`).
-        schema: account.description ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
+        // The operator's description of the account, with the tier this Worker serves (`@1.7`).
+        schema: account.description ? 'capability-descriptor@1.7' : 'capability-descriptor@1.5', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
         ...(account.description ? { description: `${account.description} (${tier} tier)` } : {}),
         account: { id: account.id, group: account.provider, mode, ...(whole ? { limitUntil: whole.until } : {}) },
         ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), load, ...(cooldowns.length ? { cooldowns } : {}), tier,

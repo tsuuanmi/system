@@ -128,10 +128,10 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(admitted.worker.worker).toBe('worker:chatgpt-main/economy')
   }, 60_000)
 
-  it('describes each tier\'s Worker with its account\'s description and the tier (capability-descriptor@1.6), and an account without one as before (T85)', async () => {
+  it('describes each tier\'s Worker with its account\'s description and the tier (capability-descriptor@1.7), and an account without one as before (T85)', async () => {
     const { ctx } = await boot({ accounts: [{ ...account('chatgpt-main', { economy: 'instant', frontier: 'high' }), description: 'The studio\'s chat subscription' }, account('chatgpt-2', { standard: 'medium' })] })
     const listed = new Map((await ctx.workers.list()).map((w) => [w.worker, w]))
-    expect(listed.get('worker:chatgpt-main/economy')).toMatchObject({ schema: 'capability-descriptor@1.6', description: 'The studio\'s chat subscription (economy tier)' })
+    expect(listed.get('worker:chatgpt-main/economy')).toMatchObject({ schema: 'capability-descriptor@1.7', description: 'The studio\'s chat subscription (economy tier)' })
     expect(listed.get('worker:chatgpt-main/frontier')).toMatchObject({ description: 'The studio\'s chat subscription (frontier tier)' })
     expect(listed.get('worker:chatgpt-2/standard')).toMatchObject({ schema: 'capability-descriptor@1.5' })
     expect(listed.get('worker:chatgpt-2/standard')).not.toHaveProperty('description')

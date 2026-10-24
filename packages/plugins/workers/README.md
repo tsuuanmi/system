@@ -26,7 +26,7 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)). Each
   descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with
   `family`), `@1.2` (with `maxInputChars`), `@1.3` (with `load` and `cooldowns`), `@1.4` (an
-  offer's `scope`), `@1.5` (its `account`), or `@1.6` (its `kinds`). A Worker id that two sources
+  offer's `scope`), `@1.5` (its `account`), `@1.6` (its `kinds`), or `@1.7` (its `description`). A Worker id that two sources
   describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;

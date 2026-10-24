@@ -1,5 +1,5 @@
 {
-  "schema": "capability-descriptor@1.6",
+  "schema": "capability-descriptor@1.7",
   "worker": "worker:account-b/frontier",
   "provider": "provider-a",
   "family": "provider-a",

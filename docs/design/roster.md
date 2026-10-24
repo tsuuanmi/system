@@ -30,7 +30,7 @@ that change what runs).
 
 | Source | Read through | What it gives |
 |---|---|---|
-| Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)` | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.6`), account, tier, quota class, state, load, cooldowns; how each source answered its last read; the Workers of its account |
+| Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)` | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.7`), account, tier, quota class, state, load, cooldowns; how each source answered its last read; the Workers of its account |
 | agent accounts | `ctx.agentWorkers.agentAccounts`: `list()`, `workersIn(account)` | each enrollment slot (`agent-account@1.0`): its account id, status, quarantine, masked hint, and the Workers that run on it ([enrollment](agent-runtimes.md#enrollment-and-quarantine)) |
 | website accounts | `ctx.accounts`: `list()`, `duplicateIdentities()` | each catalog account's secret-free view: label and status; the accounts signed in as one person |
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
@@ -46,7 +46,7 @@ manifest names each one it consumes (optional): the roster works with any subset
 | Field | From | Unknown when |
 |---|---|---|
 | `worker`, `provider`, `tier`, `quotaClass`, `locality`, `state`, `observedAt` | its descriptor | never: a listed Worker has them |
-| `description` | its descriptor's `description` (`@1.6`): the operator's words from the configuration row that defines it (agent-workers `workers[]` or `roles[]`, models `models[]`; a website Worker's is its accounts `accounts[]` entry's, with its tier), plain text on one line, at most 200 characters | no description is configured for it |
+| `description` | its descriptor's `description` (`@1.7`): the operator's words from the configuration row that defines it (agent-workers `workers[]` or `roles[]`, models `models[]`; a website Worker's is its accounts `accounts[]` entry's, with its tier), plain text on one line, at most 200 characters | no description is configured for it |
 | `derived` | its provider, role, tier, quota class, and locality, as one line; a surface shows it, marked as derived, when `description` is unknown | never |
 | `family` | its descriptor | its source declares none |
 | `account` | its descriptor's `account` (`@1.5`): `id`, `group`, `mode`, `limitUntil` | its source names no account |
@@ -124,7 +124,7 @@ The schema bounds every string and list as well
 - **A description kept by the roster, or written by a Worker.** The roster stores nothing, and a
   Worker's own text would be model output among the operator's facts. The description is the
   operator's configuration, carried on the descriptor as an optional field for people only
-  (`@1.6`); routing never reads it.
+  (`@1.7`); routing never reads it.
 - **A field on the descriptor for an unavailable Worker's reason.** It would change the
   `capability-descriptor` contract of every Worker source, a guarantee seam's input; the roster
   uses the reasons the account records already give, and says when it has none.

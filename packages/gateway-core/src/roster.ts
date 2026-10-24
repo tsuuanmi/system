@@ -56,7 +56,7 @@ export interface RosterDescriptor {
   worker: string
   provider: string
   family?: string | undefined
-  /** `@1.6`: what it is for, in the operator's words. */
+  /** `@1.7`: what it is for, in the operator's words. */
   description?: string | undefined
   account?: { id: string; group: string; mode: 'assigned' | 'pooled'; limitUntil?: string | undefined } | undefined
   load?: { running: number; queued: number; pending: number; slots: number } | undefined

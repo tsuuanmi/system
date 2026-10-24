@@ -122,7 +122,7 @@ export interface AgentWorkerConfig {
    * `reviewMember` (a member's steps name no kind).
    */
   kinds?: string[]
-  /** What it is for, in the operator's words (`capability-descriptor@1.6`); never a routing input. */
+  /** What it is for, in the operator's words (`capability-descriptor@1.7`); never a routing input. */
   description?: string
 }
 
@@ -685,7 +685,7 @@ export class AgentWorkers extends Service {
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
         // the operator gives it, so it takes no other (ADR-0057).
-        schema: worker.kinds || worker.description ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        schema: worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         ...(worker.description ? { description: worker.description } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state, observedAt,

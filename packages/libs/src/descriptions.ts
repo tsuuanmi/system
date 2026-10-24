@@ -1,5 +1,5 @@
 /**
- * A Worker's description in the operator's words (`capability-descriptor@1.6`): an optional field of
+ * A Worker's description in the operator's words (`capability-descriptor@1.7`): an optional field of
  * every configuration row that defines Workers (agent-workers `workers[]` and `roles[]`, models
  * `models[]`, accounts `accounts[]`), shown to people by the roster and never read by routing.
  * Shared by those rows' configuration schemas, so each refuses the same text.

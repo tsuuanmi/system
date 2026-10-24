@@ -733,7 +733,7 @@
           "maxLength": 64
         },
         "description": {
-          "description": "1.1: what the Worker is for, in the operator's words (capability-descriptor@1.6); unknown when none is configured.",
+          "description": "1.1: what the Worker is for, in the operator's words (capability-descriptor@1.7); unknown when none is configured.",
           "oneOf": [
             {
               "type": "object",

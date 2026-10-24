@@ -29,7 +29,7 @@ export interface CatalogEntry {
   id: string
   provider: string
   label?: string
-  /** What its Workers are for, in the operator's words (`capability-descriptor@1.6`); each tier's Worker carries it with its tier. */
+  /** What its Workers are for, in the operator's words (`capability-descriptor@1.7`); each tier's Worker carries it with its tier. */
   description?: string
   quotaClass: QuotaClass
   /** Tier → provider mode, e.g. `{ economy: 'instant', frontier: 'pro' }` (purpose P4). */

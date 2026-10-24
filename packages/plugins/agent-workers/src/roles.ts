@@ -48,7 +48,7 @@ export interface AgentRoleConfig {
   reviewMember?: boolean | undefined
   /** The kinds of work its Workers take (ADR-0057); unset, any work. */
   kinds?: string[] | undefined
-  /** What its Workers are for, in the operator's words (`capability-descriptor@1.6`); never a routing input. */
+  /** What its Workers are for, in the operator's words (`capability-descriptor@1.7`); never a routing input. */
   description?: string | undefined
   /** What differs per runtime, by runtime kind. */
   runtimes?: Record<string, AgentRoleRuntime> | undefined

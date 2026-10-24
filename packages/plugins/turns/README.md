@@ -24,7 +24,7 @@ It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
     recorded `pooledTerms` for it), and, while the whole account is cooled, its
     `limitUntil`. Each pooled provider's terms are recorded at start as a `gate`
     decision (rule `turns.pooled-terms`). An account with a `description` gives
-    each tier's Worker that description with its tier (`@1.6`).
+    each tier's Worker that description with its tier (`@1.7`).
   - **Cooldowns (ADR-0034).** A turn that fails `quota_exhausted` (a site's usage
     limit, recognized by a UI-map error rule) cools its account in table
     `turn_cooldowns`: the rule's `feature` for `featureLimitCooldownMs`, else the

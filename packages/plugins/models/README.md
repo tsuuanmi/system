@@ -26,7 +26,7 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
     while available; otherwise it is `unavailable`. Tier, quota class, and
     locality come from the entry, and so does its provider family
     (`family`, by default the route; give two routes to one vendor the same
-    family), and its `description` (`capability-descriptor@1.6`, for the roster only). It proves `persistent-conversation` too (evidence `conformance`):
+    family), and its `description` (`capability-descriptor@1.7`, for the roster only). It proves `persistent-conversation` too (evidence `conformance`):
     it keeps sessions itself. It never proves `local-data`.
   - **Calls** (`start`, `get`, `wait`, `cancel`): durable at once in
     `model_calls`, idempotent by key.

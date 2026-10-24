@@ -338,12 +338,12 @@ guesses.
   without `kinds` it takes any work. Routing compares kinds for equality only (admission check
   `capability`). A record carrying it below `@1.6` is refused. Readers accept 1.0 to 1.6. Example:
   [`capability-descriptor.kinds.json`](../../schemas/examples/capability-descriptor.kinds.json).
-- `capability-descriptor@1.6` adds the optional `description`: what the Worker is for, in the
+- `capability-descriptor@1.7` adds the optional `description`: what the Worker is for, in the
   operator's words, from the configuration row that defines it (`description` of an agent-workers
   `workers[]` or `roles[]` entry, of a `models[]` entry, or of an accounts `accounts[]` entry, which
   a website Worker carries with its tier). It is for people (the [roster](../design/roster.md))
-  and never a routing input. A record carrying it below `@1.6` is refused. Readers accept 1.0 to
-  1.6. Example:
+  and never a routing input. A record carrying it below `@1.7` is refused. Readers accept 1.0 to
+  1.7. Example:
   [`capability-descriptor.description.json`](../../schemas/examples/capability-descriptor.description.json).
 
 ### `plan`
@@ -965,7 +965,7 @@ guesses.
   has a `summary`, its one-line form. What makes each is in [availability](../design/roster.md#availability).
 - `account.record.label` is given to an operator-scope caller only; a client's record has no label.
 - `mcp-roster@1.1` adds, per Worker, `description` (known: the operator's words from its
-  descriptor, `capability-descriptor@1.6`, or `unknown` when none is configured) and `derived` (its
+  descriptor, `capability-descriptor@1.7`, or `unknown` when none is configured) and `derived` (its
   provider, role, tier, quota class, and locality as one line, for a reader to show, marked as
   derived, when there is no description); and, per step of `work`, `since` (known: when its
   current attempt started, from the event log) and `summary` (the step in one sentence: its task,

@@ -225,14 +225,14 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(checkConfig({ workers: system, worktreeSetup: [{ repository: '/home/tan/workspaces/other', commands: ['pnpm install --offline'] }] })).toEqual([expect.stringMatching(/is the workspace of no Worker with worktreePerRun, so its setup would never run/)])
   })
 
-  it('describes a hand-named Worker with its description (capability-descriptor@1.6), one without as before, and refuses a bad one at load (T85)', async () => {
+  it('describes a hand-named Worker with its description (capability-descriptor@1.7), one without as before, and refuses a bad one at load (T85)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-described-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     mkdirSync(join(dir, 'ws'), { recursive: true })
     const row = (id: string, extra: Partial<AgentWorkerConfig> = {}): AgentWorkerConfig => ({ id, runtime: A, workspace: join(dir, 'ws'), sandbox: 'read-only', tier: 'standard', ...extra })
     const b = await boot({ workers: [row('reviewer', { description: 'Reads the diffs and reports what it finds' }), row('plain')] }, { dir })
     const workers = await described(b)
-    expect(workers.get('agent:reviewer')).toMatchObject({ schema: 'capability-descriptor@1.6', description: 'Reads the diffs and reports what it finds' })
+    expect(workers.get('agent:reviewer')).toMatchObject({ schema: 'capability-descriptor@1.7', description: 'Reads the diffs and reports what it finds' })
     expect(workers.get('agent:plain')).toMatchObject({ schema: 'capability-descriptor@1.5' })
     expect(workers.get('agent:plain')).not.toHaveProperty('description')
     for (const descriptor of workers.values()) schemas.assertRecord(descriptor)

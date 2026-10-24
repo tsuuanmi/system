@@ -69,6 +69,19 @@ describe('capability-descriptor@1.5', () => {
   })
 })
 
+describe('capability-descriptor@1.7', () => {
+  const described = example('capability-descriptor.description')
+  const kinded = example('capability-descriptor.kinds')
+
+  it('adds the operator\'s description, refused before 1.7, beside kinds, which 1.6 and 1.7 carry', () => {
+    expect(valid('capability-descriptor@1.7', described)).toBe(true)
+    expect(valid('capability-descriptor@1.7', { ...described, schema: 'capability-descriptor@1.6' })).toBe(false)
+    expect(valid('capability-descriptor@1.7', { ...kinded, schema: 'capability-descriptor@1.7', description: 'Writes the code' })).toBe(true)
+    expect(valid('capability-descriptor@1.6', kinded)).toBe(true)
+    expect(valid('capability-descriptor@1.6', { ...kinded, schema: 'capability-descriptor@1.5' })).toBe(false)
+  })
+})
+
 describe('decision@1.8', () => {
   it('adds the enrollment decision and the recovery outcome wait, each refused before 1.8 (INV-13, INV-14)', () => {
     for (const name of ['decision.enrollment', 'decision.recovery-wait']) {
