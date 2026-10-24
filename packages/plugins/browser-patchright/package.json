@@ -21,7 +21,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@puppeteer/browsers": "3.2.3",
+    "@puppeteer/browsers": "3.2.4",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
     "patchright-core": "1.63.0"
