@@ -497,6 +497,31 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
     ])
   })
 
+  it('reports its confined process once it is started, and each SDK message as activity; an observer that throws changes nothing (PROP-0013)', async () => {
+    const calls: Call[] = []
+    const processes: Array<{ pid: number }> = []
+    const activity: number[] = []
+    const spawn: SpawnConfined = () => ({ pid: 4242 }) as unknown as ReturnType<SpawnConfined>
+    const before = Date.now()
+    const result = await runtime(scripted(calls), '/usr/bin/claude', { spawn }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal, undefined, {
+      onProcess: (p) => processes.push(p), onActivity: (at) => activity.push(at),
+    })
+    expect(result.text).toBe('echo: x')
+    // The scripted SDK yields its init and its result: two messages, two activity times, in order.
+    expect(activity).toHaveLength(2)
+    expect(activity[0]).toBeGreaterThanOrEqual(before)
+    expect(activity[1]).toBeGreaterThanOrEqual(activity[0]!)
+    const start = calls[0]!.options.spawnClaudeCodeProcess as (options: { command: string; args: string[]; env: Record<string, string | undefined>; signal: AbortSignal }) => unknown
+    start({ command: '/usr/bin/claude', args: [], env: {}, signal: new AbortController().signal })
+    expect(processes).toEqual([{ pid: 4242 }])
+    const throwing = await runtime(scripted(), '/usr/bin/claude', { spawn }).run({ prompt: 'y', workspace, sandbox: 'read-only' }, new AbortController().signal, undefined, {
+      onActivity: () => {
+        throw new Error('the source could not record it')
+      },
+    })
+    expect(throwing.text).toBe('echo: y')
+  })
+
   it('runs Claude Code in its own home, never the operator\'s, and refuses a run with no read confinement, before anything runs', async () => {
     const calls: Call[] = []
     await runtime(scripted(calls), '/usr/bin/claude', { env: { CLAUDE_CONFIG_DIR: join(HOME, 'elsewhere') } }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)

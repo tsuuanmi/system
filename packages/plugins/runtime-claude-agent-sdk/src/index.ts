@@ -29,6 +29,8 @@
  *   and `defer` are the hook's own decisions, and `allow` leaves the call to the pre-approvals
  *   above (a hook's `allow` would skip them); a deferred run stops there and never completes.
  *   `canUseTool` is never the gate: a pre-approved tool never reaches it.
+ * A run reports its confined Claude Code process (the outermost one the confinement starts, whose
+ * end ends the agent) and each SDK message as activity (`RunObserver`, PROP-0013).
  * The SDK's session stays native; only its id crosses as the run's handle (INV-7). What a run
  * consumed is read from the SDK's own messages (the result's `modelUsage`, `rate_limit_event`),
  * never from the model's text, and reported for a failed run too.
@@ -43,8 +45,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LoginCommand, type ModelUsage, type ProbeOptions, type RunMetering, type RunResult, type RunSpec,
-  type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand, homeProblem, identityHmac, maskEmail, proveConfinement, readHomeJson,
-  withMetering,
+  type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand, homeProblem, identityHmac, maskEmail, observe,
+  proveConfinement, readHomeJson, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -199,7 +201,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     }
   }
 
-  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
+  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', 'claude-agent-sdk: the workspace must be an absolute path')
     // One account's own home (ADR-0051): an owner-only directory that exists, or nothing runs.
     const named = spec.home !== undefined ? homeProblem(spec.home) : undefined
@@ -245,7 +247,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           mcpServers: {}, strictMcpConfig: true,
           pathToClaudeCodeExecutable: executable, abortController: controller,
           // Under the host's read confinement, its home and the workspace bound back (ADR-0024, ADR-0038).
-          spawnClaudeCodeProcess: (options) => this.spawnConfined(options, confinement),
+          spawnClaudeCodeProcess: (options) => this.spawnConfined(options, confinement, observer),
           // Without the daemon's credentials (INV-8); its own sign-in lives in its home.
           env,
           // Every command in the SDK's sandbox: the workspace, no network, no way out (ADR-0038).
@@ -256,6 +258,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
         },
       })
       for await (const message of messages as AsyncIterable<Record<string, unknown>>) {
+        observe(observer, { activity: Date.now() })
         const id = typeof message.session_id === 'string' ? message.session_id : undefined
         if (id && !handle) {
           handle = id
@@ -389,10 +392,13 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     }
   }
 
-  /** The SDK's Claude Code process, started under the confinement: the SDK's command line, wrapped. */
-  private spawnConfined(options: SpawnOptions, confinement: Confinement): SpawnedProcess {
+  /** The SDK's Claude Code process, started under the confinement: the SDK's command line, wrapped. Its pid, when it has one, is the run's agent process. */
+  private spawnConfined(options: SpawnOptions, confinement: Confinement, observer?: RunObserver): SpawnedProcess {
     const confined = confinedCommand(options.command, options.args, confinement)
-    return (this.options.spawn ?? spawnPiped)(confined.command, confined.args, { cwd: options.cwd, env: options.env, signal: options.signal })
+    const spawned = (this.options.spawn ?? spawnPiped)(confined.command, confined.args, { cwd: options.cwd, env: options.env, signal: options.signal })
+    const pid = (spawned as { pid?: unknown }).pid
+    if (typeof pid === 'number' && Number.isInteger(pid) && pid > 0) observe(observer, { process: { pid } })
+    return spawned
   }
 
   /** Whether a sandbox with no network starts inside the confinement (ADR-0038). */
