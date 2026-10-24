@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`, `confinement`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`, `confinement`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`, `limits`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `LimitsOptions`, `LimitReport`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `readLimits`, `limitProblem`, `LIMITS_READ_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -19,6 +19,22 @@ Capability **seam definition** for agent runtimes
   optional: a missing number stays missing. A run that fails attaches what it consumed to its
   error (`withMetering`), read back with `meteringOf`. Names are provider-neutral; the
   [`agent-workers`](../plugins/agent-workers/README.md) source maps them into the ledger.
+- **An account's usage report**
+  ([ADR-0059](../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
+  [limit readings](../../docs/design/agent-runtimes.md#an-accounts-usage-report)), optional:
+  `limits({ home }, signal)` reads the report of the account signed in to `home`
+  (its own home when absent), every window it reports as a `LimitObservation`, as
+  a `LimitReport`: `{ limits }`, or `{ unreadable }` with why. It runs under the
+  probe's confinement and environment, starts no model turn, spends no quota a run
+  would, and leaves no conversation behind; a runtime that cannot promise that
+  does not implement it. It reads a format only on a runtime version whose format
+  was checked, else `unreadable`, naming the version; a home it does not run in, a
+  report it cannot read, and a stopped read are `unreadable`, never a throw. A
+  Worker source asks it through `readLimits(provider, options, signal, ms)`:
+  bounded (`LIMITS_READ_MS`, 30 s), stopped with its caller, and fail-closed: a
+  provider without `limits`, a throw, a late answer, or anything the seam does not
+  define (`limitProblem`: a window named, a status the seam names, ISO times, a
+  share between 0 and 100) is `unreadable`, never a reading.
 - A provider refuses a policy it cannot enforce exactly, with a `config_error`.
   It never loosens a policy.
 - **What a run reports of itself** (PROP-0013,
@@ -127,7 +143,15 @@ Capability **seam definition** for agent runtimes
     login in two homes one, another key another, no unreadable home verified, no
     principal in the reading, a sign-in command that names the home and sets no
     session bus, and a run in a named home;
+  - `agentRuntimeLimitsConformance` (`LimitsHarness`: the provider on a checked
+    version with a readable report, with a garbled one, and on an unchecked
+    version) for a provider that reads a usage report: each window an observation
+    in the seam's units, through `readLimits` as given; an unchecked version
+    `unreadable`, naming it; a garbled report, a home it does not run in (never
+    made), and a stopped read `unreadable`, never a throw;
   - `FakeAgentRuntime`: scripted homes (`signIn`, `signOut`), a reader verified on
-    one version, passing both suites (`tests/identity.spec.ts`).
+    one version, and a scripted usage report (`report(home, windows | 'garbled')`,
+    `fake-limits.json`, read on that version for a signed-in home only), passing
+    every suite (`tests/identity.spec.ts`, `tests/limits.spec.ts`).
 - **Dependencies:** `@deepseek-ai/dsh-subprocess` and its peer
   `@deepseek-ai/dsh-http-proxy`, for the scrub only.

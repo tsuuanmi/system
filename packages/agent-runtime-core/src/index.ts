@@ -231,6 +231,84 @@ export interface LimitObservation {
   observedAt: string
 }
 
+/** What a usage report is read for (ADR-0059). */
+export interface LimitsOptions {
+  /**
+   * Read the report of the account signed in to this home (an absolute path) instead of the
+   * provider's own configured home. A provider that does not report {@link RuntimeEvidence.homes}
+   * answers a named home `unreadable`, never with its own home's report.
+   */
+  home?: string | undefined
+}
+
+/**
+ * An account's usage report, read on request (ADR-0059): each window the runtime reports, as an
+ * observation in the seam's units (a share used 0 to 100, ISO times), or why the report cannot be
+ * read. An `unreadable` report records nothing: each window keeps its last reading.
+ */
+export type LimitReport = { limits: LimitObservation[] } | { unreadable: string }
+
+/** How long one usage report may take by default (30 s); past it the report is `unreadable`. */
+export const LIMITS_READ_MS = 30_000
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+const LIMIT_STATUSES = ['allowed', 'warning', 'rejected']
+
+/**
+ * Why `observation` is not a {@link LimitObservation} as the seam defines it, or undefined when it
+ * is: a window named (at most 128 characters), a status the seam names, ISO 8601 times, and a share
+ * between 0 and 100.
+ */
+export function limitProblem(observation: unknown): string | undefined {
+  const o = observation as Partial<Record<keyof LimitObservation, unknown>> | null
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return 'an observation is not an object'
+  if (typeof o.window !== 'string' || !o.window.length || o.window.length > 128) return 'an observation names no window'
+  if (typeof o.status !== 'string' || !LIMIT_STATUSES.includes(o.status)) return `the window ${o.window} has no status the seam names`
+  const time = (value: unknown): boolean => typeof value === 'string' && ISO_TIME.test(value) && Number.isFinite(Date.parse(value))
+  if (!time(o.observedAt)) return `the window ${o.window} has no ISO observedAt`
+  if (o.resetsAt !== undefined && !time(o.resetsAt)) return `the window ${o.window} has a resetsAt that is not an ISO time`
+  if (o.usedPercentage !== undefined && !(typeof o.usedPercentage === 'number' && o.usedPercentage >= 0 && o.usedPercentage <= 100)) return `the window ${o.window} has a used share outside 0 to 100`
+  return undefined
+}
+
+/**
+ * Read a provider's usage report as a Worker source must (ADR-0059): bounded by `ms`, aborted with
+ * `signal`, and fail-closed. A provider without `limits`, one that throws, answers late, or answers
+ * anything {@link LimitReport} does not define (an observation {@link limitProblem} refuses among
+ * them) gives `unreadable`, with why, never a reading.
+ */
+export async function readLimits(provider: AgentRuntimeProvider, options: LimitsOptions, signal: AbortSignal, ms: number = LIMITS_READ_MS): Promise<LimitReport> {
+  if (typeof provider.limits !== 'function') return { unreadable: `${provider.kind} reads no usage report` }
+  if (signal.aborted) return { unreadable: 'the read was stopped before it started' }
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  signal.addEventListener('abort', abort, { once: true })
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const late = new Promise<LimitReport>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ unreadable: `the usage report did not answer within ${ms / 1000} s` })
+        controller.abort()
+      }, ms)
+    })
+    const stopped = new Promise<LimitReport>((resolve) => {
+      controller.signal.addEventListener('abort', () => resolve({ unreadable: 'the read was stopped' }), { once: true })
+    })
+    const report = await Promise.race([provider.limits({ ...options }, controller.signal), late, stopped]) as unknown
+    const r = report as Partial<{ limits: unknown; unreadable: unknown }> | null
+    if (r && typeof r === 'object' && typeof r.unreadable === 'string' && r.limits === undefined) return { unreadable: r.unreadable.slice(0, 300) || 'it gave no reason' }
+    if (!r || typeof r !== 'object' || r.unreadable !== undefined || !Array.isArray(r.limits)) return { unreadable: `${provider.kind} answered a report the seam does not define` }
+    const problem = (r.limits as unknown[]).map(limitProblem).find((p) => p !== undefined)
+    if (problem) return { unreadable: `${provider.kind} answered a report the seam does not define: ${problem}` }
+    return { limits: (r.limits as LimitObservation[]).map((l) => ({ ...l })) }
+  } catch (error) {
+    return { unreadable: `the usage report failed: ${(error as Error)?.message?.split('\n')[0]!.slice(0, 200) ?? String(error)}` }
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', abort)
+  }
+}
+
 /**
  * What a run consumed, from the runtime's own objective numbers (docs/design/resources.md),
  * never from the model's own report. Every field is optional: a missing number stays missing.
@@ -327,6 +405,17 @@ export interface AgentRuntimeProvider {
   identity?(home: string, key: Uint8Array): Promise<IdentityReading>
   /** The runtime's own sign-in command for `home` ({@link LoginCommand}); optional, with `identity`. */
   loginCommand?(home: string): LoginCommand
+  /**
+   * The usage report of the account signed in to `options.home` (its own home when absent), every
+   * window it reports as an observation (ADR-0059). Read under the same confinement and with the same
+   * scrubbed environment as its probe, starting no model turn, spending no quota a run would, and
+   * leaving no conversation behind: a runtime whose report cannot promise that does not implement it
+   * (optional). It reads a format only on a runtime version whose format was checked, and on another
+   * answers `unreadable`, naming the version. It never throws for a report it cannot read, a home it
+   * does not run in, or an aborted `signal`: that is `unreadable`, with why. Ask it through
+   * {@link readLimits}, which bounds it.
+   */
+  limits?(options: LimitsOptions, signal: AbortSignal): Promise<LimitReport>
 }
 
 /**
