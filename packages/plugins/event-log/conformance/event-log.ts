@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { expect } from 'vitest'
-import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
+import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import type { NewEvent, SystemEvent } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
@@ -38,7 +38,7 @@ const withOffset = (ms: number, hours: number): string => {
   return `${shifted}${sign}${String(Math.abs(hours)).padStart(2, '0')}:00`
 }
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: ContractVersion = '1.0'): Scenario<Boot> => ({
   id: `eventLog.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
