@@ -986,9 +986,11 @@ host that holds private data needs full-disk or home-directory encryption
 
 ## Run as a service
 
-Run the host as a systemd user service, so it starts with the machine and a
-failure is noticed. Below, `<node>` is a supported Node (`node --version`, see
-[CON-2](../requirements/constraints.md)) and `<system>` is the checkout's
+Run the host as a systemd user service, so it starts with the machine, a
+failure is noticed, and its environment is declared rather than inherited from a
+shell. Below, `<node>` is the absolute path of a supported Node (`node --version`,
+see [CON-2](../requirements/constraints.md)), `<checkout>` the installation that
+runs (the live install: `~/workspaces/system-live`), and `<system>` its
 `packages/cli/lib/bin.js`. Allow the user's services to run without a login
 session: `loginctl enable-linger`.
 
@@ -999,18 +1001,31 @@ session: `loginctl enable-linger`.
 Description=system harness
 
 [Service]
-ExecStart=<node> <system> start
-# Drain first: no new run is admitted, running ones finish or resume on the next start.
-ExecStop=<node> <system> shutdown --deadline 600
-TimeoutStopSec=660
+WorkingDirectory=<checkout>
+# Every variable the daemon reads, and nothing else; a missing file fails the start.
+EnvironmentFile=%h/.config/system/daemon.env
+ExecStart=<node> packages/cli/lib/bin.js start
+# Drain first: no new run is admitted, running ones finish or resume on the next start. A daemon
+# already gone (a `system shutdown` by hand, which exits 0 and is not restarted) needs no stop.
+ExecStop=/bin/sh -c '[ -z "$$MAINPID" ] || exec <node> packages/cli/lib/bin.js shutdown --deadline 600'
+# The drain's 600 s, the 60 s `system shutdown` waits after its SIGTERM, and a margin.
+TimeoutStopSec=720
 Restart=on-failure
+StandardOutput=append:%h/system-backups/daemon.log
+StandardError=inherit
 UMask=0077
 
 [Install]
 WantedBy=default.target
 ```
 
-Logs go to the journal: `journalctl --user -u system`.
+`~/.config/system/daemon.env` (mode `600`, yours) holds `NAME=VALUE` lines: `PATH` and
+`DSH_HOME`, required, and only the other names the daemon reads ([the daemon's
+environment](../reference/cli.md#the-daemons-environment)). systemd expands nothing in it:
+write absolute paths. `system check --env-file ~/.config/system/daemon.env` checks it against
+the profile and prints names, never values. A clean `system shutdown` exits 0, so the unit is
+not restarted; a crash is. The daemon's output goes to `~/system-backups/daemon.log`, the unit's
+own messages to the journal: `journalctl --user -u system`.
 
 **Health.** `system health` exits 0 healthy, 1 degraded, 2 down (or not
 answering), and prints what to do for each check that is not ok. Run it on a
@@ -1023,6 +1038,7 @@ OnFailure=<your notifier>.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=%h/.config/system/daemon.env
 ExecStart=<node> <system> health
 
 # ~/.config/systemd/user/system-health.timer
@@ -1042,6 +1058,7 @@ only needs liveness.
 # ~/.config/systemd/user/system-backup.service
 [Service]
 Type=oneshot
+EnvironmentFile=%h/.config/system/daemon.env
 ExecStart=/bin/sh -c '<node> <system> backup "$HOME/backups/system-$(date +%%F)"'
 
 # ~/.config/systemd/user/system-backup.timer
@@ -1072,9 +1089,8 @@ Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Options after the script: --settle <minutes>, --hours <HH-HH> (its section).
 ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh
-# The daemon an update starts again stays in this unit's group: when a pass ends, only its own
-# process is stopped, never the daemon. A pass with a drain and two builds takes its time.
-KillMode=process
+# A pass with a drain and two builds takes its time. The daemon it stops and starts is
+# system.service's (systemctl), so nothing of it is in this unit: no KillMode= is needed.
 TimeoutStartSec=infinity
 
 # ~/.config/systemd/user/system-auto-update.timer
@@ -1134,9 +1150,10 @@ path. Once the profile runs the new version:
 
 ## Update the live install from e218ae7 to the Base release
 
-The live install runs from the `~/workspaces/system-live` worktree, detached at e218ae7, on Node 24:
-started there with `nohup node packages/cli/lib/bin.js start >> ~/system-backups/daemon.log`, its
-patch `~/.dsh/profiles/system/cordis.patch.yml`. Claude Code's `system` MCP server authenticates
+The live install runs from the `~/workspaces/system-live` worktree, detached at e218ae7, on Node 24,
+under its user unit `system.service` ([Run as a service](#run-as-a-service); a daemon still started by
+hand moves under it [once](#run-the-live-daemon-under-systemservice)), its patch
+`~/.dsh/profiles/system/cordis.patch.yml`. Claude Code's `system` MCP server authenticates
 through that checkout's `packages/cli/lib/bin.js mcp-headers`. [`scripts/live-update.sh`](../../scripts/live-update.sh)
 takes it to the Base release (the merged `main`): the [upgrade with drain](#upgrade-with-drain),
 each step checked, rolled back when one fails. It is a dry run unless `--apply`.
@@ -1214,12 +1231,12 @@ check` (37 rows, checked on a copy, 2026-10-23).
    (and `--from <the live commit>` once it is no longer e218ae7).
    It changes nothing. It checks the tools, the live checkout (clean, at e218ae7), the target (a
    descendant), the vault key, free space, and the candidate patch against the target's code
-   (`system check` on a scratch copy of the profile); reads how the daemon was started from its
-   process; captures what the profile answers now (a read); and prints `system health` and the
-   plan. Fix what it reports until it ends with the plan.
+   (`system check --env-file` on a scratch copy of the profile, with the unit's environment file);
+   that the daemon runs under `system.service`; captures what the profile answers now (a read); and
+   prints `system health` and the plan. Fix what it reports until it ends with the plan.
 3. **Apply:** the same command with `--apply`, in a shell that outlives a disconnect (`tmux`, or
    `nohup … > ~/system-backups/live-update.out 2>&1 &`): the drain alone may take ten minutes. The
-   daemon starts with this shell's environment, as the first `nohup` start had its own. Notes and the
+   unit starts the daemon with its environment file, never this shell's environment. Notes and the
    backup go to `~/system-backups/<date>-before-base/` (`-2`, `-3` for a later attempt).
 4. **Read the outcome.**
    - Exit 0, `updated`: Base runs. `system plugins` lists each plugin's lifecycle, and `system
@@ -1236,9 +1253,11 @@ check` (37 rows, checked on a copy, 2026-10-23).
 **What the script checks.**
 
 - Before the stop, as in the dry run, and that the daemon is this checkout's `dsh` under `system
-  start`, started in `system-live` on Node 24, its output going to a file.
-- The stop: `system shutdown --deadline 600`, then the daemon and `system start` exit within five
-  minutes. It never kills.
+  start`, the main process of `system.service`, which runs in `system-live` on Node 24 with one
+  required environment file naming this DSH home, its output going to a file. A daemon started any
+  other way is refused, before anything changes.
+- The stop: `systemctl --user stop system.service`. Its `ExecStop` is `system shutdown --deadline
+  600` (the drain), and the daemon and `system start` exit. It never kills.
 - The backup, taken once the daemon has stopped, so it is the store a rollback returns to: `system
   backup` (the store by `VACUUM INTO`, and the vault; the key stays in `~/.dsh/system`, as in
   [backup and restore](#backup-and-restore)), verified by a restore preview; and the profile's files.
@@ -1248,7 +1267,9 @@ check` (37 rows, checked on a copy, 2026-10-23).
   stamp](../../packages/cli/README.md)). A target whose build writes no stamp is refused: update to it
   with the script of its own checkout. The `--check-with` checkout's stamp must name its own commit.
   The stamp replaces `--marker`, which the script no longer takes (a command with it exits 2).
-- Before the start: `system check` of the profile as it will start.
+- Before the start: `system check --env-file` of the profile as it will start, with the unit's
+  environment file. Then `systemctl --user start system.service` (a unit the updated code made fail
+  at its start limit is reset first).
 - After the start: `/healthz`, then the [upgrade suite's](../../packages/cli/tests/upgrade/upgrade.e2e.ts)
   expectations, on the live store: every run explains and answers `result` as before (one running at
   the capture may have moved on), no migration went backwards, and every step, session, and artifact
@@ -1260,10 +1281,10 @@ check` (37 rows, checked on a copy, 2026-10-23).
 - A failure after the stop rolls back: the updated daemon stopped, the profile's files and link put
   back, e218ae7 checked out, installed, and built (its lib stamped with its commit, or with no stamp
   for code from before the stamp, as e218ae7), `system restore <dir>/store --yes` once Base has
-  started on the store, and the daemon started as before. What Base did in its minutes is lost with
-  its store.
+  started on the store, and the unit started again. What Base did in its minutes is lost with its
+  store.
 
-**By hand**, with the daemon stopped (`system shutdown`):
+**By hand**, with the unit stopped (`systemctl --user stop system.service`):
 
 1. Copy `package.json`, `pnpm-lock.yaml`, and `cordis.patch.yml` from `<dir>/profiles/system` back
    to `~/.dsh/profiles/system`, and its `node_modules` too when the bundle link differs.
@@ -1271,8 +1292,8 @@ check` (37 rows, checked on a copy, 2026-10-23).
    && pnpm build` there.
 3. If Base started, in `~/workspaces/system-live`: `node packages/cli/lib/bin.js restore
    <dir>/store`, then again with `--yes`.
-4. Start as before: `cd ~/workspaces/system-live && nohup node packages/cli/lib/bin.js start >>
-   ~/system-backups/daemon.log 2>&1 &`.
+4. `systemctl --user reset-failed system.service; systemctl --user start system.service`, then
+   `system health`.
 
 The script was rehearsed on a throwaway worktree and DSH home: the upgrade suite's fixture store,
 a profile linked from another checkout. A start that failed rolled back to e218ae7, the store and
@@ -1316,9 +1337,11 @@ writes its output next to it (`<time>-<sha>.out`); the update's own notes are in
 that needs a new patch stops at the dry run, and you update to it [by
 hand](#update-the-live-install-from-e218ae7-to-the-base-release)). It never updates to a commit
 that is not a fast-forward of the live one, on a red or pending CI, or while paused. It never stops
-the daemon but by `live-update.sh`'s drained `system shutdown`, and never kills it.
+the daemon but by `systemctl --user stop system.service`, whose `ExecStop` drains, and never kills
+it.
 
-**Enable it:**
+**Enable it**, once the daemon runs under `system.service` ([once](#run-the-live-daemon-under-systemservice);
+until then every dry run refuses, and the first pass pauses itself):
 
 1. `git -C ~/workspaces/system-live fetch origin main && git -C ~/workspaces/system-live worktree add
    --detach ~/workspaces/system-live-check origin/main`.
@@ -1328,10 +1351,10 @@ the daemon but by `live-update.sh`'s drained `system shutdown`, and never kills 
 4. Run a pass now and read its line: `systemctl --user start system-auto-update.service; tail -n 1
    ~/system-backups/auto-update/log`.
 
-A daemon the pass starts again has the unit's environment, as one started by hand has its shell's:
-give the unit, with `Environment=` or `EnvironmentFile=`, any variable the daemon reads (an
-`apiKeyEnv` its patch names, say). A Worker that loses one fails the upgrade checks and the update
-rolls back, but the previous code then starts with the same environment: set it before enabling.
+The daemon an update restarts is `system.service`'s, with the unit's environment file, whatever
+this timer's environment is. The dry run checks that file against the target's profile (`system
+check --env-file`): a name the target no longer reads stops it there, and a name a row of the target
+forwards that the file does not set is a note in the pass's output.
 
 **Pause, and resume.** Pause by hand with `echo 'paused by hand' > ~/.dsh/system/auto-update.paused`;
 stop the timer altogether with `systemctl --user disable --now system-auto-update.timer`. A pass
@@ -1339,6 +1362,53 @@ that pauses itself writes the reason on the file's first line, with the live and
 its output. Read them, act (fix the live patch and update by hand, take up the unfinished update,
 recover from `LOOK FIRST` as that section says), then `rm ~/.dsh/system/auto-update.paused`: the
 next pass starts again from step 1.
+
+## Run the live daemon under system.service
+
+Once, before `live-update.sh` or the automatic update can stop and start the daemon: both refuse a
+daemon started by hand, whose environment would be whichever shell starts it again. Afterwards the
+unit ([Run as a service](#run-as-a-service)) runs it, with an environment file that declares every
+variable it reads. Below, `node` is Node 24 (`~/.nvm/versions/node/v24.21.0/bin/node`).
+
+1. **Write the environment file** from the shell that starts the daemon today (its `PATH` has
+   Node 24's bin first, git, Xvfb, bwrap, and for remote login the VNC server and websockify):
+
+   ```sh
+   install -d -m 700 ~/.config/system
+   (umask 077; printf 'PATH=%s\nDSH_HOME=%s\n' "$PATH" "${DSH_HOME:-$HOME/.dsh}" > ~/.config/system/daemon.env)
+   ```
+
+   Then list the names, never the values, the running daemon was started with: its parent, `system
+   start`, holds the environment of the shell that started it.
+
+   ```sh
+   pid=$(node -p 'require(process.env.HOME + "/.dsh/system/mcp.json").pid')
+   tr '\0' '\n' < "/proc/$(ps -o ppid= -p "$pid" | tr -d ' ')/environ" | cut -d= -f1 | sort
+   ```
+
+   Add to the file, with its value, each name of that list that [the daemon's
+   environment](../reference/cli.md#the-daemons-environment) lists, or that a row forwards
+   (`forwardEnv`; `SYSTEM_MCP_TOKEN` for a Codex Worker on the Responses gateway). Keep a model
+   route's key (its `apiKeyEnv`) in the vault (`system model key <NAME>`), not in the file. Leave out
+   the shell's own (`TERM`, `TMUX`, `SSH_*`, `DISPLAY`, …).
+2. **Check it** with a CLI that has `--env-file` (the check checkout's):
+   `node ~/workspaces/system-live-check/packages/cli/lib/bin.js check --env-file ~/.config/system/daemon.env`,
+   until it says `ok`. It prints names, never values.
+3. **Install the unit:** `~/.config/systemd/user/system.service` as in [Run as a
+   service](#run-as-a-service), with `<checkout>` `%h/workspaces/system-live` and `<node>`
+   `%h/.nvm/versions/node/v24.21.0/bin/node`; then `systemctl --user daemon-reload`.
+4. **Move the daemon:** in `~/workspaces/system-live`, `node packages/cli/lib/bin.js shutdown
+   --deadline 600` (it drains, then prints `stopped`), then `systemctl --user enable --now
+   system.service` and `loginctl enable-linger`.
+5. **Verify:** `systemctl --user is-active system.service` says `active`; `curl -fsS
+   http://127.0.0.1:47317/healthz` (the port the discovery file names) says `ok`; `node
+   packages/cli/lib/bin.js health` shows the checks it showed before; and a dry run of
+   `live-update.sh` says `the daemon runs under system.service`.
+
+**Back out**, if the daemon misbehaves under the unit: `systemctl --user disable --now
+system.service` (its `ExecStop` drains), then start it by hand as before, from the old shell: `cd
+~/workspaces/system-live && nohup node packages/cli/lib/bin.js start >> ~/system-backups/daemon.log
+2>&1 &`. The update scripts refuse that daemon until it runs under the unit again.
 
 ## Rotate a control token
 

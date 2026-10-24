@@ -1,23 +1,28 @@
 // The live update's dry run, its refusals, and its upgrade checks' rules
 // (docs/operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release). The script
-// runs on a throwaway repository and DSH home, with no daemon: a dry run changes nothing, and every
-// refusal comes before anything is written. --apply itself is rehearsed by hand on a throwaway
-// worktree and home (the runbook says how), since it builds and starts a real profile.
+// runs on a throwaway repository and DSH home, with a stand-in system.service unit: a dry run changes
+// nothing, every refusal comes before anything is written, and a rollback stops and starts the unit
+// (a fake daemon). --apply itself is rehearsed by hand on a throwaway worktree and home (the runbook
+// says how), since it builds and starts a real profile.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { baselineProblems, type Health, healthProblems, runProblems } from './live-update-check.ts'
+import { daemonEnv, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
 
 const SCRIPT = fileURLToPath(new URL('./live-update.sh', import.meta.url))
 
-interface Fixture { root: string; live: string; home: string; backups: string; bin: string; from: string; target: string; git: (...args: string[]) => string }
+interface Fixture {
+  root: string; live: string; home: string; backups: string; bin: string; from: string; target: string; envFile: string; unit: StandInUnit
+  git: (...args: string[]) => string
+}
 
 /**
  * A repository whose second commit's build writes the build stamp (the first is code from before it),
- * checked out at the first; a profile; a stand-in pnpm.
+ * checked out at the first; a profile; its unit's environment file; a stand-in pnpm and systemctl.
  */
 function fixture(): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'live-update-'))
@@ -49,7 +54,9 @@ function fixture(): Fixture {
   mkdirSync(bin)
   writeFileSync(join(bin, 'pnpm'), '#!/bin/sh\necho 12.9.1\n')
   chmodSync(join(bin, 'pnpm'), 0o755)
-  return { root, live, home, backups, bin, from, target, git }
+  const envFile = daemonEnv(root, home)
+  const unit = standInUnit(root, bin, live, home, envFile)
+  return { root, live, home, backups, bin, from, target, envFile, unit, git }
 }
 
 /** A checkout of the target, "built": its lib's stamp names the target, and its `system check` passes. */
@@ -59,7 +66,7 @@ function builtTarget(f: Fixture): string {
   execFileSync('git', ['-C', dir, 'checkout', '-q', '--detach', f.target], { stdio: 'pipe' })
   mkdirSync(join(dir, 'packages', 'cli', 'lib'))
   writeFileSync(join(dir, 'packages', 'cli', 'lib', 'build-commit'), `${f.target}\n`)
-  writeFileSync(join(dir, 'packages', 'cli', 'lib', 'bin.js'), "console.log(`ok: 0 row(s) of the profile pass this code's checks (${process.argv[2]})`)\n")
+  writeFileSync(join(dir, 'packages', 'cli', 'lib', 'bin.js'), "console.log(`ok: 0 row(s) of the profile pass this code's checks (${process.argv.slice(2).join(' ')})`)\n")
   return dir
 }
 
@@ -73,8 +80,15 @@ function attempt(f: Fixture, phase: string): string {
 
 function run(f: Fixture, target: string, ...args: string[]): { status: number | null; output: string } {
   const result = spawnSync('bash', [SCRIPT, target, '--from', f.from, '--live', f.live, '--dsh-home', f.home, '--backups', f.backups,
-    '--node-dir', dirname(process.execPath), '--pnpm-dir', f.bin, ...args], { encoding: 'utf8' })
+    '--node-dir', dirname(process.execPath), '--pnpm-dir', f.bin, ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${f.bin}:${process.env.PATH}` } })
   return { status: result.status, output: `${result.stdout}${result.stderr}` }
+}
+
+/** Wait until the fake daemon's discovery file exists. */
+function waitForDaemon(f: Fixture): void {
+  const discovery = join(f.home, 'system', 'mcp.json')
+  for (const until = Date.now() + 10_000; !existsSync(discovery) && Date.now() < until;) spawnSync('sleep', ['0.1'])
+  expect(existsSync(discovery)).toBe(true)
 }
 
 /**
@@ -190,7 +204,7 @@ describe('live-update.sh', () => {
     writeFileSync(patch, '- id: workflow\n  config:\n    allowSameFamily: true\n')
     const before = snapshot(f.home)
     const { status, output } = run(f, f.target, '--check-with', builtTarget(f), '--patch', patch)
-    expect(output, output).toContain("ok: 0 row(s) of the profile pass this code's checks (check)")
+    expect(output, output).toContain(`ok: 0 row(s) of the profile pass this code's checks (check --env-file ${f.envFile})`)
     expect(output).toContain('+    allowSameFamily: true')
     expect(status).toBe(0)
     expect(snapshot(f.home)).toEqual(before)
@@ -231,6 +245,70 @@ describe('live-update.sh', () => {
     expect(status).toBe(1)
     expect(output).toContain('is not at the target\'s code')
   })
+})
+
+describe('live-update.sh and system.service', () => {
+  it('refuses without the unit, with another directory, without one required environment file, or one for another home', () => {
+    const f = fixture()
+    const cases: [string, string, string][] = [
+      ['LoadState', 'not-found', 'there is no system.service user unit: run the daemon under it once (docs/operations/runbooks.md#run-the-live-daemon-under-systemservice)'],
+      ['WorkingDirectory', f.root, `system.service runs in ${f.root}, not in`],
+      ['EnvironmentFiles', `${f.envFile} (ignore_errors=yes)`, 'system.service must name one environment file, required'],
+      ['EnvironmentFiles', '', 'system.service must name one environment file, required'],
+      ['EnvironmentFiles', `${join(f.root, 'missing.env')} (ignore_errors=no)`, `no environment file ${join(f.root, 'missing.env')}`],
+    ]
+    for (const [property, value, expected] of cases) {
+      const before = readFileSync(join(f.unit.dir, property), 'utf8')
+      f.unit.set(property, value)
+      const { status, output } = run(f, f.target)
+      expect(output, output).toContain(expected)
+      expect(status).toBe(1)
+      writeFileSync(join(f.unit.dir, property), before)
+    }
+    writeFileSync(f.envFile, 'PATH=/usr/bin:/bin\nDSH_HOME=/elsewhere\n')
+    const { status, output } = run(f, f.target)
+    expect(output).toContain(`does not set DSH_HOME to ${realpathSync(f.home)} (--dsh-home)`)
+    expect(status).toBe(1)
+  })
+
+  it('refuses a daemon that runs outside the unit, with the one-time migration to point to', () => {
+    const f = fixture()
+    // The fake daemon started by hand: its parent is not the unit's main process.
+    writeFileSync(join(f.unit.dir, 'MainPID'), '0\n')
+    execFileSync('sh', [join(f.unit.dir, 'start')])
+    waitForDaemon(f)
+    writeFileSync(join(f.unit.dir, 'MainPID'), '0\n')
+    try {
+      const { status, output } = run(f, f.target)
+      expect(output, output).toMatch(/the daemon \(pid \d+\) runs outside system\.service: run it under the unit once \(docs\/operations\/runbooks\.md#run-the-live-daemon-under-systemservice\)/)
+      expect(status).toBe(1)
+    } finally {
+      const pid = Number(JSON.parse(readFileSync(join(f.home, 'system', 'mcp.json'), 'utf8')).pid)
+      process.kill(pid, 'SIGTERM')
+    }
+  })
+
+  it('rolls back through the unit: stopped by systemctl, started by systemctl, and up on /healthz', () => {
+    const f = fixture()
+    const dir = attempt(f, 'rolling-back')
+    writeFileSync(join(dir, 'live-update.state'), `${readFileSync(join(dir, 'live-update.state'), 'utf8')}rollback_from=stopped\nrollback_reason=a test\nstart_log=${join(f.root, 'daemon.log')}\n`)
+    writeFileSync(join(f.root, 'daemon.log'), '')
+    execFileSync(join(f.bin, 'systemctl'), ['--user', 'start', 'system.service'])
+    waitForDaemon(f)
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f))
+      expect(output, output).toContain('ROLLING BACK to')
+      expect(output).toContain('systemctl --user stop system.service')
+      expect(output).toMatch(/the daemon is up: pid \d+ \(system\.service: \d+\)/)
+      expect(output).toContain('rolled back: the live install runs')
+      expect(status).toBe(1)
+      expect(f.unit.calls()).toEqual(['start system.service', 'stop system.service', 'reset-failed system.service', 'start system.service'])
+      expect(readFileSync(join(dir, 'live-update.state'), 'utf8')).toContain('phase=rolled-back')
+      expect(readFileSync(join(f.unit.dir, 'state'), 'utf8').trim()).toBe('active')
+    } finally {
+      f.unit.cleanup()
+    }
+  }, 60_000)
 })
 
 describe('live-update-check: what the update may not make worse', () => {

@@ -129,7 +129,7 @@ main() {
   [[ -z $(git -C "$CHECK" status --porcelain --untracked-files=no) ]] || pause_self "the check checkout $CHECK has uncommitted changes"
   if ! { git -C "$CHECK" checkout --quiet --detach "$TARGET" &&
     (cd "$CHECK" && PATH=$build_path pnpm install --frozen-lockfile --prefer-offline --config.confirm-modules-purge=false &&
-      PATH=$build_path pnpm build); } >>"$OUT" 2>&1 8>&-; then
+      PATH=$build_path pnpm build); } >>"$OUT" 2>&1; then
     pause_self "${TARGET:0:12} did not install or build in $CHECK"
   fi
 
@@ -137,10 +137,9 @@ main() {
   local -a update=(bash "$CHECK/scripts/live-update.sh" "$TARGET" --from "$FROM" --check-with "$CHECK" --live "$LIVE"
     --dsh-home "$DSH_HOME_DIR" --node-dir "$node_dir" --pnpm-dir "$pnpm_dir" --backups "$BACKUPS")
   local status=0
-  # Without this pass's lock (fd 8): a daemon the update starts outlives the pass.
-  "${update[@]}" >>"$OUT" 2>&1 8>&- || status=$?
+  "${update[@]}" >>"$OUT" 2>&1 || status=$?
   if ((status)); then pause_self "the dry run refused ${TARGET:0:12} (exit $status): the output says why (the live patch fails the target's system check, say)"; fi
-  "${update[@]}" --apply >>"$OUT" 2>&1 8>&- || status=$?
+  "${update[@]}" --apply >>"$OUT" 2>&1 || status=$?
   case $status in
     0) outcome updated "the live install runs ${TARGET:0:12} (from ${FROM:0:12}); notes: $OUT" ;;
     1) pause_self "the update to ${TARGET:0:12} stopped or rolled back (exit 1): the live install stays at ${FROM:0:12}" ;;

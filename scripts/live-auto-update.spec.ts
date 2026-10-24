@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { daemonEnv, standInUnit } from './systemd-stand-in.ts'
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(SCRIPTS, 'live-auto-update.sh')
@@ -22,7 +23,8 @@ interface Fixture {
 /**
  * An upstream whose main is one commit ahead of the live checkout (a clone at the first), a check
  * worktree of the live repository, a profile, and stand-ins: pnpm (its build writes a CLI whose
- * `system check` passes, unless FAKE_CHECK=fail, and the build stamp), and gh (prints what `gh(…)` set).
+ * `system check` passes, unless FAKE_CHECK=fail, and the build stamp), gh (prints what `gh(…)` set),
+ * and systemctl (system.service, with no daemon running).
  */
 function fixture(): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'live-auto-update-'))
@@ -71,6 +73,7 @@ function fixture(): Fixture {
     writeFileSync(join(bin, 'gh-out', 'status'), `${status}\n`)
   }
   gh('completed success node 24 / check + test + e2e\ncompleted success codeql / javascript-typescript\n')
+  standInUnit(root, bin, live, home, daemonEnv(root, home))
   return {
     root, upstream, live, check, home, backups, bin, from, target, git, gh,
     pause: join(home, 'system', 'auto-update.paused'), log: join(backups, 'auto-update', 'log'),
