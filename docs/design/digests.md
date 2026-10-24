@@ -88,6 +88,14 @@ the sources' strictest classification. With the agent
 rows on and a read-only Claude Code Worker configured on the economy tier, that is the Worker
 PROP-0010 names; with none, the request is bypassed.
 
+The tier is never raised because no Worker of it is configured: that would be a silent fallback
+across tiers ([INV-2](../architecture/invariants.md#inv-2-fail-closed)), and the one escalation to
+standard is a recorded decision on a failed quote check only. An install whose read-only Workers are
+all on the standard tier gives one read-only Worker the economy tier for the digests, as the
+[pilot](../operations/pilot.md) and the [work-kinds example](../operations/examples/work-kinds.patch.yml)
+do (T99 D5), or sets the row's `tier: standard`, the operator's explicit choice, with which a digest
+is written by a standard Worker and never escalated.
+
 Its brief points at each source by content id and never carries their content
 ([briefs](workflow-engine.md#briefs)). The Worker's source renders it at start, each artifact
 between `<artifact id="…">` tags, followed by the `digest@1.0` schema, and checks egress on what

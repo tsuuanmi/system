@@ -396,8 +396,15 @@ the system repository with a worktree per run. The rows are in
    - `codex-writer`: the same on Codex, `kinds: [docs, tests]`: it writes in the `docs` and `tests`
      variants and runs `validate:1`.
    - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
-     every review and digest. Each now sets `worktreePerRun: true`: every Worker on a workspace must
+     every review. Each now sets `worktreePerRun: true`: every Worker on a workspace must
      agree, so a reviewer reads the writer's worktree, and the load refuses a row that disagrees.
+   - `claude-digest`: read-only, on the **economy** tier, given no kinds, in the review member's
+     empty directory. It writes the digests of task results: a digest asks for a read-only Worker on
+     the economy tier only (the `digest` row's `tier`), so with only the standard reviewers every
+     task's digest is bypassed ("no Worker can write it (a read-only Worker on the economy tier)",
+     T99 D5). Optionally give it the runtime's lighter model (`model:`). Instead of this Worker, you
+     may set the `digest` row's `tier: standard`, an explicit choice: digests then run on a standard
+     reviewer and are never escalated ([digests](../design/digests.md#the-worker)).
    - `claude-member` keeps its empty directory, never a worktree.
 3. **The approval policy that gates the writers' commands** (ADR-0038) is the bundle's studio
    policy, unchanged: reads and edits run (`workspace-write` is `auto`, with `tests` and `lint`

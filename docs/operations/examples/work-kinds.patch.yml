@@ -5,7 +5,8 @@
 #   source-code updates -> Claude Code             (a writer given `code`)
 #   docs and test work  -> Codex CLI               (a writer given `docs` and `tests`)
 #   brainstorm          -> website Workers         (unchanged; see the runbook for the CLIs)
-#   reviews, digests    -> any reviewer given no kinds (Claude Code, Codex, Antigravity CLI)
+#   reviews             -> any reviewer given no kinds (Claude Code, Codex, Antigravity CLI)
+#   digests             -> claude-digest, the one read-only Worker on the economy tier (T99 D5)
 #
 # Merge by row id into ~/.dsh/profiles/system/cordis.patch.yml: each row here replaces the live
 # patch's row of that id (a patch that targets a row replaces its whole config). Every other row of
@@ -64,9 +65,10 @@
         tier: standard
         worktreePerRun: true
         kinds: [docs, tests]
-      # The reviewers: given no kinds, they take every step that names none (each algorithm-
-      # development review, agent-review, a planner's steps, digests), and never a kinded step they
-      # cannot do (they are read-only: no develop, no validate).
+      # The reviewers: given no kinds, they take every step on their tier that names none (each
+      # algorithm-development review, agent-review, a planner's steps), and never a kinded step they
+      # cannot do (they are read-only: no develop, no validate). They are on the standard tier, so
+      # none takes a digest, which asks for the economy tier only (docs/design/digests.md#the-worker).
       - id: claude-research   # renamed from claude-review (operator, 2026-10-24)
         runtime: claude-agent-sdk
         workspace: /home/tan/workspaces/system
@@ -87,6 +89,21 @@
         model: gemini-3.8-flash-high
         tier: standard
         worktreePerRun: true   # was off
+      # T99 D5: the digests of a task's results. A digest asks for a read-only Worker on the digest
+      # row's tier (economy) as both minimum and maximum, and once more on standard only when every
+      # economy claim fails the quote check; with no economy Worker, every digest is bypassed. Its
+      # sources come in its brief, so it needs no repository: it works in the review member's empty
+      # directory, never a worktree. Given no kinds, and on the economy tier, it takes no step that
+      # asks for standard: no algorithm-development review, and an agent-review only when its caller
+      # asks for economy. To make it cheaper than a reviewer, give it the
+      # runtime's lighter model with `model:`; otherwise it runs the runtime's default model.
+      - id: claude-digest
+        runtime: claude-agent-sdk
+        workspace: /home/tan/experiments/review-member/empty
+        sandbox: read-only
+        tier: economy
+        maxTurns: 4
+        description: Writes the cited digests of task results
       # A review team member (ADR-0049) in an empty directory outside the repository; unchanged.
       - id: claude-member
         runtime: claude-agent-sdk
