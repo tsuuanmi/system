@@ -417,7 +417,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     for (const path of ['/ui/', '/ui/?view=board', '/ui/?view=workers', '/ui/?view=policy', `/ui/?run=${done.runId}`]) {
       await page.goto(origin + path)
-      await expect.poll(() => page.locator('#status').innerText(), path).toContain('updated')
+      await expect.poll(() => page.locator('#status').innerText(), { message: path }).toContain('updated')
       expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(600)
       // Each navigation link stays on one line; the links wrap as a whole.
       for (const name of ['Home', 'Board', 'Workers', 'Autonomy policy']) {
