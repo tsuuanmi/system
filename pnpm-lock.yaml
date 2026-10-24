@@ -1072,8 +1072,8 @@ importers:
         specifier: workspace:*
         version: link:../store
       zod:
-        specifier: ^4.1.0
-        version: 4.6.5
+        specifier: ^4.6.6
+        version: 4.6.7
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
