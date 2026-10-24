@@ -64,6 +64,7 @@ textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320p
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
 pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
+input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { min-width: 12em; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
 
@@ -902,36 +903,113 @@ export const APP_JS = `'use strict'
     })
     const columns = effective.map((e) => e.projectId ? 'project ' + e.projectId : 'studio')
     const classes = effective[0].effective.map((e) => e.actionClass)
+    // The proposed record, edited as a form (a mode per action class, the commands as lines, the
+    // expiry and batch numbers) or, folded under Advanced, as JSON; both edit one draft. The queue
+    // validates the proposal as it always did: the page refuses nothing the queue would take.
+    const fixed = new Set(value.alwaysAsk || [])
     const editor = el('textarea', { 'aria-label': 'Proposed policy record (JSON)', spellcheck: 'false' })
     const note = el('input', { placeholder: 'why (optional)', 'aria-label': 'Note for the proposed change' })
     const preview = el('div', {})
+    const form = el('div', {})
     const NEW = '(a new project policy)'
     const pick = el('select', { 'aria-label': 'Policy to change' }, policies.map((p) => el('option', { value: p.id }, p.id)), el('option', { value: NEW }, NEW))
     const selected = () => policies.find((p) => p.id === pick.value)
+    let draft
+    // The JSON shown under Advanced follows the form; an edit there that is not JSON leaves the form as it was.
+    const sync = () => { editor.value = pretty(draft); preview.replaceChildren() }
+    const edit = (change) => { change(draft); sync() }
+    const hours = (seconds) => String(Math.round(seconds / 36) / 100)
+    const minutes = (seconds) => String(Math.round(seconds / 0.6) / 100)
+    const number = (label, id, shown, onvalue, extra) => {
+      const input = el('input', Object.assign({ id, type: 'number', value: shown, min: '0', step: 'any', class: 'number' }, extra || {}))
+      input.addEventListener('input', () => onvalue(input.value === '' ? undefined : Number(input.value)))
+      return el('label', { for: id }, label, input)
+    }
+    const modeText = { auto: 'auto: it runs on its own', notify: 'notify: it runs, then tells you', ask: 'ask: it waits for your approval', forbid: 'forbid: it never runs' }
+    const WHY = { merge: 'an accepted result lands only on your approval', 'external-send': 'it cannot be undone', deploy: 'it cannot be undone', 'delete-data': 'it cannot be undone', spend: 'it is your decision', charter: 'it is your decision', funding: 'it is your decision', 'policy-change': 'it is your decision', remediation: 'a fix that writes, or a lost run going on, is yours to allow', promotion: 'the system never approves its own change' }
+    const buildForm = () => {
+      const p = draft
+      const studio = p.scope !== 'project'
+      const ruleOf = (c) => (p.rules || []).find((r) => r.actionClass === c)
+      const modeRow = (c) => {
+        const rule = ruleOf(c)
+        if (fixed.has(c)) return el('tr', {}, el('td', {}, c), el('td', {}, el('strong', {}, rule && rule.mode === 'forbid' ? 'forbid' : 'ask')),
+          el('td', { class: 'muted' }, 'always asks, whatever a rule says: ' + (WHY[c] || 'the queue always asks for it') + (rule && rule.mode === 'forbid' ? '; forbidden here (change it under Advanced)' : '')))
+        const select = el('select', { id: 'mode-' + c, 'aria-label': 'Mode of ' + c },
+          el('option', { value: '' }, studio ? 'not named: the default (' + p.default + ')' : 'not named: as the studio'),
+          ['auto', 'notify', 'ask', 'forbid'].map((m) => el('option', { value: m }, m)))
+        select.value = rule ? rule.mode : ''
+        select.addEventListener('change', () => edit((d) => {
+          const kept = (d.rules || []).filter((r) => r.actionClass !== c)
+          const old = ruleOf(c)
+          d.rules = select.value ? (old ? d.rules.map((r) => r.actionClass === c ? Object.assign({}, r, { mode: select.value }) : r) : kept.concat([{ actionClass: c, mode: select.value }])) : kept
+          buildForm()
+          document.getElementById('mode-' + c).focus()
+        }))
+        return el('tr', {}, el('td', {}, el('label', { for: 'mode-' + c }, c)), el('td', {}, select),
+          el('td', { class: 'muted' }, rule ? modeText[rule.mode] + (rule.requires && rule.requires.length ? ', once ' + rule.requires.join(', ') + ' pass' : '') + (rule.expiresSeconds ? '; its requests wait ' + hours(rule.expiresSeconds) + ' h' : '') : studio ? 'no rule: ' + modeText[p.default] : 'no rule: the studio policy decides'))
+      }
+      const fallback = el('select', { id: 'policy-default', 'aria-label': 'Mode of a class no rule names' }, el('option', { value: 'ask' }, 'ask'), el('option', { value: 'forbid' }, 'forbid'))
+      fallback.value = p.default
+      fallback.addEventListener('change', () => edit((d) => { d.default = fallback.value; buildForm(); document.getElementById('policy-default').focus() }))
+      const commands = el('textarea', { id: 'policy-commands', class: 'lines', 'aria-label': 'Commands judged as workspace writes, one per line', spellcheck: 'false' })
+      commands.value = (p.commands || []).join('\\n')
+      commands.addEventListener('input', () => edit((d) => {
+        const lines = commands.value.split('\\n').map((l) => l.trim()).filter(Boolean)
+        if (lines.length) d.commands = lines
+        else delete d.commands
+      }))
+      const project = studio ? null : el('input', { id: 'policy-project', value: p.projectId || '', 'aria-label': 'Project of the new policy' })
+      if (project) project.addEventListener('input', () => edit((d) => { d.projectId = project.value.trim(); if (!selected()) d.id = project.value.trim() + '.policy' }))
+      const batch = p.batch || {}
+      form.replaceChildren(
+        el('p', {}, el('strong', {}, p.id), ' · ' + (selected() ? 'version ' + selected().version + ' → ' + p.version + ' (the next version, raised for you)' : 'a new project policy, version ' + p.version),
+          project ? el('span', {}, ' · ', el('label', { for: 'policy-project' }, 'project ', project)) : null),
+        table(['Action class', 'Mode', 'What it means'], (classes).map(modeRow), 'queue modes'),
+        el('div', { class: 'batch-actions' },
+          studio ? el('label', { for: 'policy-default' }, 'A class no rule names', fallback) : null,
+          number('Requests wait (hours)', 'policy-expiry', hours(p.expiry.defaultSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { defaultSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
+          number('At most (hours)', 'policy-expiry-max', hours(p.expiry.maxSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { maxSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
+          number('Batch: at most (requests)', 'policy-batch-size', batch.maxSize === undefined ? '' : String(batch.maxSize), (n) => edit((d) => {
+            const next = Object.assign({}, d.batch, { maxSize: n })
+            if (next.maxSize === undefined && next.maxWaitSeconds === undefined) delete d.batch; else d.batch = next
+          }), { step: '1' }),
+          number('Batch: shown after (minutes)', 'policy-batch-wait', batch.maxWaitSeconds === undefined ? '' : minutes(batch.maxWaitSeconds), (m) => edit((d) => {
+            const next = Object.assign({}, d.batch, { maxWaitSeconds: m === undefined ? undefined : Math.round(m * 60) })
+            if (next.maxSize === undefined && next.maxWaitSeconds === undefined) delete d.batch; else d.batch = next
+          }))),
+        el('label', { for: 'policy-commands' }, 'Commands judged as workspace writes, one per line, matched word for word', commands))
+    }
     const fill = () => {
       const p = selected()
-      const draft = p ? Object.assign({}, p, { version: p.version + 1 })
+      draft = p ? Object.assign({}, p, { version: p.version + 1 })
         : { schema: 'autonomy-policy@1.0', id: 'project-id.policy', version: 1, scope: 'project', projectId: 'project-id', narrows: policies[0].id, rules: [{ actionClass: 'merge', mode: 'ask' }], default: 'ask', expiry: { defaultSeconds: 86400, maxSeconds: 1209600 } }
-      editor.value = pretty(draft)
-      preview.replaceChildren()
+      sync()
+      buildForm()
     }
     pick.addEventListener('change', fill)
     const parsed = () => {
       try { return JSON.parse(editor.value) } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, 'Not JSON: ' + error.message)); return undefined }
     }
+    // An edit of the JSON that parses to a record is the draft, and the form shows it.
+    editor.addEventListener('input', () => {
+      let next
+      try { next = JSON.parse(editor.value) } catch { return }
+      if (next && typeof next === 'object' && !Array.isArray(next) && Array.isArray(next.rules) && next.expiry && typeof next.expiry === 'object') { draft = next; buildForm() }
+    })
     const showDiff = () => {
-      const draft = parsed()
-      if (draft !== undefined) preview.replaceChildren(el('p', { class: 'muted' }, selected() ? 'Changes to ' + selected().id + ' version ' + selected().version + ':' : 'A new policy:'), diffView(selected(), draft))
+      const proposed = parsed()
+      if (proposed !== undefined) preview.replaceChildren(el('p', { class: 'muted' }, selected() ? 'Changes to ' + selected().id + ' version ' + selected().version + ':' : 'A new policy:'), diffView(selected(), proposed))
     }
     const propose = async () => {
-      const draft = parsed()
-      if (draft === undefined) return
+      const proposed = parsed()
+      if (proposed === undefined) return
       try {
-        const { change, request } = await api('policy/propose', { policy: draft, note: note.value })
+        const { change, request } = await api('policy/propose', { policy: proposed, note: note.value })
         status.textContent = 'proposed ' + change.changeId + ': decide request ' + request.requestId + ' in the approval queue'
         report(true, 'Proposed: ' + change.policy.id + ' version ' + change.policy.version, ['Recorded as change ' + change.changeId + '. Nothing changes yet: it waits for your verdict on request ' + request.requestId + ', shown at the top of this page and on Home.'])
         await policyView()
-      } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, error.message)) }
+      } catch (error) { preview.replaceChildren(el('p', { class: 'state failed', role: 'alert' }, 'Not proposed: ' + error.message)) }
     }
     const when = (t) => t ? ago(t) : '-'
     show(
@@ -946,13 +1024,14 @@ export const APP_JS = `'use strict'
       table(['Action class'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => el('td', {}, (e.effective.find((x) => x.actionClass === c) || {}).mode || '-')))), 'queue'),
       el('h3', {}, 'Policies'),
       table(['Policy', 'Scope', 'Version'], policies.map((p) => el('tr', {}, el('td', {}, el('code', {}, p.id)), el('td', {}, p.scope + (p.projectId ? ' ' + p.projectId : '')), el('td', {}, String(p.version))))),
-      proposals ? el('div', { class: 'panel' },
+      proposals ? el('section', { class: 'panel', 'aria-label': 'Propose a change' },
         el('h3', {}, 'Propose a change'),
-        el('p', { class: 'muted' }, 'Raise the version. The whole set must load as a configuration would; the change is asked in the approval queue on its exact hash, and applies only when you approve it there.'),
-        el('p', {}, pick),
-        editor, el('p', {}, note),
-        el('button', { onclick: showDiff }, 'Show diff'),
-        el('button', { class: 'primary', onclick: propose }, 'Propose'),
+        el('p', { class: 'muted' }, 'Change the modes, commands, or numbers below, see the change, then propose it. Nothing changes until you approve it in the approval queue; the whole set must load as a configuration would.'),
+        el('p', {}, el('label', {}, 'Policy ', pick)),
+        form,
+        el('details', { class: 'advanced' }, el('summary', {}, 'Advanced: the record as JSON'), el('p', { class: 'muted' }, 'Every field of the record, as the form edits it; an edit here shows in the form once it is valid JSON.'), editor),
+        el('p', {}, note),
+        el('div', { class: 'actions' }, el('button', { onclick: showDiff }, 'Show change'), el('button', { class: 'primary', onclick: propose }, 'Propose')),
         preview) : el('p', { class: 'muted' }, 'This approval queue changes its policy by configuration and a restart only.'),
       changes ? el('h3', {}, 'History') : null,
       changes && !changes.length ? el('p', { class: 'muted' }, 'No change was proposed yet.') : null,

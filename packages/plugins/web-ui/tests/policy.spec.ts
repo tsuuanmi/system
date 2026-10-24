@@ -209,12 +209,15 @@ describe('web UI: the policy page in a real browser', () => {
     await expect.poll(() => page.getByRole('heading', { name: 'Autonomy policy' }).count()).toBe(1)
     expect(await page.locator('main').innerText()).toContain('the configuration')
     expect(await page.locator('main').innerText()).not.toContain('null')
-    // The editor holds the studio policy at the next version; the diff shows what changes.
+    // The editor, folded under Advanced, holds the studio policy at the next version; the diff shows what changes.
+    await page.getByText('Advanced: the record as JSON').click()
     const editor = page.getByRole('textbox', { name: 'Proposed policy record (JSON)' })
     const draft = JSON.parse(await editor.inputValue()) as AutonomyPolicy
     expect(draft).toMatchObject({ id: 'studio-default', version: 2 })
     await editor.fill(JSON.stringify(merging('forbid'), null, 2))
-    await page.getByRole('button', { name: 'Show diff' }).click()
+    // The form shows the record edited as JSON: merge, which always asks, is forbidden there, said so.
+    await expect.poll(() => page.getByRole('region', { name: 'Propose a change' }).getByRole('row', { name: /^merge/ }).innerText()).toContain('forbidden here (change it under Advanced)')
+    await page.getByRole('button', { name: 'Show change' }).click()
     await expect.poll(() => page.locator('pre.diff .add').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "forbid"')]))
     expect(await page.locator('pre.diff .del').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "ask"')]))
     await page.getByRole('textbox', { name: 'Note for the proposed change' }).fill('no merges for now')
@@ -264,5 +267,49 @@ describe('web UI: the policy page in a real browser', () => {
     // Re-rendered: nothing waits any more, and the change is in force.
     await expect.poll(() => page.locator('main').innerText()).toContain('In force: the change pch-')
     expect(await waiting.count()).toBe(0)
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('edits the policy as a form: a mode per action class, the classes that always ask fixed at ask with why, the commands as lines, the expiry and batch numbers; the JSON follows under Advanced, and the proposal is the queue\'s to validate (T116)', async () => {
+    const booted = await boot()
+    const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
+    const form = page.getByRole('region', { name: 'Propose a change' })
+    await expect.poll(() => form.getByRole('combobox', { name: 'Mode of command' }).count()).toBe(1)
+    expect(await form.innerText()).toContain('studio-default · version 1 → 2 (the next version, raised for you)')
+    // Every class that always asks is fixed at ask, with why; no select for it.
+    for (const fixed of ['merge', 'deploy', 'charter', 'policy-change']) {
+      expect(await form.getByRole('combobox', { name: `Mode of ${fixed}` }).count(), fixed).toBe(0)
+      expect(await form.getByRole('row', { name: new RegExp(`^${fixed}\\b`) }).innerText(), fixed).toMatch(/ask\s+always asks, whatever a rule says: /)
+    }
+    expect(await form.getByRole('row', { name: /^merge/ }).innerText()).toContain('an accepted result lands only on your approval')
+    expect(await form.getByRole('combobox', { name: 'Mode of workspace-write' }).inputValue()).toBe('auto')
+    expect(await form.getByRole('row', { name: /^workspace-write/ }).innerText()).toContain('auto: it runs on its own, once tests, lint pass')
+    await form.getByRole('combobox', { name: 'Mode of command' }).selectOption('forbid')
+    await form.getByRole('textbox', { name: 'Commands judged as workspace writes, one per line' }).fill('pnpm lint\n\n  pnpm test  \n')
+    await form.getByLabel('Requests wait (hours)').fill('12')
+    await form.getByLabel('Batch: at most (requests)').fill('5')
+    await form.getByLabel('Batch: shown after (minutes)').fill('30')
+    await form.getByText('Advanced: the record as JSON').click()
+    const draft = JSON.parse(await form.getByRole('textbox', { name: 'Proposed policy record (JSON)' }).inputValue()) as AutonomyPolicy
+    expect(draft).toMatchObject({ id: 'studio-default', version: 2, commands: ['pnpm lint', 'pnpm test'], expiry: { defaultSeconds: 43_200, maxSeconds: 1_209_600 }, batch: { maxSize: 5, maxWaitSeconds: 1800 } })
+    expect(draft.rules.find((r) => r.actionClass === 'command')).toEqual({ actionClass: 'command', mode: 'forbid' })
+    expect(draft.rules.find((r) => r.actionClass === 'workspace-write')).toEqual({ actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'lint'] })
+    await form.getByRole('button', { name: 'Show change' }).click()
+    await expect.poll(() => form.locator('pre.diff .add').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "forbid"'), expect.stringContaining('"pnpm lint"')]))
+    // The queue validates as it always did: an expiry past its maximum is refused, and nothing is asked.
+    await form.getByLabel('Requests wait (hours)').fill('9000')
+    await form.getByRole('button', { name: 'Propose', exact: true }).click()
+    await expect.poll(() => form.getByRole('alert').innerText()).toMatch(/^Not proposed: invalid: /)
+    expect(await booted.ctx.approvals.list()).toEqual([])
+    await form.getByLabel('Requests wait (hours)').fill('12')
+    await form.getByRole('button', { name: 'Propose', exact: true }).click()
+    await expect.poll(() => page.locator('#outcome').innerText()).toContain('Proposed: studio-default version 2')
+    const [request] = await booted.ctx.approvals.list()
+    expect(request).toMatchObject({ action: { class: 'policy-change' } })
+    const change = ((await booted.call('policy')).value.changes as PolicyChange[])[0]!
+    expect(change.policy).toMatchObject({ version: 2, commands: ['pnpm lint', 'pnpm test'], expiry: { defaultSeconds: 43_200 }, batch: { maxSize: 5, maxWaitSeconds: 1800 } })
   }, 60_000)
 })

@@ -182,12 +182,22 @@ set's hash folded, and what each mode means (*auto* runs on its own, *notify* ru
 you, *ask* waits for your approval, *forbid* never runs); its history's times read relative, the
 clock time beside.
 
+**Propose a change** edits one policy (the next version, raised for the operator, or a new
+project's policy) as a form: a mode per action class (*not named*, auto, notify, ask, forbid; a
+rule's required checks and wait kept), each class that always asks shown fixed at ask with why
+(*an accepted result lands only on your approval* for merge; a forbid set in the record is shown
+as such), the mode of a class no rule names, the commands judged as workspace writes as lines,
+the requests' wait and its maximum in hours, and the batch's size and wait. The record as JSON
+stays under **Advanced**, following the form (an edit there that parses shows in the form).
+**Show change** gives the record's diff, and **Propose** sends it; the page refuses nothing the
+queue would take, and a refusal is shown as *Not proposed:* with the queue's reason.
+
 Served when `ctx.approvals` is present; without it, both routes answer `503`
 ([a policy change](../design/approvals.md#a-policy-change)).
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), and its latest 20 `policy-change@1.x` records, newest first (a change the queue proposed itself carries its `origin`, `@1.1`) |
+| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), `alwaysAsk` (the classes that always ask, whatever a rule says: `ALWAYS_ASK` in approvals-core), and its latest 20 `policy-change@1.x` records, newest first (a change the queue proposed itself carries its `origin`, `@1.1`) |
 | `POST policy/propose` | `{policy, note?}`: one `autonomy-policy@1.0` record | `{change, request}`: the `policy-change@1.0` record (`asked`) and the `policy-change` request that asks for it |
 
 - The proposal goes to `ctx.approvals.proposePolicy` as the operator's (INV-6), at the server's

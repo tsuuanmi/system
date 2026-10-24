@@ -28,7 +28,9 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   (its hash, and whether it is the configuration or a change the operator approved), the
   effective mode of every action class for the studio and each project, the policies, the latest
   changes with their diffs, and **Propose a change**: the operator edits one policy record (the
-  next version, or a new project's policy), sees its diff, and proposes it. The proposal is asked
+  next version, or a new project's policy) as a form (a mode per action class, the classes that
+  always ask fixed at ask with why, the commands as lines, the expiry and batch numbers; the JSON
+  folded under **Advanced**), sees the change, and proposes it. The proposal is asked
   in the queue as a `policy-change` request on the exact hash of the set it makes, and applies only
   when the operator approves it there ([a policy change](../../../docs/design/approvals.md#a-policy-change)).
   An asked change's card, with its **Approve** and **Deny**, is at the top of the page, and its
@@ -158,7 +160,9 @@ re-gated by the board's next sweep; a rejection that changes nothing; a restart 
 applied set, a changed configuration that refuses the queue until it supersedes the stored set; a
 client token refused; proposals the load-time or version rules refuse; a change the queue proposed
 itself, shown with its origin and applied only on the operator's approval; and, with a browser,
-the policy page's diff, a proposal, its queue entry, and its approval, and a queue entry that says
+the policy page's diff, a proposal, its queue entry, and its approval, the policy edited as a
+form (each mode, the classes that always ask fixed, commands, expiry, batch, the JSON following,
+the queue's refusal shown), and a queue entry that says
 the queue proposed the change, and why.
 [`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
