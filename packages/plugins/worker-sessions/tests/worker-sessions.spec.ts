@@ -115,10 +115,15 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
       .map((a) => (a.body as { outcome: { detail?: { budget?: string } } }).outcome.detail?.budget).filter(Boolean)
     const turns = await boot()
     team(turns, false)
-    for (let i = 0; i < 100; i++) {
-      expect(turns.workerSessions.activate('ses_a', 'h')).toEqual({ activated: true, generation: i + 1 })
-      turns.workerSessions.settle('ses_a', i + 1)
-    }
+    // A hundred turns in one store transaction, not two hundred fsynced commits: those took seconds
+    // on a loaded host, past the default timeout. Each activation and settle still runs as its own
+    // (nested) store transaction.
+    turns.store.transaction(() => {
+      for (let i = 0; i < 100; i++) {
+        expect(turns.workerSessions.activate('ses_a', 'h')).toEqual({ activated: true, generation: i + 1 })
+        turns.workerSessions.settle('ses_a', i + 1)
+      }
+    })
     expect(turns.workerSessions.activate('ses_a', 'h')).toMatchObject({ activated: false, budget: 'turns' })
     expect(turns.workerSessions.session('ses_a')!.state).toBe('FAILED')
     expect(decisions(turns)).toEqual(['turns'])
