@@ -88,7 +88,7 @@ Tests: `tests/guard.spec.ts`.
   liveness (`workers.liveness`, PROP-0013) it is read once, and each Worker with
   a run stalled, looked at, or held for want of a verdict gets `liveness`, each
   run in one sentence (`unknown` on every Worker without one listed when a
-  source could not tell). The record is checked against `mcp-roster@1.4`
+  source could not tell). The record is checked against `mcp-roster@1.5`
   before it is returned; one its schema refuses throws (a defect).
 - **`projectRoster(input, { scope, now })`** is the pure projection of what was
   read: Workers in id order, each with its description (or `unknown`), a
@@ -101,7 +101,7 @@ Tests: `tests/guard.spec.ts`.
   record. A `client` scope gets no account label, in the record or in a name.
 - **`formatRoster(roster)`**: the record for a terminal, one block per Worker,
   then the sources that did not answer and the usage entries no pool counts. A
-  silent source still describing for the first time (`describing`, `@1.4`) makes
+  silent source still describing for the first time (`describing`, `@1.5`) makes
   the count read `so far` and is named `describing…`, so a first probe after a
   start never reads as every Worker.
 

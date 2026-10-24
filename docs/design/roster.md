@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.4`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.5`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -30,7 +30,7 @@ that change what runs).
 
 | Source | Read through | What it gives |
 |---|---|---|
-| Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)`, `liveness()` (optional) | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.7`), account, tier, quota class, state, load, cooldowns; how each source answered its last read, and whether a silent one is still describing for the first time (`@1.4` `describing`: the Workers listed are then so far, which the text and the pages say; [sources that do not answer](routing.md#sources-that-do-not-answer)); the Workers of its account; the runs whose liveness needs a look ([what the operator sees](agent-runtimes.md#what-the-operator-sees)) |
+| Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)`, `liveness()` (optional) | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.7`), account, tier, quota class, state, load, cooldowns; how each source answered its last read, and whether a silent one is still describing for the first time (`@1.5` `describing`: the Workers listed are then so far, which the text and the pages say; [sources that do not answer](routing.md#sources-that-do-not-answer)); the Workers of its account; the runs whose liveness needs a look ([what the operator sees](agent-runtimes.md#what-the-operator-sees)) |
 | agent accounts | `ctx.agentWorkers.agentAccounts`: `list()`, `workersIn(account)`, and, when it has them, `labelOf(account)` and `providers()` | each enrollment slot (`agent-account@1.x`): its account id, status, quarantine (and what its reading found, `@1.1`), masked hint, and the Workers that run on it ([enrollment](agent-runtimes.md#enrollment-and-quarantine)); the operator's label of its account (`assignments[].label`); each agent runtime's title for people |
 | website accounts | `ctx.accounts`: `list()`, `duplicateIdentities()` | each catalog account's secret-free view: label and status; the accounts signed in as one person |
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
@@ -130,13 +130,13 @@ Every read and every list is bounded
 | Worker sources | 64 | `sources` is `unknown` |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.4`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.5`](../reference/schemas.md#mcp-tool-roster)).
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.4` before it is sent (a record its schema
+  content is the record, validated against `mcp-roster@1.5` before it is sent (a record its schema
   refuses is a defect, reported as an error); its text content is the rendering for a terminal.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
   record.

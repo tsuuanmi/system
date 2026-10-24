@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.4', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.5', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -274,7 +274,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(failed.workers).toEqual({ unknown: 'it could not be read: source agents: describe threw' })
     expect(value(failed.sources)).toEqual([{ source: 'agents', state: 'failed', at: AT, workers: 0, detail: 'describe threw' }])
     expect(formatRoster(failed)).toContain('source agents failed at')
-    // A source whose first describe has not landed is still describing (mcp-roster@1.4): the count is so far (T99 D8).
+    // A source whose first describe has not landed is still describing (mcp-roster@1.5): the count is so far (T99 D8).
     const early = await readRoster(services({ workers: { ...services().workers!, sources: () => [
       { source: 'agents', state: 'silent', at: AT, workers: 0, detail: 'did not describe its Workers within 5 s', describing: true },
       { source: 'website', state: 'described', at: AT, workers: 1 },
@@ -420,7 +420,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, `agent:${CLAUDE}/review`).account).toMatchObject({ value: { record: { value: { quarantine: { reason: 'unverified', detail } } } } })
   })
 
-  it('the example validates against mcp-roster@1.4, and a record that is not one is refused', async () => {
+  it('the example validates against mcp-roster@1.5, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)

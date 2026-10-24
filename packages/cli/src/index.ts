@@ -681,7 +681,7 @@ export function formatHealth(health: HealthView): string[] {
 
 /**
  * The running profile's roster (REQ-HOST-8, MCP `roster`): its rendering for a terminal, or with
- * `json` the record itself (`mcp-roster@1.4`). A refused call, or a host that does not answer, throws.
+ * `json` the record itself (`mcp-roster@1.5`). A refused call, or a host that does not answer, throws.
  */
 export async function hostRoster(json: boolean, call: typeof callTool = callTool): Promise<string> {
   const outcome = await call('roster', {})

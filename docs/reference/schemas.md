@@ -1076,13 +1076,13 @@ guesses.
   still at most 200 characters. It also adds an agent account quarantine's `detail`
   (`agent-account@1.1`), on the account record and the `quarantined` availability, and in its
   summary. Readers accept 1.0 to 1.4.
-- `mcp-roster@1.4` adds a source read's `describing` (`true`, on a `silent` read only): the source
+- `mcp-roster@1.5` adds a source read's `describing` (`true`, on a `silent` read only): the source
   has not described its Workers once since it registered, its first describe (a start's first
   probe) still running, so its Workers are not known yet, never known to be none. The text then
   counts the Workers listed as so far and names the source as describing; health reads the same
   router reads and says the same
   ([sources that do not answer](../design/routing.md#sources-that-do-not-answer)). Readers accept
-  1.0 to 1.4.
+  1.0 to 1.5.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;
