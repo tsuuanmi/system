@@ -39,8 +39,12 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   of its accounts adopts, and `loginCommand(home)` is `agy` with that home as
   its `HOME` (the XDG directories inside it, auto-update off). It has no
   `identity`: no file or command was shown to name the signed-in Google account
-  (PROP-0012 open question 1), so its accounts are enrolled `unverified`, and
-  none beyond slot 1 is ever routed until a reader is verified.
+  without reading its token (PROP-0012 open question 1; a supervised check on a
+  signed-in throwaway home, field names only, is still owed), so the `agents`
+  source takes no slot for it (`system account login antigravity-cli` is
+  refused before its home is adopted, and its hand-named Workers run on), and
+  a slot taken before reads `unverified`; none is routed until a reader is
+  verified. Its title, shown in the roster's display names, is `Antigravity CLI`.
 - **Nothing outside the gate:** the home must configure no MCP server
   (`.gemini/config/mcp_config.json`), enable no plugin (`agy plugin list
   --json`), and hold no `hooks.json` but the runtime's own; any of them makes
