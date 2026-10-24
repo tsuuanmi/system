@@ -22,13 +22,19 @@ import type { LimitObservation, LimitReport } from '@tsuuanmi/system-agent-runti
  * Claude Code versions whose `get_usage` answer is read. On any other version the report is never
  * asked for, and reads `unreadable`, naming the version (the method is named experimental by its
  * vendor: an upgrade turns the shares unknown until the new version is checked; it never misreads
- * them). Checked from each binary (2026-10-24; no account used): the `get_usage` handler answers
- * `rate_limits_available` and `rate_limits` as above, `utilization` passed through as a percentage,
- * `resets_at` as an ISO string; the fixtures in `tests/fixtures/claude-get-usage.json` hold answers
- * in that shape. Each version is also a release check on a live account
- * (docs/validation/release-checklist.md).
+ * them). Checked from the installed binaries of 2.1.308, 2.1.309, and 2.1.310 (2026-10-24, T101; no
+ * account used), whose code here differs only in minified names: the handler validates
+ * `skip_behaviors` and answers `{ session, subscription_type, rate_limits_available, rate_limits,
+ * behaviors }`; `rate_limits` is the body of `GET /api/oauth/usage` (or a snapshot of it under a
+ * minute old, kept per account in the home's `.claude.json` as `cachedUsageUtilization`), with
+ * `model_scoped`; the response schema's window is `{ utilization, resets_at }`, "Percentage of the
+ * window used, 0-100", which `/usage` prints as `Math.floor(utilization)` "% used", and `resets_at`
+ * an ISO string; `rate_limits_available` is false for an API key, a third-party provider, or a token
+ * without the profile scope. The read writes no transcript and sends no model request. The fixtures
+ * in `tests/fixtures/claude-get-usage.json` hold answers in that shape. Each version is also a
+ * release check on a live account (docs/validation/release-checklist.md).
  */
-export const VERIFIED_LIMIT_VERSIONS: readonly string[] = ['2.1.308']
+export const VERIFIED_LIMIT_VERSIONS: readonly string[] = ['2.1.308', '2.1.309', '2.1.310']
 
 /** Entries of `rate_limits` that are not a window: the per-model list and the extra usage spend (not read). */
 const NOT_WINDOWS = new Set(['model_scoped', 'extra_usage'])

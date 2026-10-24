@@ -42,7 +42,11 @@ installed.
     anything runs. Its own home is `home` on the provider, which slot 1 of its
     accounts adopts.
   - **Who is signed in** (`identity(home, key)`, reader `claude-state-file`, on
-    `VERIFIED_IDENTITY_VERSIONS`, Claude Code 2.1.308; any other version is
+    `VERIFIED_IDENTITY_VERSIONS`, Claude Code 2.1.308, 2.1.309, and 2.1.310:
+    the later two checked from their binaries against 2.1.308, the code the
+    reader relies on unchanged but for minified names, and their `--version` and
+    signed-out `auth status` in a throwaway home,
+    `tests/fixtures/claude-auth-status.json`; any other version is
     `unverified`): `claude auth status` in that home, confined and with none of
     the forwarded variables, must say `"loggedIn": true` (false or failing:
     `missing`; unreadable: `ambiguous`); the home must keep that sign-in in its
@@ -152,8 +156,12 @@ installed.
   `src/limits.ts`): the SDK's `get_usage` control request
   (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`),
   only on a Claude Code version whose answer was checked
-  (`VERIFIED_LIMIT_VERSIONS`; any other is `unreadable`, naming it, and nothing
-  starts). Claude Code starts as a run's does (the read confinement with its home
+  (`VERIFIED_LIMIT_VERSIONS`: 2.1.308, 2.1.309, 2.1.310, from their binaries:
+  the handler, the shaping of its answer, and the window schema the same but for
+  minified names; any other is `unreadable`, naming it, and nothing starts). The
+  CLI answers from the account's usage endpoint, or from its own snapshot under a
+  minute old (kept in the home's `.claude.json`), with no transcript written and
+  no model request. Claude Code starts as a run's does (the read confinement with its home
   bound back writable, the run's environment, the home as its directory) in a
   session that is sent no message: streaming input that never yields, so no
   model turn starts; no tool (`tools: []`), no settings, no MCP server, no hook,

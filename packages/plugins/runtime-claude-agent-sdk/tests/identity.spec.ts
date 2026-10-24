@@ -69,6 +69,23 @@ describe('claude-agent-sdk identity reader (ADR-0051, REQ-ACC-11)', () => {
     expect(statuses.length).toBe(before)
   })
 
+  it('is pinned to each version its reader was checked on from the binary (2.1.308 to 2.1.310): signed out as that version answers, and a signed-in home verified', async () => {
+    const checked = JSON.parse(readFileSync(new URL('./fixtures/claude-auth-status.json', import.meta.url), 'utf8')) as {
+      versions: Record<string, { version: { stdout: string }; authStatus: { exit: number; stdout: Record<string, unknown> } }>
+    }
+    expect([...VERIFIED_IDENTITY_VERSIONS]).toEqual(Object.keys(checked.versions))
+    for (const [version, seen] of Object.entries(checked.versions)) {
+      expect(/\d+\.\d+\.\d+/.exec(seen.version.stdout)?.[0], `${version} prints its version first`).toBe(version)
+      const at = home()
+      signIn(at, 'alice@example.test')
+      // Its own signed-out answer, read as printed (the real runner also sees its exit 1: missing either way).
+      expect(await runtime({ version: async () => version, status: async () => JSON.stringify(seen.authStatus.stdout) }).identity(at, KEY), version)
+        .toMatchObject({ status: 'missing', reason: 'claude auth status: not logged in', runtimeVersion: version })
+      expect(await runtime({ version: async () => version }).identity(at, KEY), version).toMatchObject({ status: 'verified', reader: IDENTITY_READER, runtimeVersion: version })
+    }
+    expect(await runtime({ version: async () => '2.1.311' }).identity(home(), KEY)).toMatchObject({ status: 'unverified' })
+  })
+
   it('reads the account and organization ids, never the email alone, and gives the email only masked (INV-8)', async () => {
     const at = home()
     signIn(at, 'alice@example.test')

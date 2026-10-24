@@ -115,11 +115,19 @@ const HOOK_TIMEOUT_S = 60
  * hook): with `CLAUDE_CONFIG_DIR` set, the home's `.claude.json` holds `oauthAccount` with
  * `accountUuid`, `emailAddress`, and `organizationUuid`, and its OAuth sign-in is kept in the home's
  * own `.credentials.json` (the lead's look on this host, field names only). On any other version a
- * reading is `unverified`. Owed (PROP-0012 phase A): the supervised check on the operator's real
- * accounts that the ids stay equal across a restart, a token refresh, and a re-login, and differ for
- * two accounts.
+ * reading is `unverified`.
+ * - 2.1.308: the lead's look above.
+ * - 2.1.309 and 2.1.310 (2026-10-24, from the installed binaries, no account used; T101): the code
+ *   the reader relies on is 2.1.308's but for minified names: `auth status` builds
+ *   `{ loggedIn, authMethod, apiProvider, … }` and exits 1 when signed out; the config directory is
+ *   `CLAUDE_CONFIG_DIR` (else `~/.claude`); the credentials file is `<it>/.credentials.json`; the
+ *   global config is `<CLAUDE_CONFIG_DIR>/.claude.json`; and the profile writer sets `oauthAccount`
+ *   with `accountUuid`, `emailAddress`, `organizationUuid`. Run in a throwaway home, `--version` and
+ *   `auth status` answered as 2.1.308's (`tests/fixtures/claude-auth-status.json`).
+ * Owed (PROP-0012 phase A): the supervised check on the operator's real accounts that the ids stay
+ * equal across a restart, a token refresh, and a re-login, and differ for two accounts.
  */
-export const VERIFIED_IDENTITY_VERSIONS: readonly string[] = ['2.1.308']
+export const VERIFIED_IDENTITY_VERSIONS: readonly string[] = ['2.1.308', '2.1.309', '2.1.310']
 
 /** The reader's id, as an `agent-account@1.0` record names it. */
 export const IDENTITY_READER = 'claude-state-file'

@@ -121,6 +121,16 @@ describe('claude-agent-sdk: an account\'s usage report from get_usage (ADR-0059)
     expect(sessions).toHaveLength(1)
   })
 
+  it('reads get_usage on each version checked from its binary (2.1.308 to 2.1.310), and on no other', async () => {
+    expect([...VERIFIED_LIMIT_VERSIONS]).toEqual(['2.1.308', '2.1.309', '2.1.310'])
+    const sessions: Session[] = []
+    for (const version of VERIFIED_LIMIT_VERSIONS) expect(await runtime(usageQuery(GOOD, sessions), { version: async () => version }).limits({}, signal()), version).toHaveProperty('limits')
+    for (const version of ['2.1.307', '2.1.311', '2.2.0']) {
+      expect(await runtime(usageQuery(GOOD, sessions), { version: async () => version }).limits({}, signal())).toEqual({ unreadable: expect.stringContaining(`the usage report of Claude Code ${version} is not verified`) })
+    }
+    expect(sessions).toHaveLength(VERIFIED_LIMIT_VERSIONS.length)
+  })
+
   it('reads nothing on an unchecked version, without confinement, or without Claude Code, and starts no session for it (INV-2)', async () => {
     const sessions: Session[] = []
     const cases: Array<[Partial<RuntimeOptions>, RegExp]> = [

@@ -1,0 +1,17 @@
+{
+  "description": "What the installed Claude Code binaries answered on 2026-10-24 (T101), each run with HOME and CLAUDE_CONFIG_DIR set to fresh empty owner-only directories (no account, no network sign-in), DISABLE_AUTOUPDATER=1, and PATH only: `--version`, and `auth status` signed out. The throwaway paths are redacted. `auth status` wrote `.claude.json` (no oauthAccount), a `.claude.json.lock` directory, and `backups/` in the config directory, nothing in HOME. Every unit of the code the identity reader and the get_usage reader rely on is 2.1.308's in 2.1.309 and 2.1.310 but for minified names.",
+  "versions": {
+    "2.1.308": {
+      "version": { "exit": 0, "stdout": "2.1.308 (Claude Code)\n" },
+      "authStatus": { "exit": 1, "stdout": { "loggedIn": false, "authMethod": "none", "apiProvider": "firstParty", "analyticsDisabled": false, "projectsDirectory": "<CLAUDE_CONFIG_DIR>/projects", "configDirectory": "<CLAUDE_CONFIG_DIR>" } }
+    },
+    "2.1.309": {
+      "version": { "exit": 0, "stdout": "2.1.309 (Claude Code)\n" },
+      "authStatus": { "exit": 1, "stdout": { "loggedIn": false, "authMethod": "none", "apiProvider": "firstParty", "analyticsDisabled": false, "projectsDirectory": "<CLAUDE_CONFIG_DIR>/projects", "configDirectory": "<CLAUDE_CONFIG_DIR>" } }
+    },
+    "2.1.310": {
+      "version": { "exit": 0, "stdout": "2.1.310 (Claude Code)\n" },
+      "authStatus": { "exit": 1, "stdout": { "loggedIn": false, "authMethod": "none", "apiProvider": "firstParty", "analyticsDisabled": false, "projectsDirectory": "<CLAUDE_CONFIG_DIR>/projects", "configDirectory": "<CLAUDE_CONFIG_DIR>" } }
+    }
+  }
+}
