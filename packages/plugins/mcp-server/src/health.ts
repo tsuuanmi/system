@@ -60,6 +60,11 @@ export interface HealthSources {
     entries: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; at: string; data?: Record<string, unknown> | undefined }>
     counted: (runId: string, pool: string) => Promise<boolean>
   }
+  /**
+   * The notifier's delivery outcomes (`notify.delivery` events, docs/design/notifications.md#health):
+   * a page of them since a time, in `seq` order, after `afterSeq`, at most `limit`.
+   */
+  deliveries?: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; data?: Record<string, unknown> | undefined }>
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
   undeleted?: () => Array<{ account: string; binding: string; reason?: string }>
   /** Login profiles the browser holds, reserves for a login, or cannot free (ADR-0030). */
@@ -76,6 +81,8 @@ const RANK: Record<HealthState, number> = { ok: 0, degraded: 1, down: 2 }
 
 /** `usage.unknown` entries the `usage` check reads at most (INV-9): past it, it is degraded, never ok. */
 export const MAX_UNKNOWN_ENTRIES = 10_000
+/** `notify.delivery` entries the `notifications` check reads at most (INV-9): past it, it is degraded, never ok. */
+export const MAX_DELIVERIES = 10_000
 /** `usage.unknown` entries the `usage` check asks for at once: the event log's most per query. */
 const UNKNOWN_PAGE = 1000
 
@@ -294,6 +301,57 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
         : ok('usage', 'the ledger counted the usage of every run in each pool\'s current window')
     }))
+  }
+
+  // Notifications fail open, so a sink that stopped working is said here, never silently lost:
+  // degraded while a sink's latest outcome recently is a failure, or a notice was dropped recently.
+  const deliveries = sources.deliveries
+  if (deliveries) {
+    // Only once the notifier recorded something recently: with its row off there is nothing to say.
+    const check = ((): HealthCheck | undefined => {
+      const since = new Date((sources.now ?? Date.now)() - sources.driftWindowMs).toISOString()
+      const entries: ReturnType<typeof deliveries> = []
+      let unread = false
+      for (let afterSeq = 0; ;) {
+        const limit = Math.min(UNKNOWN_PAGE, MAX_DELIVERIES + 1 - entries.length)
+        const page = deliveries({ since, afterSeq, limit })
+        entries.push(...page)
+        if (entries.length > MAX_DELIVERIES) {
+          unread = true
+          entries.length = MAX_DELIVERIES
+          break
+        }
+        if (page.length < limit) break
+        afterSeq = page.at(-1)!.seq
+      }
+      if (!entries.length) return undefined
+      const latest = new Map<string, { outcome: string; reason: string; failed: number }>()
+      let sent = 0
+      let dropped = 0
+      for (const { data } of entries) {
+        const outcome = String(data?.outcome ?? '')
+        if (outcome === 'dropped') dropped += 1
+        if (outcome === 'sent') sent += 1
+        const sink = typeof data?.sink === 'string' ? data.sink : undefined
+        if (!sink || !['sent', 'failed', 'unavailable'].includes(outcome)) continue
+        const before = latest.get(sink)
+        latest.set(sink, { outcome, reason: String(data?.reason ?? '').slice(0, 200), failed: (before?.failed ?? 0) + (outcome === 'sent' ? 0 : 1) })
+      }
+      const problems = [
+        ...[...latest].filter(([, s]) => s.outcome !== 'sent').sort(([a], [b]) => (a < b ? -1 : 1)).map(([sink, s]) => `${sink}: ${s.reason} (${s.failed} failed recently)`),
+        ...(dropped ? [`${dropped} notice(s) dropped: the queue was full (maxQueue)`] : []),
+        ...(unread ? [`more than ${MAX_DELIVERIES} notify.delivery entries recently: only the first ${MAX_DELIVERIES} were read`] : []),
+      ]
+      return problems.length
+        ? { name: 'notifications', state: 'degraded', detail: `${problems.join('; ')}. Notices may not reach you: see system events --type notify.delivery (docs/operations/runbooks.md#get-notified)` }
+        : ok('notifications', `${sent} notice(s) sent recently`)
+    })
+    try {
+      const made = check()
+      if (made) checks.push(made)
+    } catch (error) {
+      checks.push({ name: 'notifications', state: 'down', detail: `the check failed: ${(error as Error).message.slice(0, 160)}` })
+    }
   }
 
   const undeleted = sources.undeleted

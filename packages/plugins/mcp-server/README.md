@@ -41,7 +41,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     (`duplicateIdentities`), Worker availability,
     login profiles held for a login, open with their kept tabs, or blocked by a
     process that could not be stopped (`login-profiles`, from `browser`), provider UI drift within
-    `driftWindowHours`, usage the resource ledger could not count) as `ok`,
+    `driftWindowHours`, usage the resource ledger could not count, notifications that failed) as `ok`,
     `degraded`, or `down`, and the worst of them. Only an operator-scope caller
     sees the details; a client sees each check's name and state. It reads the
     mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`, `resources`), skips
@@ -78,6 +78,12 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     balance) reads every entry the log keeps. It reads the entries a page at a time, at most
     10,000, and past them it is degraded, saying so, never `ok`. A cap still counts such a run as
     0 (D25).
+  - `notifications` (with `eventLog`) is shown once the [notify](../notify/README.md) plugin
+    recorded a `notify.delivery` within `driftWindowHours`, and is degraded while a sink's latest
+    outcome there is `failed` or `unavailable` (naming the sink, why, and how many failed), or a
+    notice was dropped from a full queue; else `ok` with how many were sent. It reads the entries a
+    page at a time, at most 10,000, and past them it is degraded. It reads the events, never the
+    plugin ([notifications](../../../docs/design/notifications.md#health)).
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
   (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is
