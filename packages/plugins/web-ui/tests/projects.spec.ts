@@ -150,7 +150,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await outcome.innerText()).toContain(`Recorded as your verdict on request ${approvalRequest} (approval record ${request!.resolution!.approval})`)
     expect(ctx.artifacts.get(request!.resolution!.approval!)!.body).toMatchObject({ verdict: 'approved', by: 'operator', note: 'go' })
     // The queue no longer lists it; the board's next sweep activates the project.
-    await expect.poll(() => page.locator('main').innerText()).toContain('Nothing waits for your verdict.')
+    await expect.poll(() => page.locator('main').innerText()).toContain('No request waits for your verdict.')
     await ctx.board.sweep(new Date())
     expect((await ctx.board.project('p1'))?.state).toBe('active')
     await outcome.getByRole('button', { name: 'Dismiss' }).click()

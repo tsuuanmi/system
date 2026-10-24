@@ -9,6 +9,10 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   with its Worker's name; a running run's page and Board card say where it is now (its step, Worker,
   last event, and a stall; `GET runs/live`), and a start names who would likely take each step;
 
+- **Help** (`?view=help`): how System works in plain words, with links into the pages, and a
+  glossary; a **?** beside each such word on the pages opens its sentence in place by keyboard or
+  touch, linked to its entry; every empty state says what would appear and how
+  ([help](../../../docs/reference/web-ui.md#help));
 - a run's page: a sentence of where it is, what the operator can do, the answer, and its steps as
   a timeline in words, decisions folded;
 - runs, each with its steps in one line (how many completed, and those failed, waiting, or
@@ -185,6 +189,9 @@ the report, the checks not run in warning, and after Accept where the result sta
 review held for the operator past its run's lease, listed with its pending checks, refused to a
 client token, bound to the subject shown, accepted to done; a rejection as another attempt; and a
 review that expires `review-expired`.
+[`tests/help.spec.ts`](tests/help.spec.ts), with a browser: Help in the navigation, its sections
+and links, the glossary's anchors focused by a link (without a token too), each **?** named and
+controlling its note, opened and closed by keyboard and linked to Help, and the empty states.
 [`tests/live.spec.ts`](tests/live.spec.ts): what happened since a time (runs ended, tasks moved,
 requests expired) for the operator only, the Workers that could likely take a start's step, a
 running run's steps, last event, and a stall; and, with a browser, Home's *Since you last looked*

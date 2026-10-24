@@ -12,7 +12,7 @@ Every route is under `/ui/api` and passes the shared request guard first
 
 ## Home
 
-One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
+One navigation on every page, **Home**, **Board**, **Workers**, **Autonomy policy**, and **Help**, the
 current one marked (`aria-current`) and named in the window's title, which counts what waits for
 the operator first (requests for a verdict, reviews, runs that need a look): *(3) system — Home*;
 a run's page counts as Home's.
@@ -47,6 +47,26 @@ again from now. When and each Worker's status then are kept in this browser only
 | Route | Body | Answer |
 |---|---|---|
 | `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`: the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`), and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), each the latest 50; a part that cannot be read is `{unknown}`. A missing or invalid `since` is `400` |
+
+## Help
+
+**Help** (`?view=help`) says how System works in plain words, for an operator who is not a
+developer, with links into the real pages: who does the work (Workers, accounts, quota, and
+resting), how a task goes from idea to merged (proposed, ready, **Start**, working, review, you
+accept, the merge request, you approve, merged), what waits for you and why, what runs without
+asking (the autonomy policy's modes, and what always asks), and what to do when something is stuck.
+It reads nothing from the server and shows without a token.
+
+Its glossary, *Words used here*, gives each word the pages use in one plain sentence (Worker,
+account, role, tier, kind of work, quota, window, resting, project, task, run, step, attempt,
+review, checks, on its way in, merge, branch, approval request, action class, batch, autonomy
+policy, mode, always asks, policy change, quarantined, stalled, not known to be gone, derived),
+each entry an anchor (`?view=help#term-<word>`) that a link focuses. Wherever a page shows such a
+word, a **?** button beside it (named *What is <word>?*) opens its sentence in place, and closes it,
+by click, tap, or keyboard, never by hover alone; the sentence links to its entry (*more in Help*).
+
+Every empty state says what would appear there and how it gets there: *No review waits. When a
+Worker finishes a task, its result waits here for you to accept it or send it back.*
 
 ## Runs
 

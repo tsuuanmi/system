@@ -122,7 +122,7 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
     const now = page.getByRole('region', { name: 'Now' })
     await expect.poll(() => now.count()).toBe(1)
-    expect(await now.innerText()).toMatch(/^Now\nStep solo on Conformance · \w+ · \w+, for (less than a minute|\d+ min)/)
+    expect(await now.innerText()).toMatch(/^Now\b[^\n]*\nStep solo on Conformance · \w+ · \w+, for (less than a minute|\d+ min)/)
     expect(await now.innerText()).toMatch(/last event: .+ ago/)
     expect(await now.getByRole('alert').innerText()).toMatch(/^Stalled since /)
     expect(task.state).toBe('review')
