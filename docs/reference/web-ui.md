@@ -14,7 +14,10 @@ Every route is under `/ui/api` and passes the shared request guard first
 
 One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
 current one marked (`aria-current`) and named in the window's title; a run's page counts as Home's.
-Each page opens with its title and one line of what it is for.
+Each page opens with its title and one line of what it is for. On a narrow screen (600 px) no
+page is wider than the screen: the navigation wraps whole links with the refresh line under it,
+the Board's columns stack, each card the screen's width with its **Start…** across it, and the
+tables keep their first columns.
 
 **Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
 for review with when the first held for you expires, and the runs that need a look, each linking

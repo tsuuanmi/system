@@ -178,6 +178,7 @@ withdrawing the requests a waiting task and a pending amendment were on, in the 
 a ready task's run started for the operator's token only, bound to the revision and template
 shown, refused for a task naming no template; and, with a browser, a ready task started from its
 card after its confirmation (moving to Working) and a task naming no template refused with why;
+every page laid out at 600 px (none wider than the screen, the columns stacked, whole nav links);
 a charter founded from the queue (what approving and denying do, with the
 project's task counts; the approval recorded and reported with its ids; the project active after
 the board's sweep), a pause and a close each made only after its confirmation, and a Cancel that

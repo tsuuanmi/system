@@ -22,11 +22,11 @@ export const APP_CSS = `
 @media (prefers-color-scheme: dark) { :root { --fg: #f2f2f7; --bg: #111113; --muted: #a1a1a6; --line: #2c2c2e; --accent: #64a8ff; --bad: #ff6b60; --ok: #5fd068; --wait: #e2c044; } }
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
-header { display: flex; align-items: baseline; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; white-space: nowrap; display: inline-block; }
 header nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); } header nav a:hover { color: var(--accent); }
 h2.page { margin-bottom: 0; } p.lead { color: var(--muted); margin-top: 4px; }
-#status { color: var(--muted); }
+#status { color: var(--muted); margin-left: auto; }
 main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
@@ -64,8 +64,8 @@ textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320p
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
 pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
-code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { min-width: 12em; } details.advanced { margin: 8px 0; }
-@media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
+code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
+@media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
 
 export const APP_JS = `'use strict'
@@ -988,7 +988,7 @@ export const APP_JS = `'use strict'
       form.replaceChildren(
         el('p', {}, el('strong', {}, p.id), ' · ' + (selected() ? 'version ' + selected().version + ' → ' + p.version + ' (the next version, raised for you)' : 'a new project policy, version ' + p.version),
           project ? el('span', {}, ' · ', el('label', { for: 'policy-project' }, 'project ', project)) : null),
-        table(['Action class', 'Mode', 'What it means'], (classes).map(modeRow), 'queue modes'),
+        table(['Action class', 'Mode', 'What it means'], classes.map(modeRow), 'modes'),
         el('div', { class: 'batch-actions' },
           studio ? el('label', { for: 'policy-default' }, 'A class no rule names', fallback) : null,
           number('Requests wait (hours)', 'policy-expiry', hours(p.expiry.defaultSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { defaultSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
