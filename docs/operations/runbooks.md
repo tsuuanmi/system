@@ -2160,8 +2160,9 @@ your repeated approvals; it still applies only on your approval
    Exactly one studio policy; a project policy has `scope: project`, its `projectId`, and
    `narrows` the studio policy's `id`, and can only be stricter
    ([example](../../schemas/examples/autonomy-policy.project.json)). The classes that always ask
-   (`external-send`, `deploy`, `delete-data`, `spend`, `charter`, `funding`, `remediation`,
-   `policy-change`) cannot be given `auto` or `notify`.
+   (`merge`, `external-send`, `deploy`, `delete-data`, `spend`, `charter`, `funding`,
+   `remediation`, `policy-change`, `promotion`) cannot be given `auto` or `notify`: a merge always
+   asks the operator (D56).
 
    **If a change you approved on `/ui` is in force** (`source: store`), a changed configuration
    does not replace it silently: at start the queue is refused, and its log names the stored

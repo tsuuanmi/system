@@ -12,16 +12,19 @@ vi.setConfig({ testTimeout: 120_000 })
 
 const schemas = new SchemaRegistry()
 
-/** The bundle's studio policy at the next version, with merge given `mode`. */
-const merging = (mode: 'notify' | 'forbid'): AutonomyPolicy => {
+/** The bundle's studio policy at the next version, with `actionClass` given `mode`. */
+const ruling = (actionClass: 'merge' | 'command', mode: 'notify' | 'forbid'): AutonomyPolicy => {
   const [studio] = bundlePolicies()
-  return { ...studio!, version: studio!.version + 1, rules: studio!.rules.map((r) => (r.actionClass === 'merge' ? { ...r, mode } : r)) }
+  return { ...studio!, version: studio!.version + 1, rules: studio!.rules.map((r) => (r.actionClass === actionClass ? { ...r, mode } : r)) }
 }
 
-/** A merge task of project p1, proposed and waiting for approval under the bundle's policy (merge asks). */
-async function waitingMerge(ctx: Booted['ctx']): Promise<{ taskId: string; requestId: string }> {
+/** The bundle's studio policy at the next version, with merge given `mode`. */
+const merging = (mode: 'notify' | 'forbid'): AutonomyPolicy => ruling('merge', mode)
+
+/** A task of project p1 of `actionClass`, proposed and waiting for approval under the bundle's policy (merge and command ask). */
+async function waitingMerge(ctx: Booted['ctx'], actionClass: 'merge' | 'command' = 'merge'): Promise<{ taskId: string; requestId: string }> {
   await activeProject(ctx)
-  const proposed = await ctx.board.propose({ projectId: 'p1', title: 'merge', goal: 'merge the branch', acceptance: [{ id: 'a1', statement: 'merged' }], actionClass: 'merge' })
+  const proposed = await ctx.board.propose({ projectId: 'p1', title: actionClass, goal: `${actionClass} the branch`, acceptance: [{ id: 'a1', statement: 'merged' }], actionClass })
   await ctx.board.sweep(new Date())
   const task = (await ctx.board.task(proposed.taskId))!
   expect(task).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' } })
@@ -72,15 +75,16 @@ describe('web UI: the operator changes the autonomy policy through a policy-chan
     expect(set).toMatchObject({ source: 'configuration' })
     expect(set.hash).toBe(set.configHash)
     expect(before.value).toMatchObject({ proposals: true, changes: [], policies: [{ id: 'studio-default', version: 1 }] })
-    const { taskId, requestId } = await waitingMerge(ctx)
+    // A merge always asks (D56), so the change loosens a command task's class instead.
+    const { taskId, requestId } = await waitingMerge(ctx, 'command')
 
-    const { change, request } = await propose(booted, merging('notify'), 'merges are reviewed after the fact')
+    const { change, request } = await propose(booted, ruling('command', 'notify'), 'commands are reviewed after the fact')
     expect(request).toMatchObject({ schema: 'approval-request@1.1', action: { class: 'policy-change' }, subject: { type: 'content', ref: 'autonomy-policy-set', version: change.hash }, requester: { component: 'approvals', policyChangeId: change.changeId } })
-    expect(request.action.consequences).toContain('studio merge ask → notify')
-    expect(change).toMatchObject({ state: 'asked', baseHash: set.hash, effect: [{ actionClass: 'merge', from: 'ask', to: 'notify' }], previous: { version: 1 }, policy: { version: 2 } })
+    expect(request.action.consequences).toContain('studio command ask → notify')
+    expect(change).toMatchObject({ state: 'asked', baseHash: set.hash, effect: [{ actionClass: 'command', from: 'ask', to: 'notify' }], previous: { version: 1 }, policy: { version: 2 } })
     // Asked, not applied: the policy and the waiting task are as they were.
     expect((await call('policy')).value).toMatchObject({ set: { hash: set.hash }, changes: [{ changeId: change.changeId, state: 'asked' }] })
-    expect((await ctx.approvals.check({ class: 'merge', projectId: 'p1' })).mode).toBe('ask')
+    expect((await ctx.approvals.check({ class: 'command', projectId: 'p1' })).mode).toBe('ask')
 
     // A verdict on another subject than the one shown changes nothing (INV-5).
     const forged = await call('approvals/decide', { verdicts: [{ requestId: request.requestId, subject: { ...request.subject, version: set.hash }, verdict: 'approved' }] })
@@ -96,7 +100,7 @@ describe('web UI: the operator changes the autonomy policy through a policy-chan
       schema: 'decision@1.6', decisionType: 'policy-change', decider: { type: 'rule', id: 'approvals.policy-change' },
       outcome: { option: change.hash, detail: { cause: 'approved', from: set.hash, to: change.hash, requestId: request.requestId } },
     })
-    // The merge request was withdrawn under the new set at once, and the board's next sweep puts the task to it: notify runs.
+    // The command task's request was withdrawn under the new set at once, and the board's next sweep puts the task to it: notify runs.
     expect(await ctx.approvals.get(requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
     await ctx.board.sweep(new Date())
     expect(await ctx.board.task(taskId)).toMatchObject({ state: 'ready' })
@@ -150,7 +154,8 @@ describe('web UI: the operator changes the autonomy policy through a policy-chan
     const { call, client, ctx } = booted
     expect((await call('policy', undefined, client)).status).toBe(401)
     expect((await call('policy/propose', { policy: merging('forbid') }, client)).status).toBe(401)
-    for (const policy of [{ ...merging('forbid'), version: 1 }, { ...merging('forbid'), default: 'auto' }, { ...merging('forbid'), rules: [{ actionClass: 'remediation', mode: 'auto' }] }]) {
+    // A merge always asks (D56): a policy giving it notify is refused like one giving remediation auto.
+    for (const policy of [{ ...merging('forbid'), version: 1 }, { ...merging('forbid'), default: 'auto' }, { ...merging('forbid'), rules: [{ actionClass: 'remediation', mode: 'auto' }] }, merging('notify')]) {
       const refused = await call('policy/propose', { policy })
       expect(refused.status, JSON.stringify(refused.value)).toBe(400)
       expect(refused.value.error).toMatch(/^invalid: /)

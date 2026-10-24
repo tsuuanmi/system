@@ -663,9 +663,10 @@ guesses.
   and 100 projects'.
 - The classes that always ask are the irreversible effects (`external-send`, `deploy`,
   `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`),
-  `remediation`, and `promotion`. The schema refuses `auto` and `notify` for them, except
-  `remediation`, which it predates: a policy that gives `remediation` either is refused when
-  loaded. `promotion` joined `common@1`'s action classes with the feedback loop
+  `remediation`, `promotion`, and `merge` (a merge always asks the operator, D56,
+  [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)).
+  The schema refuses `auto` and `notify` for them, except `remediation` and `merge`, which it
+  predates: a policy that gives either of them `auto` or `notify` is refused when loaded. `promotion` joined `common@1`'s action classes with the feedback loop
   ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). No record named it
   before, so the schema refuses it `auto` and `notify` from the start without tightening
   anything, and the record stays `@1.0`.

@@ -475,7 +475,7 @@ export const boardSuite = defineSuite<Boot>({
     }),
     scenario('policy-change-asks-again', 'puts a wait whose request the queue withdrew on a policy change to the policy again, as a fresh gate: ready when it now needs no person, the forbid outcome when forbidden, one new request on the same subject while it still asks; a charter wait too (INV-2, INV-9, INV-13)', async (ctx, { changePolicies }) => {
       await active(ctx, 'p2')
-      const loose = await ctx.board.propose(task('p2', 'loose', { actionClass: 'merge' }), at(2))
+      const loose = await ctx.board.propose(task('p2', 'loose', { actionClass: 'command' }), at(2))
       const tight = await ctx.board.propose(task('p2', 'tight', { actionClass: 'deploy' }), at(2))
       const still = await ctx.board.propose(task('p2', 'still', { actionClass: 'spend' }), at(2))
       const lost = await ready(ctx, task('p2', 'lost'))
@@ -490,15 +490,16 @@ export const boardSuite = defineSuite<Boot>({
         waits.set(t.taskId, (await ctx.approvals.get(waiting.waiting!.approvalRequest!))!)
       }
 
-      // The studio's next version lets merge run, forbids deploy and remediation, and still asks about spend and charter.
+      // The studio's next version lets a command run (a merge always asks, D56), forbids deploy and remediation, and still asks about spend and charter.
       const [studio, ...rest] = POLICIES
       const rule = (actionClass: ActionClass, mode: 'auto' | 'forbid') => ({ actionClass, mode })
-      await changePolicies([{ ...studio!, version: studio!.version + 1, rules: [...studio!.rules.filter((r) => !['merge', 'deploy'].includes(r.actionClass)), rule('merge', 'auto'), rule('deploy', 'forbid'), rule('remediation', 'forbid')] }, ...rest])
-      await ctx.approvals.sweep(at(12))
+      await changePolicies([{ ...studio!, version: studio!.version + 1, rules: [...studio!.rules.filter((r) => !['command', 'deploy'].includes(r.actionClass)), rule('command', 'auto'), rule('deploy', 'forbid'), rule('remediation', 'forbid')] }, ...rest])
+      // Applied at 11, before the studio's 600-second command expiry rejects loose's request at 12: a withdrawal, not an expiry.
+      await ctx.approvals.sweep(at(11))
       for (const requestId of [...[...waits.values()].map((r) => r.requestId), amendment.approvalRequest]) {
         expect((await ctx.approvals.get(requestId))?.resolution?.cause).toBe('withdrawn')
       }
-      await ctx.board.sweep(at(12))
+      await ctx.board.sweep(at(11))
       const regated = async (taskId: string): Promise<BoardTask> => {
         const t = validTask((await ctx.board.task(taskId))!)
         const decision = ctx.artifacts.get(t.lastDecision!)!.body as { decisionType: string; inputs: string[]; candidates: Array<{ option: string; reasons: string[] }>; outcome: { option: string } }

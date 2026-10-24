@@ -875,8 +875,9 @@ stateDiagram-v2
 ### Landing an accepted result
 
 > Decision: [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)
-> (proposed), [PROP-0013](../proposals/0013-feedback-from-work.md#landing-merge-or-apply) W5 in part:
-> `merge` only, asked by the engine; `apply` and MCP `land` are not built.
+> (accepted, D56), [PROP-0013](../proposals/0013-feedback-from-work.md#landing-merge-or-apply) W5 in part:
+> `merge` only, asked by the engine; `apply` and MCP `land` are not built. A merge always asks the
+> operator, whatever the policy's mode for `merge` (D56: `merge` is in `ALWAYS_ASK`).
 
 An accepted result is not done with until it is in the repository the next task is cut from. When
 a task's run reported a result one of whose artifacts names a git working tree (an agent result's
@@ -893,8 +894,7 @@ stateDiagram-v2
   commit --> committed: committed on system/run/<runId> (gate decision commit)
   commit --> none: no source holds the tree
   commit --> refused: the tree moved, or it cannot be checked
-  committed --> asked: policy ask, one merge request
-  committed --> merging: policy auto or notify
+  committed --> asked: policy ask (a merge always asks), one merge request
   committed --> refused: policy forbid
   asked --> merging: approved
   asked --> rejected: denied, expired, or withdrawn
@@ -912,7 +912,7 @@ stateDiagram-v2
 |---|---|---|
 | watch | in the transaction that reports the run: `landing` on its `workflow_tasks` row | a task in review waits; one that moved on, was rejected, or cancelled lands nothing (`none`) |
 | commit | the source commits the worktree on its branch, as the system, with a message naming the task, the run, the reviews of that tree, and the acceptance decision (`System-Task`, `System-Run`, `System-Acceptance`, `System-Subject` trailers); a `gate` decision (`workflow.landing`, `commit`; inputs the acceptance and the result) | an agent run of the workflow run unfinished or not known to be gone: it waits; a tree that is no longer the accepted subject, a worktree removed or tampered with: refused, nothing committed, a `gate` decision (`refuse`); no source holds the tree, or the tree holds no change (a review's): `none` |
-| ask | `ctx.approvals.check` on `merge` for the task's project; on `ask`, one request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`, requester `workflow` with the run, its final step, the task, and the project; its summary and consequences name the branches, the SHAs, and the `git diff --stat`; a base that already holds the head is merged at once | `forbid`, or a `merge` rule whose required checks nothing reported (a landing runs none): refused; no queue loaded: it waits |
+| ask | `ctx.approvals.check` on `merge` for the task's project; on `ask`, one request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`, requester `workflow` with the run, its final step, the task, and the project; its summary and consequences name the branches, the SHAs, that a merge always asks the operator (D56), and the `git diff --stat`; a base that already holds the head is merged at once. A merge always asks, whatever the policy's mode for `merge`: `merge` is in `ALWAYS_ASK`, so no policy that gives it `auto` or `notify` loads | `forbid`, or a `merge` rule whose required checks nothing reported (a landing runs none): refused; a verdict other than `ask` (a provider that gave `auto` or `notify`): refused, nothing merged; no queue loaded: it waits |
 | approved | the operator's verdict on that exact version (`approval` decision) | denied, expired, or withdrawn by its requester: `rejected`, nothing merged; withdrawn on a policy change: put to the policy in force again |
 | merge | the source merges the branch into the repository's checked-out branch as one merge commit, the system its author (`System-Landing` trailer); a `gate` decision (`merge`) naming the commit | a base that moved, or tracked changes in the checkout: a decision (`refuse`), then asked again on the base as it is; the branch moved, a conflict (aborted, the repository as it was), or another failure: refused |
 

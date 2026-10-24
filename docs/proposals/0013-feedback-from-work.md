@@ -635,7 +635,11 @@ no completion gate. The lease rule narrows when `lost` fires and changes no reco
    (proposed), or a proposed follow-up task with the observations as its input?
 5. **`merge` as always-ask.** The studio policy asks; should the schema and provider put `merge` in
    the always-ask set (`ALWAYS_ASK`), as for `deploy`, so no project policy can make landing `auto`?
-   Proposed: yes, while landing is new.
+   Proposed: yes, while landing is new. **Answered by D56 (2026-10-24): yes, a merge always asks**,
+   whatever the policy's mode for `merge`. `merge` is in `ALWAYS_ASK`; a policy that gives it
+   `auto` or `notify` is refused when loaded (a load-time rule, since `autonomy-policy@1.0` predates
+   it), as recorded in
+   [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md).
 6. **Who lands.** `agent-workers`, which owns the worktrees and branches (proposed), or a separate
    plugin with its own seam?
 7. **Bounds.** `pollSeconds` 60, `maxBindings` 32, `maxRounds` 2, `stallSeconds` and

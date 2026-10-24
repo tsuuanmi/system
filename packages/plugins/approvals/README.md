@@ -149,7 +149,7 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   unless `enabled`): `approvals` (3 to 100, default 5) and `windowSeconds` (3600 to 7776000,
   default 604800), when the queue proposes a change from repeated approvals. At load, a policy the schema
   refuses, two rules for one action class, a rule giving a class in `ALWAYS_ASK` `auto` or
-  `notify` (a 1.0 policy's `remediation`), an `expiry.defaultSeconds` or a rule's
+  `notify` (a 1.0 policy's `remediation` or `merge`: a merge always asks, D56), an `expiry.defaultSeconds` or a rule's
   `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a shell
   metacharacter, a batch rule whose `maxWaitSeconds` is not under the shortest expiry a request
   it batches can get, no or several studio policies, a project policy narrowing another policy
