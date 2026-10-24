@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Landed, type LandStep, LIVENESS_STATES, type LivenessQuery,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
   type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -179,6 +179,21 @@ export class WorkerRouter extends Workers {
       if (landed) return { ...landed, source: source.name }
     }
     return undefined
+  }
+
+  async changes(runId: string): Promise<{ changes: Array<WorkChange & { source: string }>; unread: Array<{ source: string; detail: string }> }> {
+    const changes: Array<WorkChange & { source: string }> = []
+    const unread: Array<{ source: string; detail: string }> = []
+    for (const source of this.registry.values()) {
+      if (!source.changes) continue
+      try {
+        for (const change of (await source.changes(runId)) ?? []) changes.push({ ...change, source: source.name })
+      } catch (error) {
+        // A source that cannot read its worktree is never read as holding no change (INV-2).
+        unread.push({ source: source.name, detail: (error as Error).message.slice(0, 300) })
+      }
+    }
+    return { changes, unread }
   }
 
   release(sessionIds: readonly string[], reason: string): { due: number } {

@@ -392,6 +392,14 @@ The **`agents` Worker source**: agent runtimes as Workers
     aborted (`git merge --abort`), its files named, and the repository checked to be as it was
     (`conflict`); a merge git refuses before starting changes nothing (`failed`). Never a force, a
     reset, a branch deletion, or a push.
+- **A run's change** (`changes` on the `workers` seam, T122,
+  [design](../../../docs/design/agent-runtimes.md#a-runs-change-for-the-operators-review)): for each
+  worktree it holds of a workflow run, read only, what it holds against the commit it forked from
+  on the repository's checked-out branch, committed or not: each file's status, lines, and diff,
+  untracked files as added (read only through a descriptor that follows no link, under the
+  worktree by real path), within `CHANGE_BOUNDS`; a retired worktree's from its branch. git runs
+  through the worktree's own administrative directory with `--no-optional-locks`, after the
+  landing's check that the worktree is intact; one that is not throws.
 - **Metering** ([resources](../../../docs/design/resources.md)), for a Worker
   with a `pool`, through `ctx.resources` (optional: read when present, never
   injected):

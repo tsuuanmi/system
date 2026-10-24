@@ -41,7 +41,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - when `ctx.board` is present, the **reviews**: every board task in review, those the board
   holds for the operator first ([board](../../../docs/design/board.md#required-checks-bind-at-acceptance)),
   each with its project, exact subject, result artifacts, the checks still pending, its run, and
-  until when it waits, and the operator's **Accept / Reject**; above them, and on Home's waiting
+  until when it waits; what it changed (each file of its worktree's change, folded, read through
+  `ctx.workers.changes`), what its reviewers said, and what its checks measured (the run's report),
+  with the checks not run in warning; and the operator's **Accept / Reject**; then, once accepted,
+  where the result stands on its way into the repository, until it is merged or refused
+  ([what a review shows](../../../docs/reference/web-ui.md#what-a-review-shows)); above them, and on Home's waiting
   line, when the first review held for the operator expires (marked within the hour), since an
   unanswered one expires and its task waits for input that nothing revives (T99 D6). Without it
   the reviews routes answer `503`;
@@ -170,7 +174,10 @@ the policy page's diff, a proposal, its queue entry, and its approval, the polic
 form (each mode, the classes that always ask fixed, commands, expiry, batch, the JSON following,
 the queue's refusal shown), and a queue entry that says
 the queue proposed the change, and why.
-[`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a workspace-write task's
+[`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a run's
+change, verdicts, and report served to the operator only (a source that cannot read its own named),
+and, with a browser, a review card with what changed (stat, files folded, show all), the verdict,
+the report, the checks not run in warning, and after Accept where the result stands; a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
 client token, bound to the subject shown, accepted to done; a rejection as another attempt; and a
 review that expires `review-expired`.

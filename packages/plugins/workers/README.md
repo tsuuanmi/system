@@ -15,7 +15,9 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   never read as having none), and lands an accepted result made in a worktree it
   holds (`land`, ADR-0060: asked of each source in turn, the first that holds the
   worktree answers, with its name; one that throws is a `failed` refusal, never
-  read as not holding it). The router
+  read as not holding it), and reads a workflow run's change in its worktrees
+  (`changes`, T122: every source that holds one answers, with its name; one that
+  throws is named in `unread`, never read as no change). The router
   returns the admitted Worker with its source's name; `source(name)` finds the
   source. Three sources register today: website Workers (`ctx.turns`, one Worker
   per account and mapped tier), agent Workers

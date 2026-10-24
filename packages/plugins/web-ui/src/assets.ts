@@ -63,7 +63,7 @@ button:disabled { opacity: 0.6; cursor: progress; } button:focus-visible, a:focu
 textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
-pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
+pre.diff .add, .stat .add, .files .add { color: var(--ok); } pre.diff .del, .stat .del, .files .del { color: var(--bad); } pre.diff .hunk { color: var(--muted); } pre.diff.file { margin: 4px 0; } pre.report { white-space: pre-wrap; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-wrap: anywhere; } ul.files, ul.verdicts { list-style: none; padding: 0; margin: 4px 0; } ul.files li { margin: 2px 0; } ul.verdicts ul { margin: 4px 0 4px 16px; padding: 0; list-style: none; } .evidence h4 { margin: 12px 0 4px; } p.pending-checks { color: var(--wait); border-left: 3px solid var(--wait); padding-left: 8px; }
 code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter, li.capacity meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } li.capacity .no-bar { display: inline-block; width: 64px; margin-right: 8px; } ul.capacities { list-style: none; padding: 0; margin: 6px 0; } li.capacity { margin: 2px 0; } section.account { margin: 20px 0; } section.account > h3 { margin-bottom: 4px; } section.account > h3 .muted { font-weight: 400; } .quota { margin: 4px 0 8px; } details.facts { margin-top: 6px; } details.facts dl { margin-top: 4px; } .panel.worker h4 { margin: 0 0 4px; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
@@ -421,9 +421,80 @@ export const APP_JS = `'use strict'
 
   // The board's tasks in review, one card each: the operator's Accept or Reject names the exact
   // result shown (INV-5). Absent when no board runs.
+  // Where an accepted result stands on its way into the repository (ADR-0060), in words, each pending step linked to where it is decided.
+  const landingLine = (l) => l.state === 'asked' && l.requestId ? el('div', {}, 'Accepted — waiting to merge into ' + (l.base || 'its base') + ': ', decideLink(l.requestId, 'approve'))
+    : l.state === 'merged' ? el('div', {}, 'Accepted and merged into ' + (l.base || 'its base') + (l.commit ? ' as ' : ''), l.commit ? el('code', {}, l.commit.slice(0, 12)) : null, el('span', { class: 'muted' }, ' · not pushed'))
+      : l.state === 'refused' ? el('div', {}, 'Accepted — not merged: ' + (l.reason || 'refused'))
+        : l.state === 'rejected' ? el('div', {}, 'Accepted — the merge was not approved; ' + (l.branch || 'its branch') + ' keeps the commit')
+          : l.state === 'committed' ? el('div', {}, 'Accepted and committed on ' + (l.branch || 'its run\\'s branch') + (l.head ? ' as ' : ''), l.head ? el('code', {}, l.head.slice(0, 12)) : null, '; its merge request comes next')
+            : l.state === 'merging' ? el('div', {}, 'Accepted — merging into ' + (l.base || 'its base') + ' now')
+              : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
+
+  // What the operator reads before a review verdict (T122): the run's change, each reviewer's
+  // verdict, and the run's report, read once per run and result (runs/<id>/review).
+  const evidenceCache = new Map()
+  const reviewOf = async (runId, key) => {
+    const kept = evidenceCache.get(runId)
+    if (kept && kept.key === key) return kept.value
+    let value
+    try { value = await api('runs/' + encodeURIComponent(runId) + '/review') } catch (error) { value = { error } }
+    if (evidenceCache.size > 50) evidenceCache.clear()
+    // A read that failed is tried again on the next refresh.
+    if (!value.error) evidenceCache.set(runId, { key, value })
+    return value
+  }
+  const SHOWN_LINES = 200
+  // One file's diff as text, each line marked by what it is; a long one shows its first lines and a "show all".
+  const diffLines = (text) => {
+    const lines = text.split('\\n')
+    const line = (l) => el('span', l.startsWith('+') && !l.startsWith('+++') ? { class: 'add' } : l.startsWith('-') && !l.startsWith('---') ? { class: 'del' } : l.startsWith('@@') ? { class: 'hunk' } : {}, l + '\\n')
+    const pre = el('pre', { class: 'diff file' }, lines.slice(0, SHOWN_LINES).map(line))
+    if (lines.length <= SHOWN_LINES) return pre
+    const all = el('button', {}, 'Show all ' + lines.length + ' lines')
+    all.addEventListener('click', () => { pre.replaceChildren(...lines.map(line)); all.remove() })
+    return el('div', {}, pre, all)
+  }
+  const STATUS_WORD = { added: 'added', modified: 'changed', deleted: 'deleted', renamed: 'renamed' }
+  const workChangeView = (change) => {
+    if (!('value' in change)) return el('p', { class: 'unknown' }, 'What changed is unknown (' + change.unknown + '). Do not accept what you could not see.')
+    const { changes, unread } = change.value
+    return el('div', { class: 'change' },
+      unread.map((u) => el('p', { class: 'state failed', role: 'alert' }, 'The change in source ' + u.source + ' could not be read: ' + u.detail + '. Do not accept what you could not see.')),
+      !changes.length && !unread.length ? el('p', { class: 'muted' }, 'No worktree of this run holds a change: it wrote no file in one.') : null,
+      changes.map((c) => {
+        const count = (k) => c.files.reduce((n, f) => n + (f[k] || 0), 0)
+        const total = c.files.length + c.more
+        return el('div', { role: 'group', 'aria-label': 'Change on ' + c.branch },
+          el('p', { class: 'stat' }, el('strong', {}, total + (total === 1 ? ' file' : ' files') + ' changed'), ' ', el('span', { class: 'add' }, '+' + count('added')), ' ', el('span', { class: 'del' }, '−' + count('removed')),
+            el('span', { class: 'muted' }, ' · on ' + c.branch + ', against ' + c.base.branch + ' at ' + c.base.sha.slice(0, 12) + (c.fromBranch ? ' (its worktree was removed: what its branch holds)' : ''))),
+          el('ul', { class: 'files' }, c.files.map((f) => el('li', {}, el('details', {},
+            el('summary', {}, el('code', {}, f.path), ' ' + STATUS_WORD[f.status] + (f.from ? ' from ' + f.from : '') + ' ', f.binary || f.note ? el('span', { class: 'muted' }, f.binary ? 'binary' : f.note) : [el('span', { class: 'add' }, '+' + (f.added || 0)), ' ', el('span', { class: 'del' }, '−' + (f.removed || 0))]),
+            f.diff !== undefined ? diffLines(f.diff) : el('p', { class: 'muted' }, f.binary ? 'A binary file: its content is not shown.' : f.note ? 'Not shown: ' + f.note + '.' : 'Not shown: the change is past what a page shows; read it in ' + c.workspace + '.'),
+            f.truncated ? el('p', { class: 'muted' }, 'Cut: read the whole file in ' + c.workspace + '.') : null)))),
+          c.more ? el('p', { class: 'muted' }, c.more + ' more file(s) are not listed: read them in ' + c.workspace + '.') : null)
+      }))
+  }
+  // Each reviewer's verdict on the exact change, with its findings.
+  const verdictsView = (assessments) => !('value' in assessments) ? el('p', { class: 'unknown' }, 'The reviewers\\' verdicts are unknown (' + assessments.unknown + ').')
+    : !assessments.value.length ? el('p', { class: 'muted' }, 'No reviewer gave a verdict on this change.')
+      : el('ul', { class: 'verdicts' }, assessments.value.map((a) => el('li', {},
+        el('strong', { class: a.verdict === 'approve' ? 'state completed' : 'state failed' }, a.verdict === 'approve' ? 'Approved' : 'Changes requested'), ' by the review at ' + (a.nodeId || 'a step') + (a.reviewer ? ' (' + a.reviewer + ')' : ''),
+        a.findings.length ? el('ul', {}, a.findings.map((f) => el('li', { class: f.severity === 'blocking' ? 'state failed' : '' }, el('span', { class: 'tag' }, f.severity), ' ' + f.title + (f.file ? ' (' + f.file + ')' : ''), f.detail ? el('div', { class: 'muted' }, f.detail) : null))) : el('span', { class: 'muted' }, '; no finding'))))
+  // The run's report in its own words: a line that says a criterion was not met or not measured is marked, the words stay the step's.
+  const reportView = (report) => el('div', {},
+    el('p', { class: 'muted' }, 'The run\\'s last step, ' + report.nodeId + ', reported this, in its own words:'),
+    el('pre', { class: 'report' }, report.text.split('\\n').map((l) => el('span', /\\b(not met|failed|not run)\\b/i.test(l) ? { class: 'state failed' } : /\\bnot measured\\b/i.test(l) ? { class: 'soon' } : /\\bmet\\b/i.test(l) ? { class: 'state completed' } : {}, l + '\\n'))),
+    report.truncated ? el('p', { class: 'muted' }, 'Cut at 32,000 characters: the whole report is the run\\'s answer.') : null)
+  // On a run's page the report is its answer, already shown: \`report\` false leaves it out.
+  const evidenceView = (review, report = true) => review.error ? el('p', { class: 'state failed' }, 'What the run changed and what its steps said could not be read: ' + review.error.message + '. Do not accept what you could not see.')
+    : el('div', { class: 'evidence' },
+      el('h4', {}, 'What changed'), workChangeView(review.change),
+      el('h4', {}, 'What the reviewers said'), verdictsView(review.assessments),
+      review.report && report ? [el('h4', {}, 'What the checks measured'), reportView(review.report)] : null)
+
   async function reviews() {
-    let listed
-    try { ({ reviews: listed } = await api('reviews')) } catch (error) {
+    let listed, accepted
+    try { ({ reviews: listed, accepted } = await api('reviews')) } catch (error) {
       return error.status === 503 ? null : el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
     }
     const decide = (r, verdict, buttons, clicked) => async () => {
@@ -434,14 +505,14 @@ export const APP_JS = `'use strict'
       try {
         const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: (notes.get(key) || '').trim() })
         notes.delete(key)
-        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep. When its result is a run\\'s worktree, the system commits it on the run\\'s branch and asks you here to merge it.' : '; it goes back for another attempt if it has one left.')])
+        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep. When its result is a run\\'s worktree, the system commits it on the run\\'s branch and asks you here to merge it: see it under Accepted, on their way in.' : '; it goes back for another attempt if it has one left.')])
       } catch (error) {
         report(false, 'Not recorded: your ' + (verdict === 'accept' ? 'acceptance' : 'rejection') + ' of ' + r.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was decided: the task is still in review.'])
       }
       buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] })
       await refresh()
     }
-    const card = (r) => {
+    const card = (r, evidence) => {
       const yes = el('button', { class: 'primary', 'aria-describedby': 'review-title-' + r.taskId }, 'Accept: mark it done')
       const no = el('button', { 'aria-describedby': 'review-title-' + r.taskId }, 'Reject: send it back')
       yes.addEventListener('click', decide(r, 'accept', [yes, no], yes))
@@ -454,9 +525,12 @@ export const APP_JS = `'use strict'
           r.expiresAt ? (r.heldFor === 'operator' ? 'yours until ' : 'its reviewer\\'s until ') + relative(r.expiresAt) + ' (' + absolute(r.expiresAt) + ')' : 'no expiry known'),
         el('dl', {},
           r.goal ? [el('dt', {}, 'Asked'), el('dd', {}, r.goal)] : null,
-          el('dt', {}, 'Checks not run'), el('dd', {}, r.pendingChecks.length ? r.pendingChecks.join(', ') + ': nothing has run them. Your Accept counts them as passed, so run them on the result first.' : 'none: every required check passed'),
           el('dt', {}, 'Result'), el('dd', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named',
             el('details', {}, el('summary', {}, 'Exact result (' + r.artifacts.length + ' artifact(s))'), el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a)))))),
+        evidence ? evidenceView(evidence) : null,
+        // The checks the policy requires that nothing ran: next to the verdict, in warning color.
+        r.pendingChecks.length ? el('p', { class: 'pending-checks', role: 'note' }, el('strong', {}, 'Checks not run: ' + r.pendingChecks.join(', ') + '. '), 'Accepting counts them as passed — run them first.')
+          : el('p', { class: 'muted' }, 'Every check the policy requires passed.'),
         el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input), yes, no))
     }
     // A review held for the operator expires unseen, and its task then waits for input that nothing revives: say when the first does.
@@ -465,7 +539,12 @@ export const APP_JS = `'use strict'
     const section = el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
       first ? el('p', {}, mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
         el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.') : null,
-      listed.length ? listed.map(card) : el('p', { class: 'muted' }, 'No task waits for your review.'))
+      listed.length ? await Promise.all(listed.map(async (r) => card(r, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined))) : el('p', { class: 'muted' }, 'No task waits for your review.'),
+      // A verdict's consequence stays in sight: each accepted result still on its way into the repository.
+      accepted && accepted.length ? el('section', { 'aria-label': 'Accepted, on their way in' }, el('h3', {}, 'Accepted, on their way in'),
+        accepted.map((a) => el('article', { class: 'panel request', 'aria-label': 'Accepted: ' + a.title }, el('h4', {}, a.title),
+          el('p', { class: 'meta' }, 'Project ' + (a.project.title || a.project.projectId) + ' · task ' + a.taskId), landingLine(a.landing),
+          a.run ? el('p', {}, el('a', { href: '?run=' + encodeURIComponent(a.run.runId), onclick: (e) => { e.preventDefault(); go(a.run.runId) } }, 'open its run')) : null))) : null)
     if (first) section.dataset.firstExpires = first
     return section
   }
@@ -551,6 +630,9 @@ export const APP_JS = `'use strict'
   }
   async function detail(runId) {
     const { run, explain } = await api('runs/' + encodeURIComponent(runId))
+    // Its change, its reviewers' verdicts, and its report, read again only when the run moved (T122).
+    const evidence = run.status === 'running' ? undefined : await reviewOf(runId, run.updatedAt)
+    const landing = evidence && !evidence.error ? evidence.landing : undefined
     let roster = null
     try { roster = await api('roster') } catch {}
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
@@ -601,6 +683,8 @@ export const APP_JS = `'use strict'
         run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Continue run'), el('span', { class: 'muted' }, 'runs its failed step again as a new attempt; the steps that are done are kept')] : null) : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
+      evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
+        ? el('section', { class: 'panel request', 'aria-label': 'What it changed' }, el('h3', {}, 'What it changed, and what its reviewers said'), landing ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
       el('h3', {}, 'Steps'),
       el('ol', { class: 'timeline' }, run.nodes.map((n) => {
         const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
@@ -702,11 +786,6 @@ export const APP_JS = `'use strict'
       'retries-spent': 'used all its attempts: waits for input', question: 'asked a question: waits for an answer', rejected: 'was rejected: waits for input', 'review-expired': 'its review expired', 'operator-review': 'waits for your review',
     }
     // Where a done task's accepted result stands on its way into the repository (ADR-0060).
-    const landingLine = (l) => l.state === 'asked' && l.requestId ? el('div', {}, 'Accepted — waiting to merge into ' + (l.base || 'its base') + ': ', decideLink(l.requestId, 'approve'))
-      : l.state === 'merged' ? el('div', {}, 'Accepted and merged into ' + (l.base || 'its base') + (l.commit ? ' as ' : ''), l.commit ? el('code', {}, l.commit.slice(0, 12)) : null, el('span', { class: 'muted' }, ' · not pushed'))
-        : l.state === 'refused' ? el('div', {}, 'Accepted — not merged: ' + (l.reason || 'refused'))
-          : l.state === 'rejected' ? el('div', {}, 'Accepted — the merge was not approved; ' + (l.branch || 'its branch') + ' keeps the commit')
-            : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
     // The operator starts a ready task's run, as the lead does (MCP run with task): behind a
     // confirmation that says what runs and on which kind of Worker, bound to the task and template shown.
     const needs = (step) => step.source ? 'the system reads it itself, on no Worker'

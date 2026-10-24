@@ -313,6 +313,49 @@ export type Landed =
   | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean }
   | { outcome: 'refused'; cause: LandRefusal; reason: string }
 
+/** One file of a run's change (`WorkChange`): its path, how it changed, its lines added and removed, and its diff. */
+export interface ChangedFile {
+  path: string
+  /** `renamed` names the path it came from in `from`. */
+  status: 'added' | 'modified' | 'deleted' | 'renamed'
+  from?: string
+  /** Lines added and removed; undefined for a binary file. */
+  added?: number
+  removed?: number
+  /** Its unified diff, verbatim, within {@link CHANGE_BOUNDS}.fileChars; absent for a binary file or one past the bounds. */
+  diff?: string
+  /** Its diff was cut at {@link CHANGE_BOUNDS}.fileChars, or left out past {@link CHANGE_BOUNDS}.totalChars. */
+  truncated?: boolean
+  binary?: true
+  /** Why its content is not shown when it is not a binary file: a link, or not a regular file under the worktree. */
+  note?: string
+}
+
+/**
+ * A workflow run's change in one of its worktrees, read only: what its working tree holds against
+ * the commit it forked from on the repository's checked-out branch (its merge base), committed and
+ * not yet committed, untracked files included as added, within {@link CHANGE_BOUNDS}.
+ */
+export interface WorkChange {
+  repository: string
+  workspace: string
+  branch: string
+  /** The repository's checked-out branch, and the commit the change is read against (where the run forked from it). */
+  base: { branch: string; sha: string }
+  /** The worktree's HEAD now. */
+  head: string
+  files: ChangedFile[]
+  /** Files past {@link CHANGE_BOUNDS}.files, counted only. */
+  more: number
+  /** Some diff was cut or left out by the bounds. */
+  truncated: boolean
+  /** The worktree was removed: the change is read from its branch, committed changes only. */
+  fromBranch?: true
+}
+
+/** The bounds of a run's change as a source reads it (INV-9). */
+export const CHANGE_BOUNDS = { files: 200, fileChars: 64_000, totalChars: 512_000 } as const
+
 /**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept
  * this work now, how is it invoked, what did it produce). `describe` is called on every
@@ -369,6 +412,13 @@ export interface WorkerSource {
    * step repeated after a restart finds its own work done and says so (INV-4).
    */
   land?(step: LandStep): Promise<Landed | undefined>
+  /**
+   * The change of workflow run `runId` in each worktree of it this source holds, read only (no
+   * index write, no hook), within {@link CHANGE_BOUNDS}; undefined when it holds none. It never
+   * reads outside those worktrees and their repository, and throws when a worktree it holds cannot
+   * be read, which is never read as no change (INV-2).
+   */
+  changes?(runId: string): Promise<WorkChange[] | undefined>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -546,6 +596,14 @@ export abstract class Workers extends Service {
    * that finds no `land` lands nothing.
    */
   abstract land?(step: LandStep): Promise<(Landed & { source: string }) | undefined>
+
+  /**
+   * A workflow run's change in its worktrees, from every source that holds one
+   * (`WorkerSource.changes`), each with its `source`; and each source that could not read its own,
+   * with why (INV-2: never read as no change). Optional: a caller that finds no `changes` cannot
+   * show a change.
+   */
+  abstract changes?(runId: string): Promise<{ changes: Array<WorkChange & { source: string }>; unread: Array<{ source: string; detail: string }> }>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }

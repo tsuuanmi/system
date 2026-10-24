@@ -668,6 +668,8 @@ export class AgentWorkers extends Service {
       liveness: (query) => this.liveness(query),
       // Landing an accepted result made in a workflow run's worktree (ADR-0060): its commit, then its merge.
       land: (step) => this.worktrees.land(step),
+      // A workflow run's change in its worktrees, read only, for the operator's review (T122).
+      changes: (runId) => this.worktrees.changes(runId),
     })
     // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => {
