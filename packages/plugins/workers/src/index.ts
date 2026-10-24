@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Landed, type LandStep, LIVENESS_STATES, type LivenessQuery,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Carried, type CarryStep, type Landed, type LandStep, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
   type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -177,6 +177,21 @@ export class WorkerRouter extends Workers {
         landed = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not ${step.step} the worktree ${step.workspace}: ${(error as Error).message.slice(0, 300)}` }
       }
       if (landed) return { ...landed, source: source.name }
+    }
+    return undefined
+  }
+
+  async carry(step: CarryStep): Promise<(Carried & { source: string }) | undefined> {
+    for (const source of this.registry.values()) {
+      if (!source.carry) continue
+      let carried: Carried | undefined
+      try {
+        carried = await source.carry(step)
+      } catch (error) {
+        // A source that cannot answer is never read as not holding the earlier tree (INV-2).
+        carried = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not carry the worktree ${step.from.workspace} into run ${step.runId}: ${(error as Error).message.slice(0, 300)}` }
+      }
+      if (carried) return { ...carried, source: source.name }
     }
     return undefined
   }
