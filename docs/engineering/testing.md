@@ -97,10 +97,11 @@ scenario of the suite, on the same provider, does not stay.
     whose turn was still running, superseded after the restart (that turn is
     cancelled). The provider must see the prompt exactly once, and the run must
     recover, or fail closed as AMBIGUOUS.
-  - The harnesses cap the leases at 30 s (`leases.maxTtlMs`,
+  - The harnesses cap the leases at 10 s (`leases.maxTtlMs`,
     [`leases.mjs`](../../packages/system-bundle/tests/crash/leases.mjs)), so a
-    restart waits out the dead process's leases in half the time, as it would
-    their 60 s. The budget cases keep the default cap: a run's lease on its
+    restart waits out the dead process's leases in a sixth of the time, as it
+    would their 60 s; a live holder keeps its lease, renewed at a third of the
+    TTL granted. The budget cases keep the default cap: a run's lease on its
     board task must outlive the run's own lease, as on a real restart.
   - Every other row of the
     [effect register](../architecture/data-flow.md#effect-register) that names a
