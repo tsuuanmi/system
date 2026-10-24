@@ -426,7 +426,7 @@ export function workersConformance(name: string, boot: Boot): void {
         expect(failure).toBeInstanceOf(AdmissionFailure)
         expect(failure.rejections.map((r) => [r.worker, r.failed.map((f) => f.check)])).toEqual([['w:g-a', ['cooldown']], ['w:g-b', ['assignment']]])
         expect(failure.limitUntil).toBe(later)
-        expect(body(ctx, failure.decision).candidates.find((c) => c.selected)!.reasons[0]).toMatch(new RegExp(`at their limit, the first back at ${later.replace(/\./g, '\\.')}`))
+        expect(body(ctx, failure.decision).candidates.find((c) => c.selected)!.reasons[0]).toContain(`at their limit, the first back at ${later}`)
       })
     })
 
