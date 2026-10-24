@@ -469,6 +469,23 @@ describe('MCP tool calls', () => {
     expect(call('mcp-report', { ...week, output: { ...week.output, usage: { ...before, total, pools: [total].map((t) => ({ pool: usage.pools[0].pool, ...t })) } } })).toBe(true)
   })
 
+  it('1.3 lists the reviews held for the operator as the report is made, each with when it expires, only when there is any (T99 D6)', () => {
+    const week = example('mcp-report.week')
+    const attention = week.output.attention
+    const [held] = attention.reviewsHeld
+    const withAttention = (changed: Json): Json => ({ ...week, output: { ...week.output, attention: { ...attention, ...changed } } })
+    expect(call('mcp-report', withAttention({ reviewsHeld: [held, { ...held, taskId: 'task-5d2f', pendingChecks: [] }], reviewsHeldOmitted: 3 }))).toBe(true)
+    expect(call('mcp-report', withAttention({ reviewsHeld: [] }))).toBe(false)
+    expect(call('mcp-report', withAttention({ reviewsHeld: [{ ...held, expiresAt: 'tomorrow' }] }))).toBe(false)
+    expect(call('mcp-report', withAttention({ reviewsHeld: [{ ...held, pendingChecks: ['tests', 'tests'] }] }))).toBe(false)
+    expect(call('mcp-report', withAttention({ reviewsHeld: [{ ...held, pendingChecks: ['operator'] }] }))).toBe(false)
+    expect(call('mcp-report', withAttention({ reviewsHeld: [{ ...held, since: held.expiresAt }] }))).toBe(false)
+    expect(call('mcp-report', withAttention({ reviewsHeldOmitted: 0 }))).toBe(false)
+    // A report of 1.2, with none held, stays valid.
+    const { reviewsHeld: _, ...before } = attention
+    expect(call('mcp-report', { ...week, output: { ...week.output, attention: before } })).toBe(true)
+  })
+
   it('checks a call against its own tool, not another', () => {
     const claim = example('mcp-board.claim')
     expect(call('mcp-board', { ...claim, tool: 'board_cancel' })).toBe(false)

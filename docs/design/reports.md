@@ -4,7 +4,7 @@
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Proposals:
 > [PROP-0010](../proposals/0010-base-version.md) (B8: the baseline report, a weekly investor report),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#validation-plan) (the baseline).
-> Payload: [`mcp-report@1.2`](../reference/schemas.md#mcp-tool-report).
+> Payload: [`mcp-report@1.3`](../reference/schemas.md#mcp-tool-report).
 >
 > Implemented in [`report`](../../packages/plugins/report/README.md); differs from target: quota
 > lost at reset is not reported (the ledger's seam gives each window's latest reading only), and
@@ -63,6 +63,7 @@ those requests.
 | batches | what the operator was shown: the batches the queue made (`approvals.batched`), and each request the operator answered outside a batch, per UTC day |
 | attention budget | for a project's report, its charter's `maxInterruptionsPerDay` and `maxBatchesPerDay`; each day over either is marked |
 | agent runs' liveness | only where there is any (`mcp-report` 1.2, `attention.liveness`): stalls reported in the period, runs that ended without being known to be gone (their session and worktree held), runs the operator freed (each once, a second free for its worktree not counted again), and `held`, those that ended unknown in the period and were not freed in it, at most 64. Shown beside the interruptions and never counted as one, so the baseline's figure keeps its meaning; an agent run belongs to a project by the workflow run it served |
+| reviews held for the operator | only where there is any (`mcp-report` 1.3, `attention.reviewsHeld`): the scope's tasks in review waiting `operator-review` as of `asOf`, the soonest to expire first, at most 64 (the rest counted), each with its title, its pending checks, and `expiresAt`; the rendering says how long each has left as of `asOf` (`expires in 3h`), since an unanswered review expires and its task waits for input that nothing revives (T99 D6) |
 | usage | the records observed in the period, per pool and in all: input tokens (cached input included), cache reads and writes, output tokens, turns, the runtime's own cost estimate; and the records by outcome |
 | usage a cap counts as 0 | per pool and in all, only where there is any (`mcp-report` 1.1): the records without token counts, without a cost, without turns, and the runs recorded in the period whose usage the ledger could not count and has not counted since (`unknownRuns`); and those runs in all (`usage.unknown`): each once per pool by its first entry's kind (not reported, interrupted, refused, failed), and how many the ledger has counted a record of since (reconciled) |
 | digests | digests of task results that ended in the period: attached or bypassed; for those attached, the claims kept and dropped, and the escalations |

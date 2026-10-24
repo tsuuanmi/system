@@ -1027,6 +1027,11 @@ guesses.
   unknown in the period and were not freed in it (at most 64, `heldOmitted` counting the rest), each
   by its agent run, Worker, when, and workflow run. They are never counted as interruptions. A 1.1
   report stays valid.
+- `mcp-report` 1.3 adds `attention.reviewsHeld`, only when there is any: the tasks of the scope in
+  review whose acceptance is held for the operator (`operator-review`) as of `asOf`, the soonest to
+  expire first (at most 64, `reviewsHeldOmitted` counting the rest), each by its task, project,
+  title, `expiresAt`, and the pending checks its wait names. Unanswered by `expiresAt`, a review
+  expires and its task waits for input (`review-expired`). A 1.2 report stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:

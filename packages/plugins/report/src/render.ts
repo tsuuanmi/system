@@ -73,6 +73,15 @@ export function renderReport(report: Report): string {
     const allowed = [at.threshold.maxInterruptionsPerDay !== undefined ? plural(at.threshold.maxInterruptionsPerDay, 'interruption') : '', at.threshold.maxBatchesPerDay !== undefined ? plural(at.threshold.maxBatchesPerDay, 'batch', 'batches') : ''].filter(Boolean).join(' and ')
     lines.push(`- Charter allows ${allowed} a day: ${at.daysOver ? `over it on ${plural(at.daysOver, 'day')} (${at.days.filter((d) => d.over).map((d) => d.date).join(', ')})` : 'never over it'}.`)
   }
+  if (at.reviewsHeld) {
+    // When each expires unseen, as of the report: unanswered, its task waits for input, which nothing revives.
+    const asOf = Date.parse(report.asOf)
+    const held = at.reviewsHeld.map((r) => {
+      const left = Math.round((Date.parse(r.expiresAt) - asOf) / 1000)
+      return `${r.taskId} "${r.title}" (${left > 0 ? `expires in ${duration(left)}` : 'expired'}, at ${r.expiresAt}${r.pendingChecks.length ? `; ${r.pendingChecks.join(', ')} not run` : ''})`
+    })
+    lines.push(`- Reviews held for you now: ${held.join(', ')}${at.reviewsHeldOmitted ? ` and ${whole(at.reviewsHeldOmitted)} more` : ''}. Accept or Reject each on /ui before it expires: unanswered, its task waits for input, which nothing revives.`)
+  }
   if (at.liveness) {
     const l = at.liveness
     lines.push(`- Agent runs: ${whole(l.stalled)} stalled, ${whole(l.unknown)} ended without being known to be gone (their session and worktree held until you free them), ${whole(l.freed)} freed by you.`)

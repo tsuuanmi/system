@@ -208,15 +208,15 @@ const INPUT: ToolSpec['inputSchema'] = {
   until: zod.string().max(64).optional().describe('The period\'s end, ISO 8601 (exclusive); default now'),
   days: zod.number().int().min(1).max(MAX_DAYS).optional().describe('The period as the days before until (default 7, the weekly investor report)'),
 }
-const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.'
+const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.'
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** The `report` tool: input and output checked against `mcp-report@1.2`; the text is the rendering. */
+/** The `report` tool: input and output checked against `mcp-report@1.3`; the text is the rendering. */
 export function registerTool(ctx: Context): void {
   ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
     try {
-      schemas.assertDef('mcp-report@1.2', 'report-input', args)
+      schemas.assertDef('mcp-report@1.3', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
@@ -227,7 +227,7 @@ export function registerTool(ctx: Context): void {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-report@1.2', 'report-output', made)
+      schemas.assertDef('mcp-report@1.3', 'report-output', made)
     } catch (error) {
       return refused(`report: the report made an output its schema refuses (a defect): ${(error as Error).message}`)
     }
