@@ -113,7 +113,10 @@ charters, and their tasks.
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each input and structured output is validated against
   [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) (1.1) `$defs/<tool>-input` and
-  `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`.
+  `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`. A
+  tool that changes the board checks the output it would give inside the move's transaction,
+  before it commits (each such method takes an optional `check`), so an output its schema refuses
+  (a defect) is refused with nothing moved, and a request the move opened is withdrawn.
   - `board_charter` and `board_propose` are retry-safe under `clientRequestId`, recorded in the
     same transaction as the write (the table is never pruned: M5, open); a `board_charter` retry
     reports the charter version that call asked about, and founding under a key derives the

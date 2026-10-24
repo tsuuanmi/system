@@ -55,6 +55,13 @@ result, `reconcileRun`) belong to the run that serves the attempt: the
 has one writer ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)). A lead
 takes a task with `board_claim` and hands that claim to the run; no MCP tool makes those moves.
 
+A `board_*` tool that changes the board (`board_charter`, `board_propose`, `board_claim`,
+`board_update`, `board_cancel`, and the operator's moves) checks the output it would give inside
+the move's store transaction, before it commits: an output its schema refuses (a defect) is
+refused with nothing moved, decided, or withdrawn, and a request the move opened on the queue is
+withdrawn ([INV-2](../architecture/invariants.md#inv-2-fail-closed),
+[INV-14](../architecture/invariants.md#inv-14-every-record-has-a-versioned-schema)).
+
 ## Project
 
 ```mermaid

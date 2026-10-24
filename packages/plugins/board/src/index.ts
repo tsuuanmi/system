@@ -49,6 +49,24 @@ export interface Page<T> { items: T[]; next?: string }
 /** Tasks per state. */
 export type Counts = Record<TaskState, number>
 
+/**
+ * Sees what a call that changes the board returns, inside the transaction that records it, before it
+ * commits (the `board_*` tools check their output with it): one that throws rolls the whole move back,
+ * so a refused output leaves the board as it was (INV-2, INV-14).
+ */
+export type Checked<T> = (value: T) => void
+/** What founding a project or amending its charter returns. */
+export interface Chartered { project: Project; approvalRequest: string; charterVersion: number }
+/** What closing a project returns: the project and how many open tasks the close cancelled. */
+export interface Closed { project: Project; cancelled: number }
+/** A renewal and the task as renewed. */
+export type Renewed = Claim & { task: BoardTask }
+/** `value`, once `check` (if any) has seen it. */
+const checkedBy = <T>(check: Checked<T> | undefined, value: T): T => {
+  check?.(value)
+  return value
+}
+
 export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
 const OPEN: readonly TaskState[] = TASK_STATES.filter((s) => !TERMINAL.includes(s))
 const CANCELLABLE: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'waiting-for-input', 'waiting-for-approval']
@@ -313,10 +331,12 @@ export class StoreBoard extends Board {
    * with a key already used returns what that call made, with the charter version it asked about,
    * and changes nothing. Founding under a key derives the project's id from it, so a retry after a
    * crash between asking and recording asks about the same subject and adopts that request (M2).
+   * `check` sees what the call returns inside the transaction that records it, before it commits:
+   * one that throws records nothing, and the request it opened is withdrawn ({@link Checked}).
    */
-  async charterProject(input: CharterInput, at: Date = new Date(), clientRequestId?: string): Promise<{ project: Project; approvalRequest: string; charterVersion: number }> {
+  async charterProject(input: CharterInput, at: Date = new Date(), clientRequestId?: string, check?: Checked<Chartered>): Promise<Chartered> {
     const prior = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_charter', input.projectId)
-    if (prior) return this.priorCharter(prior)
+    if (prior) return checkedBy(check, this.priorCharter(prior))
     if (input.charter.approval !== undefined) throw new BoardError('invalid', 'a charter never carries its approval in: the operator gives it')
     const existing = input.projectId === undefined ? undefined : this.readProject(input.projectId)
     // A founding call declares milestones only as planned: funding one is the operator's decision, which a charter approval does not cover (M3).
@@ -347,7 +367,7 @@ export class StoreBoard extends Board {
     try {
       return this.ctx.store.transaction((db) => {
         const again = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_charter', input.projectId)
-        if (again) return this.priorCharter(again)
+        if (again) return checkedBy(check, this.priorCharter(again))
         let project: Project
         if (existing) {
           const now = this.projectOf(projectId)
@@ -362,7 +382,7 @@ export class StoreBoard extends Board {
             .run(projectId, project.state, project.createdAt, project.revision, JSON.stringify(project), request.requestId, version, request.expiresAt)
         }
         if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_charter', projectId, undefined, request.requestId, at, version)
-        return { project, approvalRequest: request.requestId, charterVersion: version }
+        return checkedBy(check, { project, approvalRequest: request.requestId, charterVersion: version })
       })
     } catch (error) {
       await this.withdrawUnheld(request.requestId, at)
@@ -372,31 +392,33 @@ export class StoreBoard extends Board {
 
   // Pausing, resuming, and closing are the operator's project moves (docs/design/board.md#the-operators-project-moves).
 
-  async pause(projectId: string, at: Date = new Date()) {
+  /** Pause an active project; `check` sees it paused before the pause commits: one that throws moves nothing. */
+  async pause(projectId: string, at: Date = new Date(), check?: Checked<Project>) {
     return this.ctx.store.transaction(() => {
       const { project } = this.projectOf(projectId)
       if (project.state !== 'active') throw new BoardError('invalid-transition', `${projectId} is ${project.state}, not active`)
-      return this.writeProject(project, changed(project, at, {
+      return checkedBy(check, this.writeProject(project, changed(project, at, {
         state: 'paused', lastDecision: this.decision(project, undefined, {
           from: 'active', to: 'paused',
           why: 'paused: until it is resumed no task is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry',
           whyNot: 'the operator paused it',
         }, at),
-      }))
+      })))
     })
   }
 
-  async resume(projectId: string, at: Date = new Date()) {
+  /** Resume a paused project; `check` as {@link pause}'s. */
+  async resume(projectId: string, at: Date = new Date(), check?: Checked<Project>) {
     return this.ctx.store.transaction(() => {
       const { project } = this.projectOf(projectId)
       if (project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${project.state}, not paused`)
-      return this.writeProject(project, changed(project, at, {
+      return checkedBy(check, this.writeProject(project, changed(project, at, {
         state: 'active', lastDecision: this.decision(project, undefined, {
           from: 'paused', to: 'active',
           why: 'resumed: its approved charter still holds; its proposed tasks go through the gate on the next sweep, and its ready tasks may be claimed again',
           whyNot: 'the operator resumed it',
         }, at),
-      }))
+      })))
     })
   }
 
@@ -404,8 +426,12 @@ export class StoreBoard extends Board {
     return (await this.closeProject(projectId, outcome, at)).project
   }
 
-  /** Close a project (`close`), and say how many open tasks the close cancelled (`board_close` reports it). */
-  async closeProject(projectId: string, outcome: 'achieved' | 'stopped', at: Date = new Date()): Promise<{ project: Project; cancelled: number }> {
+  /**
+   * Close a project (`close`), and say how many open tasks the close cancelled (`board_close` reports
+   * it). `check` sees that inside the closing transaction, before it commits: one that throws closes
+   * and cancels nothing, and withdraws nothing.
+   */
+  async closeProject(projectId: string, outcome: 'achieved' | 'stopped', at: Date = new Date(), check?: Checked<Closed>): Promise<Closed> {
     if (outcome !== 'achieved' && outcome !== 'stopped') throw new BoardError('invalid', `a project closes as achieved or stopped, not ${String(outcome)}`)
     const before = this.projectOf(projectId)
     if (before.project.state !== 'active' && before.project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${before.project.state}`)
@@ -424,6 +450,7 @@ export class StoreBoard extends Board {
       const closed = this.writeProject(now.project, changed(now.project, at, {
         state: 'closed', closure: { outcome, decision, at: at.toISOString() }, lastDecision: decision, proposedCharter: undefined,
       }), null)
+      check?.({ project: closed, cancelled })
       return { project: closed, released: [...released, ...(now.request ? [now.request] : [])], cancelled }
     })
     // Withdrawn only once the move committed (S7): a crash or a failed transaction leaves every wait as it was.
@@ -455,11 +482,14 @@ export class StoreBoard extends Board {
     return this.proposeTask(input, at)
   }
 
-  /** Propose a task (`propose`), retry-safe under `clientRequestId`: a key already used returns the task it made. */
-  proposeTask(input: TaskInput, at: Date = new Date(), clientRequestId?: string): BoardTask {
+  /**
+   * Propose a task (`propose`), retry-safe under `clientRequestId`: a key already used returns the
+   * task it made. `check` sees the task before the proposal commits: one that throws stores nothing.
+   */
+  proposeTask(input: TaskInput, at: Date = new Date(), clientRequestId?: string, check?: Checked<BoardTask>): BoardTask {
     return this.ctx.store.transaction((db) => {
       const prior = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_propose', input.projectId)
-      if (prior) return this.taskOf(prior.task_id!).task
+      if (prior) return checkedBy(check, this.taskOf(prior.task_id!).task)
       const { project } = this.projectOf(input.projectId)
       if (project.state === 'closed') throw new BoardError('invalid-transition', `${input.projectId} is closed`)
       for (const dep of input.dependsOn ?? []) {
@@ -481,11 +511,12 @@ export class StoreBoard extends Board {
       db.prepare('INSERT INTO board_tasks (task_id, project_id, state, created_at, revision, record, writes) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(task.taskId, task.projectId, task.state, task.createdAt, task.revision, JSON.stringify(task), writes)
       if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_propose', task.projectId, task.taskId, undefined, at)
-      return task
+      return checkedBy(check, task)
     })
   }
 
-  async claim(taskId: string, owner: string, ttlMs: number, at: Date = new Date()): Promise<Claim> {
+  /** Take a ready task's lease; `check` sees the claim before it commits: one that throws takes nothing. */
+  async claim(taskId: string, owner: string, ttlMs: number, at: Date = new Date(), check?: Checked<Claim>): Promise<Claim> {
     return this.ctx.store.transaction(() => {
       const current = this.taskOf(taskId)
       this.expectState(current.task, 'ready')
@@ -511,11 +542,12 @@ export class StoreBoard extends Board {
         },
         lease: { token: lease.token, ttlMs },
       }, at)
-      return { taskId, generation: lease.generation, leaseExpiresAt }
+      return checkedBy(check, { taskId, generation: lease.generation, leaseExpiresAt })
     })
   }
 
-  async renew(taskId: string, generation: number, ttlMs: number, at: Date = new Date()): Promise<Claim> {
+  /** Renew the holder's lease; `check` sees the renewal and the task as renewed before it commits: one that throws renews nothing. */
+  async renew(taskId: string, generation: number, ttlMs: number, at: Date = new Date(), check?: Checked<Renewed>): Promise<Claim> {
     return this.ctx.store.transaction(() => {
       const current = this.taskOf(taskId)
       const lease = this.holding(current, generation, at)
@@ -529,16 +561,17 @@ export class StoreBoard extends Board {
       }
       const leaseExpiresAt = new Date(renewed.expiresAt).toISOString()
       // A renewal moves nothing: no decision, the holder's lease only.
-      this.commit(current, { changes: { holder: { ...current.task.holder!, leaseExpiresAt } }, lease: { token: renewed.token, ttlMs } }, at)
+      const task = this.commit(current, { changes: { holder: { ...current.task.holder!, leaseExpiresAt } }, lease: { token: renewed.token, ttlMs } }, at)
+      check?.({ taskId, generation, leaseExpiresAt, task })
       return { taskId, generation, leaseExpiresAt }
     })
   }
 
-  /** Renew the holder's lease for as long as it was claimed (`board_update`). */
-  async heartbeat(taskId: string, generation: number, at: Date = new Date()): Promise<Claim> {
+  /** Renew the holder's lease for as long as it was claimed (`board_update`); `check` as {@link renew}'s. */
+  async heartbeat(taskId: string, generation: number, at: Date = new Date(), check?: Checked<Renewed>): Promise<Claim> {
     const stored = this.taskOf(taskId)
     this.holding(stored, generation, at)
-    return this.renew(taskId, generation, stored.ttlMs!, at)
+    return this.renew(taskId, generation, stored.ttlMs!, at, check)
   }
 
   async start(taskId: string, generation: number, run: { runId: string; brief?: ArtifactRef }, at: Date = new Date()) {
@@ -730,7 +763,8 @@ export class StoreBoard extends Board {
     }
   }
 
-  async answer(taskId: string, answers: string[], at: Date = new Date()) {
+  /** Answer a question wait; `check` sees the task as moved before the move commits: one that throws moves nothing. */
+  async answer(taskId: string, answers: string[], at: Date = new Date(), check?: Checked<BoardTask>) {
     const before = this.taskOf(taskId).task
     this.expectState(before, 'waiting-for-input')
     const questions = before.waiting?.questions ?? []
@@ -759,17 +793,18 @@ export class StoreBoard extends Board {
           }, at),
         },
       }
-    }))
+    }, check))
   }
 
-  async cancel(taskId: string, reason: 'operator' | 'lead' | 'superseded', note?: string, at: Date = new Date()) {
+  /** Cancel a task; `check` as {@link answer}'s: one that throws cancels nothing and withdraws nothing. */
+  async cancel(taskId: string, reason: 'operator' | 'lead' | 'superseded', note?: string, at: Date = new Date(), check?: Checked<BoardTask>) {
     if (reason !== 'operator' && reason !== 'lead' && reason !== 'superseded') throw new BoardError('invalid', `a task is cancelled by the operator, the lead, or as superseded, not ${String(reason)}`)
     if (note !== undefined && (note.length === 0 || [...note].length > 500)) throw new BoardError('invalid', 'a cancellation note is 1 to 500 characters')
     const before = this.taskOf(taskId).task
     this.expectState(before, ...CANCELLABLE)
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
-    const cancelled = this.commitLater(before, at, undefined, (current) => this.cancelMove(this.projectOf(current.task.projectId).project, current.task, reason, at, undefined, note))
+    const cancelled = this.commitLater(before, at, undefined, (current) => this.cancelMove(this.projectOf(current.task.projectId).project, current.task, reason, at, undefined, note), check)
     // Withdrawn after the move committed (S7), as in reconcileRun.
     if (pending) await this.withdrawUnheld(pending, at)
     return cancelled
@@ -1565,17 +1600,18 @@ export class StoreBoard extends Board {
   /**
    * Commit a move decided before an await (on the approval queue): refused (`conflict`) when the
    * task changed meanwhile; a holder's write presents its generation again. `move` may decide that
-   * nothing moves after all (undefined), and then nothing is written.
+   * nothing moves after all (undefined), and then nothing is written. `check` sees the task as moved
+   * before the move commits: one that throws moves nothing.
    */
-  private commitLater(before: BoardTask, at: Date, generation: number | undefined, move: (current: Stored) => Move): BoardTask
+  private commitLater(before: BoardTask, at: Date, generation: number | undefined, move: (current: Stored) => Move, check?: Checked<BoardTask>): BoardTask
   private commitLater(before: BoardTask, at: Date, generation: number | undefined, move: (current: Stored) => Move | undefined): BoardTask | undefined
-  private commitLater(before: BoardTask, at: Date, generation: number | undefined, move: (current: Stored) => Move | undefined): BoardTask | undefined {
+  private commitLater(before: BoardTask, at: Date, generation: number | undefined, move: (current: Stored) => Move | undefined, check?: Checked<BoardTask>): BoardTask | undefined {
     return this.ctx.store.transaction(() => {
       const current = this.taskOf(before.taskId)
       if (current.task.revision !== before.revision) throw new BoardError('conflict', `${before.taskId} changed while the board waited on the approval queue`)
       if (generation !== undefined) this.fenced(current, generation, at)
       const next = move(current)
-      return next ? this.commit(current, next, at) : undefined
+      return next ? checkedBy(check, this.commit(current, next, at)) : undefined
     })
   }
 

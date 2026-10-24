@@ -8,7 +8,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type BudgetLine, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Leases from '@tsuuanmi/system-leases'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z as zod } from 'zod'
@@ -1037,6 +1037,59 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect(await open(ctx, 'p2')).toEqual([])
     expect((await call('board_close', { projectId: 'p2', outcome: 'stopped' }, 'operator')).content[0]?.text).toMatch(/^invalid-transition/)
     expect((await call('board_resume', { projectId: 'nope' }, 'operator')).content[0]?.text).toMatch(/^unknown-project/)
+  })
+
+  it('checks the output of every tool that changes the board before its move commits: one its schema refuses (a defect) changes nothing, and a request it opened is withdrawn (INV-2, INV-14)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    await active(ctx)
+    const idle = await ready(ctx, task('p2', 'idle'))
+    const held = await ready(ctx, task('p2', 'held'))
+    const claim = await ctx.board.claim(held.taskId, 'lead', 600_000)
+    const asks = await ready(ctx, task('p2', 'asks'))
+    const { generation } = await ctx.board.claim(asks.taskId, 'lead', 600_000)
+    await ctx.board.start(asks.taskId, generation, { runId: 'run-1' })
+    await ctx.board.block(asks.taskId, generation, { reason: 'question', questions: ['Band width?'] })
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }))
+    await ctx.board.sweep(new Date())
+    const waitedOn = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+    // A defect: every output of a tool that changes the board is one its schema refuses.
+    const assertDef = SchemaRegistry.prototype.assertDef
+    const spy = vi.spyOn(SchemaRegistry.prototype, 'assertDef').mockImplementation(function (this: SchemaRegistry, tag, def, value) {
+      if (tag.startsWith('mcp-board@') && def.endsWith('-output') && !/^board-(projects|brief|tasks|task)-output$/.test(def)) throw new SchemaError(`${tag}#/$defs/${def}`, [], 'a defect')
+      assertDef.call(this, tag, def, value)
+    })
+    onTestFinished(() => spy.mockRestore())
+    const snapshot = async () => ({
+      projects: await ctx.board.projects(), tasks: await ctx.board.tasks({ projectId: 'p2' }), requests: await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] }),
+      leases: [idle, held, asks].map((t) => ctx.leases.current(`board-task:${t.taskId}`)),
+    })
+    const before = await snapshot()
+    const calls: Array<[string, Record<string, unknown>, 'client' | 'operator']> = [
+      ['board_charter', { projectId: 'p3', title: 'Other', charter: CHARTER, clientRequestId: 'found-p3' }, 'client'],
+      ['board_charter', { projectId: 'p2', title: 'project p2', charter: { ...CHARTER, version: 2 } }, 'client'],
+      ['board_propose', { projectId: 'p2', title: 'x', goal: 'g', acceptance: [{ id: 'a1', statement: 's' }], actionClass: 'read', clientRequestId: 'x-1' }, 'client'],
+      ['board_claim', { taskId: idle.taskId, owner: 'lead' }, 'client'],
+      ['board_update', { taskId: held.taskId, generation: claim.generation }, 'client'],
+      ['board_update', { taskId: asks.taskId, answers: [{ question: 0, answer: '64' }] }, 'client'],
+      ['board_cancel', { taskId: merge.taskId }, 'client'],
+      ['board_pause', { projectId: 'p2' }, 'operator'],
+      ['board_close', { projectId: 'p2', outcome: 'stopped' }, 'operator'],
+    ]
+    for (const [tool, args, scope] of calls) {
+      const refused = await call(tool, args, scope)
+      expect([refused.isError, refused.content[0]?.text], tool).toEqual([true, expect.stringMatching(new RegExp(`^board: ${tool} would make an output its schema refuses \\(a defect\\), so nothing changed`))])
+    }
+    // Nothing moved, and the requests the refused charters opened were withdrawn; the waits kept theirs.
+    const after = await snapshot()
+    expect({ ...after, requests: after.requests.filter((r) => r.resolution?.cause !== 'withdrawn') }).toEqual(before)
+    expect(after.requests.filter((r) => r.resolution?.cause === 'withdrawn').map((r) => r.action.class)).toEqual(['charter', 'charter'])
+    expect((await ctx.approvals.get(waitedOn))?.resolution).toBeUndefined()
+    // The move is taken once the output checks: the same retry-safe key founds the project then.
+    spy.mockRestore()
+    expect(await ok(call('board_charter', { projectId: 'p3', title: 'Other', charter: CHARTER, clientRequestId: 'found-p3' }))).toMatchObject({ projectId: 'p3', state: 'proposed', charterVersion: 1 })
+    expect(await ok(call('board_pause', { projectId: 'p2' }, 'operator'))).toMatchObject({ state: 'paused' })
   })
 
   it('pages board_tasks and board_projects: 20 by default, never more than the page bound, with a cursor it refuses when forged (INV-9)', async () => {
