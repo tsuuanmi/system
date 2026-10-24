@@ -28,13 +28,13 @@ import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
-import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskStartInput } from './types.ts'
+import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput } from './types.ts'
 import { explain, usage } from './views.ts'
 
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskOutcome, TaskStartInput, TaskView, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -121,12 +121,17 @@ export class Workflow extends Service {
         purge(engine)
         engine.recover()
         void sweepDeferrals(engine)
+        void engine.tasks.landings.sweep()
       })
       const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
       // The requests deferred tool calls wait on: an approved one continues its session, once. Then
-      // the sessions whose mail waited because they took no input are looked at again.
-      const deferrals = setInterval(() => void sweepDeferrals(engine).finally(() => retryHeldWakes(engine)), pollMs(engine))
+      // the sessions whose mail waited because they took no input are looked at again, and the
+      // landings of accepted results move on (ADR-0059).
+      const deferrals = setInterval(() => void sweepDeferrals(engine).finally(() => {
+        retryHeldWakes(engine)
+        void engine.tasks.landings.sweep()
+      }), pollMs(engine))
       deferrals.unref()
       return async () => {
         clearInterval(daily)
@@ -204,6 +209,16 @@ export class Workflow extends Service {
 
   get(runId: string): RunView | undefined {
     return this.engine.get(runId)
+  }
+
+  /**
+   * The landing of a board task run's accepted result (ADR-0059): whether it is committed, asked to
+   * merge (its request), merged (the commit), or refused and why; undefined when the run serves no
+   * task or its result is on no working tree.
+   */
+  landing(runId: string): TaskLanding | undefined {
+    const row = this.engine.tasks.row(runId)
+    return row ? this.engine.tasks.landings.view(row) : undefined
   }
 
   /** The durable node records of a run, in dependency order. */

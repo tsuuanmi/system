@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, LIVENESS_STATES, type LivenessQuery,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Landed, type LandStep, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
   type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -162,6 +162,21 @@ export class WorkerRouter extends Workers {
     }
     runs.sort((a, b) => compare(b.since, a.since) || compare(a.source, b.source) || compare(a.execution, b.execution))
     return { runs: runs.slice(0, MAX_LIVENESS_RUNS), counts, unread }
+  }
+
+  async land(step: LandStep): Promise<(Landed & { source: string }) | undefined> {
+    for (const source of this.registry.values()) {
+      if (!source.land) continue
+      let landed: Landed | undefined
+      try {
+        landed = await source.land(step)
+      } catch (error) {
+        // A source that cannot answer is never read as not holding the worktree (INV-2).
+        landed = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not ${step.step} the worktree ${step.workspace}: ${(error as Error).message.slice(0, 300)}` }
+      }
+      if (landed) return { ...landed, source: source.name }
+    }
+    return undefined
   }
 
   release(sessionIds: readonly string[], reason: string): { due: number } {

@@ -39,7 +39,7 @@ const call = async (ctx: Context, args: Record<string, unknown>): Promise<Called
   return { ...(result.isError ? { isError: true } : {}), text, ...(result.structuredContent ? { report: result.structuredContent as unknown as Report.Report } : {}) }
 }
 
-/** A project of two tasks: one accepted by the operator after a fix through the queue, one held for the operator. */
+/** A project of two tasks: one accepted by the operator after a fix through the queue, its merge asked and left open; one held for the operator. */
 async function pilotWeek(): Promise<Pilot> {
   const pilot = await bootPilot({ changes: 1 }, [RecordingMcp, Report])
   onTestFinished(() => pilot.dispose())
@@ -53,6 +53,8 @@ async function pilotWeek(): Promise<Pilot> {
   await reported(ctx, one.runId)
   await digested(first.taskId)
   expect((await operatorAccepts(ctx, first.taskId)).state).toBe('done')
+  // The accepted result is committed on its run's branch and its merge asked in the queue (ADR-0059), left open.
+  await until(() => ctx.workflow.get(one.runId)?.task?.landing?.state === 'asked', 'the merge of the accepted result to be asked')
   const second = await propose(pilot, 'p1', 'keep add() fast')
   await reported(ctx, (await attempt(ctx, second.taskId, 'Keep add() fast')).runId)
   await digested(second.taskId)
@@ -70,18 +72,18 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
     expect(report!.tasks).toMatchObject({ created: 2, done: 1, doneByOperator: 1, cancelled: 0, now: { done: 1, review: 1 } })
     expect(report!.attempts).toEqual({ reported: 2, accepted: 0, rejected: 0, heldForOperator: 2, reconciled: 0, other: 0, review: { passed: 2, failed: 0, none: 0 } })
     expect(report!.remediation).toEqual({ cycles: 1, fixesOpened: 1, fixesClosed: 0 })
-    // The project's own requests: its charter and the fix; another project's charter is not its.
-    expect(report!.approvals).toMatchObject({ asked: 2, approved: 2, rejected: 0, expired: 0, withdrawn: 0, openNow: 0, wait: { answered: 2 } })
-    expect(report!.approvals.byClass.map((c) => [c.actionClass, c.asked])).toEqual([['charter', 1], ['remediation', 1]])
-    expect(report!.attention).toMatchObject({ interruptions: 4, batches: 2, threshold: { maxBatchesPerDay: 4, maxInterruptionsPerDay: 10 }, daysOver: 0 })
+    // The project's own requests: its charter, the fix, and the accepted result's merge, still open; another project's charter is not its.
+    expect(report!.approvals).toMatchObject({ asked: 3, approved: 2, rejected: 0, expired: 0, withdrawn: 0, openNow: 1, wait: { answered: 2 } })
+    expect(report!.approvals.byClass.map((c) => [c.actionClass, c.asked])).toEqual([['charter', 1], ['merge', 1], ['remediation', 1]])
+    expect(report!.attention).toMatchObject({ interruptions: 5, batches: 2, threshold: { maxBatchesPerDay: 4, maxInterruptionsPerDay: 10 }, daysOver: 0 })
     // Every agent run the project's tasks took, the digests of their results included, from the runtime's own numbers.
     expect(agent.runs.filter((r) => r.role === 'digest')).toHaveLength(2)
     expect(report!.usage.total).toEqual({ records: agent.runs.length, inputTokens: 1000 * agent.runs.length, outputTokens: 100 * agent.runs.length, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, turns: 2 * agent.runs.length, costUsd: 0.25 * agent.runs.length })
     expect(report!.usage.pools.map((p) => p.pool)).toEqual(['plan.agents'])
     expect(report!.digests).toEqual({ attached: 2, bypassed: 0, claimsKept: 2, claimsDropped: 0, escalated: 0 })
     expect(report!.baseline).toEqual({
-      acceptedResults: 1, interruptions: 4, attempts: 2,
-      perAcceptedResult: { tokens: 1100 * agent.runs.length, costUsd: 0.25 * agent.runs.length, turns: 2 * agent.runs.length, interruptions: 4, attempts: 2 },
+      acceptedResults: 1, interruptions: 5, attempts: 2,
+      perAcceptedResult: { tokens: 1100 * agent.runs.length, costUsd: 0.25 * agent.runs.length, turns: 2 * agent.runs.length, interruptions: 5, attempts: 2 },
     })
     expect(report!.notes).toEqual([])
     expect(text).toBe(Report.renderReport(report!))
@@ -90,7 +92,7 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
     // The studio's report counts every project: both charters.
     const studio = (await call(ctx, {})).report!
     expect(studio.projects.map((p) => p.projectId)).toEqual(['p1', 'p2'])
-    expect(studio.approvals.asked).toBe(3)
+    expect(studio.approvals.asked).toBe(4)
     expect(studio.usage.total.records).toBe(agent.runs.length)
     expect(studio.attention).not.toHaveProperty('threshold')
   })

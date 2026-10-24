@@ -1,7 +1,7 @@
 # Workflow engine
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-WF-1..11. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
+> Requirements: REQ-WF-1..11, REQ-WF-13. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
 > Templates: [workflow templates](../reference/workflow-templates.md).
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md); differs from target:
@@ -628,7 +628,9 @@ is refused (`config_error`), and every other run is unaffected.
   run starts work, and a spent one stops the run before its next step and blocks the task
   ([below](#a-tasks-budget)).
 - **After the report**, a result that reached the board is digested
-  ([below](#a-digest-of-a-tasks-result)).
+  ([below](#a-digest-of-a-tasks-result)), and once the board has the task `done` on a result in
+  the run's worktree, that result is landed: committed on the run's branch, then merged on the
+  operator's `merge` approval ([below](#landing-an-accepted-result)).
 
 ### A task's budget
 
@@ -839,6 +841,64 @@ stateDiagram-v2
   and goes on waiting.
 - The engine reaches `ctx.digests` and `attachDigest` through their definitions only: with the
   digest row off, or a board at contract 1.0, results keep no digest.
+
+### Landing an accepted result
+
+> Decision: [ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)
+> (proposed), [PROP-0013](../proposals/0013-feedback-from-work.md#landing-merge-or-apply) W5 in part:
+> `merge` only, asked by the engine; `apply` and MCP `land` are not built.
+
+An accepted result is not done with until it is in the repository the next task is cut from. When
+a task's run reported a result one of whose artifacts names a git working tree (an agent result's
+`workspace` and `subject`, on the result's exact subject when that is a tree), the engine watches
+the task, and once the board has it `done` on that run's result, lands it through the
+[`workers` seam](routing.md)'s optional `land`, by the source that holds the tree as the run's own
+[worktree](agent-runtimes.md#landing-a-worktree):
+
+```mermaid
+stateDiagram-v2
+  [*] --> watch: result on a working tree reported to the board
+  watch --> commit: the board has the task done on this result
+  watch --> none: another attempt, rejected, or cancelled
+  commit --> committed: committed on system/run/<runId> (gate decision commit)
+  commit --> none: no source holds the tree
+  commit --> refused: the tree moved, or it cannot be checked
+  committed --> asked: policy ask, one merge request
+  committed --> merging: policy auto or notify
+  committed --> refused: policy forbid
+  asked --> merging: approved
+  asked --> rejected: denied, expired, or withdrawn
+  asked --> commit: withdrawn on a policy change
+  merging --> merged: merged into the checked-out branch (gate decision merge)
+  merging --> commit: the base moved, or its tree is not clean
+  merging --> refused: a conflict (aborted), the branch moved, a failure
+  merged --> [*]
+  refused --> [*]
+  rejected --> [*]
+  none --> [*]
+```
+
+| Step | Records | On failure |
+|---|---|---|
+| watch | in the transaction that reports the run: `landing` on its `workflow_tasks` row | a task in review waits; one that moved on, was rejected, or cancelled lands nothing (`none`) |
+| commit | the source commits the worktree on its branch, as the system, with a message naming the task, the run, the reviews of that tree, and the acceptance decision (`System-Task`, `System-Run`, `System-Acceptance`, `System-Subject` trailers); a `gate` decision (`workflow.landing`, `commit`; inputs the acceptance and the result) | an agent run of the workflow run unfinished or not known to be gone: it waits; a tree that is no longer the accepted subject, a worktree removed or tampered with: refused, nothing committed, a `gate` decision (`refuse`); no source holds the tree, or the tree holds no change (a review's): `none` |
+| ask | `ctx.approvals.check` on `merge` for the task's project; on `ask`, one request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`, requester `workflow` with the run, its final step, the task, and the project; its summary and consequences name the branches, the SHAs, and the `git diff --stat`; a base that already holds the head is merged at once | `forbid`, or a `merge` rule whose required checks nothing reported (a landing runs none): refused; no queue loaded: it waits |
+| approved | the operator's verdict on that exact version (`approval` decision) | denied, expired, or withdrawn by its requester: `rejected`, nothing merged; withdrawn on a policy change: put to the policy in force again |
+| merge | the source merges the branch into the repository's checked-out branch as one merge commit, the system its author (`System-Landing` trailer); a `gate` decision (`merge`) naming the commit | a base that moved, or tracked changes in the checkout: a decision (`refuse`), then asked again on the base as it is; the branch moved, a conflict (aborted, the repository as it was), or another failure: refused |
+
+- **Exact** (INV-5): the commit binds to the accepted tree, the request to both heads; a base or a
+  branch that moved is never merged under an approval of another.
+- **Never more** (INV-2): no force, reset, branch deletion, or push in any path; a push is the
+  operator's ([runbook](../operations/runbooks.md#land-an-accepted-result)).
+- **Recorded** (INV-13): every decision is under the run's final step, so `explain` shows it; each
+  change of state appends `workflow.task.landing` (the task, the state, the request, the commit, or
+  why); the run's view has it as `task.landing`, and the Board shows it on the task's card.
+- **Bounded** (INV-9): at most 32 landings looked at each `approvalPollSeconds`, the longest
+  unlooked-at first.
+- **Restart** (INV-4): where it stands is on the run's row; a request asked before a crash is
+  adopted from the queue (the same run, class, and exact subject), and the source finds a commit or
+  a merge already made instead of making it twice.
+- A run reported before landing existed lands nothing: merge its branch by hand.
 
 ## A plain run's acceptance
 

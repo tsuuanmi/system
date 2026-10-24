@@ -197,6 +197,12 @@
   approval requires high confidence and only low-risk side-effect classes. The
   approval is an `approval` artifact bound to the exact plan.
 
+- **REQ-WF-13** A board task's accepted result made in a run's own worktree lands in its
+  repository only on a `merge` approval (or the policy's `auto`) bound to the base and head SHAs:
+  it is committed on the run's branch only while the worktree is the accepted tree, merged only
+  while both heads are where the approval saw them, and a conflict changes nothing; never a force
+  or a push. Each step is a recorded decision.
+
 ## Artifacts and schemas (`REQ-ART`)
 
 - **REQ-ART-1** Every decision (admission, route, tier, escalation, egress,

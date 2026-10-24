@@ -343,6 +343,17 @@
   on this host that the host state is unreadable (`readsConfined`), is
   unavailable, and only read-only Workers prove `review`. The confinement is only
   as strong as each runtime's sandbox and bubblewrap.
+
+  **Landing** ([ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)):
+  what a Worker wrote reaches the operator's checkout of the repository only by a
+  merge of its run's branch the operator approved (or a policy set `merge` to
+  `auto`), at the exact SHAs and with the `git diff --stat` the request showed.
+  The commit is made only while the worktree is the tree that was reviewed and
+  accepted, and git runs with hooks off and no global configuration, so nothing
+  the Worker wrote runs during the commit or the merge. The merged files then sit
+  in the checkout as any reviewed change does: a tool there that runs files
+  automatically (a directory's environment file, a build step) runs what was
+  merged. Nothing is pushed.
 - **Local or private data leaks to a provider website or API through a prompt or
   attachment.** `ctx.egress` checks the **actual outgoing payload** inside the
   Worker source, after routing chose the Worker and before anything is sent

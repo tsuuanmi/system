@@ -256,6 +256,32 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('lands through the source that holds the worktree, with its name; none holding it is undefined, and a source that throws is a refusal, never read as not holding it (ADR-0059, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.land !== 'function') return
+        const merge = (workspace: string) => ({ step: 'merge' as const, runId: 'run_1', workspace, head: 'b'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) }, message: 'merge' })
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b')], {
+          land: async (step) => step.workspace === '/wt/two'
+            ? { outcome: 'merged', repository: '/repo', branch: 'system/run/run_1', head: 'b'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) }, commit: 'c'.repeat(40), already: false }
+            : undefined,
+        }))
+        ctx.workers.register(source('broken', [worker('w:c')], {
+          land: async (step) => {
+            if (step.workspace === '/wt/broken') throw new Error('the store failed')
+            return undefined
+          },
+        }))
+        expect(await ctx.workers.land(merge('/wt/two'))).toMatchObject({ outcome: 'merged', commit: 'c'.repeat(40), source: 'two' })
+        expect(await ctx.workers.land(merge('/wt/nobody'))).toBeUndefined()
+        expect(await ctx.workers.land(merge('/wt/broken'))).toMatchObject({ outcome: 'refused', cause: 'failed', source: 'broken', reason: expect.stringMatching(/could not merge the worktree \/wt\/broken: the store failed/) })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('lists the runs whose liveness needs a look from every source that tells it, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
       const { ctx, dispose } = await boot()
       try {

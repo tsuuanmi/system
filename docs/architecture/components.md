@@ -132,7 +132,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   A Worker configured with `worktreePerRun` works, per workflow run, in that run's own git
   worktree of its repository, and the source removes the worktree, its changes committed on
   the run's branch, once the run has been idle past a retention
-  ([workspaces](../design/agent-runtimes.md#workspaces)).
+  ([workspaces](../design/agent-runtimes.md#workspaces)). On the engine's ask it lands an
+  accepted result made there: committed on the run's branch, then merged into the repository's
+  checked-out branch on the operator's `merge` approval
+  ([landing a worktree](../design/agent-runtimes.md#landing-a-worktree)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), ACP agents, and the Antigravity CLI (its installed `agy`, only on a version verified
   live, every tool call held by its PreToolUse hook, bridged to the run)
@@ -249,7 +252,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   abstract `Approvals` (`ctx.approvals`, optional) a remediation fix's gate asks the approval
   queue, an approved deferred tool call's session is continued once, and a plain run that wrote
   records the policy's checks still pending ([remediation on the
-  queue](../design/workflow-engine.md#remediation-on-the-approval-queue)).
+  queue](../design/workflow-engine.md#remediation-on-the-approval-queue)). A board task's result
+  accepted in its run's worktree is landed: committed on the run's branch, then merged on a
+  `merge` request, both through the `workers` seam's optional `land`
+  ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result)).
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).

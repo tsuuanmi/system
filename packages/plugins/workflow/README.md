@@ -405,6 +405,20 @@ second execution path (INV-1).
     `workflow.task.digest` event. Its state is on the run's `workflow_tasks` row, so a restart
     asks once and goes on waiting
     ([a digest of a task's result](../../../docs/design/workflow-engine.md#a-digest-of-a-tasks-result)).
+  - **Landing** ([design](../../../docs/design/workflow-engine.md#landing-an-accepted-result),
+    ADR-0059 proposed): a result reported on a working tree (a result artifact of an agent run
+    naming its `workspace` and git `subject`, on the result's subject when that is a tree) is
+    watched (`landing` on its `workflow_tasks` row, migration 18; runs reported before it land
+    nothing). Once the board has the task `done` on it, `ctx.workers.land` (optional) has the source
+    that holds the tree commit it on the run's branch, the message naming the task, the run, the
+    reviews of that tree, and the acceptance; then `merge` is put to the policy: `ask` opens one
+    request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }` (one asked before a
+    crash adopted), `forbid` refuses, `auto` and `notify` merge. On the approval the source merges.
+    A base that moved or was not clean is asked again; a moved tree or head, a conflict, a failure,
+    or a denial ends it. Each step is a `gate` decision (`workflow.landing`) under the final step,
+    each change of state a `workflow.task.landing` event; the view's `task.landing` and
+    `ctx.workflow.landing(runId)` tell where it stands. At most 32 looked at each
+    `approvalPollSeconds`. No source holding the tree: nothing lands (`none`).
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
@@ -716,5 +730,6 @@ in `engine.ts`:
 | `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
 | `tasks.ts` | runs that serve a board task: what their briefs carry, resuming the session before them, taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
+| `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done, its `merge` put to the policy and asked on the queue, merged on the approval, through the workers seam's `land` |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

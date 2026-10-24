@@ -173,8 +173,10 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
    checks in the run's worktree yourself ([worktree](runbooks.md#a-runs-worktree)), then Accept or
    Reject. A rejection makes another attempt, which resumes the developer's session from a brief
    pointing at this attempt's result and your decision; tell the lead your reason.
-4. **Merge what you accepted**: commit in the run's worktree and merge its branch
-   `system/run/<runId>` ([recover work](runbooks.md#a-runs-worktree)). Nothing merges for you.
+4. **Merge what you accepted**: once you accept, the system commits the result on its run's branch
+   and asks you to merge it; approve the `merge` request (the Board's **Accepted — waiting to
+   merge: approve**), and it is merged into the repository's checked-out branch. Nothing is pushed
+   ([land an accepted result](runbooks.md#land-an-accepted-result)).
 5. **End the day with the report**: `system report --project <id> --days 1`. Check the attention
    line against the charter, and the ledger's usage against the pool.
 
@@ -211,9 +213,9 @@ Then close the project, on `/ui`:
    `review`; the **Board** page counts them. Let a running attempt finish, or stop its run
    (`system stop <runId>`: the task is ready again or waits, and the close cancels it); decide
    every review held for you (Accept or Reject).
-2. **Take what you accepted.** Merge each accepted result's branch
-   ([recover work](runbooks.md#a-runs-worktree)) before you close: the close removes no worktree
-   or result, but it cancels every open task, so no further attempt runs.
+2. **Take what you accepted.** Approve each accepted result's merge request, or merge its branch
+   by hand ([land an accepted result](runbooks.md#land-an-accepted-result)), before you close: the
+   close removes no worktree or result, but it cancels every open task, so no further attempt runs.
 3. **Close it.** On the **Board** page, press **Close** on the project and pick the outcome:
    `achieved` when its criteria are met, `stopped` when it ends without them (a stop rule fired,
    or you stop it). The confirmation says how many open tasks it cancels and claims it releases,
