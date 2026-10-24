@@ -68,7 +68,7 @@ const flaky = (ctx: Context, failing: () => boolean): (() => void) => {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: Scenario<Boot>['since'] = '1.0'): Scenario<Boot> => ({
   id: `leases.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
