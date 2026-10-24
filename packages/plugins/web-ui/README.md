@@ -3,7 +3,11 @@
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
 - **Home**, a dashboard: what waits for the operator (approvals, reviews, runs that need a look,
-  each linked), the Workers at a glance, then those decisions and the recent runs;
+  each linked, and counted in the window's title: *(3) system — Home*), what happened since the
+  operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`), the
+  Workers at a glance, then those decisions and the recent runs by their tasks' titles, each step
+  with its Worker's name; a running run's page and Board card say where it is now (its step, Worker,
+  last event, and a stall; `GET runs/live`), and a start names who would likely take each step;
 
 - a run's page: a sentence of where it is, what the operator can do, the answer, and its steps as
   a timeline in words, decisions folded;
@@ -181,6 +185,11 @@ the report, the checks not run in warning, and after Accept where the result sta
 review held for the operator past its run's lease, listed with its pending checks, refused to a
 client token, bound to the subject shown, accepted to done; a rejection as another attempt; and a
 review that expires `review-expired`.
+[`tests/live.spec.ts`](tests/live.spec.ts): what happened since a time (runs ended, tasks moved,
+requests expired) for the operator only, the Workers that could likely take a start's step, a
+running run's steps, last event, and a stall; and, with a browser, Home's *Since you last looked*
+until marked as seen, the waiting count in the window's title, the start's likely Workers, and a
+running run's page and Board card.
 [`tests/projects.spec.ts`](tests/projects.spec.ts): the projects listed with their open tasks; a
 pause and a close refused to a client token, bound to the revision shown; a paused project whose
 ready task the engine does not run and whose proposed task is not gated, resumed and run to done;

@@ -13,7 +13,9 @@ Every route is under `/ui/api` and passes the shared request guard first
 ## Home
 
 One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
-current one marked (`aria-current`) and named in the window's title; a run's page counts as Home's.
+current one marked (`aria-current`) and named in the window's title, which counts what waits for
+the operator first (requests for a verdict, reviews, runs that need a look): *(3) system — Home*;
+a run's page counts as Home's.
 Each page opens with its title and one line of what it is for. On a narrow screen (600 px) no
 page is wider than the screen: the navigation wraps whole links with the refresh line under it,
 the Board's columns stack, each card the screen's width with its **Start…** across it, and the
@@ -30,7 +32,21 @@ revives (what was asked, the checks not run, the run that made the result, the e
 folded; **Accept: mark it done** and **Reject: send it back**, each with its own note), the runs
 that need a look (failed, or waiting
 for a plan approval, a fix's verdict, or a deciding vote) with why and a link, and the 15 most
-recent runs.
+recent runs, each by its task's title (else its template) with its id under it, and each step with
+its Worker's roster `name`.
+
+*Since you last looked*, under *Waiting for you*, says what happened since the operator last marked
+Home as seen, one line each with a link, the latest first, at most 20: the runs that finished or
+failed (with why), the tasks that moved (accepted, merged, waiting for a review, an approval, or
+input, cancelled), the requests that expired unanswered (counted as denied), and the Workers that
+started resting, came back, became unavailable, or are available again. **Mark as seen** starts it
+again from now. When and each Worker's status then are kept in this browser only
+(`localStorage`, `system.seen`), never on the server; a first look keeps them and says so. It reads
+`GET activity` and the roster.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`: the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`), and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), each the latest 50; a part that cannot be read is `{unknown}`. A missing or invalid `since` is `400` |
 
 ## Runs
 
@@ -39,7 +55,12 @@ is (finished, running which step on which Worker, failed at which step and why, 
 you); then what the operator can do (the plan's approval, the tie's vote, the fix's verdict link,
 **Stop run**, **Continue run**, each with what it does), the answer, and the steps as a timeline in
 words (done, running, failed, waiting for you, waiting for earlier steps), each with its Worker's
-roster `name` and tier; each step's decisions and the run's spec hash are folded.
+roster `name` and tier; each step's decisions and the run's spec hash are folded. A running run's
+page says where it is *Now*, refreshed with the page: each running step on its Worker and for how
+long, the run's last event in words and how long ago (*last event: a tool call ran, 40 s ago*),
+and, when its Worker's source says it stalled (no activity past its own bound,
+[liveness](../design/agent-runtimes.md#what-the-operator-sees)), *Stalled since 13:05* as an alert.
+A running task's Board card says the same in one line.
 
 | Route | Body | Answer |
 |---|---|---|
@@ -49,6 +70,7 @@ roster `name` and tier; each step's decisions and the run's spec hash are folded
 | `POST runs/<runId>/vote` | `{decision, option, rationale}`: the tie decision the page shows, an option or `inconclusive` | `{run}`; the vote is the operator's |
 | `POST runs/<runId>/stop` | `{reason?}` | `{run}` |
 | `POST runs/<runId>/continue` | `{nodeId?}` | `{run}` |
+| `GET runs/live` | — | `{asOf, runs}`: the running runs (at most 50), each with `runId`, `template`, `startedAt`, `taskId`, its running `steps` (`nodeId`, `attempt`, `worker`, `since`: when the attempt started), `lastEvent` (the run's latest event's `type` and `at`, read forward from its oldest running step's start, at most 5 pages, else `{unknown}`), and `stalled` (`{value: {since}}` when `ctx.workers.liveness` tells a stalled run of it, `{value: null}` when not, `{unknown}` when nothing tells) |
 | `GET runs/<runId>/review` | — | `{runId, change, assessments, report?, landing?}`: what the operator reads before a review verdict ([below](#what-a-review-shows)); `404` for an unknown run |
 
 A refused action is `400` (a malformed body) or `409` (the engine refused it).
@@ -148,7 +170,7 @@ any step runs.
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET tasks/<taskId>/start` | — | `{task {taskId, title, revision, template, attempts}, steps}`: what would run, each step's `nodeId`, `objective`, `capabilities`, least `tier`, and `kind`, `team {kind, members}`, `source`, or `plans` when it has them (`ctx.workflow.templateSteps`) |
+| `GET tasks/<taskId>/start` | — | `{task {taskId, title, revision, template, attempts}, steps}`: what would run, each step's `nodeId`, `objective`, `capabilities`, least `tier`, and `kind`, `team {kind, members}`, `source`, or `plans` when it has them (`ctx.workflow.templateSteps`), and `workers`: the Workers that could likely take it now (`free`: ready, or busy with a slot free) or once one is (`busy`, resting at a limit included), at most 8 each, by id: those whose descriptor proves every capability the step needs, at its tier or above, taking its kind of work (`ctx.workers.list()`; no routing decision is made, and routing decides when the run starts), `{unknown}` when they cannot be read |
 | `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId}})`, its input the task's title and goal |
 
 - An unknown task is `404`, a malformed body `400`. A task that is not ready, names no template
@@ -158,7 +180,9 @@ any step runs.
   `409` with its reason.
 - The card's **Start…** opens a confirmation that says what runs: the template, the attempt (*its
   attempt 1 of 3*), each step with the kind of Worker it runs on (*Do solo: a Worker of standard
-  tier or above that can reason*), how many Workers are free, and that nothing runs until
+  tier or above that can reason*) and who would likely take it, by display name with its account's
+  5 h quota (*Likely: Claude Code · science · develop — 5 h used 42 %*), or *None free: it waits for
+  …*), how many Workers are free, and that nothing runs until
   **Confirm start**; **Cancel** closes it. A task that names no template shows why it cannot start
   here instead. The outcome (the run, linked, or why nothing started) is reported above the page,
   and the card moves to *Working*.
