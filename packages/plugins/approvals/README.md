@@ -52,6 +52,11 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     once its oldest request has waited `batch.maxWaitSeconds`. A request already expired is left
     for the sweep. Each batch is one transaction with an `approvals.batched` event (when
     `ctx.eventLog` is present) naming the batch, its project, and its requests.
+  - Events, in the transaction of the change they name, when `ctx.eventLog` is present (a failed
+    append is logged, and the change stands): `approvals.requested` for each request queued (its
+    id, class, `expiresAt`, requester component, and project, never its summary, consequences, or
+    command) and `approvals.resolved` for each resolution (state, cause, option, with the
+    `approval` decision), which [notifications](../../../docs/design/notifications.md) read.
   - `decide(verdicts, at?)`: the operator's verdicts, each its own transaction. A verdict for an
     unknown, resolved, or expired request, or for another subject than the request's, is refused
     and changes nothing; one whose transaction throws (a busy store, a stale write, an approval

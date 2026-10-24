@@ -404,6 +404,14 @@
 - **Telemetry or data leaving through host defaults.** DSH telemetry rows disabled
   in the `system` profile; DeepSeek-specific defaults disabled unless configured
   ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
+- **A notification leaks what it is about, or its webhook's token.** The `notify` row is off;
+  its notices are made by code from ids, classes, kinds, and times only, never a prompt, an
+  answer, a request's summary or command, or a token (the `/ui` link carries none). Its webhook
+  posts only after the egress gate permits the exact body for the `webhook` class, whose default
+  lets nothing leave (INV-12), and follows no redirect; its URL is a credential in the vault,
+  read at each delivery, never configuration, and never logged or recorded
+  ([notifications](../design/notifications.md#sinks)). `notify-send` runs without a shell, with
+  `--` before the text and only the environment the session bus needs.
 - **Prompts kept indefinitely on disk.** The store is `0600`; finished turns, their
   prompt text, and their receipts are deleted after `retainDays` (default 30), in
   one transaction, while answers remain as artifacts holding the prompt hash only

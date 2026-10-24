@@ -62,7 +62,7 @@ sequenceDiagram
 
 | Step | Who | Records | On failure |
 |---|---|---|---|
-| observe | a Worker source or runtime, from a status line, limit notice, response headers, or result | the reading as an `evidence` artifact; the window's latest reading by `observedAt` | a reading for a pool or window not configured is refused (`unknown-pool`) |
+| observe | a Worker source or runtime, from a status line, limit notice, response headers, or result | the reading as an `evidence` artifact; the window's latest reading by `observedAt`; a `resources.pool.limited` event (pool, account, window, `until`, source, the evidence) when the reading closes a window that was open, which [notifications](notifications.md) read | a reading for a pool or window not configured is refused (`unknown-pool`) |
 | reserve | the engine before a run, or the board before an attempt | a `budget` decision, `reserved` or `refused` with a reason per pool or cap | refused when a pool is not configured, or unavailable, or a cap would be exceeded |
 | record | the Worker source, after the run | the record as a `receipt` artifact | refused for an unknown pool (`unknown-pool`), a schema violation, or cached input above the input (`invalid`) |
 | release | whoever reserved | the hold is removed | an unknown reservation is refused; an expired one releases quietly |

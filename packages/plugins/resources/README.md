@@ -17,7 +17,10 @@ guarantee seam: it fails closed (INV-2).
     there (instants compared, so an offset never reorders them; of two equal ones the later
     call stands). Refused: a pool, account, window id, or window kind not configured
     (`unknown-pool`); a schema violation or a time that does not parse (`invalid`), so a limit
-    never reads as already past.
+    never reads as already past. A reading that stands and closes a window that was open (its
+    limit ends after now) appends `resources.pool.limited` (pool, account, window, `until`,
+    source, the evidence) in its transaction, when `ctx.eventLog` is present, for
+    [notifications](../../../docs/design/notifications.md); a failed append is logged only.
   - `reserve(request, at?)`: in one write transaction (`BEGIN IMMEDIATE`), checks that every
     pool of the request's lines is configured and available, and that every cap holds, then
     records a `decision@1.4` `budget` decision and, when reserved, holds the lines. Both
@@ -70,7 +73,7 @@ guarantee seam: it fails closed (INV-2).
   duplicate pool or window id, a pool with no window or more than 8, more than 64 pools, or an
   id that is not one refuses the plugin. The bundle's row configures none: every pool is
   unavailable until the operator configures it.
-- **Injects:** `store`, `artifacts`; `mcp` is optional.
+- **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional.
 - **Not yet:** only agent Workers report to it, and the engine reserves only for a board
   task's run that declares a budget (its lines as caps), not before every run. Released and expired reservations, older readings, and duplicate
   records stay (as rows and artifacts) until a retention rule exists for them.
