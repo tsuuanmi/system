@@ -363,6 +363,23 @@ So the repository's main working tree is written only by a merge the operator ap
 policy allowed, at the exact SHAs it was asked on. The worktree itself stays until the retention
 removes it; it is clean then, and its branch always stays.
 
+### A run's change, for the operator's review
+
+The `agents` source also answers `changes(runId)` on the `workers` seam (T122): each worktree it
+holds of that workflow run, read only, so the operator sees what a result changed before the
+verdict ([web UI API](../reference/web-ui.md#reviews)). The change is read against the commit the
+worktree forked from on the repository's checked-out branch (their merge base), committed and not
+yet committed: each file's status, lines added and removed, and unified diff (`-M`, no colour, no
+external diff or text conversion), and each untracked file the repository does not ignore as
+added lines (`.system/` is ignored). git runs with `--no-optional-locks` (no index write), no
+hooks, through the worktree's own administrative directory, after the same check as a landing that
+the worktree is intact and on its branch. An untracked file is read only when it and its directory
+are under the worktree by their real paths, through one descriptor that follows no link; a link or
+a special file is named, not read. A retired worktree's change is read from its branch (committed
+changes only). Bounded (`CHANGE_BOUNDS`): 200 files, 64,000 characters of one file's diff, 512,000
+in all; past them the rest is cut or counted. A worktree that cannot be read throws, and the
+registry names its source as unread, never as no change (INV-2).
+
 ## Credentials and egress
 
 - **Environment** ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)).

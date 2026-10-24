@@ -49,6 +49,7 @@ roster `name` and tier; each step's decisions and the run's spec hash are folded
 | `POST runs/<runId>/vote` | `{decision, option, rationale}`: the tie decision the page shows, an option or `inconclusive` | `{run}`; the vote is the operator's |
 | `POST runs/<runId>/stop` | `{reason?}` | `{run}` |
 | `POST runs/<runId>/continue` | `{nodeId?}` | `{run}` |
+| `GET runs/<runId>/review` | — | `{runId, change, assessments, report?, landing?}`: what the operator reads before a review verdict ([below](#what-a-review-shows)); `404` for an unknown run |
 
 A refused action is `400` (a malformed body) or `409` (the engine refused it).
 
@@ -59,7 +60,7 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET reviews` | — | `{reviews}`: every task in review, those held for the operator first, by expiry: `taskId`, `title`, `goal`, `actionClass`, `acceptance`, `attempts`, `project {projectId, title}`, the result's exact `subject`, `artifacts` (and `digest`, `files`), `pendingChecks`, `run`, `heldFor` (`operator`, or `reviewer` while a run's lease holds it), `since`, `expiresAt`, `lastDecision` |
+| `GET reviews` | — | `{reviews, accepted}`: `accepted`, the latest 20 done tasks whose accepted result is still on its way into the repository (landing `watch`, `commit`, `committed`, `asked`, `merging`), each with `taskId`, `title`, `project`, `run`, and `landing` as the Board's cards give it; `reviews`, every task in review, those held for the operator first, by expiry: `taskId`, `title`, `goal`, `actionClass`, `acceptance`, `attempts`, `project {projectId, title}`, the result's exact `subject`, `artifacts` (and `digest`, `files`), `pendingChecks`, `run`, `heldFor` (`operator`, or `reviewer` while a run's lease holds it), `since`, `expiresAt`, `lastDecision` |
 | `POST reviews/<taskId>/decide` | `{verdict: accept \| reject, subject, note?}` | `{task, decision}`: the task after `ctx.board.accept`, and the `acceptance` decision recorded |
 
 - `subject` is the exact subject of the result the page showed (INV-5): a result on another
@@ -71,6 +72,35 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
   accepts a review.
 - A malformed body is `400`, an unknown task `404`. A refusal by the board is `409`, with its
   failure (`invalid`, `invalid-transition`, …).
+
+### What a review shows
+
+`GET runs/<runId>/review` gives, read only:
+
+- `change`: `{value: {changes, unread}}` from `ctx.workers.changes(runId)`, each worktree's change
+  of the run (`WorkChange`: its repository, worktree, branch, `base {branch, sha}` it is read
+  against, `head`, and `files`, each with `path`, `status`, `added`, `removed`, and its `diff`, or
+  `binary` or a `note` why it is not shown, within `CHANGE_BOUNDS`) with its `source`, and each
+  source that could not read its own; `{unknown}` with why when no registry or no `changes` is
+  mounted ([a run's change](../design/agent-runtimes.md#a-runs-change-for-the-operators-review));
+- `assessments`: the run's `assessment@1.0` artifacts, at most 20: each reviewer's `verdict` and
+  `findings`, with its step and Worker;
+- `report`: the run's answer (its last step's, such as a validation's report), at most 32,000
+  characters, `truncated` past them;
+- `landing`: where its accepted result stands, as a card gives it (with the committed `head`).
+
+A review card shows, before **Accept** and **Reject**: *What changed* (`3 files changed +19 −1 ·
+on system/run/<id>, against main at <sha>`, then each file folded, its diff in monospace lines
+marked added and removed, the first 200 lines with **Show all N lines**); *What the reviewers said*
+(*Approved* or *Changes requested*, each finding with its severity); *What the checks measured*
+(the report in the step's own words, a line that says a criterion was not met or not measured
+marked); and the checks the policy requires that nothing ran, in warning colour: *Checks not run:
+tests, lint. Accepting counts them as passed — run them first.* A change that could not be read
+says so (*Do not accept what you could not see*), never an empty change. The page reads it once
+per run and result. After **Accept**, the result is listed under *Accepted, on their way in* with
+where it stands (*Accepted and committed on system/run/<id> as <head>; its merge request comes
+next*, *Accepted — waiting to merge into main: approve*, linked to its request) until it is merged
+or refused. A run's page shows the same under *What it changed*.
 
 ## Projects
 
