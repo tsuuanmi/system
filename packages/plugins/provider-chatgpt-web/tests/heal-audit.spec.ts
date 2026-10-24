@@ -7,7 +7,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Providers from '@tsuuanmi/system-providers'
 import Store from '@tsuuanmi/system-store'
 import type { Browser } from 'patchright-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt } from '../fixtures/fake-chatgpt.ts'
 import ChatGptWeb, { type ChatGptWebDriver } from '../src/index.ts'
@@ -19,10 +19,6 @@ describe.runIf(canRunBrowser)('self-heal is audited (INV-13) and persisted to th
     ;({ browser, close } = await launchTestBrowser())
   })
   afterAll(async () => close())
-  const cleanups: Array<() => unknown> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
 
   async function boot(withAudit: boolean, sendTestId = '') {
     const fake = new FakeChatGpt({ sendLabel: 'Submit message', sendTestId, answer: 'healed' })
@@ -36,7 +32,10 @@ describe.runIf(canRunBrowser)('self-heal is audited (INV-13) and persisted to th
     ]
     await Promise.all(fibers)
     const context = await browser.newContext()
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }), () => fake.stop(), async () => { for (const f of fibers.reverse()) await f.dispose() }, () => context.close())
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => fake.stop())
+    onTestFinished(async () => { for (const f of fibers.reverse()) await f.dispose() })
+    onTestFinished(() => context.close())
     return { ctx, fake, dir, page: await context.newPage(), driver: ctx.providers.get('chatgpt-web') as ChatGptWebDriver }
   }
 

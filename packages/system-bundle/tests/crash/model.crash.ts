@@ -9,21 +9,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { fakeOpenAi } from '../../../plugins/models/tests/fake-openai.ts'
 
 const HARNESS = fileURLToPath(new URL('./model-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Engine { child: ChildProcess; runId: Promise<string>; done: Promise<{ status: string; answer?: string; error?: { kind: string } }> }
 
 function engine(args: string[]): Engine {
   const child = spawn(process.execPath, [HARNESS, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, SYSTEM_CRASH_MODEL_KEY: 'sk-crash-0123456789' } })
-  cleanups.push(() => {
+  onTestFinished(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
     } catch {
@@ -49,20 +44,16 @@ function engine(args: string[]): Engine {
   return { child, runId, done }
 }
 
-const until = async (check: () => boolean, ms: number): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out')
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, ms: number): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error('timed out')
+}, { timeout: ms, interval: 20 })
 
 describe('crash injection while a model Worker answers (QA-1, INV-4)', () => {
   it('after the call was sent, before the answer: the call is sent exactly once more and the run completes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-model-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const server = await fakeOpenAi()
-    cleanups.push(() => server.close())
+    onTestFinished(() => server.close())
     // The first send is held open until the process is killed; the next one answers.
     server.script.push({ holdMs: 120_000 })
     const first = engine([dir, server.baseURL, 'start', 'What is two plus two?'])

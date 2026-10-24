@@ -16,7 +16,7 @@ import { type Brief, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { type Drafter, FakeDigests } from '../../../digest-core/conformance/digests.ts'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type Config, type RunView, type TaskView } from '../src/index.ts'
@@ -95,11 +95,6 @@ const quoting = (quote: string): Drafter => (sources) => ({
   text: `\`\`\`json\n${JSON.stringify({ status: 'passed', summary: 'The step answered.', claims: [{ id: 'C1', kind: 'finding', text: 'It answered.', citation: { artifact: sources[0], quote } }] })}\n\`\`\``,
 })
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 async function boot(options: { workflow?: Config; digests?: Drafter | 'held' | false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-digests-'))
   const ctx = new Context()
@@ -115,7 +110,8 @@ async function boot(options: { workflow?: Config; digests?: Drafter | 'held' | f
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
   await engine
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     await engine.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
@@ -131,13 +127,9 @@ async function boot(options: { workflow?: Config; digests?: Drafter | 'held' | f
   }
 }
 
-const until = async (check: () => boolean | Promise<boolean>, what: string, ms = 30_000): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = (check: () => boolean | Promise<boolean>, what: string, ms = 30_000): Promise<void> => vi.waitFor(async () => {
+  if (!(await check())) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: ms, interval: 25 })
 
 /** The run's task once its digest settled: attached or bypassed. */
 const digested = async (ctx: Context, runId: string): Promise<TaskView> => {

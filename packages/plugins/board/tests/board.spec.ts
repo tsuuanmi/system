@@ -10,7 +10,7 @@ import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gate
 import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z as zod } from 'zod'
 import { FakeApprovals, POLICIES } from '../../../approvals-core/conformance/approvals.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
@@ -65,14 +65,9 @@ interface Booted {
   stop: () => Promise<void>
 }
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 async function boot(options: { dir?: string; board?: Config } = {}): Promise<Booted> {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-board-'))
-  if (!options.dir) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  if (!options.dir) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const base = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(Leases, {}), ctx.plugin(FlakyApprovals), ctx.plugin(RecordingMcp)]
   await Promise.all(base)
@@ -85,7 +80,7 @@ async function boot(options: { dir?: string; board?: Config } = {}): Promise<Boo
     await fiber.dispose()
     for (const f of [...base].reverse()) await f.dispose()
   }
-  cleanups.push(stop)
+  onTestFinished(stop)
   return {
     ctx, dir, stop,
     board: () => ctx.board as StoreBoard,

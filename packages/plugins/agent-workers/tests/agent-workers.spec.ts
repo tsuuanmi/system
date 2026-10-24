@@ -22,14 +22,9 @@ import Workflow from '@tsuuanmi/system-workflow'
 import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { DEVELOP } from './develop.ts'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
 import { openDirectory } from '../src/worktrees.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 /**
  * A scripted agent: it answers with the prompt, and records every run's policy. With `process`, each
@@ -118,10 +113,15 @@ async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [wo
   fibers.push(ctx.plugin(SoftwareDevelopment))
   await fibers.at(-1)
   ctx.agentRuntimes.register(agent)
+  // Once: a test that stops a boot itself (a restart on its state) leaves nothing for its cleanup.
+  let stopped = false
   const stop = async (): Promise<void> => {
+    if (stopped) return
+    stopped = true
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
-  cleanups.push(stop, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(stop)
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return { ctx, dir, stop }
 }
 
@@ -456,7 +456,6 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const queued = source.start({ key: 'k-2', worker: 'agent:reviewer', prompt: 'next', requirement: requirement(), decisions: admitted.decisions })
     await new Promise((resolve) => setTimeout(resolve, 300))
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     // A crash: the dead process still holds the queued run's lease for a few seconds.
     const db = new DatabaseSync(join(dir, 'system.db'))
     db.prepare("INSERT OR REPLACE INTO leases (resource, owner, token, generation, expires_at) VALUES (?, 'dead:1:x', 'dead', 7, ?)").run(`agent-run:${queued.id}`, Date.now() + 3000)
@@ -476,7 +475,6 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: admitted.decisions })
     await new Promise((resolve) => setTimeout(resolve, 300))
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     const again = new ScriptedAgent()
     const second = await boot(again, { workers: [worker()], deadAfterSeconds: 1 }, dir)
     const done = await second.ctx.workers.source('agents')!.wait(started.id, 10_000)
@@ -511,7 +509,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
   describe('exact-head review (REQ-TEAM-5, REQ-WF-5)', { timeout: 60_000 }, () => {
     const gitRepo = (): string => {
       const dir = mkdtempSync(join(tmpdir(), 'system-review-ws-'))
-      cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
       const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { stdio: 'ignore' })
       git('init', '-q')
       writeFileSync(join(dir, 'calc.py'), 'def add(a, b):\n    return a - b\n')
@@ -944,7 +942,6 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     await new Promise((resolve) => setTimeout(resolve, 300))
     // Stopped mid-run: the agent reported nothing, and the run stays started.
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     const again = new ScriptedAgent({ metering: METERING })
     const second = await boot(again, { workers: [metered()], deadAfterSeconds: 1 }, dir, LEDGER)
     expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed' } })
@@ -1014,7 +1011,6 @@ describe('agents source: a usage limit its runtime gives no reading for is never
     expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'quota_exhausted', message: expect.stringMatching(/takes? no run until .*nothing was run/) } })
     expect(agent.runs).toHaveLength(1)
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     // It survives a restart.
     const second = await boot(new ScriptedAgent(), config, dir)
     second.ctx.agentRuntimes.register(Object.assign(new ScriptedAgent(), { kind: 'other' }))
@@ -1068,13 +1064,11 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
     const execution = first.ctx.workers.source('agents')!.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
     await new Promise((resolve) => setTimeout(resolve, 300))
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     return { dir, id: execution.id, session }
   }
   const restart = async (dir: string, config: Partial<Config> = {}) => {
     const again = new ScriptedAgent()
     const booted = await boot(again, { workers: [worker()], deadAfterSeconds: 1, ...config }, dir)
-    cleanups.splice(cleanups.indexOf(booted.stop), 1)
     return { ...booted, again }
   }
   const decisionOf = (ctx: Context, done: WorkerExecution) => done.decisions.map((d) => ctx.artifacts.get(d)!.body as { decisionType: string; decider: { id: string; version: string }; outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; reasons: string[] }> })
@@ -1245,7 +1239,7 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
   const git = (dir: string, ...args: string[]): string => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' }).trim()
   const temp = (prefix: string): string => {
     const dir = mkdtempSync(join(tmpdir(), prefix))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     return dir
   }
   /** A repository on `main` with one commit; never one of the operator's. */
@@ -1379,7 +1373,6 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     const before = await boot(first, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') }, dir)
     expect((await run(before.ctx, 'agent:dev', 'k-1', 'run_keep')).status).toBe('completed')
     await before.stop()
-    cleanups.splice(cleanups.indexOf(before.stop), 1)
     const elsewhere = temp('system-worktrees-')
     const second = developer({ act: () => 'looked again' })
     const after = await boot(second, { workers: [writer(repo)], worktreeRoot: elsewhere }, dir)

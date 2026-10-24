@@ -7,7 +7,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import StoreBoard from '@tsuuanmi/system-board'
 import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { POLICIES } from '../../../approvals-core/conformance/approvals.ts'
 import { boardSuite, CHARTER } from '../../../board-core/conformance/board.ts'
 import { BOARD_CONTRACT, type TaskInput } from '../../../board-core/src/index.ts'
@@ -44,10 +44,6 @@ runSuite(boardSuite, {
 })
 
 describe('the store-backed board over this queue: a policy change', () => {
-  const cleanups: Array<() => unknown> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
   /** The bundle's pair over the store in `dir`, as one process of the daemon starts it with `policies`. */
   const start = async (dir: string, policies: readonly AutonomyPolicy[]): Promise<{ ctx: Context; stop: () => Promise<void> }> => {
     const ctx = new Context()
@@ -62,7 +58,7 @@ describe('the store-backed board over this queue: a policy change', () => {
       stopped = true
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     }
-    cleanups.push(stop)
+    onTestFinished(stop)
     return { ctx, stop }
   }
   const task = (title: string, actionClass: TaskInput['actionClass']): TaskInput => ({
@@ -76,7 +72,7 @@ describe('the store-backed board over this queue: a policy change', () => {
 
   it('puts every wait whose request the restarted queue withdrew to the new policy: a loosened class runs, a forbidden one is cancelled, one that still asks gets one new request on the same subject (INV-2, INV-13)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-approvals-board-policy-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     // Wall-clock times: the restarted queue withdraws at load, by the wall clock, what it no longer asks for.
     const base = new Date()
     const at = (minutes: number): Date => new Date(base.getTime() + minutes * 60_000)

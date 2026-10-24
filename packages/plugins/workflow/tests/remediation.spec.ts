@@ -15,7 +15,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import type { ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { CONFIG, type Rendered, ScriptedWorkers } from '../conformance/workflow.ts'
 import Workflow, { type NodeTemplate, type RunView } from '../src/index.ts'
@@ -73,10 +73,13 @@ class TreeWorkers extends ScriptedWorkers {
 class TestApprovals extends StoreApprovals {
   forge?: (request: ApprovalRequest) => ApprovalRequest
   unreadable = false
+  /** Requests read, so a test waits for the engine's next reads of the queue, never for a fixed time. */
+  reads = 0
 
   override async get(requestId: string): Promise<ApprovalRequest | undefined> {
     if (this.unreadable) throw new Error('the approval queue cannot be read')
     const request = await super.get(requestId)
+    this.reads++
     return request && this.forge ? this.forge(request) : request
   }
 
@@ -94,14 +97,9 @@ function workingTree(): string {
   writeFileSync(join(dir, 'calc.py'), 'def add(a, b):\n    return a - b\n')
   git('add', '.')
   git('commit', '-q', '-m', 'init')
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Booted {
   ctx: Context
@@ -147,7 +145,8 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
   await engine
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     await engine.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
@@ -162,15 +161,11 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
   }
 }
 
-const until = async <T>(read: () => T | undefined | Promise<T | undefined>, what: string, ms = 30_000): Promise<T> => {
-  const deadline = Date.now() + ms
-  for (;;) {
-    const value = await read()
-    if (value) return value
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = <T>(read: () => T | undefined | Promise<T | undefined>, what: string, ms = 30_000): Promise<T> => vi.waitFor(async () => {
+  const value = await read()
+  if (!value) throw new Error(`timed out waiting for ${what}`)
+  return value
+}, { timeout: ms, interval: 25 })
 
 /** The run once it waits on the remediation gate's request in the queue. */
 const queued = (ctx: Context, runId: string): Promise<RunView & { blocked: { kind: 'gate'; approvalRequest: string; plan: ArtifactRef } }> =>
@@ -234,8 +229,9 @@ describe('remediation on the approval queue', () => {
     // The queue is the one channel for this verdict: the operator's plan approval is refused, and changes nothing.
     expect(() => ctx.workflow.approve(run.runId, { verdict: 'approved', plan: waiting.blocked.plan })).toThrow(/waits on approval request .* in the approval queue/)
     expect(ctx.workflow.get(run.runId)!.blocked).toMatchObject({ kind: 'gate' })
-    // Polling again asks nothing new.
-    await new Promise((resolve) => setTimeout(resolve, 2500))
+    // Polling again asks nothing new: the waiting run reads its request twice more (every approvalPollSeconds).
+    const reads = queueOf(ctx).reads
+    await vi.waitFor(() => expect(queueOf(ctx).reads).toBeGreaterThanOrEqual(reads + 2), { timeout: 15_000 })
     expect(await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).toHaveLength(1)
     await decide(ctx, request, 'approved')
     const done = await finished(ctx, run.runId)

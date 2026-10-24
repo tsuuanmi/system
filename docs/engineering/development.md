@@ -37,7 +37,7 @@ pnpm workspaces ([`pnpm-workspace.yaml`](../../pnpm-workspace.yaml)):
 | `packages/plugins/*` | every Cordis plugin, one package each |
 | `packages/system-bundle` | the bundle that mounts the plugins ([`cordis.patch.yml`](../../packages/system-bundle/cordis.patch.yml)) |
 | `packages/cli` | the `system` command |
-| `scripts/`, `spikes/` | repository checks and generators; the release scripts ([releasing](releasing.md)); the live install's update ([runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)); the experiments' helpers ([experiments](../validation/experiments/README.md)); the statistics goldens' generator ([golden tests](../design/statistics.md#golden-tests)); the M0 spike |
+| `scripts/`, `spikes/` | repository checks and generators; the test groups ([testing](testing.md#test-groups)); the release scripts ([releasing](releasing.md)); the live install's update ([runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)); the experiments' helpers ([experiments](../validation/experiments/README.md)); the statistics goldens' generator ([golden tests](../design/statistics.md#golden-tests)); the M0 spike |
 
 Each package has a colocated `README.md` that says what it owns, what it does not
 own, its entry points, and its dependency direction, and links back to
@@ -64,7 +64,9 @@ pnpm gen:reference      # regenerate docs/reference/configuration.md after chang
 pnpm gen:packages       # regenerate docs/architecture/packages.md after changing a package or its seams
 pnpm gen:manifests      # regenerate every plugin-manifest.json after changing a plugin's seams, Config, egress check, or package.json
 pnpm gen:traceability   # regenerate docs/validation/traceability.md from test titles
-pnpm test               # every *.spec.ts: unit, contract, driver, concurrency, and architecture tests
+pnpm test               # every *.spec.ts: unit, contract, driver, concurrency, and architecture tests: the whole suite
+pnpm test:group <name>  # one functional group of it (testing.md#test-groups); no name lists them
+pnpm test:affected      # the groups the change since origin/main affects (--base <ref>, --dry-run)
 pnpm test:e2e           # build, then boot the real profile through dsh (packages/cli/tests)
 pnpm test:crash         # build, then SIGKILL the engine at each crash point and restart it (testing.md)
 pnpm changeset          # record a user-visible change for the next release (releasing.md)

@@ -15,15 +15,11 @@ import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { FakeAgentRuntime } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { type AgentAccount, assess } from '../src/accounts.ts'
 import AgentWorkers, { type Config } from '../src/index.ts'
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 const schemas = new SchemaRegistry()
 
 /** A `ctx.mcp` that keeps contributed tools, so a test calls a handler as the operator would. */
@@ -68,8 +64,8 @@ async function boot(options: { config?: Partial<Config>; dir?: string; runtime?:
   const stop = async (): Promise<void> => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
-  cleanups.push(stop)
-  if (!options.dir) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(stop)
+  if (!options.dir) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return { ctx, dir, home, mcp: (ctx as unknown as { mcp: RecordingMcp }).mcp, stop }
 }
 
@@ -117,7 +113,7 @@ describe('agent accounts: slots are homes (ADR-0051, REQ-ACC-11)', () => {
 describe('agent accounts: the id comes from the verified login (ADR-0051)', () => {
   it('derives the id from the keyed hash, the same after a restart and a re-login; another install key gives another; no principal is in any record or decision (INV-8)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-accounts-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const b = await boot({ dir })
     await accounts(b).begin({ provider: KIND })
     FakeAgentRuntime.signIn(b.home, 'alice.secret@example.test')

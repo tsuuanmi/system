@@ -5,7 +5,13 @@ import type {} from '../src/display.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
 
-export function displayConformance(name: string, boot: Boot): void {
+/**
+ * `timeout` bounds each scenario, boot and dispose included: 15 s by default, as the other real-Xvfb
+ * tests allow. It must exceed the provider's own startup bound (display-virtual's
+ * `startupTimeoutMs`, 5 s by default), so that on a loaded host a slow X server fails by the
+ * provider's own timeout, if at all, never by the test's.
+ */
+export function displayConformance(name: string, boot: Boot, timeout = 15_000): void {
   describe(`ctx.display conformance: ${name}`, () => {
     it('prepares an invisible headed display: never visible, never headless', async () => {
       const { ctx, dispose } = await boot()
@@ -19,7 +25,7 @@ export function displayConformance(name: string, boot: Boot): void {
       } finally {
         await dispose()
       }
-    })
+    }, timeout)
 
     it('shares one display between callers until it is lost', async () => {
       const { ctx, dispose } = await boot()
@@ -30,13 +36,13 @@ export function displayConformance(name: string, boot: Boot): void {
       } finally {
         await dispose()
       }
-    })
+    }, timeout)
 
     it('signals loss to its holders when the provider is disposed', async () => {
       const { ctx, dispose } = await boot()
       const display = await ctx.display.prepare('invisible')
       await dispose()
       expect(display.lost.aborted).toBe(true)
-    })
+    }, timeout)
   })
 }

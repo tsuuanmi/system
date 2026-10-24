@@ -1,21 +1,16 @@
 import type { ApprovalRequest, AutonomyPolicy, PolicyChange } from '@tsuuanmi/system-approvals-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { chromium } from 'patchright-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
-import { type Booted, boot as bootUi, bundlePolicies, OPERATOR } from './store-backed.ts'
+import { type Booted, boot, bundlePolicies, OPERATOR } from './store-backed.ts'
 
 // A policy change end to end, through the web UI's API, over the store-backed approval queue and
 // board under the bundle's own default studio policy (docs/design/approvals.md#a-policy-change).
 vi.setConfig({ testTimeout: 120_000 })
 
 const schemas = new SchemaRegistry()
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-const boot = (options: Parameters<typeof bootUi>[1] = {}) => bootUi(cleanups, options)
 
 /** The bundle's studio policy at the next version, with merge given `mode`. */
 const merging = (mode: 'notify' | 'forbid'): AutonomyPolicy => {
@@ -189,7 +184,7 @@ describe('web UI: the policy page in a real browser', () => {
     const change = await queueProposes(booted)
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const queue = page.getByRole('region', { name: 'Approval queue' })
@@ -203,7 +198,7 @@ describe('web UI: the policy page in a real browser', () => {
     const booted = await boot()
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
     await expect.poll(() => page.getByRole('heading', { name: 'Autonomy policy' }).count()).toBe(1)

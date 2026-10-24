@@ -12,6 +12,10 @@ Throwaway probes for the M0 spike. The results are canonical in
 | [bundle/](bundle/package.json) | the profile's **only** bundle (no `dsh-base`, ADR-0019): timer, credentials, `dsh-host-webserver`, and an MCP Streamable HTTP probe on `/mcp` |
 | [sqlite.spec.ts](sqlite.spec.ts), [sqlite-worker.ts](sqlite-worker.ts) | `node:sqlite` WAL, `BEGIN IMMEDIATE`, and cross-process revision checks |
 
+The probes are not part of `pnpm test` (operator decision D37, 2026-10-24): the store's conformance
+suite holds the product to what they found. Run the `node:sqlite` probe by hand with
+`pnpm exec vitest run --root spikes/m0-dsh-core` (its own [vitest.config.ts](vitest.config.ts)).
+
 Exercise the MCP probe once the profile is running. The port is printed by
 `ss -ltnp`, because the probe uses `port: 0`:
 

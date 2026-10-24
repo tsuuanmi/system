@@ -9,7 +9,7 @@ import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import Providers from '@tsuuanmi/system-providers'
 import { chromium } from 'patchright-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { WebSocket } from 'ws'
 import { canRunBrowser, launchTestBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
@@ -19,11 +19,6 @@ import Login from '../src/index.ts'
 const vnc = [process.env.X0VNCSERVER, join(homedir(), '.cache', 'system-tigervnc', 'usr', 'bin', 'x0vncserver'), '/usr/bin/x0vncserver']
   .find((p): p is string => !!p && existsSync(p))
 if (process.env.SYSTEM_REQUIRE_BROWSER === '1' && !vnc) throw new Error('remote-login tests need x0vncserver (apt install tigervnc-scraping-server)')
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop', () => {
   async function boot(ids: string[] = ['chatgpt-main']) {
@@ -41,7 +36,9 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles'), vncPath: vnc!, chromePath: testChrome! }),
     ]
     await Promise.all(fibers)
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }), () => fake.stop(), async () => { for (const f of fibers.reverse()) await f.dispose() })
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }))
+    onTestFinished(() => fake.stop())
+    onTestFinished(async () => { for (const f of fibers.reverse()) await f.dispose() })
     return { ctx, fake }
   }
 
@@ -99,7 +96,7 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
     const { ctx } = await boot()
     const session = await ctx.login.remote('chatgpt-main')
     const viewer = await launchTestBrowser()
-    cleanups.push(() => viewer.close())
+    onTestFinished(() => viewer.close())
     const page = await viewer.browser.newPage()
     await page.goto(session.url)
     await expect.poll(() => page.locator('#status').innerText(), { timeout: 15_000 }).toBe('Sign in, then press Save account.')

@@ -1,6 +1,6 @@
 import { Secret, TOTP } from 'otpauth'
 import type { Browser } from 'patchright-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../fixtures/fake-chatgpt.ts'
 import { ChatGptWebDriver } from '../src/index.ts'
@@ -15,16 +15,13 @@ describe.runIf(canRunBrowser)('credential sign-in (driver.signIn, against the fa
     ;({ browser, close } = await launchTestBrowser())
   })
   afterAll(async () => close())
-  const cleanups: Array<() => Promise<unknown>> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
 
   async function signedOut(options: FakeOptions) {
     const fake = new FakeChatGpt({ requireCookie: true, ...options })
     await fake.start()
     const context = await browser.newContext()
-    cleanups.push(() => fake.stop(), () => context.close())
+    onTestFinished(() => fake.stop())
+    onTestFinished(() => context.close())
     const page = await context.newPage()
     const driver = new ChatGptWebDriver({ origin: fake.origin, timeouts: { readyMs: 5000 } })
     expect(await driver.checkAuth(page)).toBe('signed-out')

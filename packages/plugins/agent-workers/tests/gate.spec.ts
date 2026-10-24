@@ -22,16 +22,11 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 const WORKSPACE = mkdtempSync(join(tmpdir(), 'system-gate-ws-'))
 afterAll(() => rmSync(WORKSPACE, { recursive: true, force: true }))
@@ -96,7 +91,7 @@ async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | nul
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
-  cleanups.push(async () => {
+  onTestFinished(async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     rmSync(dir, { recursive: true, force: true })
   })
@@ -720,22 +715,33 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     ]
     await Promise.all(fibers)
     ctx.agentRuntimes.register(agent)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     })
-    return ctx
+    // The engine's deferral sweep (every approvalPollSeconds) starts by reading the deferrals still
+    // unsettled, then reads each one's request from the queue: a test waits for the sweeps it needs,
+    // never for a fixed time, so a loaded host is slow, never wrong.
+    const swept = { sweeps: 0, reads: new Map<string, number>() }
+    const prepare = ctx.store.db.prepare.bind(ctx.store.db)
+    ctx.store.db.prepare = ((sql: string) => {
+      if (/^SELECT \* FROM workflow_deferrals WHERE settled_at IS NULL\b/.test(sql)) swept.sweeps++
+      return prepare(sql)
+    }) as typeof ctx.store.db.prepare
+    const get = ctx.approvals.get.bind(ctx.approvals)
+    ctx.approvals.get = async (requestId) => {
+      const request = await get(requestId)
+      swept.reads.set(requestId, (swept.reads.get(requestId) ?? 0) + 1)
+      return request
+    }
+    return Object.assign(ctx, { swept })
   }
 
-  const settledRun = async (ctx: Context, runId: string, status: 'completed' | 'failed') => {
-    const deadline = Date.now() + 30_000
-    for (;;) {
-      const view = ctx.workflow.get(runId)!
-      if (view.status === status) return view
-      if (Date.now() > deadline) throw new Error(`run ${runId} is ${view.status}, not ${status}`)
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    }
-  }
+  const settledRun = (ctx: Context, runId: string, status: 'completed' | 'failed') => vi.waitFor(() => {
+    const view = ctx.workflow.get(runId)!
+    if (view.status !== status) throw new Error(`run ${runId} is ${view.status}, not ${status}`)
+    return view
+  }, { timeout: 30_000, interval: 50 })
 
   it('continues the session once the operator approves the call it stopped at: one more attempt, whose brief says so, and the call runs once', async () => {
     const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
@@ -745,8 +751,9 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     expect(failed.error).toMatchObject({ kind: 'config_error' })
     const [request] = await ctx.approvals.list()
     expect(request).toMatchObject({ action: { class: 'command' }, requester: { component: 'worker', sessionId: run.sessionId } })
-    // Nothing continues before the verdict.
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    // Nothing continues before the verdict: a sweep reads the request, open, and continues nothing.
+    const read = ctx.swept.reads.get(request!.requestId) ?? 0
+    await vi.waitFor(() => expect(ctx.swept.reads.get(request!.requestId)).toBeGreaterThan(read), { timeout: 15_000 })
     expect(agent.runs).toHaveLength(1)
     await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'approved' }])
     const done = await settledRun(ctx, run.runId, 'completed')
@@ -759,8 +766,11 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     const continued = ctx.artifacts.list({ kind: 'decision', runId: run.runId }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail?: Record<string, unknown> } })
       .filter((d) => d.decider.id === 'workflow.approved-call')
     expect(continued).toEqual([expect.objectContaining({ decisionType: 'recovery', outcome: expect.objectContaining({ option: 'continue', detail: expect.objectContaining({ approvalRequest: request!.requestId }) }) })])
-    // At most once per approval: later sweeps continue nothing more.
-    await new Promise((resolve) => setTimeout(resolve, 2500))
+    // At most once per approval: later sweeps continue nothing more. Sweeps never overlap, so two
+    // more starts mean a whole sweep ran after the continuation.
+    expect(ctx.store.db.prepare('SELECT outcome FROM workflow_deferrals WHERE request_id = ?').get(request!.requestId)).toEqual({ outcome: 'continued' })
+    const sweeps = ctx.swept.sweeps
+    await vi.waitFor(() => expect(ctx.swept.sweeps).toBeGreaterThanOrEqual(sweeps + 2), { timeout: 15_000 })
     expect(agent.runs).toHaveLength(2)
   })
 
@@ -771,9 +781,9 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     await settledRun(ctx, run.runId, 'failed')
     const [request] = await ctx.approvals.list()
     await ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'rejected' }])
-    await new Promise((resolve) => setTimeout(resolve, 2500))
+    // The next sweep settles the deferral as rejected, continuing nothing; a settled one is never read again.
+    await vi.waitFor(() => expect(ctx.store.db.prepare('SELECT outcome FROM workflow_deferrals WHERE request_id = ?').get(request!.requestId)).toEqual({ outcome: 'rejected' }), { timeout: 15_000 })
     expect(ctx.workflow.get(run.runId)!.status).toBe('failed')
     expect(agent.runs).toHaveLength(1)
-    expect(ctx.store.db.prepare('SELECT outcome FROM workflow_deferrals WHERE request_id = ?').get(request!.requestId)).toEqual({ outcome: 'rejected' })
   })
 })

@@ -27,6 +27,7 @@ import Turns from '@tsuuanmi/system-turns'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
+import { LEASE_CAP_MS } from './leases.mjs'
 
 const [dir, origin, chrome, mode, ...rest] = process.argv.slice(2)
 /**
@@ -46,7 +47,7 @@ const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}
 
 const ctx = new Context()
 const fibers = [
-  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, { maxTtlMs: LEASE_CAP_MS }), ctx.plugin(Egress, {}),
   ctx.plugin(TurnReceipts, {}), ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
   ctx.plugin(Accounts, { accounts: [{ id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } }] }),
   ctx.plugin(VirtualDisplay, {}), ctx.plugin(BrowserPool, { chromePath: chrome }), ctx.plugin(Providers),

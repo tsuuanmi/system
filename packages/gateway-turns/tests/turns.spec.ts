@@ -3,13 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { claimsNoAccess, NUDGE, parseToolCalls, renderOpening, renderSuffix, renderTools, Threads, tierOf, type Turn } from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 describe('the text tool protocol (ADR-0022)', () => {
   it('maps model names to tiers', () => {
@@ -80,7 +75,8 @@ async function boot() {
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(StubWorkflow)]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const workflow = (ctx as unknown as { workflow: StubWorkflow }).workflow
   return { threads: new Threads(ctx, { scope: 'test' }), workflow }
 }

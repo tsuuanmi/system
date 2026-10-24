@@ -16,7 +16,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z as zod } from 'zod'
 import { POLICIES } from '../../../approvals-core/conformance/approvals.ts'
 import StoreApprovals, { checkConfig, type Config, policyProblems, type RepeatedApprovals } from '../src/index.ts'
@@ -38,14 +38,9 @@ const subject = (ref: string, version = 'v1'): Subject => ({ type: 'content', re
 const [STUDIO, PROJECT, NO_COMMANDS] = POLICIES as [AutonomyPolicy, AutonomyPolicy, AutonomyPolicy]
 const { batch: _, ...UNBATCHED } = STUDIO
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 const tempDir = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'system-approvals-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -69,7 +64,7 @@ async function boot(options: { dir?: string; config?: Partial<Config>; eventLog?
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     await new Promise((resolve) => setImmediate(resolve))
   }
-  cleanups.push(stop)
+  onTestFinished(stop)
   return { ctx, dir, approvals: ctx.approvals as StoreApprovals, mcp: () => (ctx as unknown as { mcp: RecordingMcp }).mcp, stop }
 }
 
@@ -146,10 +141,10 @@ describe('configuration', () => {
     const errors = logged(ctx, 'error')
     const store = ctx.plugin(Store, { path: join(tempDir(), 'system.db') })
     await store
-    cleanups.push(() => store.dispose())
+    onTestFinished(() => store.dispose())
     const artifacts = ctx.plugin(Artifacts, {})
     await artifacts
-    cleanups.push(() => artifacts.dispose())
+    onTestFinished(() => artifacts.dispose())
     for (const policies of [[PROJECT], [{ ...STUDIO, expiry: { defaultSeconds: 120, maxSeconds: 300 } }], []]) {
       const fiber = ctx.plugin(ManualApprovals, { policies })
       const error = await Promise.resolve(fiber).then(() => undefined, (e: unknown) => e)
@@ -638,7 +633,7 @@ describe('a policy change through the queue (docs/design/approvals.md#a-policy-c
     const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
     const artifacts = ctx.plugin(Artifacts, {})
     await Promise.all([store, artifacts])
-    cleanups.push(async () => { await artifacts.dispose(); await store.dispose() })
+    onTestFinished(async () => { await artifacts.dispose(); await store.dispose() })
     const fiber = ctx.plugin(ManualApprovals, { policies: POLICIES, ...config })
     const error = await Promise.resolve(fiber).then(() => undefined, (e: unknown) => e)
     expect(ctx.get('approvals'), 'no ctx.approvals is provided').toBeUndefined()
@@ -959,7 +954,7 @@ describe('the queue proposes a policy change from repeated approvals (docs/desig
     const dir = tempDir()
     const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {})]
     await Promise.all(fibers)
-    cleanups.push(async () => { for (const f of fibers.reverse()) await f.dispose() })
+    onTestFinished(async () => { for (const f of fibers.reverse()) await f.dispose() })
     const fiber = ctx.plugin(ManualApprovals, { policies: POLICIES, repeatedApprovals: { enabled: true, approvals: 1 } })
     const error = await Promise.resolve(fiber).then(() => undefined, (e: unknown) => e)
     expect(String((error as Error | undefined)?.message)).toMatch(/repeatedApprovals\.approvals/)

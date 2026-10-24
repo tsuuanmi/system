@@ -10,21 +10,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 const HARNESS = fileURLToPath(new URL('./enroll-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 type Message = Record<string, unknown>
 
 /** One harness process, and the first message carrying each key. */
 function daemon(args: string[]): { child: ChildProcess; message: (key: string) => Promise<Message> } {
   const child = spawn(process.execPath, [HARNESS, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-  cleanups.push(() => {
+  onTestFinished(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
     } catch {
@@ -58,7 +53,7 @@ function daemon(args: string[]): { child: ChildProcess; message: (key: string) =
 describe('crash injection between an enrollment slot\'s allocation and its verification (REQ-ACC-11, INV-2)', () => {
   it('a daemon killed while it reads the slot\'s identity leaves the slot enrolled, never ready, and its Workers take no work until the operator verifies it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-enroll-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = daemon([dir, 'crash'])
     expect((await first.message('begun')).begun).toMatchObject({ provider: 'scripted', slot: 1, status: 'enrolled' })
     await first.message('reading')

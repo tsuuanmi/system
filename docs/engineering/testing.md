@@ -35,6 +35,10 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   once it passes, the run fails until the entry is removed. A baseline never hides a new
   failure.
 
+A provider's own spec tests what its seam's suite does not hold: what is particular to that
+provider (a default, the words of a refusal, a helper it exports). A test that only repeats a
+scenario of the suite, on the same provider, does not stay.
+
 ## Conventions adopted from DSH
 
 - **Real plugins over mocks.** Plugin tests compose the real plugins they inject
@@ -93,6 +97,11 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
     whose turn was still running, superseded after the restart (that turn is
     cancelled). The provider must see the prompt exactly once, and the run must
     recover, or fail closed as AMBIGUOUS.
+  - The harnesses cap the leases at 30 s (`leases.maxTtlMs`,
+    [`leases.mjs`](../../packages/system-bundle/tests/crash/leases.mjs)), so a
+    restart waits out the dead process's leases in half the time, as it would
+    their 60 s. The budget cases keep the default cap: a run's lease on its
+    board task must outlive the run's own lease, as on a real restart.
   - Every other row of the
     [effect register](../architecture/data-flow.md#effect-register) that names a
     crash test gets what its row says a restart does: an agent run, a model call,
@@ -120,6 +129,14 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   ([`scripts/statistics/`](../../scripts/statistics/sign-flip-goldens.py)) and
   committed with the versions they ran with. No test runs Python
   ([golden tests](../design/statistics.md#golden-tests)).
+- **Clean up with the test.** What a test or its helper starts (a store, a fake
+  site, a browser) is released by `onTestFinished`, newest first, so a helper that
+  boots something registers its own cleanup and a test file keeps no list of its
+  own.
+- **Wait for the event, not the clock.** A test waits with `vi.waitFor` for what
+  it must see (a row's state, the next read of a poll or sweep), or runs a long
+  timer on fake time. A fixed sleep stays only where a test shows that nothing
+  happens during a window, and nothing it could wait for marks that window.
 
 ## Real display and browser tests
 
@@ -127,6 +144,13 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
 headed Chrome, not a mocked engine: invisibility, foreground behavior, and the
 absence of automation leaks are properties of the real browser.
 
+- A file of tests that each compose the real stack shares one Xvfb:
+  `fileDisplay()` in
+  [`browser-patchright/tests/support.ts`](../../packages/plugins/browser-patchright/tests/support.ts)
+  starts it in `beforeAll` and stops it in `afterAll`, and each test mounts it where it would
+  mount `display-virtual`, as a profile's browsers share one display. Each test still launches
+  its own Chrome. The fake passes the display conformance suite, and `display-virtual` itself is
+  tested on its own real Xvfb.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
   product's own `discoverChrome` and launch it with the product's arguments.
   The order is `CHROME_PATH`, then a system Chrome no older than the engine,
@@ -141,11 +165,40 @@ absence of automation leaks are properties of the real browser.
   `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
   skipping silently.
 
+## Test groups
+
+`pnpm test` runs the whole suite. Every workspace package's tests, and the repository scripts',
+belong to one functional group: `kernel`, `workflow`, `workers`, `websites`, `surfaces`, and
+`libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
+`pnpm test:group` with no name lists each with its packages; its own test fails when a package or
+a test file is in no group, or in two.
+
+- `pnpm test:group <name>...` runs those groups.
+- `pnpm test:affected` runs the groups the change since `origin/main` affects, committed or not
+  (`--base <ref>` for another base, `--dry-run` to print them only). A group is affected when its
+  tests depend on a changed package: on its code or on its test files (a fake site, a conformance
+  suite, a test helper), through imports and `package.json`, transitively; or when they locate a
+  changed package's data file. The `libs` group runs for every change, since the scripts' tests
+  check the whole repository, and documentation reaches it alone. A schema reaches every package;
+  a root configuration file, CI, or a path the script cannot place runs every group (fail
+  closed). A spike runs none: spikes are not part of the suite.
+
+The rule:
+
+- **A change** runs its groups (`pnpm test:affected`) and `pnpm check`.
+- **A big update** runs the full gate: `pnpm check`, `pnpm test`, `pnpm test:e2e`, and
+  `pnpm test:crash`. A contract, seam, or schema change, a batch integration, and a release are
+  big updates.
+
 ## CI gates
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to
-`main` and every pull request, on Node 24.18.1 (the floor), the latest 24, and the latest 26, with a real Xvfb, TigerVNC, bubblewrap, and
-Chrome installed. Each gate is a root [`package.json`](../../package.json) script:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request, every
+push to `main` (every merge), nightly on `main`, and on each release tag (the
+[release workflow](releasing.md) calls it), on Node 24.18.1 (the floor), the latest 24, and the
+latest 26, with a real Xvfb, TigerVNC, bubblewrap, and Chrome installed. A pull request runs
+`pnpm check` and its affected [test groups](#test-groups); everything else runs the full gate.
+The job keeps one name on every trigger, so a required check names it whatever ran. Each gate is
+a root [`package.json`](../../package.json) script:
 
 1. `pnpm check`:
    - `check:docs` ([`scripts/check-docs.ts`](../../scripts/check-docs.ts)):
@@ -172,18 +225,20 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
      ([plugin host](../design/plugin-host.md#manifests));
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
 2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1` and `SYSTEM_REQUIRE_BWRAP=1`:
-   every `*.spec.ts` in a package's `tests/`, in `scripts/`, and in `spikes/`
+   every `*.spec.ts` in a package's `tests/` and in `scripts/`
    ([`vitest.config.ts`](../../vitest.config.ts)): unit, contract, driver,
    concurrency, and architecture tests, and the tests of the repository's scripts.
    The agent read confinement tests run against the real bubblewrap; locally they
-   are skipped when `bwrap` is missing, and in CI a missing one fails the run.
+   are skipped when `bwrap` is missing, and in CI a missing one fails the run. On a
+   pull request, `pnpm test:affected --base origin/<its base branch>` instead, with
+   the same environment.
 3. `pnpm test:e2e`: build, then every `*.e2e.ts`, one file at a time
    ([`vitest.e2e.config.ts`](../../vitest.e2e.config.ts)): boot the shipped
    profile and the `api-first` preset through `dsh`, and upgrade every seeded
-   store fixture.
+   store fixture. Not on a pull request.
 4. `pnpm test:crash`: build, then every `*.crash.ts`, one file at a time
    ([`vitest.crash.config.ts`](../../vitest.crash.config.ts)): the cases of
-   [crash injection](#conventions-adopted-from-dsh).
+   [crash injection](#conventions-adopted-from-dsh). Not on a pull request.
 
 [`.github/workflows/audit.yml`](../../.github/workflows/audit.yml) runs
 `pnpm audit:deps` (no high or critical advisory in a production dependency) once,

@@ -18,7 +18,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
@@ -74,7 +74,7 @@ function workingTree(): string {
   git('add', '.')
   git('commit', '-q', '-m', 'init')
   writeFileSync(join(dir, 'kernel.c'), 'int main(void) { return 1; }\n')
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -91,11 +91,6 @@ class ShortLeaseBoard extends StoreBoard {
     return super.renew(taskId, generation, Math.min(ttlMs, ShortLeaseBoard.CAP_MS), at)
   }
 }
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Booted {
   ctx: Context
@@ -129,7 +124,8 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; boa
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
   await engine
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     await engine.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
@@ -166,13 +162,9 @@ const settled = async (ctx: Context, runId: string): Promise<RunView> => {
   return view
 }
 
-const until = async (check: () => boolean | Promise<boolean>, what: string, ms = 30_000): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+const until = (check: () => boolean | Promise<boolean>, what: string, ms = 30_000): Promise<void> => vi.waitFor(async () => {
+  if (!(await check())) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: ms, interval: 25 })
 
 /** The run's outcome reached its task. */
 const reported = async (ctx: Context, runId: string): Promise<RunView> => {
@@ -790,7 +782,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
       if (failing) throw new Error('the ledger did not answer')
       return release(reservationId)
     })
-    cleanups.push(() => spy.mockRestore())
+    onTestFinished(() => spy.mockRestore())
 
     const task = await ready(ctx, 'stuck hold', { budget })
     workers.reply = () => 'hold'
@@ -824,7 +816,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
       if (reserved.state === 'refused' && request.taskId === other.taskId) failing = false
       return reserved
     })
-    cleanups.push(() => reserving.mockRestore())
+    onTestFinished(() => reserving.mockRestore())
     const second = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: other.taskId } })
     await until(() => workers.started.length === 2, 'its first step started')
     workers.release(workers.started[1]!.id, { text: 'the first half' })
@@ -848,7 +840,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     // The second reservation of the batch waits until the first step finished (as a sibling waking from a back-off would).
     let open!: () => void
     const late = new Promise<void>((resolve) => (open = resolve))
-    cleanups.push(() => open())
+    onTestFinished(() => open())
     const reserve = ctx.resources.reserve.bind(ctx.resources)
     const spy = vi.spyOn(ctx.resources, 'reserve').mockImplementation(async (request) => {
       if (spy.mock.calls.length === 2) await late

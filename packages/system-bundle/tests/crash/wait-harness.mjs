@@ -16,6 +16,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
+import { LEASE_CAP_MS } from './leases.mjs'
 
 const [dir, reset, mode, arg] = process.argv.slice(2)
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
@@ -54,7 +55,7 @@ function source(ctx) {
 const step = { nodeId: 'needy', objective: 'Do needy', prompt: '{{input}}', capabilities: ['reason', 'deep-research'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' }
 const ctx = new Context()
 const fibers = [
-  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, { maxTtlMs: LEASE_CAP_MS }), ctx.plugin(Egress, {}),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
   ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c) => void c.workers.register(source(c)) }),
   ctx.plugin(Workflow, { retryDelayMs: 300, templates: { needy: [step] } }),

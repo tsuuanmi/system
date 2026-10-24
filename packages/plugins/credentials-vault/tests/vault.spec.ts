@@ -3,17 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { type CredentialRecord, credentialKey, credentialRef } from '@deepseek-ai/dsh-credentials'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import VaultCredentialProvider from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'system-vault-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -21,7 +16,7 @@ async function boot(dir: string): Promise<Context> {
   const ctx = new Context()
   const fiber = ctx.plugin(VaultCredentialProvider, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') })
   await fiber
-  cleanups.push(() => fiber.dispose())
+  onTestFinished(() => fiber.dispose())
   return ctx
 }
 
@@ -54,7 +49,7 @@ describe('encrypted ctx.credentials provider', () => {
     const dir = tempDir()
     const ctx = await boot(dir)
     process.env[REF] = 'from-env'
-    cleanups.push(() => delete process.env[REF])
+    onTestFinished(() => void delete process.env[REF])
     expect(await ctx.credentials.resolve(REF)).toEqual({ value: 'from-env', source: 'env' })
     await expect(ctx.credentials.set(REF, 'x')).rejects.toThrow(/shadows/)
   })
@@ -128,7 +123,7 @@ describe('review fixes (PR #3 security review)', () => {
     const ctx = new Context()
     const fiber = ctx.plugin(VaultCredentialProvider, { path: join(dir, 'vault.enc'), keyFile })
     await fiber
-    cleanups.push(() => fiber.dispose())
+    onTestFinished(() => fiber.dispose())
     await ctx.credentials.set(REF, 'v')
     expect(await ctx.credentials.resolve(REF)).toEqual({ value: 'v', source: 'vault' })
   })
@@ -144,7 +139,7 @@ describe('review fixes (PR #3 security review)', () => {
 describe('disposal during an in-flight mutation (review)', () => {
   it('never seals the vault with a wiped key: dispose waits for the mutation', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-vault-dispose-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     const fiber = ctx.plugin(VaultCredentialProvider, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') })
     await fiber
@@ -164,13 +159,13 @@ describe('disposal during an in-flight mutation (review)', () => {
 
   it('reports where its key is kept: beside the vault by default, apart when keyFile points elsewhere (key custody)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-vault-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const beside = await boot(dir)
     expect((beside.credentials as unknown as VaultCredentialProvider).custody()).toEqual({ keyApart: false, keyFile: join(dir, 'vault.key'), vault: join(dir, 'vault.enc') })
     const apart = new Context()
     const fiber = apart.plugin(VaultCredentialProvider, { path: join(dir, 'other', 'vault.enc'), keyFile: join(dir, 'vault.key') })
     await fiber
-    cleanups.push(() => fiber.dispose())
+    onTestFinished(() => fiber.dispose())
     expect((apart.credentials as unknown as VaultCredentialProvider).custody()).toMatchObject({ keyApart: true })
   })
 })

@@ -253,7 +253,7 @@ Consumers depend on definitions only.
 
 | Seam | Definition (abstract `Service`) | Conformance suite | Providers that run it |
 |---|---|---|---|
-| `display` | `Display` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/display.ts` | `display-virtual` (real Xvfb), the test fake `KillableDisplay` |
+| `display` | `Display` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/display.ts` | `display-virtual` (real Xvfb), the test fakes `KillableDisplay` and the file display (`fileDisplay`, one Xvfb per test file) |
 | `browser` | `Browser<Page, Context>` in `@tsuuanmi/system-provider-core` (engine-neutral) | `provider-core/conformance/browser.ts` | `browser-patchright` |
 | `providers` | `ProviderRegistry` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/providers.ts` | `providers` |
 | `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts`, which also checks that a tool declaring no scope is listed to the operator only | `mcp-server` (listed through a real MCP client, per scope) |

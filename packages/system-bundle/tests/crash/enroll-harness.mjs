@@ -22,6 +22,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter from '@tsuuanmi/system-workers'
+import { LEASE_CAP_MS } from './leases.mjs'
 
 const [dir, mode] = process.argv.slice(2)
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
@@ -48,7 +49,7 @@ const scripted = {
 
 const ctx = new Context()
 const fibers = [
-  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, { maxTtlMs: LEASE_CAP_MS }), ctx.plugin(Egress, {}),
   ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry, {}),
   ctx.plugin(AgentWorkers, { workers: [{ id: 'reviewer', runtime: 'scripted', workspace, sandbox: 'read-only', tier: 'standard' }], probeTtlMs: 0 }),

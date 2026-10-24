@@ -10,21 +10,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 const HARNESS = fileURLToPath(new URL('./agent-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Reconciled { option: string; verdict: string; reasons: string[] }
 interface Engine { child: ChildProcess; runId: Promise<string>; done: Promise<{ status: string; error?: { kind: string; message: string } }>; reconciled: Promise<Reconciled[]> }
 
 function engine(args: string[]): Engine {
   const child = spawn(process.execPath, [HARNESS, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-  cleanups.push(() => {
+  onTestFinished(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
     } catch {
@@ -53,13 +48,9 @@ function engine(args: string[]): Engine {
   return { child, runId, done, reconciled }
 }
 
-const until = async (check: () => boolean, ms: number): Promise<void> => {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out')
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, ms: number): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error('timed out')
+}, { timeout: ms, interval: 20 })
 
 const starts = (dir: string): number => (existsSync(join(dir, 'agent-started')) ? readFileSync(join(dir, 'agent-started'), 'utf8').split('\n').filter(Boolean).length : 0)
 
@@ -68,7 +59,7 @@ async function crashed(agentProcess: 'process' | 'none'): Promise<{ dir: string;
   const dir = mkdtempSync(join(tmpdir(), 'system-crash-agent-'))
   const workspace = join(dir, 'workspace')
   mkdirSync(workspace)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const first = engine([dir, workspace, 'start', 'Review the change for correctness', agentProcess])
   const runId = await first.runId
   await until(() => starts(dir) === 1, 60_000)

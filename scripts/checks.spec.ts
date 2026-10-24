@@ -3,11 +3,11 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { checkDocs, slugify } from './check-docs.ts'
-import { checkSchemas, loadSchemas, schemaId } from './check-schemas.ts'
+import { slugify } from './check-docs.ts'
+import { loadSchemas, schemaId } from './check-schemas.ts'
 import { scanText } from './check-secrets.ts'
 import { rows } from './gen-reference.ts'
-import { scenarioTitle, testTitle, undefinedCitations } from './gen-traceability.ts'
+import { scenarioTitle, testTitle } from './gen-traceability.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const schemas = join(root, 'schemas')
@@ -15,10 +15,6 @@ const example = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(join(schemas, 'examples', name), 'utf8')) as Record<string, unknown>
 
 describe('documentation checks', () => {
-  it('finds no structural or link problems in the repository', () => {
-    expect(checkDocs(root)).toEqual([])
-  })
-
   it('slugifies headings like GitHub', () => {
     expect(slugify('INV-4 Restart is reconciliation, not replay')).toBe('inv-4-restart-is-reconciliation-not-replay')
     expect(slugify('Delivery order: slice 1 first')).toBe('delivery-order-slice-1-first')
@@ -26,10 +22,6 @@ describe('documentation checks', () => {
 })
 
 describe('schema checks', () => {
-  it('compiles every schema in strict mode and validates every example', () => {
-    expect(checkSchemas(schemas)).toEqual([])
-  })
-
   it('rejects a decision with two selected candidates', () => {
     const decision = example('decision.route.json') as { candidates: { selected: boolean }[] }
     decision.candidates.forEach((c) => (c.selected = true))
@@ -124,10 +116,6 @@ describe('configuration reference', () => {
 })
 
 describe('traceability', () => {
-  it('finds no test citing an id that no requirement, quality attribute, or invariant defines', () => {
-    expect(undefinedCitations()).toEqual([])
-  })
-
   it('reads test titles and conformance scenario titles, which the suites hold as data', () => {
     expect(testTitle(`  it('refuses a stale lease (INV-15)', async () => {`)).toBe('refuses a stale lease (INV-15)')
     expect(scenarioTitle(`    scenario('expiry-rejects', 'rejects at expiry (INV-2)', async (ctx) => {`)).toBe('rejects at expiry (INV-2)')

@@ -27,6 +27,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow, { type RunView } from '@tsuuanmi/system-workflow'
+import { vi } from 'vitest'
 import * as SoftwareDevelopment from '../src/index.ts'
 
 export const ORIGINAL = 'def add(a, b):\n    return a - b\n'
@@ -199,15 +200,11 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   }
 }
 
-export const until = async <T>(read: () => T | undefined | Promise<T | undefined>, what: string, ms = 30_000): Promise<T> => {
-  const deadline = Date.now() + ms
-  for (;;) {
-    const value = await read()
-    if (value) return value
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+export const until = <T>(read: () => T | undefined | Promise<T | undefined>, what: string, ms = 30_000): Promise<T> => vi.waitFor(async () => {
+  const value = await read()
+  if (!value) throw new Error(`timed out waiting for ${what}`)
+  return value
+}, { timeout: ms, interval: 25 })
 
 /** The operator's verdict on a request in the queue, bound to the subject it shows. */
 export async function decide(ctx: Context, requestId: string, verdict: 'approved' | 'rejected' = 'approved'): Promise<void> {

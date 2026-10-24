@@ -2,13 +2,12 @@ import { type Server, createServer } from 'node:http'
 import { Context } from '@deepseek-ai/cordis'
 import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { Display, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import BrowserPool from '../src/index.ts'
-import { canRunBrowser as canRun, testChrome as chrome } from './support.ts'
+import { canRunBrowser as canRun, testChrome as chrome, fileDisplay } from './support.ts'
 
 /** These tests exercise the patchright provider itself, so they use its concrete page and context types. */
 const pool = (ctx: Context): BrowserPool => ctx.browser as unknown as BrowserPool
-
 
 /** A display provider whose Xvfb the test can kill, to simulate a lost display. */
 class KillableDisplay extends Display {
@@ -76,19 +75,15 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
   })
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
 
-  const cleanups: Array<() => unknown> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
-
-  async function boot(config: Record<string, unknown> = {}): Promise<{ ctx: Context; display: KillableDisplay }> {
+  async function boot(config: Record<string, unknown> = {}): Promise<{ ctx: Context; display: KillableDisplay; disposeBrowser: () => Promise<void> }> {
     const ctx = new Context()
     const displayFiber = ctx.plugin(KillableDisplay)
     await displayFiber
     const fiber = ctx.plugin(BrowserPool, { chromePath: chrome!, ...config })
     await fiber
-    cleanups.push(() => displayFiber.dispose(), () => fiber.dispose())
-    return { ctx, display: ctx.display as KillableDisplay }
+    onTestFinished(() => displayFiber.dispose())
+    onTestFinished(() => fiber.dispose())
+    return { ctx, display: ctx.display as KillableDisplay, disposeBrowser: () => fiber.dispose() }
   }
 
   it('opens a turn page that is headed, foreground, and free of automation leaks (REQ-ACC-6)', async () => {
@@ -209,10 +204,10 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
   }, 60_000)
 
   it('closes every browser on dispose', async () => {
-    const { ctx } = await boot()
+    const { ctx, disposeBrowser } = await boot()
     const turn = await pool(ctx).openTurn('acct-a')
     const browser = turn.context.browser()!
-    await cleanups.pop()!()
+    await disposeBrowser()
     expect(browser.isConnected()).toBe(false)
   }, 60_000)
 })
@@ -223,6 +218,14 @@ if (canRun) {
   displayConformance('KillableDisplay (the test fake)', async () => {
     const ctx = new Context()
     const fiber = ctx.plugin(KillableDisplay)
+    await fiber
+    return { ctx, dispose: () => fiber.dispose() }
+  })
+  // The test fake that gives a whole test file one Xvfb (support.ts).
+  const FileDisplay = fileDisplay()
+  displayConformance('the file display (the test fake)', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(FileDisplay)
     await fiber
     return { ctx, dispose: () => fiber.dispose() }
   })

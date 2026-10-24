@@ -4,14 +4,10 @@ import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import * as Gateway from '../src/index.ts'
 import { type ResponsesRequest, responseOf, streamEvents, toolsOf, turnsOf } from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
+import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
 
 const TOOLS: ResponsesRequest['tools'] = [
   { type: 'function', name: 'exec_command', description: 'Runs a command.', parameters: { properties: { cmd: { type: 'string' } }, required: ['cmd'] } },
@@ -103,7 +99,8 @@ async function boot() {
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(StubWorkflow), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(Gateway, { tokenDir: dir })]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const base = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}/openai/v1`
   const auth = { authorization: `Bearer ${Buffer.alloc(32, 9).toString('base64url')}`, 'content-type': 'application/json' }
   return { base, auth, workflow: (ctx as unknown as { workflow: StubWorkflow }).workflow }
@@ -113,17 +110,10 @@ const post = (base: string, auth: Record<string, string>, body: unknown) => fetc
 
 describe('Responses gateway over HTTP', () => {
   it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
-    const routes: unknown[] = []
-    class LanWebServer extends Service {
-      protocol = 'http:'
-      host = '192.0.2.10'
-      port = 47317
-      constructor(ctx: Context) { super(ctx, 'webServer') }
-      register(route: unknown): () => void { routes.push(route); return () => undefined }
-    }
+    const { LanWebServer, routes } = lanWebServer()
     const ctx = new Context()
     const dir = mkdtempSync(join(tmpdir(), 'system-gw-lan-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     await ctx.plugin(Store, { path: join(dir, 'system.db') })
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)

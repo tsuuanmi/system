@@ -51,5 +51,5 @@ export DSH_HOME=$(mktemp -d) DSH_TELEMETRY_DISABLED=1
 npx -y @deepseek-ai/dsh@0.2.1-alpha.2 plugin --profile system-probe add ./
 # remove "@deepseek-ai/dsh-base" from $DSH_HOME/profiles/system-probe/package.json → dsh.profile.bundles
 npx -y @deepseek-ai/dsh@0.2.1-alpha.2 --profile system-probe   # then curl /mcp (see spike README)
-pnpm test spikes/m0-dsh-core                     # node:sqlite probe
+pnpm exec vitest run --root spikes/m0-dsh-core   # node:sqlite probe (not part of pnpm test)
 ```

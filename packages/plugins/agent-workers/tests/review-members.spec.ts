@@ -24,13 +24,8 @@ import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
 import { sha256 } from '@tsuuanmi/system-libs'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, onTestFinished } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 /** Reads run on auto; everything else asks. */
 const POLICY: AutonomyPolicy = {
@@ -100,7 +95,8 @@ async function boot(runtimes: AgentRuntimeProvider[], config: Partial<Config> & 
   ]
   await Promise.all(fibers)
   for (const runtime of runtimes) ctx.agentRuntimes.register(runtime)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
   return { ctx }
@@ -284,7 +280,7 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
 
   it('runs a review member\'s step only in an empty workspace outside any repository, and trusts no answer after which it changed', async () => {
     const base = mkdtempSync(join(tmpdir(), 'system-review-members-ws-'))
-    cleanups.push(() => rmSync(base, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(base, { recursive: true, force: true }))
     const filled = join(base, 'filled')
     mkdirSync(filled)
     writeFileSync(join(filled, 'AGENTS.md'), 'Instructions a runtime would read on its own.\n')
@@ -330,7 +326,7 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve
     })
-    cleanups.push(() => release())
+    onTestFinished(() => release())
     replays.during = (spec) => (spec.prompt === 'o1' ? held : undefined)
     const first = start('o1', 'agent:agy', 'ses_open')
     await expect.poll(() => replays.runs.some((r) => r.prompt === 'o1')).toBe(true)

@@ -6,15 +6,11 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { ApprovalRequest, Verdict, VerdictResult } from '@tsuuanmi/system-approvals-core'
 import { chromium } from 'patchright-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
+import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
 
 const RUN = {
   runId: 'run_abc', template: 'investigate', status: 'running', specHash: 'sha256:00', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:01Z',
@@ -108,7 +104,8 @@ async function boot(options: { approvals?: boolean; roster?: boolean } = {}) {
   const ctx = new Context()
   const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   if (options.roster) (ctx as unknown as { workflow: StubWorkflow }).workflow.extra = [STEP]
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
   return { ctx, origin, token, workflow: (ctx as unknown as { workflow: StubWorkflow }).workflow, approvals: () => (ctx as unknown as { approvals: StubApprovals }).approvals }
@@ -116,16 +113,9 @@ async function boot(options: { approvals?: boolean; roster?: boolean } = {}) {
 
 describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
-    const routes: unknown[] = []
-    class LanWebServer extends Service {
-      protocol = 'http:'
-      host = '192.0.2.10'
-      port = 47317
-      constructor(ctx: Context) { super(ctx, 'webServer') }
-      register(route: unknown): () => void { routes.push(route); return () => undefined }
-    }
+    const { LanWebServer, routes } = lanWebServer()
     const dir = mkdtempSync(join(tmpdir(), 'system-ui-lan-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)
@@ -279,7 +269,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it.runIf(canRunBrowser)('renders the Workers tab in a real browser: counts, one card per Worker by status, what it is for (or a derived line, marked), what it does now, its account and limits (T85)', async () => {
     const { origin, token } = await boot({ roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     await page.getByRole('link', { name: 'Workers' }).click()
@@ -305,7 +295,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it.runIf(canRunBrowser)('shows the approval queue in a real browser and approves a batch on the subjects it shows', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     const queue = page.getByRole('region', { name: 'Approval queue' })
@@ -336,7 +326,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it.runIf(canRunBrowser)('keeps a press on Approve when a refresh lands between pressing and releasing: the click is not lost (T84)', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     const approve = page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' })
@@ -363,7 +353,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const { origin, token, approvals } = await boot({ approvals: true })
     approvals().failure = new Error('the store is busy')
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' }).click()
@@ -385,7 +375,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
     const { origin, token, workflow } = await boot()
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     await page.getByRole('link', { name: 'run_abc' }).click()

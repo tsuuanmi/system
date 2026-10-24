@@ -10,13 +10,8 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import * as SoftwareDevelopment from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function boot() {
   const dir = mkdtempSync(join(tmpdir(), 'system-profile-'))
@@ -26,7 +21,8 @@ async function boot() {
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, {}),
   ]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return ctx
 }
 

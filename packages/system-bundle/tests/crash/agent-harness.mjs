@@ -25,6 +25,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
+import { LEASE_CAP_MS } from './leases.mjs'
 
 const [dir, workspace, mode, arg, agentProcess = 'process'] = process.argv.slice(2)
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
@@ -61,7 +62,7 @@ const scripted = {
 
 const ctx = new Context()
 const fibers = [
-  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, { maxTtlMs: LEASE_CAP_MS }), ctx.plugin(Egress, {}),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry, {}),
   // A short activity window, and one look before the operator, so the case is not bound by the defaults' minutes.
   ctx.plugin(AgentWorkers, { workers: [{ id: 'reviewer', runtime: 'scripted', workspace, sandbox: 'read-only', tier: 'standard' }], deadAfterSeconds: 2, maxUnknownVerdicts: 1 }),

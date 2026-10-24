@@ -14,14 +14,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 const HARNESS = fileURLToPath(new URL('./budget-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Settled {
   run: { runId: string; status: string; error?: { kind: string; message: string }; task?: { phase: string; budget?: { spent?: boolean; blocked?: boolean; lastAttempt?: string }; outcome?: { status: string; state?: string } } }
@@ -39,7 +34,7 @@ interface Engine { child: ChildProcess; exited: Promise<NodeJS.Signals | number 
 
 function engine(args: string[]): Engine {
   const child = spawn(process.execPath, [HARNESS, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-  cleanups.push(() => {
+  onTestFinished(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
     } catch {
@@ -76,7 +71,7 @@ describe('crash injection while a spent budget ends a task\'s last attempt (QA-1
   ] as const) {
     it(`${when}; the task waits for input (retries-spent), and no funding is asked`, async () => {
       const dir = mkdtempSync(join(tmpdir(), 'system-crash-budget-'))
-      cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
       const first = engine([dir, 'start', point])
       const { runId } = await first.started
       expect(await first.exited).toBe('SIGKILL')
@@ -108,7 +103,7 @@ describe('crash injection while a two-step run reserves its task\'s budget per s
   ] as const) {
     it(`${when}; the second step never starts, and the task's last attempt ends with no funding asked (retries-spent)`, async () => {
       const dir = mkdtempSync(join(tmpdir(), 'system-crash-steps-'))
-      cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
       const started = (): string[] => (existsSync(join(dir, 'started')) ? readFileSync(join(dir, 'started'), 'utf8').split('\n').filter(Boolean) : [])
       const first = engine([dir, 'steps', point])
       const { runId } = await first.started

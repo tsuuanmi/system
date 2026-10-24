@@ -9,17 +9,13 @@ import Leases from '@tsuuanmi/system-leases'
 import { type Brief, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { BENCH, draft, type Drafter, LOG } from '../../../digest-core/conformance/digests.ts'
 import { DigestWorker } from '../../../digest-core/conformance/worker.ts'
 import StoreDigests, { type Config } from '../src/index.ts'
 
 vi.setConfig({ testTimeout: 60_000 })
 const schemas = new SchemaRegistry()
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 /** The provider over real routing and leases, a scripted digest Worker, and two raw artifacts. */
 async function boot(drafter: ((refs: { log: ArtifactRef; bench: ArtifactRef }) => Drafter) | undefined, config: Config = {}) {
@@ -40,7 +36,8 @@ async function boot(drafter: ((refs: { log: ArtifactRef; bench: ArtifactRef }) =
   }).id as ArtifactRef
   refs.log = raw(LOG)
   refs.bench = raw(BENCH)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     await provider.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
@@ -56,13 +53,9 @@ async function boot(drafter: ((refs: { log: ArtifactRef; bench: ArtifactRef }) =
   }
 }
 
-const until = async (check: () => boolean, what: string): Promise<void> => {
-  const deadline = Date.now() + 30_000
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+const until = (check: () => boolean, what: string): Promise<void> => vi.waitFor(() => {
+  if (!check()) throw new Error(`timed out waiting for ${what}`)
+}, { timeout: 30_000, interval: 20 })
 
 describe('ctx.digests on the store', () => {
   it('starts its Worker with a brief recorded before the run, pointing at the sources by content id and never carrying their content, which the source renders verbatim', async () => {

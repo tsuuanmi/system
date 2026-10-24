@@ -11,13 +11,8 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter, { type WorkerExecution } from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import * as Science from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function boot(workflow: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-science-'))
@@ -27,7 +22,8 @@ async function boot(workflow: Record<string, unknown> = {}) {
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, ...workflow }),
   ]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return ctx
 }
 
