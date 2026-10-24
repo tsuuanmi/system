@@ -2,8 +2,10 @@
 
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
-- **Home**, a dashboard: what waits for the operator (approvals, reviews, runs that need a look,
-  each linked, and counted in the window's title: *(3) system — Home*), what happened since the
+- **Home**, a dashboard: what waits for the operator and they can act on (open approval requests,
+  reviews held for them, runs that wait for their own move or failed outside the board since they
+  last looked, each linked, and counted in the window's title on every page from one route,
+  `GET waiting`: *(3) system — Home*), what happened since the
   operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`), the
   Workers at a glance, then those decisions and the recent runs by their tasks' titles, each step
   with its Worker's name; a running run's page and Board card say where it is now (its step, Worker,

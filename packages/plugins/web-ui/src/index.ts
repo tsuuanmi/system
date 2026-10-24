@@ -50,6 +50,9 @@ export const ACTIVITY_SHOWN = 50
 const ACTIVITY_PAGES = 5
 const ACTIVITY_STATES: TaskState[] = ['done', 'review', 'waiting-for-input', 'waiting-for-approval', 'cancelled']
 export const LIVE_RUNS = 50
+/** Runs "Waiting for you" lists at most, and runs of each state one count reads at most (INV-9). */
+export const WAITING_RUNS = 50
+const WAITING_READ = 500
 /** Workers named per step of a start's preview, free and busy each. */
 export const LIKELY_WORKERS = 8
 /** Accepted results on their way into the repository that the reviews list, the latest first. */
@@ -618,6 +621,62 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   /**
+   * What waits for the operator now (\`GET waiting?since=<ISO time>\`, T127): the one count the window's
+   * title gives on every page and Home's "Waiting for you" lists, of what the operator can act on only:
+   * - the approval requests open for a verdict (every tool call, fix, merge, or task approval a run or
+   *   the board waits on is one of them);
+   * - the reviews held for the operator (\`operator-review\`), not those a run's reviewer still holds;
+   * - the runs that wait for the operator's own move and ask no request (a tie's deciding vote, a plan's
+   *   approval), whenever they started; and the runs outside the board that failed since \`since\`, when
+   *   the operator last marked Home as seen, which they may continue (a board task's run is not: the
+   *   board decides its next attempt).
+   * Each part is read by state, bounded; one that cannot be read is \`{unknown}\` with why, and \`count\`
+   * then says \`partial\`, never a smaller count read as all (INV-2).
+   */
+  const waiting = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+    const raw = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since')
+    const since = raw === null ? undefined : new Date(raw)
+    if (since && Number.isNaN(since.getTime())) return json(res, 400, { error: 'since must be an ISO time' })
+    const why = (what: string, error: unknown): { unknown: string } => ({ unknown: `${what} could not be read: ${(error as Error).message.slice(0, 200)}` })
+    const approvals = ctx.get('approvals')
+    let requests: { value: number } | { unknown: string }
+    try {
+      requests = approvals ? { value: (await approvals.list()).length } : { unknown: 'the approval queue is not running' }
+    } catch (error) {
+      requests = why('the approval queue', error)
+    }
+    const board = ctx.get('board')
+    let reviews: { value: number; firstExpires?: string } | { unknown: string }
+    if (!board) reviews = { unknown: 'the board is not running' }
+    else {
+      try {
+        const held: string[] = []
+        for (const project of await board.projects()) {
+          for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) if (task.waiting?.reason === 'operator-review') held.push(task.waiting.expiresAt)
+        }
+        held.sort()
+        reviews = { value: held.length, ...(held[0] ? { firstExpires: held[0] } : {}) }
+      } catch (error) {
+        reviews = why('the board', error)
+      }
+    }
+    let runs: { value: unknown[]; more?: true } | { unknown: string }
+    try {
+      const running = ctx.workflow.usage(WAITING_READ, { status: ['running'] })
+      const failed = ctx.workflow.usage(WAITING_READ, { status: ['failed'], ...(since ? { changedSince: since.toISOString() } : {}) })
+      const look = [...running.filter((r) => r.blocked && !('approvalRequest' in r.blocked && r.blocked.approvalRequest)), ...failed.filter((r) => !r.task)]
+      runs = { value: look.slice(0, WAITING_RUNS), ...(look.length > WAITING_RUNS || running.length === WAITING_READ || failed.length === WAITING_READ ? { more: true as const } : {}) }
+    } catch (error) {
+      runs = why('the runs', error)
+    }
+    const parts = [requests, reviews, runs]
+    const count = (('value' in requests) ? requests.value : 0) + (('value' in reviews) ? reviews.value : 0) + (('value' in runs) ? runs.value.length : 0)
+    const partial = parts.some((p) => 'unknown' in p) || ('more' in runs && runs.more === true)
+    return json(res, 200, { asOf: new Date().toISOString(), ...(since ? { since: since.toISOString() } : {}), requests, reviews, runs, count, ...(partial ? { partial: true } : {}) })
+  }
+
+  /**
    * The roster (docs/design/roster.md): `GET roster` gives every Worker in one read model, projected
    * on read from the services mounted, each one absent read as unknown with why. The page is the
    * operator's, so it shows account labels.
@@ -686,6 +745,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'projects' || path.startsWith('projects/')) return projects(req, res, path)
     if (path.startsWith('tasks/')) return tasks(req, res, path)
     if (path === 'activity') return activity(req, res)
+    if (path === 'waiting') return waiting(req, res)
     if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })

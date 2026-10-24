@@ -694,15 +694,15 @@ export const APP_JS = `'use strict'
   const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.kind === 'tool-call' ? 'a Worker\\'s tool call waits for your verdict' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
     : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
   const RECENT = 15
-  // How many things wait for the operator, named in the window's title ("(3) system — Home"), on every page.
-  let waitingCount = 0
-  const countWaiting = async () => {
-    let n = 0
-    try { n += (await api('approvals')).batches.reduce((m, b) => m + b.requests.length, 0) } catch {}
-    try { n += (await api('reviews')).reviews.length } catch {}
-    try { n += (await api('runs')).runs.filter(needsLook).length } catch {}
-    return n
+  // What waits for the operator and they can act on, from one read on every page (GET waiting, T127): the
+  // window's title counts it ("(3) system — Home"), and Home's "Waiting for you" lists it. A failed run counts
+  // until the operator marks Home as seen; a count that could not be read whole is shown as at least, or "?".
+  let waiting = null
+  const readWaiting = async () => {
+    const seen = seenOf()
+    try { return await api('waiting' + (seen ? '?since=' + encodeURIComponent(seen.at) : '')) } catch (error) { return { unknown: error.message } }
   }
+  const badge = () => !waiting ? '' : waiting.unknown ? '(?) ' : waiting.count ? '(' + waiting.count + (waiting.partial ? '+' : '') + ') ' : waiting.partial ? '(?) ' : ''
 
   // "Since you last looked" (T124): kept in this browser only (localStorage), never on the server: when
   // the operator last marked Home as seen, and each Worker's status then, to tell what changed since.
@@ -799,17 +799,20 @@ export const APP_JS = `'use strict'
     // A run's task by its title, from the Board's cards.
     const titles = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, t.title])))
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
-    const asked = queued ? queued.querySelectorAll('article.request').length : 0
-    const toReview = reviewed ? Number(reviewed.dataset.count || 0) : 0
-    const look = runs.filter(needsLook)
-    waitingCount = asked + toReview + look.length
+    waiting = await readWaiting()
+    const part = (name) => waiting.unknown ? { unknown: waiting.unknown } : waiting[name]
+    const asked = 'value' in part('requests') ? part('requests').value : 0
+    const toReview = 'value' in part('reviews') ? part('reviews').value : 0
+    const look = 'value' in part('runs') ? part('runs').value : []
+    const unread = ['requests', 'reviews', 'runs'].filter((name) => 'unknown' in part(name))
     const since = await sinceView(roster, titles)
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
     const waiting = [
       asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
-      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review'
-        + (reviewed.dataset.firstExpires ? '; the first held for you expires ' + relative(reviewed.dataset.firstExpires) : ''))) : null,
-      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look')) : null,
+      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' review is' : ' reviews are') + ' held for you'
+        + (part('reviews').firstExpires ? '; the first expires ' + relative(part('reviews').firstExpires) : ''))) : null,
+      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look' + (part('runs').more ? ', and more' : ''))) : null,
+      unread.length ? el('li', { class: 'unknown' }, 'What else waits is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts
     // A source still describing its Workers for the first time: the counts are so far.
@@ -1497,16 +1500,16 @@ export const APP_JS = `'use strict'
       if (name === page || (page === 'run' && name === 'home')) link.setAttribute('aria-current', 'page')
       else link.removeAttribute('aria-current')
     }
-    document.title = (waitingCount ? '(' + waitingCount + ') ' : '') + 'system — ' + PAGES[page][0] + (current ? ' ' + current : '')
+    document.title = badge() + 'system — ' + PAGES[page][0] + (current ? ' ' + current : '')
   }
   async function refresh() {
     mark()
     // Help reads nothing from the server: it shows with or without a token.
-    if (view === 'help') { helpView(); if (token) waitingCount = await countWaiting(); mark(); return }
+    if (view === 'help') { helpView(); if (token) waiting = await readWaiting(); mark(); return }
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
-    // Home counts what waits as it renders; any other page asks.
-    if (view || current) waitingCount = await countWaiting()
+    // Home reads what waits as it renders; any other page reads the same.
+    if (view || current) waiting = await readWaiting()
     mark()
   }
   refresh()

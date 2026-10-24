@@ -13,25 +13,28 @@ Every route is under `/ui/api` and passes the shared request guard first
 ## Home
 
 One navigation on every page, **Home**, **Board**, **Workers**, **Autonomy policy**, and **Help**, the
-current one marked (`aria-current`) and named in the window's title, which counts what waits for
-the operator first (requests for a verdict, reviews, runs that need a look): *(3) system — Home*;
-a run's page counts as Home's.
+current one marked (`aria-current`) and named in the window's title, which counts first what
+waits for the operator and they can act on: *(3) system — Home*; a run's page counts as Home's.
+Every page reads the count from one route, `GET waiting` ([below](#what-waits-for-you)), and
+Home's *Waiting for you* lists the same: the requests open for a verdict, the reviews held for the
+operator, and the runs that need a look. A count that could not be read whole reads *(3+)*, or
+*(?)* with nothing known.
 Each page opens with its title and one line of what it is for. On a narrow screen (600 px) no
 page is wider than the screen: the navigation wraps whole links with the refresh line under it,
 the Board's columns stack, each card the screen's width with its **Start…** across it, and the
 tables keep their first columns.
 
-**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
-for review with when the first held for you expires, and the runs that need a look, each linking
-to its section), the Workers at a glance (the roster's counts, then each account's capacity in one
+**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the reviews held for
+you with when the first expires, and the runs that need a look, each linking to its section, and
+what of it could not be read), the Workers at a glance (the roster's counts, then each account's capacity in one
 line, its 5 h bar beside it: *Claude Code · science: 5 h used 42 %, resets 03:08*, with *resting
 until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*), the approval cards, the reviews as
 cards, under a line saying how many are held for you and when the first expires, marked when
 within the hour, since an unanswered one expires and its task waits for input that nothing
 revives (what was asked, the checks not run, the run that made the result, the exact result
 folded; **Accept: mark it done** and **Reject: send it back**, each with its own note), the runs
-that need a look (failed, or waiting
-for a plan approval, a fix's verdict, or a deciding vote) with why and a link, and the 15 most
+that need a look (waiting for a plan approval or a deciding vote, or outside the board and failed
+since you last marked Home as seen) with why and a link, and the 15 most
 recent runs, each by its task's title (else its template) with its id under it, and each step with
 its Worker's roster `name`.
 
@@ -46,7 +49,27 @@ again from now. When and each Worker's status then are kept in this browser only
 
 | Route | Body | Answer |
 |---|---|---|
+| `GET waiting?since=<ISO time>` | — | `{asOf, since?, requests, reviews, runs, count, partial?}`, each part `{value}` or `{unknown}` with why ([what waits for you](#what-waits-for-you)); `count` adds the known parts, and `partial` says a part is unknown or holds more than it read. An invalid `since` is `400` |
 | `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`, each part `{value, more?}` or `{unknown}` with why when it cannot be read (never empty in its place): the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), read by state and by when their state changed (`ctx.workflow.usage` with a filter, contract 1.7), so a run that started long ago is there; the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`); and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), read newest first (`ctx.eventLog`, contract 1.1), at most 5 pages of 1,000. Each part lists at most 50, the latest first; `more` says it holds more than it lists, or that a read stopped at its bound before the end. A missing or invalid `since` is `400` |
+
+### What waits for you
+
+The one count of what waits for the operator and they can act on (T127), read by every page for
+the window's title and by Home for *Waiting for you*:
+
+- `requests`: the approval requests open for a verdict (`ctx.approvals.list()`). A tool call, a
+  fix, a merge, a funding raise, or a task's approval that a run or the board waits on is one of
+  them, so it is counted once, here.
+- `reviews`: the board tasks in review held for the operator (`operator-review`), with
+  `firstExpires`; a review a run's reviewer still holds is not the operator's yet.
+- `runs`: the runs that wait for the operator's own move and ask no request (a tie's deciding vote,
+  a plan's approval), whenever they started; and the runs outside the board that failed since
+  `since`, when the operator last marked Home as seen (this browser's `system.seen`), which they
+  may continue. A board task's failed run is not counted: the board decides its next attempt. At
+  most 50 listed, each state read by state (at most 500), `more` past them.
+
+A run that failed before the operator last marked Home as seen is seen: it stays in the recent runs,
+and no longer counts.
 
 ## Help
 
