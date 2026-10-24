@@ -213,6 +213,9 @@ account's profile open, Save reads it in place, in a page of its own.
       session-only cookies survive; the restored tabs are blanked.
     - It closes after `closeAfterMs` idle. A close waits until its Chrome has
       exited, and stops one that has not within 10 s.
+    - A page close waits at most 5 s for the browser to confirm it. Chrome can
+      acknowledge a close and then drop it, so an operation's end, and so a
+      runtime stop, never wait on the tab. Such a tab closes with its context.
     - If the browser dies, in-flight operations fail, and a submitted turn
       reconciles by its receipt.
   - **Who holds a profile.** A process on this host whose command line names

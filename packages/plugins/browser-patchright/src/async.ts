@@ -48,6 +48,16 @@ export async function closeWithin(context: BrowserContext, ms = 5000, attachMs =
 }
 
 /**
+ * Close a page, never waiting more than `ms` for the browser to confirm it. Chrome acknowledges a
+ * close that lands as the page's navigation commits, then drops it: the tab stays open, and
+ * `page.close()` waits for it with no bound of its own (CI 2026-10-24: a runtime stop hung on the
+ * page its abort closed). Such a tab closes with its context.
+ */
+export async function closePageWithin(page: Page, ms = 5000): Promise<void> {
+  await boundedBy(page.close(), ms)
+}
+
+/**
  * `promise`, unless `signal` aborts first; then it rejects at once, and a late value goes to
  * `onLate`, once. Without a signal it is `promise` itself, with no bound of its own: each caller
  * bounds the operation it waits on.

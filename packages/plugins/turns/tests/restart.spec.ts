@@ -216,6 +216,29 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     expect(Date.now() - t0).toBeLessThan(15_000)
   }, 90_000)
 
+  it('settles pending waits promptly when the runtime stops, even when the browser drops the close of the page the stop aborted (INV-9, CI 2026-10-24)', async () => {
+    const { ctx, stop } = await boot({ fake: { thinkMs: 30_000 } })
+    // A close that lands as the page's first navigation commits: Chrome acknowledges it and the
+    // tab stays open, so the page's close never completes.
+    const browser = ctx.browser as unknown as { openTurn: (...args: unknown[]) => Promise<{ page: { close: () => Promise<void> } }> }
+    const open = browser.openTurn.bind(browser)
+    let opened!: () => void
+    const pageOpen = new Promise<void>((resolve) => { opened = resolve })
+    browser.openTurn = async (...args) => {
+      const turn = await open(...args)
+      turn.page.close = () => new Promise<void>(() => undefined)
+      opened()
+      return turn
+    }
+    const started = await ask(ctx, { prompt: 'slow' })
+    const waiting = ctx.turns.wait(started.turnId, 55_000)
+    await pageOpen
+    const t0 = Date.now()
+    await stop()
+    await waiting
+    expect(Date.now() - t0).toBeLessThan(15_000)
+  }, 90_000)
+
   it('never serves a routed turn by another mode after its tier was unmapped across a restart (INV-2, QA-3)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
