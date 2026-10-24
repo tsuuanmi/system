@@ -44,6 +44,12 @@ const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-sr
 const MAX_BODY = 16_384
 /** A proposed policy record is larger than a verdict: up to 64 rules and 200 commands of 200 characters. */
 const MAX_POLICY_BODY = 131_072
+/** Accepted results on their way into the repository that the reviews list, the latest first. */
+export const ACCEPTED_SHOWN = 20
+const LANDING_OPEN: ReadonlySet<string> = new Set(['watch', 'commit', 'committed', 'asked', 'merging'])
+/** Reviewers' verdicts a run's review read lists at most, and the characters of its report. */
+export const REVIEW_VERDICTS = 20
+export const REVIEW_REPORT_CHARS = 32_000
 /** Policy changes the page lists, newest first. */
 export const POLICY_HISTORY = 20
 /** Verdicts one call takes at most, as `approvals_decide` does (a batch holds at most 50). */
@@ -149,7 +155,7 @@ function landingCard(landing: TaskLanding | undefined): Record<string, unknown> 
   return {
     landing: {
       state: landing.state, ...(landing.branch ? { branch: landing.branch } : {}), ...(landing.base ? { base: landing.base.branch } : {}),
-      ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}),
+      ...(landing.head ? { head: landing.head } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}),
       ...(landing.reason && (landing.state === 'refused' || landing.state === 'rejected') ? { reason: landing.reason } : {}),
     },
   }
@@ -290,7 +296,16 @@ export function apply(ctx: Context, config: Config = {}): void {
         for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) listed.push(reviewOf(task, { projectId: project.projectId, title: project.title }))
       }
       listed.sort((a, b) => (a.heldFor === b.heldFor ? String(a.expiresAt ?? '').localeCompare(String(b.expiresAt ?? '')) : a.heldFor === 'operator' ? -1 : 1))
-      return json(res, 200, { reviews: listed })
+      // The results accepted and still on their way into the repository (ADR-0060), the latest first: a verdict's consequence stays in sight.
+      const accepted: Array<Record<string, unknown> & { at: string }> = []
+      for (const project of await board.projects()) {
+        for (const task of await board.tasks({ projectId: project.projectId, states: ['done'] })) {
+          const landing = task.run ? ctx.workflow.landing(task.run.runId) : undefined
+          if (landing && LANDING_OPEN.has(landing.state)) accepted.push({ taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, run: task.run, landing: landingCard(landing).landing, at: task.updatedAt ?? task.createdAt })
+        }
+      }
+      accepted.sort((a, b) => b.at.localeCompare(a.at))
+      return json(res, 200, { reviews: listed, accepted: accepted.slice(0, ACCEPTED_SHOWN).map(({ at: _, ...rest }) => rest) })
     }
     const match = /^reviews\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/decide$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
@@ -444,6 +459,42 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
+  /**
+   * What the operator reads before a review verdict (`GET runs/<runId>/review`, T122): the run's
+   * change in its worktrees, read only through `ctx.workers.changes` (each file with its lines and its
+   * diff, bounded, from the source that holds the worktree); each reviewer's verdict on it (its
+   * `assessment` artifacts); the run's report (its last step's answer, such as a validation's); and
+   * where its accepted result stands on its way into the repository. A part that cannot be read is
+   * `{unknown}` with why, never empty (INV-2).
+   */
+  const review = async (res: ServerResponse, runId: string): Promise<void> => {
+    const run = ctx.workflow.get(runId)
+    if (!run) return json(res, 404, { error: `unknown run ${runId}` })
+    const workers = ctx.get('workers' as never) as { changes?: (runId: string) => Promise<{ changes: unknown[]; unread: Array<{ source: string; detail: string }> }> } | undefined
+    let change: Record<string, unknown>
+    if (!workers) change = { unknown: 'the Worker registry (ctx.workers) is not mounted' }
+    else if (typeof workers.changes !== 'function') change = { unknown: 'the Worker registry cannot read a run\'s change' }
+    else {
+      try {
+        change = { value: await workers.changes(runId) }
+      } catch (error) {
+        change = { unknown: `the change could not be read: ${(error as Error).message.slice(0, 300)}` }
+      }
+    }
+    const artifacts = ctx.get('artifacts')
+    const assessments = artifacts
+      ? { value: artifacts.list({ kind: 'assessment', runId, limit: REVIEW_VERDICTS }).map((a) => {
+        const body = a.body as { verdict: string; findings: unknown[]; reviewer?: string }
+        return { nodeId: a.nodeId, createdAt: a.createdAt, verdict: body.verdict, findings: body.findings, ...(body.reviewer ? { reviewer: body.reviewer } : {}) }
+      }) }
+      : { unknown: 'the artifact store (ctx.artifacts) is not mounted' }
+    const last = [...run.nodes].reverse().find((n) => n.result)
+    const text = run.answer
+    const report = text !== undefined && last ? { nodeId: last.nodeId, text: text.slice(0, REVIEW_REPORT_CHARS), ...(text.length > REVIEW_REPORT_CHARS ? { truncated: true } : {}) } : undefined
+    const landing = ctx.workflow.landing(runId)
+    return json(res, 200, { runId, change, assessments, ...(report ? { report } : {}), ...(landing && landing.state !== 'none' ? { landing: landingCard(landing).landing } : {}) })
+  }
+
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const refused = refuse(req)
     if (refused) return json(res, refused[0], { error: refused[1] })
@@ -455,13 +506,14 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path.startsWith('tasks/')) return tasks(req, res, path)
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
-    const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue))?$/.exec(path)
+    const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue|review))?$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
     const [, runId, action] = match as unknown as [string, string, string | undefined]
     if (!action && req.method === 'GET') {
       const run = workflow.get(runId)
       return run ? json(res, 200, { run, explain: workflow.explain(runId) }) : json(res, 404, { error: `unknown run ${runId}` })
     }
+    if (action === 'review') return req.method === 'GET' ? review(res, runId) : json(res, 405, { error: 'method not allowed' })
     if (!action || req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
     try {
       const body = await readJson(req)
