@@ -224,6 +224,58 @@ export interface WorkerExecution {
 }
 
 /**
+ * Where a run's liveness needs the operator's look (PROP-0013, ADR-0056):
+ * - `stalled`: running, its agent process present and quiet for the source's stall bound; nothing is
+ *   sent to it, and its own deadline ends it;
+ * - `looking`: started, its holder no longer holds it, and it is not known to be gone: verdicts are
+ *   being taken, and it reaches the operator unless one finds it gone;
+ * - `unknown`: it ended without being known to be gone, so what it ran in (its session, its
+ *   workspace) stays held until the operator frees it.
+ */
+export type LivenessState = 'stalled' | 'looking' | 'unknown'
+export const LIVENESS_STATES: readonly LivenessState[] = ['unknown', 'looking', 'stalled']
+
+/** Runs one source lists at most in a {@link LivenessReport} (INV-9); its `counts` count them all. */
+export const MAX_LIVENESS_RUNS = 64
+
+/** A run whose liveness needs the operator's look, as the source that ran it tells it. */
+export interface RunLiveness {
+  /** The execution, by its source's id. */
+  execution: string
+  worker: string
+  state: LivenessState
+  /** Since when it is in this state (ISO 8601). */
+  since: string
+  /** The latest verdict given on it, by the rule the source names (such as `liveness@1`). */
+  verdict?: string
+  /** The verdicts taken in a row, and how many it gets before it goes to the operator. */
+  looks?: { taken: number; max: number }
+  /** Why: each signal as last found (the holder, the agent process, the activity). */
+  reasons: string[]
+  /** The decision that ended it, for `unknown`. */
+  decision?: ArtifactRef
+  /** What it holds: its session, its workspace, each in words. */
+  holds: string[]
+  /** What the operator can do now, in one sentence. */
+  action: string
+  /** The workflow run it served, and its session, when it has them. */
+  runId?: string
+  sessionId?: string
+}
+
+/** What a source tells of the runs whose liveness needs a look: at most {@link MAX_LIVENESS_RUNS}, the latest first, and how many there are in each state. */
+export interface LivenessReport {
+  runs: RunLiveness[]
+  counts: Record<LivenessState, number>
+}
+
+/** Which runs to tell of: those of one workflow run, or one execution; none, every one. */
+export interface LivenessQuery {
+  runId?: string
+  execution?: string
+}
+
+/**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept
  * this work now, how is it invoked, what did it produce). `describe` is called on every
  * route, so states are current.
@@ -267,6 +319,12 @@ export interface WorkerSource {
    * a source that cannot tell says so here, never undefined. Undefined: free, or not this source's.
    */
   held?(sessionId: string): Promise<string | undefined>
+  /**
+   * The runs of this source whose liveness needs the operator's look (PROP-0013, ADR-0056): stalled,
+   * being looked at, or ended without being known to be gone. Read from the source's durable facts
+   * when asked. A source that cannot tell throws, and is never read as having none (INV-2).
+   */
+  liveness?(query?: LivenessQuery): Promise<LivenessReport>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -420,6 +478,15 @@ export abstract class Workers extends Service {
    * automated input (PROP-0013, ADR-0056).
    */
   abstract held?(sessionId: string): Promise<string | undefined>
+
+  /**
+   * The runs whose liveness needs the operator's look, from every source that tells it
+   * (`WorkerSource.liveness`): each with its `source`, the latest first, at most
+   * {@link MAX_LIVENESS_RUNS}; the counts in each state across them; and each source that could not
+   * tell, with why (INV-2: never read as having none). Optional: a caller that finds no `liveness`
+   * cannot tell (PROP-0013).
+   */
+  abstract liveness?(query?: LivenessQuery): Promise<{ runs: Array<RunLiveness & { source: string }>; counts: Record<LivenessState, number>; unread: Array<{ source: string; detail: string }> }>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }
