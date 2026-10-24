@@ -78,8 +78,8 @@ const ownerRows = (ctx: Context, ...values: string[]): void => {
   for (const value of values) insert.run(value)
 }
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>): Scenario<Boot> => ({
-  id: `artifacts.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: Scenario<Boot>['since'] = '1.0'): Scenario<Boot> => ({
+  id: `artifacts.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
     try {
@@ -92,7 +92,7 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const artifactsSuite = defineSuite<Boot>({
   seam: 'artifacts',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('id-from-content', 'computes the id from the canonical content alone, never trusting the producer\'s id or time (REQ-ART-2)', async (ctx) => {
       const forged = `sha256:${'f'.repeat(64)}`
@@ -269,6 +269,18 @@ export const artifactsSuite = defineSuite<Boot>({
       expect(ids({ runId: 'run-3' })).toEqual([])
       expect(ctx.artifacts.list({ limit: 2 })).toHaveLength(2)
     }),
+    scenario('list-newest', 'lists newest first on asking, the latest within the limit: the exact reverse of the stored order (INV-9)', async (ctx) => {
+      const stored = []
+      for (const text of ['first', 'second', 'third']) {
+        stored.push(ctx.artifacts.put(answer(text, { runId: 'run-1' })).id)
+        // A later millisecond: stored later reads as newer.
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      expect(ctx.artifacts.list({ runId: 'run-1' }).map((e) => e.id)).toEqual(stored)
+      expect(ctx.artifacts.list({ runId: 'run-1', newest: true }).map((e) => e.id)).toEqual([...stored].reverse())
+      expect(ctx.artifacts.list({ runId: 'run-1', newest: true, limit: 2 }).map((e) => e.id)).toEqual([stored[2], stored[1]])
+      expect(ctx.artifacts.list({ kind: 'report', newest: false, limit: 1 }).map((e) => e.id)).toEqual([stored[0]])
+    }, '1.1'),
     scenario('read-window', 'reads an artifact\'s header and a window of its text, else its JSON, in whole characters within bounds, and refuses anything but a content id (INV-9, INV-12)', async (ctx) => {
       const stored = ctx.artifacts.put(answer('a😀b😀c', { classification: 'local-private', runId: 'run-1', nodeId: 'review:1' }))
       expect(ctx.artifacts.read(stored.id)).toMatchObject({
