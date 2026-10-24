@@ -78,7 +78,8 @@ Tests: `tests/guard.spec.ts`.
 - **`readRoster(services, { scope, now? })`** reads each service it is given
   once, bounded (`ROSTER_BOUNDS`): the Worker registry (`list`, `sources`,
   `siblings`), the agent accounts (`agentAccounts.list`, `workersIn`, and,
-  when it has them, `labelOf` and `providers` for the runtimes' titles), the
+  when it has them, `labelOf`, `unreadReport` for why a window of the
+  account has no reading yet, and `providers` for the runtimes' titles), the
   website accounts (`list`, `duplicateIdentities`), the resource ledger
   (`pools`, `usage`), the event log (`usage.unknown`, counted by
   `countUnknownUsage` in [`libs`](../libs/README.md); each listed step's

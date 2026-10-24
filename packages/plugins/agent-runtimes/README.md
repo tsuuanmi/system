@@ -24,7 +24,9 @@
   registered secret path (`secretPaths()`), plus the configured `hide` paths
   (kept as given, so a typo shows in the probe). `readOnly` (default
   `$DSH_HOME/system/tools`) and the caller's binds (its home, its workspace)
-  come back. `$DSH_HOME` expands in both lists.
+  come back. `$DSH_HOME` expands in both lists. Whatever it hides,
+  `confinedCommand` gives each confined command a fresh `/tmp` of its own as
+  `TMPDIR`, `TMP`, and `TEMP` (agent-runtime-core).
 - **Config:** `bwrap` (default: found on PATH once, a root-owned one first),
   `hide`, `readOnly`.
 - **Dependencies:** `system-libs` (`dshHome`, `secretPaths`).

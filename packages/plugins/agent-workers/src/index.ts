@@ -501,6 +501,8 @@ export class AgentWorkers extends Service {
   private readonly cutover: Cutover
   /** The periodic read of each account's usage report into its pool (ADR-0059, ./reports.ts). */
   private readonly reports: ReportSchedule
+  /** Each account whose last usage report could not be read: why, and when (for the roster); a report read clears it. */
+  private readonly unreadReports = new Map<string, { why: string; at: string }>()
   private sweeping: Promise<SweepOutcome> | undefined
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
@@ -530,6 +532,7 @@ export class AgentWorkers extends Service {
       root: config.accountHomes ?? join(dshHome(), 'system', 'agent-homes'),
       workersIn: (account) => this.workersIn(account),
       labelOf: (accountId) => config.assignments?.find((a) => a.account === accountId)?.label,
+      unreadReport: (accountId) => this.unreadReports.get(accountId),
     })
     this.probes = new Probes({
       ttlMs: config.probeTtlMs ?? 5 * 60_000,
@@ -1004,17 +1007,23 @@ export class AgentWorkers extends Service {
   /**
    * The usage report of the account a Worker runs on, read in `home` (its runtime's own when
    * undefined) through `readLimits`: bounded, aborted by a stop, and fail-closed (ADR-0059). Undefined
-   * when its runtime reads none, or when the report cannot be read: that is logged, nothing is
+   * when its runtime reads none, or when the report cannot be read: that is logged and kept as the
+   * account's last unread report (the roster shows why on a window with no reading yet), nothing is
    * recorded, and its windows keep their last readings.
    */
   private async usageReport(worker: WorkerSpec, home: string | undefined, when: 'its periodic read' | `after run ${string}`): Promise<LimitObservation[] | undefined> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
     if (typeof provider?.limits !== 'function') return undefined
-    this.reports.noted(accountOf(worker))
+    const account = accountOf(worker)
+    this.reports.noted(account)
     const report = await readLimits(provider, home !== undefined ? { home } : {}, this.stopped.signal)
-    if ('limits' in report) return report.limits
+    if ('limits' in report) {
+      this.unreadReports.delete(account)
+      return report.limits
+    }
     if (this.stopped.signal.aborted) return undefined
-    const message = `agent Workers: the usage report of ${accountOf(worker)} (${when}) cannot be read, so nothing is recorded and its windows keep their last readings: ${report.unreadable}`
+    this.unreadReports.set(account, { why: report.unreadable, at: new Date().toISOString() })
+    const message = `agent Workers: the usage report of ${account} (${when}) cannot be read, so nothing is recorded and its windows keep their last readings: ${report.unreadable}`
     // The periodic read says a standing problem once; a run's own read, each time.
     if (when === 'its periodic read') this.warnOnce(message)
     else this.ctx.logger.warn(message)

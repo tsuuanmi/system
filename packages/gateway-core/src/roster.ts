@@ -135,6 +135,8 @@ export interface RosterServices {
       workersIn(account: never): string[]
       /** The operator's display label of a slot's account, when one is configured. */
       labelOf?(account: never): string | undefined
+      /** Why a slot's account's last usage report could not be read, and when, while no later one was read. */
+      unreadReport?(account: never): { why: string; at: string } | undefined
       /** Each agent runtime, with its title for people when its provider gives one. */
       providers?(): Array<{ provider: string; title?: string | undefined }>
     }
@@ -154,8 +156,11 @@ export interface RosterInput {
   websiteAccounts: Known<RosterWebsiteAccount[]>
   /** Groups of website accounts signed in as one person. */
   duplicates: Known<string[][]>
-  /** Each enrolled agent account with the Workers that run on it, and the operator's label when configured. */
-  agentAccounts: Known<Array<{ account: RosterAgentAccount; workers: string[]; label?: string | undefined }>>
+  /**
+   * Each enrolled agent account with the Workers that run on it, the operator's label when
+   * configured, and why its last usage report could not be read, while no later one was.
+   */
+  agentAccounts: Known<Array<AgentEntry>>
   /** Each agent runtime's title for people, by its kind, as its provider gives it; a Worker of a runtime not in it is named by its provider. */
   titles?: ReadonlyMap<string, string>
   pools: Known<RosterPool[]>
@@ -264,8 +269,8 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 const later = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined ? a : Date.parse(b) > Date.parse(a) ? b : a)
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** An enrolled agent account as the roster read it: the slot's record, its Workers, and the operator's label when configured. */
-type AgentEntry = { account: RosterAgentAccount; workers: string[]; label?: string | undefined }
+/** An enrolled agent account as the roster read it: the slot's record, its Workers, the operator's label when configured, and its last unread usage report. */
+type AgentEntry = { account: RosterAgentAccount; workers: string[]; label?: string | undefined; unreadReport?: { why: string; at: string } | undefined }
 
 /** The account record a Worker runs on: the enrolled agent account of its id (or that lists it), else the website account of its id. */
 function recordOf(input: RosterInput, d: RosterDescriptor, scope: RosterScope): { record: Known<RosterAccountRecord>; agent?: AgentEntry; site?: RosterWebsiteAccount } {
@@ -346,11 +351,16 @@ function reasonOf(d: RosterDescriptor, rec: RosterAccountRecord | undefined, rec
   return unknown(`its Worker source gives no reason${isKnown(record) ? '' : `, and its account could not be read (${record.unknown})`}; system explain on a run it was refused for shows the route's reasons`)
 }
 
-function windowsOf(p: RosterPool): RosterWindow[] {
+/**
+ * A pool's windows as the roster shows them. A window with no reading yet says, for the operator, why
+ * its account's last usage report could not be read (`unread`), when that is the latest read of it.
+ */
+function windowsOf(p: RosterPool, unread: { why: string; at: string } | undefined): RosterWindow[] {
+  const none = unread ? `no reading yet: its account's usage report could not be read at ${unread.at}: ${unread.why}` : 'no reading yet'
   return p.windows.map((w) => {
     const r = p.readings.find((reading) => reading.window.id === w.id)
     const base = { id: w.id, kind: w.kind, ...(w.seconds !== undefined ? { seconds: w.seconds } : {}) }
-    if (!r) return { ...base, state: 'unknown' as const, used: unknown<number>('no reading yet'), resets: unknown<string>('no reading yet') }
+    if (!r) return { ...base, state: 'unknown' as const, used: unknown<number>(none), resets: unknown<string>('no reading yet') }
     const reset = later(r.resetsAt, r.cooldownUntil)
     return {
       ...base, state: r.state, observedAt: r.observedAt, source: r.source,
@@ -360,7 +370,7 @@ function windowsOf(p: RosterPool): RosterWindow[] {
   })
 }
 
-function poolsOf(input: RosterInput, d: RosterDescriptor): Known<RosterPoolView[]> {
+function poolsOf(input: RosterInput, d: RosterDescriptor, unread: { why: string; at: string } | undefined): Known<RosterPoolView[]> {
   if (!d.account) return unknown('its Worker source names no account, so no pool can be told to be its')
   if (!isKnown(input.pools)) return unknown(input.pools.unknown)
   const usage = input.unknownUsage
@@ -373,7 +383,7 @@ function poolsOf(input: RosterInput, d: RosterDescriptor): Known<RosterPoolView[
     const unknownUsage: RosterPoolView['unknownUsage'] = !isKnown(usage) ? unknown(usage.unknown)
       : usage.value.unread ? unknown(`more than ${ROSTER_BOUNDS.unknownEntries} usage.unknown entries are in the pools' windows; only the first were read`)
         : known({ runs: counted?.runs ?? 0, kinds: counted?.kinds ?? {} })
-    return { pool: p.pool, kind: p.kind, available: p.available, ...(p.until ? { until: p.until } : {}), windows: windowsOf(p), unknownUsage }
+    return { pool: p.pool, kind: p.kind, available: p.available, ...(p.until ? { until: p.until } : {}), windows: windowsOf(p, unread), unknownUsage }
   }))
 }
 
@@ -463,7 +473,8 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
       const account: Known<RosterAccount> = d.account
         ? known({ id: d.account.id, group: d.account.group, mode: d.account.mode, ...(d.account.limitUntil ? { limitUntil: d.account.limitUntil } : {}), record })
         : unknown('its Worker source names no account (a descriptor below capability-descriptor@1.5, or a Worker of none)')
-      const pools = poolsOf(input, d)
+      // Why its account's usage report could not be read is the operator's (it may name the account's home).
+      const pools = poolsOf(input, d, options.scope === 'operator' && agent?.account.accountId === d.account?.id ? agent?.unreadReport : undefined)
       const work = workOf(input, d.worker, options.now)
       // A Worker the engine sees running a step is busy, whatever load its source reports (none, or none running).
       const running = isKnown(work) ? work.value.items.length : 0
@@ -578,7 +589,8 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
   const slots = agentWorkers?.agentAccounts
   const agentAccounts = await read(slots ? undefined : 'the agent accounts (ctx.agentWorkers) are not mounted', () => slots!.list().map((account) => {
     const label = slots!.labelOf?.(account as never)
-    return { account, workers: slots!.workersIn(account as never), ...(label !== undefined ? { label } : {}) }
+    const unreadReport = slots!.unreadReport?.(account as never)
+    return { account, workers: slots!.workersIn(account as never), ...(label !== undefined ? { label } : {}), ...(unreadReport ? { unreadReport } : {}) }
   }))
   // The agent runtimes' titles: a name for people only, so a read that fails names the Workers by their provider.
   const titles = new Map<string, string>()

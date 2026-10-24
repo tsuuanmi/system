@@ -267,7 +267,7 @@ worktreeSetup:
   hash, used once. With no queue loaded, nothing runs.
 - **Confined.** Each command runs under the read confinement with more: the host's file system
   read-only except the worktree (`confinedCommand`'s `readOnly`), no network but its own loopback
-  (`network: false`), the worktree as its directory, a private `/tmp`, its own PID namespace and
+  (`network: false`), the worktree as its directory, a private `/tmp` as its `TMPDIR`, its own PID namespace and
   session, the daemon's scrubbed environment (`childEnvironment`), and the setup's deadline
   (SIGKILL; bubblewrap takes the namespace with it). The confinement is proven on the host
   (`proveConfinement`) before each setup.
@@ -389,6 +389,10 @@ removes it; it is clean then, and its branch always stays.
   `--die-with-parent`): Codex through an owner-only launcher (`writeLauncher`), ACP agents
   and the Antigravity CLI directly, Claude Code through the SDK's `spawnClaudeCodeProcess`, which wraps the SDK's own
   command line ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
+  Every confined command (an agent and everything it starts, a probe, a worktree's setup) has a
+  temporary directory of its own: a fresh tmpfs at `/tmp`, never the host's, which `TMPDIR`,
+  `TMP`, and `TEMP` name whatever the daemon's own are (`confinedCommand`, T113), so a tool's
+  temporary files and unix sockets (a test runner's IPC pipe) land there and go with it.
   Each agent runs in a home of its own (Codex's `CODEX_HOME`, Claude Code's
   `CLAUDE_CONFIG_DIR`, the Antigravity CLI's `HOME`, each under `<DSH_HOME>/system`), never the
   operator's login, which is hidden; the operator signs in there once, and a probe that finds no
@@ -729,7 +733,20 @@ The Antigravity CLI offers no command tool (`run_command` is denied), so its Wor
 
 Commands that need the network (installing packages) fail inside a Worker: dependencies are
 prepared before the run, in a worktree by its repository's [setup](#a-worktrees-setup), offline
-from what the host holds. The sandbox runtime does not claim to stop a kernel escape
+from what the host holds.
+
+Commands that listen on a unix socket fail inside a Worker too, whatever the directory: both
+command sandboxes refuse unix sockets on Linux by a seccomp filter (`EPERM`), the SDK's unless
+`network.allowAllUnixSockets` (which the SDK's settings describe as disabling that blocking) and
+Codex's as part of its no-network sandbox (from its documented design; not re-checked live). The
+`tsx` CLI is one: it opens an IPC pipe in its temporary directory (`/tmp/tsx-<uid>/<pid>.pipe`)
+for every script, so a repository check started through it fails as
+`listen EPERM: operation not permitted` (T113). The private `/tmp` above is not the cause and
+does not lift it. Allowing unix sockets would let a command reach any socket the confinement
+leaves visible (a container engine's, a system bus), a loosening of ADR-0038 that needs its own
+decision, so none is made: such a check runs outside the Worker, or the repository starts its
+scripts without a unix socket. (A worktree's setup runs under the read confinement alone, so its
+commands can listen on one.) The sandbox runtime does not claim to stop a kernel escape
 ([threat model](../security/threat-model.md#threats-and-controls)).
 
 ## Metering
@@ -867,7 +884,7 @@ also reports every window of the signed-in account on request, without a model t
 
   | Runtime | Report | Windows | Versions |
   |---|---|---|---|
-  | Claude Code | the SDK's `get_usage` control request (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`) in a session sent no message (streaming input that never yields), with no tool, settings, MCP server, or hook, and no session written (`persistSession: false`); then closed | each window of `rate_limits` (when `rate_limits_available`) whose `utilization` is a number: `five_hour`, `seven_day`, `seven_day_oauth_apps`, and the per-model weekly windows, by name (the names a `rate_limit_event` uses); `model_scoped`, `extra_usage`, the plan type, and the session are not read; `rate_limits_available: false` (an API key) is `unreadable` | `VERIFIED_LIMIT_VERSIONS`: 2.1.308, 2.1.309, 2.1.310 |
+  | Claude Code | the SDK's `get_usage` control request (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`) in a session sent no message (streaming input that never yields), with no tool, settings, MCP server, or hook, and no session written (`persistSession: false`); then closed | each window of `rate_limits` (when `rate_limits_available`) whose `utilization` is a number: `five_hour`, `seven_day`, `seven_day_oauth_apps`, and the per-model weekly windows, each under its name (the names a `rate_limit_event` uses); a window is told by its shape, an object with a `utilization` (the endpoint's body adds entries without a new Claude Code version, T111), so the entries that are not (arrays such as `model_scoped` and `limits`, objects without a `utilization` such as `spend`, booleans, strings, nulls) and `extra_usage` are skipped, while a number or a window with a field of the wrong type is `unreadable`; the plan type and the session are not read; `rate_limits_available: false` (an API key) is `unreadable` | `VERIFIED_LIMIT_VERSIONS`: 2.1.308, 2.1.309, 2.1.310 |
   | Codex | `codex app-server` in the account's `CODEX_HOME` (a home with no MCP server, the runtime's `--config` overrides): `initialize`, `initialized`, `account/rateLimits/read`, then ended; no thread, no turn | `primary` and `secondary`, each named by its length, `<windowDurationMins>m` (`300m`, `10080m`), since which is the five-hour window is not fixed by name; one of no stated length only when used up, as `*` | `VERIFIED_RATE_LIMITS_VERSIONS`: 0.164.0 |
   | Antigravity CLI | `agy --print=/usage --output-format json` in its own home only, which print mode answers itself (as [above](#limit-readings)) | each enabled bucket that says what is left, by its `id` | `VERIFIED_LIMIT_VERSIONS`: 1.4.6 |
 
@@ -884,14 +901,18 @@ also reports every window of the signed-in account on request, without a model t
   `limited` reading closed** before the later of that reading's `resetsAt` and `cooldownUntil`:
   that `ok` reading is not recorded, and is logged. An `unreadable` report, a timeout, or a failure
   records nothing and is logged; the window keeps its last reading and `observedAt`, which the
-  roster shows.
+  roster shows. Why it could not be read, and when, is kept per account until a report is read
+  (`agentAccounts.unreadReport`, in memory), and the operator's roster says it on each window of
+  the account with no reading yet (`used unknown (no reading yet: its account's usage report could
+  not be read at <time>: <why>)`).
 - **Evidence** (2026-10-24, no account used): Claude Code's handler, the shaping of its answer
   (`rate_limits` is the body of the account's `GET /api/oauth/usage`, or the CLI's snapshot of it
   under a minute old, kept per account in the home's `.claude.json`), the response schema (window
   `{ utilization, resets_at }`, "Percentage of the window used, 0-100"), and the `/usage` renderer
   (`Math.floor(utilization)` "% used") are the same in 2.1.308, 2.1.309, and 2.1.310 but for
   minified names, and the read writes no transcript and sends no model request; Codex's and agy's
-  as [above](#limit-readings). Fixtures: `runtime-claude-agent-sdk/tests/fixtures/claude-get-usage.json`,
+  as [above](#limit-readings). Fixtures: `runtime-claude-agent-sdk/tests/fixtures/claude-get-usage.json`
+  and `claude-get-usage-live.json` (the shape a live answer took on 2026-10-24, T111),
   `runtime-codex-sdk/tests/fixtures/codex-0.164.0-rate-limits.json`,
   `runtime-antigravity-cli/tests/fixtures/agy-1.4.6-usage.json`.
 - **What stays unknown:** absolute amounts (each report gives shares); windows a runtime does not

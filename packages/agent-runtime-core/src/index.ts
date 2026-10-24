@@ -589,6 +589,13 @@ const real = (path: string): string | undefined => {
 const under = (path: string, root: string): boolean => path.startsWith(root.endsWith(sep) ? root : root + sep)
 const depth = (path: string): number => path.split(sep).filter(Boolean).length
 
+/**
+ * The temporary directory of every confined command: a fresh tmpfs of its own at `/tmp`, never the
+ * host's, which `TMPDIR`, `TMP`, and `TEMP` name, so a tool's temporary files and sockets (a test
+ * runner's IPC pipe, a compiler's cache) land there whatever the daemon's own temporary directory is.
+ */
+export const PRIVATE_TMP = '/tmp'
+
 interface Plan {
   /** Hidden roots that exist: no other hidden path contains them. */
   hidden: Array<{ path: string; dir: boolean }>
@@ -597,8 +604,10 @@ interface Plan {
   binds: Array<{ path: string; writable: boolean }>
   /** Hide entries that do not exist on this host (a typo, or nothing to hide yet). */
   absent: string[]
-  /** Binds that would re-expose a hidden path. */
+  /** Binds that would re-expose a hidden path, or the host's temporary directory. */
   conflicts: string[]
+  /** The host's `/tmp` (its real path), when no hidden directory already lies over it: a tmpfs is mounted there. */
+  tmp?: string
 }
 
 function plan(confinement: Confinement): Plan {
@@ -616,9 +625,13 @@ function plan(confinement: Confinement): Plan {
       if (path) binds.set(path, writable || (binds.get(path) ?? false))
     }
   }
-  const conflicts = [...binds.keys()].flatMap((bind) => [...hides.keys()].filter((h) => h === bind || under(h, bind)).map((h) => `binding back ${bind} would expose ${h}`))
+  // The host's /tmp is never seen: hidden like the rest when the confinement names it, else a tmpfs of its own.
+  const host = real(PRIVATE_TMP)
+  const covered = host !== undefined && [...hides.keys()].some((h) => h === host || under(host, h))
+  const masked = [...hides.keys(), ...(host !== undefined && !covered ? [host] : [])]
+  const conflicts = [...binds.keys()].flatMap((bind) => masked.filter((h) => h === bind || under(h, bind)).map((h) => `binding back ${bind} would expose ${h}`))
   const hidden = [...hides].filter(([path]) => ![...hides.keys()].some((other) => other !== path && under(path, other))).map(([path, dir]) => ({ path, dir }))
-  return { hidden, hides: [...hides.keys()], binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts }
+  return { hidden, hides: masked, binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts, ...(host !== undefined && !covered ? { tmp: host } : {}) }
 }
 
 /**
@@ -629,8 +642,8 @@ function plan(confinement: Confinement): Plan {
 export interface ConfinedCommandOptions {
   /**
    * The host's file system is read-only to the child: only the confinement's `writable` binds, the
-   * tmpfs that hides each hidden directory, and writable `views` can be written. Default: the host
-   * as writable as it is to the daemon.
+   * tmpfs that hides each hidden directory (its private `/tmp` among them), and writable `views` can
+   * be written. Default: the host as writable as it is to the daemon.
    */
   readOnly?: boolean
   /** `false`: no network, a network namespace of the child's own with only its loopback. Default: the host's network. */
@@ -650,11 +663,13 @@ export interface ConfinedCommandOptions {
  * The command line that runs `command args` under `confinement`: its own PID namespace (with
  * its own /proc) and session, so nothing it starts outlives it and it cannot reach the
  * daemon's terminal; then the mounts, shallowest first, so a path bound back lies over the
- * tmpfs that hides its parent; then `options`' views. Throws when a bind or a view would
- * re-expose a hidden path.
+ * tmpfs that hides its parent; then `options`' views. Its temporary directory is always a fresh
+ * tmpfs of its own at {@link PRIVATE_TMP} (the confinement's when it hides `/tmp`, else one mounted
+ * there), writable whatever `readOnly` says, and `TMPDIR`, `TMP`, and `TEMP` name it, over any value
+ * of its environment. Throws when a bind or a view would re-expose a hidden path or the host's `/tmp`.
  */
 export function confinedCommand(command: string, args: readonly string[], confinement: Confinement, options: ConfinedCommandOptions = {}): { command: string; args: string[] } {
-  const { hidden, hides, binds, conflicts } = plan(confinement)
+  const { hidden, hides, binds, conflicts, tmp } = plan(confinement)
   if (conflicts.length) throw new Error(`read confinement refused: ${conflicts[0]}`)
   const views = (options.views ?? []).map((view) => {
     const source = real(view.source)
@@ -666,6 +681,7 @@ export function confinedCommand(command: string, args: readonly string[], confin
   })
   if (options.chdir !== undefined && !isAbsolute(options.chdir)) throw new Error(`read confinement refused: the start directory ${options.chdir} is not absolute`)
   const mounts = [
+    ...(tmp !== undefined ? [{ path: tmp, args: ['--tmpfs', tmp] }] : []),
     ...hidden.map((h) => ({ path: h.path, args: h.dir ? ['--tmpfs', h.path] : ['--ro-bind', '/dev/null', h.path] })),
     ...binds.map((b) => ({ path: b.path, args: [b.writable ? '--bind' : '--ro-bind', b.path, b.path] })),
   ].sort((a, b) => depth(a.path) - depth(b.path))
@@ -673,6 +689,7 @@ export function confinedCommand(command: string, args: readonly string[], confin
   const argv = [
     '--die-with-parent', '--unshare-pid', ...(options.network === false ? ['--unshare-net'] : []), '--new-session', ...root, '--proc', '/proc',
     ...mounts.flatMap((m) => m.args), ...views.flat(), ...(options.chdir !== undefined ? ['--chdir', options.chdir] : []),
+    ...['TMPDIR', 'TMP', 'TEMP'].flatMap((name) => ['--setenv', name, PRIVATE_TMP]),
   ]
   return { command: confinement.bwrap, args: [...argv, '--', command, ...args] }
 }
