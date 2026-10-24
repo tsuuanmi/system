@@ -282,6 +282,22 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('reads a run\'s change from every source that holds a worktree of it, with its name; a source that cannot read its own is named, never read as no change (T122, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.changes !== 'function') return
+        const change = { repository: '/repo', workspace: '/wt/run_1', branch: 'system/run/run_1', base: { branch: 'main', sha: 'a'.repeat(40) }, head: 'a'.repeat(40), files: [{ path: 'a.ts', status: 'modified' as const, added: 1, removed: 0, diff: '+x' }], more: 0, truncated: false }
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b')], { changes: async (runId) => (runId === 'run_1' ? [change] : undefined) }))
+        ctx.workers.register(source('broken', [worker('w:c')], { changes: async (runId) => { if (runId === 'run_1') throw new Error('git failed'); return undefined } }))
+        expect(await ctx.workers.changes('run_1')).toEqual({ changes: [{ ...change, source: 'two' }], unread: [{ source: 'broken', detail: 'git failed' }] })
+        expect(await ctx.workers.changes('run_2')).toEqual({ changes: [], unread: [] })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('lists the runs whose liveness needs a look from every source that tells it, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
       const { ctx, dispose } = await boot()
       try {

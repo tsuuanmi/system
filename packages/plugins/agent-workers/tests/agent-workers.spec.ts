@@ -1445,6 +1445,50 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(agent.runs[1]!.workspace).toBe(repo)
   })
 
+  it('reads a workflow run\'s change in its worktree for the operator, read only: each file with its lines and diff, an untracked file as added, a link never followed, a removed worktree\'s from its branch (T122, INV-2)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const outside = temp('system-outside-')
+    writeFileSync(join(outside, 'secret.txt'), 'not the run\'s\n')
+    const agent = developer({ act: (spec) => { const done = writes(spec); if (spec.sandbox === 'workspace-write') symlinkSync(join(outside, 'secret.txt'), join(spec.workspace, 'leak.txt')); return done } })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect((await run(ctx, 'agent:dev', 'k-1', 'run_seen')).status).toBe('completed')
+    const workspace = agent.runs[0]!.workspace
+    const status = git(workspace, 'status', '--porcelain', '--untracked-files=all')
+    // The test's own status may refresh the index; what changes() does is measured after it.
+    const index = statSync(join(git(workspace, 'rev-parse', '--absolute-git-dir'), 'index')).mtimeMs
+    const source = ctx.workers.source('agents')!
+    const [change, ...others] = (await source.changes!('run_seen'))!
+    expect(others).toEqual([])
+    expect(change).toMatchObject({ repository: repo, workspace, branch: 'system/run/run_seen', base: { branch: 'main', sha: head }, head, more: 0, truncated: false })
+    expect(change!.files.map((f) => [f.path, f.status, f.added, f.removed])).toEqual([['calc.py', 'modified', 1, 1], ['leak.txt', 'added', undefined, undefined], ['note-run_seen.txt', 'added', 1, 0]])
+    expect(change!.files[0]!.diff).toMatch(/^diff --git a\/calc.py b\/calc.py\n[\s\S]*-    return a - b\n\+    return a \+ b$/)
+    // A link is named, never followed out of the worktree; an untracked file reads as added lines.
+    expect(change!.files[1]).toEqual({ path: 'leak.txt', status: 'added', note: 'a link or a file that cannot be opened, not read' })
+    expect(JSON.stringify(change)).not.toContain('not the run\'s')
+    expect(change!.files[2]!.diff).toBe('new file note-run_seen.txt (untracked)\n+k-1')
+    // Read only: the worktree, its index, and the repository are as they were.
+    expect(statSync(join(git(workspace, 'rev-parse', '--absolute-git-dir'), 'index')).mtimeMs).toBe(index)
+    expect(git(workspace, 'status', '--porcelain', '--untracked-files=all')).toBe(status)
+    untouched(repo, head)
+    // A run this source holds no worktree of reads as none; through the registry, with the source's name.
+    expect(await source.changes!('run_other')).toBeUndefined()
+    expect((await ctx.workers.changes!('run_seen')).changes.map((c) => c.source)).toEqual(['agents'])
+    // A worktree whose .git file points elsewhere is not read: an error, never no change (INV-2).
+    const pointer = readFileSync(join(workspace, '.git'), 'utf8')
+    writeFileSync(join(workspace, '.git'), `gitdir: ${join(repo, '.git')}\n`)
+    await expect(source.changes!('run_seen')).rejects.toThrow(/no longer points to the worktree's own directory/)
+    expect((await ctx.workers.changes!('run_seen')).unread).toEqual([{ source: 'agents', detail: expect.stringMatching(/no longer points/) }])
+    writeFileSync(join(workspace, '.git'), pointer)
+    // Removed after the retention: read from its branch, the committed change only.
+    rmSync(join(workspace, 'leak.txt'))
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
+    const [kept] = (await source.changes!('run_seen'))!
+    expect(kept).toMatchObject({ fromBranch: true, base: { branch: 'main', sha: head }, head: git(repo, 'rev-parse', 'system/run/run_seen') })
+    expect(kept!.files.map((f) => [f.path, f.status])).toEqual([['calc.py', 'modified'], ['note-run_seen.txt', 'added']])
+    untouched(repo, head)
+  })
+
   it('gives a reviewer of the same workflow run the writer\'s worktree, and binds its review to that subject (REQ-WF-5, REQ-TEAM-5, INV-15)', async () => {
     const repo = repository()
     const head = git(repo, 'rev-parse', 'HEAD')

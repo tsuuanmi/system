@@ -25,14 +25,14 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import type { Landed, LandStep } from '@tsuuanmi/system-workers-core'
+import { CHANGE_BOUNDS, type ChangedFile, type Landed, type LandStep, type WorkChange } from '@tsuuanmi/system-workers-core'
 
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -588,6 +588,111 @@ export class Worktrees {
     const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(step.runId, step.workspace) as WorktreeRow | undefined
     if (!row) return undefined
     return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : this.merge(row, step)))
+  }
+
+  /**
+   * The change of workflow run `runId` in each of its worktrees (T122), read only: what the worktree
+   * holds against the commit it forked from on the repository's checked-out branch, committed or
+   * not, untracked files as added; a removed worktree's from its branch. git reads through the
+   * worktree's own administrative directory, with no optional lock, hook, or external diff; an
+   * untracked file is read only when it is a regular file under the worktree, never through a link.
+   * Undefined when this source holds no worktree of the run; a worktree that cannot be read throws.
+   */
+  async changes(runId: string): Promise<WorkChange[] | undefined> {
+    const rows = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? ORDER BY repository').all(runId) as unknown as WorktreeRow[]
+    if (!rows.length) return undefined
+    const changes: WorkChange[] = []
+    for (const row of rows) changes.push(await this.changeOf(row))
+    return changes
+  }
+
+  private async changeOf(row: WorktreeRow): Promise<WorkChange> {
+    const base = await this.baseOf(row.repository)
+    if ('problem' in base) throw new WorktreeError(`the change of ${row.path} cannot be read: ${base.problem}`)
+    const READ = ['--no-optional-locks']
+    const DIFF = ['-M', '--no-color', '--no-ext-diff', '--no-textconv']
+    const live = row.removed_at === null && existsSync(row.path)
+    let head: string
+    let run: (args: string[]) => Promise<string>
+    let against: string[]
+    if (live) {
+      await this.verify(row)
+      run = (args) => git(row.path, [...READ, `--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
+      head = (await run(['rev-parse', 'HEAD'])).trim()
+      against = [(await git(row.repository, [...READ, 'merge-base', base.sha, head])).trim()]
+    } else {
+      run = (args) => git(row.repository, [...READ, ...args])
+      head = (await run(['rev-parse', '--verify', `refs/heads/${row.branch}^{commit}`])).trim()
+      const fork = (await run(['merge-base', base.sha, head])).trim()
+      against = [fork, head]
+    }
+    const fork = against[0]!
+    // One diff queue, read three ways in the same order: name and status, lines, and the patch.
+    const statuses = (await run(['diff', ...DIFF, '--name-status', '-z', ...against])).split('\0').filter(Boolean)
+    const numbers = (await run(['diff', ...DIFF, '--numstat', '-z', ...against])).split('\0')
+    const patch = await run(['diff', ...DIFF, ...against])
+    const files: ChangedFile[] = []
+    for (let i = 0, n = 0; i < statuses.length && statuses[i];) {
+      const code = statuses[i++]!
+      const from = code.startsWith('R') || code.startsWith('C') ? statuses[i++] : undefined
+      const path = statuses[i++]!
+      // numstat -z: "added\tremoved\tpath" or, for a rename, "added\tremoved\t" then from and to.
+      const counts = (numbers[n++] ?? '').split('\t')
+      if (from !== undefined) n += 2
+      const binary = counts[0] === '-'
+      files.push({ path, status: code.startsWith('A') ? 'added' : code.startsWith('D') ? 'deleted' : from !== undefined ? 'renamed' : 'modified', ...(from !== undefined ? { from } : {}),
+        ...(binary ? { binary: true as const } : { added: Number(counts[0]) || 0, removed: Number(counts[1]) || 0 }) })
+    }
+    const blocks = patch ? patch.split(/^(?=diff --git )/m).filter((b) => b.startsWith('diff --git ')) : []
+    // The patch's blocks are the queue's files in order; should git ever disagree with itself, no file gets another's diff.
+    const matched = blocks.length === files.length
+    if (live) {
+      for (const path of (await run(['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean).sort()) files.push(this.untracked(row.path, path))
+    }
+    let total = 0
+    let truncated = false
+    const shown = files.slice(0, CHANGE_BOUNDS.files).map((file, i) => {
+      const diff = file.diff ?? (matched && i < blocks.length && !file.binary ? blocks[i]!.trimEnd() : undefined)
+      if (diff === undefined) return file
+      const room = Math.min(CHANGE_BOUNDS.fileChars, CHANGE_BOUNDS.totalChars - total)
+      if (room <= 0) { truncated = true; const { diff: _, ...rest } = file; return { ...rest, truncated: true } }
+      const cut = diff.length > room
+      total += Math.min(diff.length, room)
+      if (cut) truncated = true
+      return { ...file, diff: cut ? diff.slice(0, room) : diff, ...(cut ? { truncated: true } : {}) }
+    })
+    const more = Math.max(0, files.length - CHANGE_BOUNDS.files)
+    return { repository: row.repository, workspace: row.path, branch: row.branch, base: { branch: base.branch, sha: fork }, head, files: shown, more, truncated: truncated || more > 0, ...(live ? {} : { fromBranch: true as const }) }
+  }
+
+  /** An untracked file of a worktree as an added file: a regular file read through one descriptor that follows no link, else said and not shown. */
+  private untracked(root: string, path: string): ChangedFile {
+    const full = resolve(root, path)
+    // Under the worktree by its real path, its directory too: a link that leads out is never read.
+    const top = real(root)
+    const dir = real(dirname(full))
+    if (!top || !dir || !under(full, root) || !under(dir, top) || path.split('/').includes('..')) return { path, status: 'added', note: 'outside the worktree, not read' }
+    let fd: number
+    try {
+      fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | constants.O_NOCTTY)
+    } catch {
+      return { path, status: 'added', note: 'a link or a file that cannot be opened, not read' }
+    }
+    try {
+      const stat = fstatSync(fd)
+      if (!stat.isFile()) return { path, status: 'added', note: 'not a regular file, not read' }
+      const size = Math.min(stat.size, CHANGE_BOUNDS.fileChars + 1)
+      const buffer = Buffer.alloc(size)
+      const read = size ? readSync(fd, buffer, 0, size, 0) : 0
+      const bytes = buffer.subarray(0, read)
+      if (bytes.includes(0)) return { path, status: 'added', binary: true }
+      const lines = bytes.toString('utf8').split('\n')
+      if (lines.at(-1) === '') lines.pop()
+      return { path, status: 'added', added: lines.length, removed: 0,
+        diff: `new file ${path} (untracked)\n${lines.map((l) => `+${l}`).join('\n')}`, ...(stat.size > CHANGE_BOUNDS.fileChars ? { truncated: true } : {}) }
+    } finally {
+      closeSync(fd)
+    }
   }
 
   /** Commit the worktree's changes on its branch, while it is still exactly the accepted subject. */
