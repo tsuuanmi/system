@@ -166,6 +166,18 @@ driver, its operations are data: a UI map,
   encountering an error. Can I try something else for you?"), read only in a short answer, fails
   the turn as `overloaded` before any acceptance judges it. The prompt was sent, so it is not
   resent ([INV-4](../../../docs/architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
+  That is the honest outcome as far as the site shows, and nothing in it is recovered:
+  - Live on 2026-10-24 the site answered "Sorry, something went wrong. Please try your request
+    again." 6 s after the conversation got its id, and reopened 30 minutes later the conversation's
+    page showed an empty new chat, neither the prompt nor the error: no answer came later to be
+    read.
+  - The site's own retry (Redo on that turn, or trying again as it asks) runs the prompt again on
+    the site. That is a resend, which reconciliation allows only on positive evidence that the
+    prompt left no trace (RESUBMIT); a page that shows nothing of it is not that evidence
+    (AMBIGUOUS). One bounded resend after a site's error is a separate decision
+    ([roadmap](../../../docs/proposals/roadmap.md#follow-ups-from-the-reliability-review)).
+  - What the operator does is in the
+    [runbook](../../../docs/operations/runbooks.md#a-review-member-fails-on-a-website).
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence
