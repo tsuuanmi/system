@@ -124,14 +124,22 @@ describe('acp: the client side enforces the policy', () => {
     expect(existsSync(join(marks.dir, 'cancelled'))).toBe(true)
   })
 
-  it('never sends the prompt of a run aborted while its session was being made, and ends the agent at once', async () => {
+  it('ends the agent at once when aborted while it makes the session: there is no prompt to cancel', async () => {
     const marks = marked()
+    // The session never comes: only ending the agent ends the run (no cancel timer for a minute).
     writeFileSync(join(marks.dir, 'hold'), '')
     const controller = new AbortController()
     const running = runtime(true, { env: marks.env }, { cancelMs: 60_000 }).run({ prompt: 'hang', workspace, sandbox: 'read-only' }, controller.signal)
     await marks.at('session')
     controller.abort()
-    writeFileSync(join(marks.dir, 'go'), '')
+    await expect(running).rejects.toMatchObject({ kind: 'aborted' })
+    expect(existsSync(join(marks.dir, 'prompted'))).toBe(false)
+  })
+
+  it('never sends the prompt of a run aborted once its session exists, before the prompt', async () => {
+    const marks = marked()
+    const controller = new AbortController()
+    const running = runtime(true, { env: marks.env }, { cancelMs: 60_000 }).run({ prompt: 'hang', workspace, sandbox: 'read-only' }, controller.signal, () => controller.abort())
     await expect(running).rejects.toMatchObject({ kind: 'aborted' })
     expect(existsSync(join(marks.dir, 'prompted'))).toBe(false)
   })
