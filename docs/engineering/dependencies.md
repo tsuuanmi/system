@@ -99,6 +99,18 @@ operator signs it off.
   API key if the install ever serves anyone but the operator. The decision did not
   name the SDK's feedback collection, so that item is still signed off at the release.
 
+### Advisories in production dependencies
+
+The operator's decision of 2026-10-24 (D28) on the two moderate advisories of the
+[dependency audit](../validation/release-checklist.md) of 2026-10-23:
+
+- **`ip-address`** (GHSA-rxp7-6hxx-x8q5, 10.7.3, through `express-rate-limit` of
+  `@modelcontextprotocol/sdk`): overridden to `>=10.7.4`, a patch within the range its
+  dependents ask for. The code path is not one `mcp-server` imports.
+- **`@modelcontextprotocol/client`** (GHSA-6prh-2h8m-c8cw, 2.2.0): not overridden. The
+  `dsh` launcher's `dsh-mcp-client` pins it exactly, and that row is installed but not
+  mounted; it waits for DSH to update its pin, which a DSH bump brings (CON-8).
+
 ## Built, with what was compared
 
 Each of these is built because nothing fits; the comparison is the reason.
