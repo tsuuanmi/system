@@ -14,6 +14,7 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 |---|---|
 | Capabilities | what routing admits Workers by ([capability vocabulary](../design/routing.md#capability-vocabulary)); a node in a session also requires `persistent-conversation`; a review team member's step is also review-member work ([scoped offers](../design/routing.md#scoped-offers)) |
 | Tier | the minimum tier; *caller* means the caller's `tier` replaces it |
+| Kind | optional: the kind of work the step is, a label such as `code` (a variant may change it); a Worker the operator gives kinds takes only steps of those kinds, a Worker given none takes any ([work kinds](../design/routing.md#work-kinds)). No built-in template names one |
 | Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist`; `own`: a new persistent conversation of this node alone ([conversations](../design/workflow-engine.md#conversations)) |
 | Acceptance | the contract the result must pass; a rejected result may escalate one tier (`maxEscalations`, default 1) |
 
@@ -134,22 +135,35 @@ by a read-only local agent Worker; never a website account.
 |---|---|---|---|---|
 | `review:1` | `review`, `local-data` | standard (caller) | caller | `acceptance.answer` |
 
+`review:1` names no kind of work, so a Worker the operator gives kinds never takes it: keep a
+read-only Worker given none ([work kinds](../design/routing.md#work-kinds)).
+
 ### `algorithm-development`
 
 Provided by
 [`profile-software-development`](../../packages/plugins/profile-software-development/README.md)
 (row off by default, like `agent-review`). One attempt of a board task that tests one hypothesis
-(PROP-0010 B8): a lead starts it with MCP `run` and `task`, and the project's charter and
+(PROP-0010 B8): a lead starts it with MCP `run` and `task` (and `variant: docs` or `variant: tests`
+for docs or test work), and the project's charter and
 milestones are the board's ([pilot](../operations/pilot.md)). Every step runs on a local agent
 Worker, in the run's own git worktree when the Workers set `worktreePerRun`.
 
-| Node | Capabilities | Tier | Conversation | Acceptance |
-|---|---|---|---|---|
-| `develop:1` | `develop`, `local-data` | standard | persistent (the run's session; the task's next attempt resumes it) | `acceptance.answer` |
-| `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | temporary | `acceptance.answer` |
-| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | temporary | `acceptance.answer` |
+| Node | Capabilities | Tier | Kind | Conversation | Acceptance |
+|---|---|---|---|---|---|
+| `develop:1` | `develop`, `local-data` | standard | `code` | persistent (the run's session; the task's next attempt resumes it) | `acceptance.answer` |
+| `develop:1` (variant `docs`) | `develop`, `local-data` | standard | `docs` | persistent | `acceptance.answer` |
+| `develop:1` (variant `tests`) | `develop`, `local-data` | standard | `tests` | persistent | `acceptance.answer` |
+| `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | none | temporary | `acceptance.answer` |
+| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `tests` | temporary | `acceptance.answer` |
 
-- `develop:1` states the hypothesis it tests, then changes the code toward the task.
+- **Kinds of work** ([ADR-0056](../decisions/adr/0056-route-work-by-kind.md)). With no Worker given
+  kinds, every step routes as it always did. Once the operator gives writers kinds
+  ([route work by kind](../operations/runbooks.md#route-work-by-kind)), `develop:1` and its fix run
+  on a writer given `code` (or, in the `docs` and `tests` variants, `docs` or `tests`), and
+  `validate:1` on one given `tests`; `review:1` names none, so it needs a reviewer given no kinds.
+  The variants are this template's docs work and test work; no other template carries them.
+- `develop:1` states the hypothesis it tests, then changes the code toward the task; in the `docs`
+  variant it changes documentation only, in the `tests` variant tests only.
 - `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
   and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
   change, never the developer's answer. Blocking findings grow a fix (on `develop:1`'s

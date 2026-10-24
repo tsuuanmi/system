@@ -47,18 +47,30 @@ Lifecycle: `draft → preflight → confirm → accepted → active`.
 ### Variants
 
 A template node may declare named variants:
-`variants: { <name>: { objective?, prompt?, capabilities?, tier?, conversation?, acceptance? } }`.
+`variants: { <name>: { objective?, prompt?, capabilities?, tier?, kind?, conversation?, acceptance? } }`.
 
 - The caller names at most one variant at start (MCP `run` `variant`, CLI
   `system run --variant`; `research` also takes `deep`). Its fields replace the node's own before the spec is
   checked and hashed, so the chosen fields are part of the `specHash`.
 - A variant the template does not define is refused with `invalid_input`:
   `template <t> has no variant <v> (it has: …)`. Nothing is sent.
-- A variant changes only those six fields: it never adds a team, a planner's
-  growth policy, or `differentFrom`. Each value is checked: a tier, a conversation,
-  non-empty capabilities, non-empty text. Every variant is resolved when the template
-  is added, so a broken variant is refused then, not at a run's start. The one variant
-  today is `research`'s `deep` ([templates](../reference/workflow-templates.md#research)).
+- A variant changes only those seven fields: it never adds a team, a planner's
+  growth policy, or `differentFrom`. Each value is checked: a tier, a kind of work, a
+  conversation, non-empty capabilities, non-empty text. Every variant is resolved when the template
+  is added, so a broken variant is refused then, not at a run's start. The variants
+  today are `research`'s `deep` ([templates](../reference/workflow-templates.md#research)) and
+  `algorithm-development`'s `docs` and `tests`, which change its develop step's kind of work
+  ([templates](../reference/workflow-templates.md#algorithm-development)).
+
+### Kinds of work
+
+A node may name the `kind` of work it is (`code`, `docs`, …; [ADR-0056](../decisions/adr/0056-route-work-by-kind.md)).
+Its requirement carries it (`work-requirement@1.2`), set from the admitted spec only (INV-6), and
+routing gives it only to a Worker that takes it ([work kinds](routing.md#work-kinds)). Preflight
+refuses a kind that is no label, and one on a team or a source step. A remediation fix has the
+kind of the step whose change it fixes, and its re-review the review's; a planner's step has
+none. A board task's next attempt resumes the earlier session only on a Worker that takes the
+kind of every step that would continue it; otherwise it starts fresh, given its brief.
 
 ### Conversations
 

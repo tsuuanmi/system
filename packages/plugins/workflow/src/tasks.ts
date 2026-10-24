@@ -24,7 +24,7 @@
  */
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type Project, renderTasks, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
-import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
@@ -416,9 +416,13 @@ export class TaskRuns {
       const listed = (await workers.list()).filter((w) => bound.includes(w.worker))
       // An offer scoped to another kind of work (a review member's conversation, ADR-0049) never resumes a task's session.
       const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
+      // The steps that would continue it must be work its Worker takes (ADR-0056), or they could never route there.
+      const continuing = prepared.spec.nodes.filter((n) => n.session.persist)
+      const untaken = ready ? continuing.filter((n) => !takesKind(ready, n)) : []
       const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
       if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
       else if (!ready) fresh = `the Worker of session ${previous.sessionId} cannot resume it now (${listed.length ? listed.map((w) => `${w.worker} is ${w.state}`).join(', ') : `${bound.join(', ') || 'no Worker'} is not listed`})`
+      else if (untaken.length) fresh = `the Worker of session ${previous.sessionId}, ${ready.worker}, takes ${ready.kinds!.join(', ')} work only, and ${untaken.map((n) => `${n.nodeId} is ${n.kind === undefined ? 'work that names no kind' : `${n.kind} work`}`).join(', ')}`
       else if (served >= max) fresh = `session ${previous.sessionId} has served ${served} runs (limit ${max}, workflow.maxSessionRuns; INV-9)`
     }
     const resume = !fresh

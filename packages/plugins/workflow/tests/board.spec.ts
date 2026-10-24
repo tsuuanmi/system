@@ -1036,6 +1036,35 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(workers.started).toHaveLength(1)
   })
 
+  it('resumes a task\'s session only on a Worker that takes the kind of work of the steps that would continue it (ADR-0056)', async () => {
+    const docs = [{ nodeId: 'kept', objective: 'Do kept', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer', kind: 'docs' }]
+    const { ctx, workers } = await boot({ workflow: { templates: { docs } } })
+    // The same Worker, keeping conversations, given no kinds, then given code work only.
+    const keeper = (kinds?: string[]) => worker('w:keeper', { schema: 'capability-descriptor@1.6', tier: 'standard', proves: ['reason', 'persistent-conversation'], ...(kinds ? { kinds } : {}) })
+    workers.extra = [keeper()]
+    await project(ctx)
+    const attempt = async (task: BoardTask): Promise<RunView> => {
+      const run = await ctx.workflow.start({ template: 'docs', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      await settled(ctx, run.runId)
+      return reported(ctx, run.runId)
+    }
+    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: true })
+    const task = await ready(ctx, 'docs', { maxAttempts: 3 })
+    const first = await attempt(task)
+    expect(first.sessionId).toBeDefined()
+    expect(workers.started[0]!.requirement).toMatchObject({ schema: 'work-requirement@1.2', kind: 'docs' })
+    await ctx.board.sweep(new Date())
+    workers.extra = [keeper(['code'])]
+    const second = await attempt((await ctx.board.task(task.taskId))!)
+    const [fresh] = decisionsOf(ctx, 'admission', 'workflow.task-session')
+    expect(fresh).toMatchObject({ outcome: { option: 'fresh' } })
+    expect(fresh!.candidates.find((c) => c.option === 'fresh')!.reasons.join(' ')).toContain('w:keeper, takes code work only, and kept is docs work')
+    expect(second.sessionId).not.toBe(first.sessionId)
+    // No Worker keeps a conversation for docs work now: the step fails closed, unsent.
+    expect(second.status).toBe('failed')
+    expect(workers.started).toHaveLength(1)
+  })
+
   it('refuses a template other than the task\'s, a classification laxer than its project\'s, and a run for a task with no board loaded', async () => {
     const { ctx, workers } = await boot()
     const { approvalRequest } = await ctx.board.charter({ projectId: 'p1', title: 'private', charter: CHARTER, classification: 'local-private' })

@@ -41,6 +41,28 @@ const REVIEW_PROMPT = [
   'Judge whether the change does what the task asks, correctly, and nothing beyond it. A defect, a change the task does not need, or a test or benchmark weakened, skipped, or made unreliable is a blocking finding.',
 ].join('\n')
 
+/** The `docs` variant's develop step: the attempt changes the documentation the task names, never the code it documents. */
+const DOCS_PROMPT = [
+  '{{input}}',
+  '',
+  'Work toward the task above in this run\'s own git worktree, by changing documentation only:',
+  '1. State what the documentation should say once this attempt is done, and why. On a later attempt, start from what the previous attempt measured and why it was not accepted.',
+  '2. Change the documents the task needs, and only those: no source code and no test. Every statement you write must be true of the code as it is in this worktree.',
+  '3. Commands run confined to this worktree, with no network.',
+  'End with what the documentation now says, the files you changed, and which acceptance criteria the change should now meet.',
+].join('\n')
+
+/** The `tests` variant's develop step: the attempt adds or changes tests, never the code under test. */
+const TESTS_PROMPT = [
+  '{{input}}',
+  '',
+  'Work toward the task above in this run\'s own git worktree, by changing tests only:',
+  '1. State what the tests should check once this attempt is done, and why. On a later attempt, start from what the previous attempt measured and why it was not accepted.',
+  '2. Add or change the tests the task needs, and only those: no code under test. Never weaken, skip, or loosen a test or a benchmark, and never make one pass by what it no longer checks.',
+  '3. Commands run confined to this worktree, with no network.',
+  'End with what the tests now check, the files you changed, and which acceptance criteria the change should now meet.',
+].join('\n')
+
 const VALIDATE_PROMPT = [
   'Validate the change in this worktree. Run each test, benchmark, and check that the task\'s acceptance criteria name, exactly as they write it, from the worktree\'s top level.',
   'Change no file: you measure the change, you do not fix it.',
@@ -67,11 +89,20 @@ const VALIDATE_PROMPT = [
  *
  * Its measurements are evidence, not a check the engine reports: under a policy that requires tests,
  * the board holds the result for the operator.
+ *
+ * Each writing step names its kind of work (ADR-0056): `develop:1` is `code` work, or `docs` or
+ * `tests` work in the variant of that name, and `validate:1` is `tests` work. A Worker the operator
+ * gives kinds takes only steps of those kinds; one given none takes them all, as before. The review
+ * names no kind, so any reviewer the operator gives none takes it.
  */
 export const ALGORITHM_DEVELOPMENT: NodeTemplate[] = [
   {
     nodeId: 'develop:1', objective: 'Test one hypothesis toward the task: state it, and change the code to try it', prompt: DEVELOP_PROMPT,
-    capabilities: ['develop', 'local-data'], tier: 'standard', conversation: 'persistent', acceptance: 'acceptance.answer',
+    capabilities: ['develop', 'local-data'], tier: 'standard', kind: 'code', conversation: 'persistent', acceptance: 'acceptance.answer',
+    variants: {
+      docs: { kind: 'docs', objective: 'Change the documentation toward the task: state what it should say, and write it', prompt: DOCS_PROMPT },
+      tests: { kind: 'tests', objective: 'Change the tests toward the task: state what they should check, and write them', prompt: TESTS_PROMPT },
+    },
   },
   {
     nodeId: 'review:1', objective: 'Review the exact change against the task, independently of its developer', dependsOn: ['develop:1'], prompt: REVIEW_PROMPT,
@@ -79,7 +110,7 @@ export const ALGORITHM_DEVELOPMENT: NodeTemplate[] = [
   },
   {
     nodeId: 'validate:1', objective: 'Run the task\'s tests and benchmarks on the reviewed change, and report what they measured', dependsOn: ['review:1'], prompt: VALIDATE_PROMPT,
-    capabilities: ['validate', 'local-data'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer',
+    capabilities: ['validate', 'local-data'], tier: 'economy', kind: 'tests', conversation: 'temporary', acceptance: 'acceptance.answer',
   },
 ]
 
