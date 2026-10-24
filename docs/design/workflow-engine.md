@@ -620,6 +620,9 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **Explained.** These decisions are the run's, not a step's: `explain` lists them first, in the
+  order they were made (REQ-ART-3), before each step's own: the task's admission and session, a
+  lost holder, the result's subject and acceptance, the report, a funding gate, and the digest.
 - **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
   worktree ([below](#tasksmd-in-a-runs-workspace)).
 - **A question.** A step may answer with questions instead of a result; the task then waits for

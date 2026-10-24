@@ -273,6 +273,26 @@ describe('system usage and explain output', () => {
     ])
   })
 
+  it('prints a board task\'s run with the decisions no step holds first: how it took the task, the result\'s subject, acceptance, and report (T99 D9)', () => {
+    const lines = formatExplanation({
+      runId: 'run_2', template: 'algorithm-development', status: 'failed', specHash: 'sha256:cd',
+      decisions: [
+        { id: 'sha256:11', type: 'admission', outcome: 'claim', reasons: ['the caller holds no claim on task task-1, which is ready: the run claims it as workflow:run_2'] },
+        { id: 'sha256:12', type: 'gate', outcome: 'fail', reasons: ['no result of the run is on git-head abc, the subject task task-1 writes'] },
+        { id: 'sha256:13', type: 'reconciliation', outcome: 'report', reasons: ['the run failed (stale_subject): an attempt the board counts'] },
+      ],
+      nodes: [{ nodeId: 'develop:1', state: 'COMPLETED', worker: 'agent:dev', quotaClass: 'agent-plan', decisions: [] }],
+    })
+    expect(lines).toEqual([
+      'run_2  algorithm-development  failed  spec sha256:cd',
+      '  run (decisions no step holds)',
+      '    admission  claim  the caller holds no claim on task task-1, which is ready: the run claims it as workflow:run_2  (sha256:11)',
+      '    gate  fail  no result of the run is on git-head abc, the subject task task-1 writes  (sha256:12)',
+      '    reconciliation  report  the run failed (stale_subject): an attempt the board counts  (sha256:13)',
+      '  develop:1  COMPLETED  agent:dev  agent-plan  -',
+    ])
+  })
+
   it('prints a run\'s executions whose liveness needs a look after its decision chain: the verdict, its looks, why, what it holds, and what to do (PROP-0013)', () => {
     const held = {
       source: 'agents', execution: 'arun_00000000000000aa', worker: 'agent:dev', state: 'unknown' as const, since: '2026-10-24T01:00:00.000Z', verdict: 'unknown (liveness@1)', looks: { taken: 3, max: 3 },

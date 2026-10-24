@@ -509,7 +509,11 @@ second execution path (INV-1).
     `usageUnknown`, the kind its Worker source recorded first in the run's
     `usage.unknown` entries
     ([resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
-  - `explain` gives each step's egress, tier, route (or admission), and
+  - `explain` gives the run's own decisions that no step holds (`decisions`: a board
+    task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
+    holder, the result's subject and acceptance, the report, a funding gate, and the
+    digest, in the order they were made; a Worker's own decisions filed under the run
+    are not among them), then each step's egress, tier, route (or admission), and
     acceptance or recovery decisions with their reasons (REQ-ART-3), and each
     vote decision's ballots (round, member, choice, confidence, rationale). It
     lists every attempt's decisions in the order they were made, so a rejected

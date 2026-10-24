@@ -528,7 +528,7 @@ Scope: `operator`
 
 ## `explain`
 
-The decision chain behind a run (egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.
+The decision chain behind a run (the decisions no step holds, such as a board task's admission, result subject, acceptance, and report; then egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.
 
 Scope: `client`
 

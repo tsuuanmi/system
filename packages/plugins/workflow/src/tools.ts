@@ -235,7 +235,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('explain', {
     scope: 'client',
-    description: 'The decision chain behind a run (egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.',
+    description: 'The decision chain behind a run (the decisions no step holds, such as a board task\'s admission, result subject, acceptance, and report; then egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.',
     inputSchema: { id: zod.string().max(200) },
   }, async (args) => {
     const id = String(args.id)
