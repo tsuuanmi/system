@@ -59,7 +59,7 @@ import {
 } from './roles.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
-import { notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, SWEEP_BATCH, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
+import { notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -1331,7 +1331,7 @@ export class AgentWorkers extends Service {
    * the retention does: nothing is ever discarded, and the branch always stays. Recorded first as the
    * operator's `retention` decision (INV-13), naming each worktree planned; with none to remove,
    * nothing is decided. `check` sees the output the plan would give before anything is decided: one
-   * that throws decides and removes nothing. At most {@link SWEEP_BATCH} worktrees a call (INV-9).
+   * that throws decides and removes nothing. At most 50 worktrees a call (the sweep's batch; INV-9).
    */
   async removeWorktrees(input: { runId?: string; commitChanges?: boolean; note?: string } = {}, check?: (planned: WorktreeRemoval) => void): Promise<WorktreeRemoval> {
     if (input.runId !== undefined && !RUN_ID.test(input.runId)) throw new ProviderError('invalid_input', `${String(input.runId).slice(0, 80)} is not a workflow run id; nothing was removed`)
@@ -1356,7 +1356,7 @@ export class AgentWorkers extends Service {
       deterministic: false,
     }, { producer: { type: 'operator', ref: 'operator' }, ...(input.runId ? { runId: input.runId } : {}), classification: 'operator-shared' }).id as ContentId
     const done: RunWorktreeRelease[] = []
-    for (const runId of [...new Set(plans.map((p) => p.runId))]) {
+    for (const runId of new Set(plans.map((p) => p.runId))) {
       const ofRun = plans.filter((p) => p.runId === runId)
       for (const released of await this.worktrees.release(runId, decision, commit, ofRun, null)) done.push({ runId, ...released })
     }
@@ -2284,7 +2284,7 @@ export interface WorktreeListing {
 /**
  * What the operator's removal of finished worktrees did (`agent_worktrees_remove`): their `retention`
  * decision, when one was removable; each worktree removed or kept, and why; and how many it did not
- * look at (more than {@link SWEEP_BATCH}).
+ * look at (more than 50).
  */
 export interface WorktreeRemoval {
   decision?: ContentId
