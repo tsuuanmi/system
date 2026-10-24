@@ -56,8 +56,10 @@ describe('crash injection while a node waits for an assigned account\'s limit (R
   it('a waiting node killed mid-wait waits on after a restart, sends nothing before the reset, and then runs once on that account', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-wait-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-    // Long enough to outlast the kill and the dead process's leases, short enough for the suite.
-    const reset = new Date(Date.now() + 75_000).toISOString()
+    // Long enough to outlast the kill and the dead process's 30 s leases (leases.mjs), with more of
+    // the wait left after the restart takes the run than the 60 s leases left before, short enough
+    // for the suite.
+    const reset = new Date(Date.now() + 50_000).toISOString()
     const first = engine([dir, reset, 'start'])
     const runId = await first.runId
     expect(await first.waiting).toEqual({ until: reset, attempt: 0, started: [] })

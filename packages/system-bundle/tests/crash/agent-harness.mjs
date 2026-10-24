@@ -20,6 +20,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
+import { LEASE_CAP_MS } from './leases.mjs'
 
 const [dir, workspace, mode, arg] = process.argv.slice(2)
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
@@ -40,7 +41,7 @@ const scripted = {
 
 const ctx = new Context()
 const fibers = [
-  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, { maxTtlMs: LEASE_CAP_MS }), ctx.plugin(Egress, {}),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry, {}),
   ctx.plugin(AgentWorkers, { workers: [{ id: 'reviewer', runtime: 'scripted', workspace, sandbox: 'read-only', tier: 'standard' }] }),
   ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 300, templates: { 'agent-review': AGENT_REVIEW } }),

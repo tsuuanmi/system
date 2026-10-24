@@ -118,6 +118,10 @@ const CHARTER = {
 
 const ctx = new Context()
 const fibers = [
+  // The leases keep their default cap, unlike the other harnesses' 10 s (leases.mjs): it caps the
+  // run's lease on its board task too, which must outlive the run's own lease, as it does on a real
+  // restart (600 s against 60 s). Capped together, the task's lease lapses as the restart takes the
+  // run, and the run ends as holder_lost: another case than the one this harness injects.
   ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }),
   ctx.plugin(StoreBoard, { sweepSeconds: 0 }), ctx.plugin(StoreResources, { pools: [POOL] }),

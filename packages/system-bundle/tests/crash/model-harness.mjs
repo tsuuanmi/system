@@ -20,13 +20,14 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
+import { LEASE_CAP_MS } from './leases.mjs'
 
 const [dir, baseURL, mode, arg] = process.argv.slice(2)
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
 
 const ctx = new Context()
 const fibers = [
-  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+  ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, { maxTtlMs: LEASE_CAP_MS }), ctx.plugin(Egress, {}),
   ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }), ctx.plugin(LlmRuntime),
   ctx.plugin(PiAi, { providers: { fake: { api: 'openai-completions', baseURL, apiKeyEnv: 'SYSTEM_CRASH_MODEL_KEY', models: [{ id: 'm1' }] } } }),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(Models, { models: [{ id: 'fast', route: 'fake', model: 'm1', tier: 'standard' }] }),

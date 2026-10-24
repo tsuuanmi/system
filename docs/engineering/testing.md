@@ -83,6 +83,11 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
     temporary chat.
   - It is then restarted on the same state. The provider must see the prompt
     exactly once, and the run must recover, or fail closed as AMBIGUOUS.
+  - The harnesses cap the leases at 30 s (`leases.maxTtlMs`,
+    [`leases.mjs`](../../packages/system-bundle/tests/crash/leases.mjs)), so a
+    restart waits out the dead process's leases in half the time, as it would
+    their 60 s. The budget cases keep the default cap: a run's lease on its
+    board task must outlive the run's own lease, as on a real restart.
   - The same holds for every other row of the
     [effect register](../architecture/data-flow.md#effect-register) that names a
     crash test: an agent run never starts again; a model call is sent exactly once
