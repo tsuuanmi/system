@@ -494,11 +494,12 @@ export const boardSuite = defineSuite<Boot>({
       const [studio, ...rest] = POLICIES
       const rule = (actionClass: ActionClass, mode: 'auto' | 'forbid') => ({ actionClass, mode })
       await changePolicies([{ ...studio!, version: studio!.version + 1, rules: [...studio!.rules.filter((r) => !['command', 'deploy'].includes(r.actionClass)), rule('command', 'auto'), rule('deploy', 'forbid'), rule('remediation', 'forbid')] }, ...rest])
-      await ctx.approvals.sweep(at(12))
+      // Applied at 11, before the studio's 600-second command expiry rejects loose's request at 12: a withdrawal, not an expiry.
+      await ctx.approvals.sweep(at(11))
       for (const requestId of [...[...waits.values()].map((r) => r.requestId), amendment.approvalRequest]) {
         expect((await ctx.approvals.get(requestId))?.resolution?.cause).toBe('withdrawn')
       }
-      await ctx.board.sweep(at(12))
+      await ctx.board.sweep(at(11))
       const regated = async (taskId: string): Promise<BoardTask> => {
         const t = validTask((await ctx.board.task(taskId))!)
         const decision = ctx.artifacts.get(t.lastDecision!)!.body as { decisionType: string; inputs: string[]; candidates: Array<{ option: string; reasons: string[] }>; outcome: { option: string } }
