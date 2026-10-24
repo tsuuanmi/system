@@ -745,7 +745,8 @@ for every script, so a repository check started through it fails as
 does not lift it. Allowing unix sockets would let a command reach any socket the confinement
 leaves visible (a container engine's, a system bus), a loosening of ADR-0038 that needs its own
 decision, so none is made: such a check runs outside the Worker, or the repository starts its
-scripts without a unix socket. (A worktree's setup runs under the read confinement alone, so its
+scripts without a unix socket, as this one does: `node --import tsx <script>` registers tsx's
+loader in the process and opens no socket, where the `tsx` CLI listens on its pipe. (A worktree's setup runs under the read confinement alone, so its
 commands can listen on one.) The sandbox runtime does not claim to stop a kernel escape
 ([threat model](../security/threat-model.md#threats-and-controls)).
 

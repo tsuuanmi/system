@@ -489,8 +489,7 @@ describe('the command surface (REQ-GW-4)', () => {
     const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
     const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
-    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
-    const help = spawnSync(tsx, [bin, '--help'], { encoding: 'utf8' })
+    const help = spawnSync(process.execPath, ['--import', 'tsx', bin, '--help'], { encoding: 'utf8' })
     const usage = `${help.stdout}${help.stderr}`
     const commands = [...usage.matchAll(/^ {2}([a-z][a-z-]*(?: [a-z][a-z-]*)?)/gm)].map((m) => m[1]!.split(' ')[0])
     for (const family of [['ask', 'research', 'brainstorm', 'review'], ['run', 'approve', 'vote', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'report', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
@@ -501,11 +500,10 @@ describe('the command surface (REQ-GW-4)', () => {
     const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
     const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
-    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
     const doc = (name: string): string => readFileSync(fileURLToPath(new URL(`../../../docs/reference/${name}`, import.meta.url)), 'utf8')
     const flat = (text: string): string => text.replace(/\s+/g, ' ').toLowerCase()
     // The `ui` entry runs until the next command; the reference's row is one line.
-    const usage = flat(/^ {2}ui {2,}([\s\S]*?)(?=^ {2}[a-z])/m.exec(spawnSync(tsx, [bin, '--help'], { encoding: 'utf8' }).stdout)![1]!)
+    const usage = flat(/^ {2}ui {2,}([\s\S]*?)(?=^ {2}[a-z])/m.exec(spawnSync(process.execPath, ['--import', 'tsx', bin, '--help'], { encoding: 'utf8' }).stdout)![1]!)
     const reference = flat(/^\| `system ui` \|(.*)$/m.exec(doc('cli.md'))![1]!)
     const parts = [...doc('web-ui.md').matchAll(/^## (.+)$/gm)].map((m) => m[1]!.toLowerCase())
     expect(parts).toEqual(expect.arrayContaining(['runs', 'reviews', 'projects', 'approval queue', 'autonomy policy']))
@@ -523,11 +521,10 @@ describe('the command surface (REQ-GW-4)', () => {
     const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
     const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
-    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
     const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
     dirs.push(home)
     const tokens = seedHome(home)
-    const run = (...args: string[]) => spawnSync(tsx, [bin, ...args], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home } })
+    const run = (...args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', bin, ...args], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home } })
     // No gateway row is mounted here (the model gateways are off by default, PROP-0004): even the model token is withheld.
     const model = run('mcp-token', '--scope', 'model')
     expect(model.status).not.toBe(0)

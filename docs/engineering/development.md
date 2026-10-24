@@ -17,7 +17,7 @@ are canonical.
 | build | `tsc -p tsconfig.build.json` per package, into `lib/` ([`tsconfig.build.base.json`](../../tsconfig.build.base.json)) |
 | lint | `oxlint` over `scripts/`, `spikes/`, and `packages/`, with its default rules (no configuration file) |
 | tests | Vitest; bare workspace imports resolve to `src/` ([`vitest.config.ts`](../../vitest.config.ts)) |
-| scripts | `tsx` for the checks and generators in [`scripts/`](../../scripts/) |
+| scripts | `tsx` for the checks and generators in [`scripts/`](../../scripts/), loaded in the process (`node --import tsx <script>`, never the `tsx` CLI, whose IPC pipe is a unix socket an agent's command sandbox refuses; [confined commands](../design/agent-runtimes.md#confined-commands)) |
 | browser automation | `patchright-core` against a system or pinned managed Chrome (CON-7) |
 
 DSH packages and `@deepseek-ai/cordis` are declared as **`peerDependencies` and

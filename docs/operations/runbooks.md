@@ -144,7 +144,8 @@ default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
   fails with `listen EPERM … /tmp/tsx-<uid>/<pid>.pipe`) still fails inside a
   Worker's commands: Claude Code's and Codex's command sandboxes refuse unix
   sockets, and nothing loosens them; run it outside the Worker, or start the
-  repository's scripts without a unix socket
+  repository's scripts without a unix socket (`node --import tsx <script>` instead
+  of `tsx <script>`, as this repository's own `package.json` does)
   ([confined commands](../design/agent-runtimes.md#confined-commands)). Only
   `~/.dsh/system/tools` (read-only), the Worker's own home, and its workspace come
   back; a workspace that holds one of those paths (your home directory, say) is

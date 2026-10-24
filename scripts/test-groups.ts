@@ -4,9 +4,9 @@
  * a big update (a contract, seam, or schema change, a batch integration, a release) runs the full
  * gate: `pnpm check`, `pnpm test`, `pnpm test:e2e`, `pnpm test:crash`.
  *
- * - `tsx scripts/test-groups.ts group [<name>...] [-- <vitest args>]`: run those groups' tests; with
+ * - `node --import tsx scripts/test-groups.ts group [<name>...] [-- <vitest args>]`: run those groups' tests; with
  *   no name, list the groups.
- * - `tsx scripts/test-groups.ts affected [--base <ref>] [--dry-run] [-- <vitest args>]`: run the
+ * - `node --import tsx scripts/test-groups.ts affected [--base <ref>] [--dry-run] [-- <vitest args>]`: run the
  *   groups the files changed since `<ref>` (default `origin/main`, else `main`) affect, committed or
  *   not, and nothing more.
  *
