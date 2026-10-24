@@ -57,6 +57,7 @@ abstract class AgentRuntimes extends Service {     // ctx.agentRuntimes
 
 interface AgentRuntimeProvider {
   readonly kind: string;                    // "claude-agent-sdk", "codex-sdk", "acp:<name>", "antigravity-cli"
+  readonly title?: string;                  // its name for people ("Claude Code"), shown only (below)
   readonly home?: string;                   // its own configured home, adopted as slot 1 (below)
   probe(options?: { home?: string }): Promise<RuntimeEvidence>;  // a named home: through probeIn only
   run(spec: RunSpec, signal: AbortSignal,
@@ -119,6 +120,13 @@ interface LimitObservation {
   observedAt: string;
 }
 ```
+
+A provider's `title` (optional, plain text on one line, at most 64 characters, `titleOf`) is the
+only place a runtime's product name is written: the roster's display names and the operator's
+account listing show it ([display names](roster.md#display-names)); nothing routes on it
+([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)). Claude Code, Codex, and the
+Antigravity CLI give one; an ACP agent, whose kind the operator names, gives none and is shown by
+its kind. The provider suite checks a title that is given.
 
 Workers are not providers. The `agents` Worker source
 ([`agent-workers`](../../packages/plugins/agent-workers/README.md)) turns each configured
@@ -410,10 +418,23 @@ operator's forwarded variables. Only the keyed hash (and a masked email) leaves 
 |---|---|---|---|---|---|
 | `codex-sdk` | `codex-auth-json` | Codex 0.164.0 | `codex login status` says `Logged in using ChatGPT` (an API-key sign-in names no person: `ambiguous`) | `tokens.account_id` of `auth.json`, the ChatGPT account id | none (the email is only in the id token, which is never read) |
 | `claude-agent-sdk` | `claude-state-file` | Claude Code 2.1.308 | `claude auth status` says `loggedIn`, and the home keeps that sign-in in its own `.credentials.json` (existence only; elsewhere is `unverified`) | `oauthAccount.accountUuid` and `oauthAccount.organizationUuid` of `.claude.json`, both whole (never the email alone) | `oauthAccount.emailAddress`, masked |
-| `antigravity-cli` | none | — | — | no file or command was shown to name the signed-in Google account: every account is `unverified` | — |
+| `antigravity-cli` | none | — | — | no file or command was shown to name the signed-in Google account: no account of it can be enrolled (one enrolled before reads `unverified`) | — |
 
 - **Version-pinned** as agy's hook is ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)):
-  `VERIFIED_IDENTITY_VERSIONS` in each runtime; on any other version a reading is `unverified`.
+  `VERIFIED_IDENTITY_VERSIONS` in each runtime; on any other version a reading is `unverified`,
+  and its reason names the version found, the executable, and the versions the reader admits
+  (Claude Code: `found Claude Code 2.1.310 (<executable>); its identity reader admits only
+  2.1.308`). A pinned executable that is no longer there (Claude Code's updater prunes old
+  versions under `~/.local/share/claude/versions`) is named as such, with where to keep a checked
+  copy (`~/.dsh/system/tools/claude/<version>/`, bound back read-only to every agent as Codex's
+  executable is; [runbook](../operations/runbooks.md#keep-claude-codes-pinned-version)); the
+  probe says the same.
+- **The Antigravity CLI has no reader.** agy 1.4.6 keeps its sign-in under
+  `~/.gemini/antigravity-cli` in its own `HOME`, and no file or command was shown to name the
+  signed-in Google account without reading its token (PROP-0012 open question 1). Finding one needs
+  a supervised check on a signed-in throwaway home, field names only, as agy's hook was checked; it
+  was not done (T103). So no account of it can be enrolled
+  ([below](#enrollment-and-quarantine)).
 - **Evidence.** The file and field names were seen on this host (two Codex
   homes signed in as two accounts showed two `tokens.account_id`; values were never read into any
   record), and each reader is tested against redacted fixtures of that shape and passes the
@@ -428,9 +449,13 @@ operator's forwarded variables. Only the keyed hash (and a masked email) leaves 
 ### Enrollment and quarantine
 
 The `agents` source ([`agent-workers`](../../packages/plugins/agent-workers/README.md)) keeps each
-slot as an `agent-account@1.0` record and every change of what a slot holds as an `enrollment`
-decision, recorded before the record changes; inputs are the slot's earlier decision, never the
-principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+slot as an `agent-account@1.x` record and every change of what a slot holds as an `enrollment`
+decision, recorded before the record changes, in one transaction with it; inputs are the slot's
+earlier decision, never the principal
+([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)). A quarantine
+says what its reading found (`quarantine.detail`, `agent-account@1.1`: the decision's reason, for
+`unverified` the version found and the ones admitted), so health, `system account list`, the
+roster, and a refused run name it, not only the reason.
 
 - **Slots.** A runtime has `slots` (on its `agent-workers` `providers` entry, default 1, at most
   64). Slot 1 is the runtime's own configured home, adopted where it is; slot `n` is
@@ -442,7 +467,12 @@ principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-ar
 - **`system account login <runtime>`** (MCP `account_enroll`, step `begin`): take the lowest free
   slot (or the one named), record it `enrolled`, and return the runtime's `loginCommand` for its
   home, which the CLI runs in the operator's terminal without D-Bus; the daemon runs no interactive
-  sign-in. Then step `verify` reads the identity and records the status:
+  sign-in. A runtime with no `identity` takes no free slot (`config_error`, nothing made or
+  recorded): its account could only ever be `unverified` and take no derived work, and adopting its
+  home would hold the hand-named Workers running there while the slot is `enrolled` (fail closed
+  before acting, [INV-2](../architecture/invariants.md#inv-2-fail-closed)). A slot taken before
+  (an earlier release) can still be signed in again and verified. Then step `verify` reads the
+  identity and records the status:
 
   | Reading | Status |
   |---|---|
@@ -452,7 +482,12 @@ principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-ar
   | `verified`, the same full hash as another slot | both `quarantined`, `duplicate` |
   | `verified`, another slot's short id under a different full hash | both `quarantined`, `ambiguous` |
   | `ambiguous` | `quarantined`, `ambiguous` |
-  | `unverified`, or a runtime with no `identity` | `quarantined`, `unverified` |
+  | `unverified`, or a runtime with no `identity` (a slot taken before) | `quarantined`, `unverified` |
+
+- **Output checked before it commits.** The account tools check the output a call that changes
+  anything would give against `mcp-agent-accounts@1.2` before the change commits (a slot taken, a
+  reading recorded, a slot freed, a cutover applied or rolled back): an output its schema refuses
+  is a defect, refused with nothing changed, never reported after the work is done.
 
 - **Read again** at each probe of the runtime (every `ready` account; an account home's probe,
   that home's), which runs in the background every half `probeTtlMs`
@@ -498,7 +533,7 @@ the trusted envelope of account choice
         tier: standard
         runtimes: { claude-agent-sdk: { maxTurns: 4 } }
     assignments:
-      - { account: "claude-agent-sdk:1f0c2b7e9a5d3c41", roles: [review] }
+      - { account: "claude-agent-sdk:1f0c2b7e9a5d3c41", roles: [review], label: science }
       - { account: "codex-sdk:04aa5c1e9b7d3f20", roles: [review] }
 ```
 
@@ -515,6 +550,12 @@ the trusted envelope of account choice
   Worker; an assignment naming an account that is not `ready` (no slot holds it, not verified,
   signed out, or quarantined, `unverified` included) derives a Worker that reads `unavailable` with
   the account's reason, and probes nothing.
+- **An account's label** (`assignments[].label`, optional, plain text on one line, at most 64
+  characters) is the operator's name for the account, such as `science` or `lead`, for people
+  only: the roster's display name (`Claude Code · science · review`,
+  [display names](roster.md#display-names)), the Workers tab, and `system account list` show it.
+  It is never a routing input, never part of a Worker id, and never kept on the account's record;
+  changing it changes no id: ids stay stable keys, and the meaning goes in a display name.
 - **Its account's home.** Runs and probes name the account's home (`RunSpec.home`, `probeIn`),
   none when it is the runtime's own (slot 1); the account is read again before each run, as the
   sandbox proof is.
@@ -544,11 +585,13 @@ Hand-named Workers (`workers`) are the shape before phase F; one row holds one s
 Workers to derived ones. It plans by default and changes nothing; `--apply` applies the plan;
 `--rollback` undoes it.
 
-- **The plan** (rule `agent-workers.migration` version 2, pure): each runtime's configured home is slot 1 of
+- **The plan** (rule `agent-workers.migration` version 3, pure): each runtime's configured home is slot 1 of
   its provider, adopted where it is; rows that agree on the work's settings (their `kinds`
   included) become one role
   (`review` when read-only, `develop` when writing; another of a kind `review-2`, …; a second row of
-  one runtime starts another role), with what each runtime set under `runtimes`; the account in
+  one runtime starts another role), with what each runtime set under `runtimes`, the rows' `kinds`,
+  and their `description` when every row of the role gives the same one (none otherwise: a role's
+  description is every one of its Workers', version 3); the account in
   slot 1 is assigned the roles of its runtime's rows, by its verified id; an old `pool` becomes the
   provider's pool template, with its windows and cooldown; and `maxConcurrentRunsPerAccount` is the
   number of the runtime's rows, so as many of its runs run at once as did. The live patch's
@@ -556,11 +599,16 @@ Workers to derived ones. It plans by default and changes nothing; `--apply` appl
   for Claude Code and the model for the Antigravity CLI.
 - **What stops it** (each named, with what to do): a runtime not registered; no account in slot 1
   (enroll it first); slot 1 not the runtime's own home; an account not `ready`; rows of one runtime
-  drawing on different pools, windows, or cooldowns; a pool the ledger does not configure. An
-  `unverified` account (the Antigravity CLI has no reader) waits: the cutover waits for its reader,
-  unless the operator stops that runtime's Workers at the cutover (`--stop <runtime>`; PROP-0012
-  open question 1, as proposed). A stopped runtime's role keeps what it set for it, for the
-  assignment the operator adds once its account can be verified.
+  drawing on different pools, windows, or cooldowns; a pool the ledger does not configure. A
+  runtime with no identity reader (the Antigravity CLI), whose account cannot be enrolled, and an
+  `unverified` account (a slot taken before) wait: the cutover waits for its reader, unless the
+  operator stops that runtime's Workers at the cutover (`--stop <runtime>`; PROP-0012 open
+  question 1, as proposed). A stopped runtime's role keeps what it set for it, for the assignment
+  the operator adds once its account can be verified.
+- **Its output is checked first.** The tool's output (`mcp-agent-accounts@1.2`) is checked inside
+  the apply's or the rollback's transaction, after every write and before the commit: an output
+  its schema refuses is a defect, and the call is refused with nothing decided or moved (before
+  1.2, a plan whose roles had `kinds` was refused only after an apply had committed).
 - **Apply**, refused while a run of a hand-named Worker is queued or running (drain first), in one
   transaction: an `enrollment` decision per hand-named Worker (`migrated` to its new id, its input
   the account's latest enrollment decision, or `stopped`); each of its agent sessions and runs moved

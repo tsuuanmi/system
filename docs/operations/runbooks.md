@@ -160,6 +160,40 @@ default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
   change. A session bound to the old Worker stays on it, so a new run starts a new session.
   Its home (`home`) and its account do not change.
 
+### Keep Claude Code's pinned version
+
+Claude Code's identity reader is pinned to the versions a check verified (2.1.308,
+[identity readers](../design/agent-runtimes.md#identity-readers)). Each probe and each run reads
+every `ready` Claude Code account again, so a Claude Code on another version turns them all
+`quarantined (unverified)` and their derived Workers take no work. `system account list` and
+`system health` then name the version found and the ones admitted (`found Claude Code 2.1.310
+(…); its identity reader admits only 2.1.308`). Pin the executable with the
+`runtime-claude-agent-sdk` row's `executable`.
+
+Do not point the pin into `~/.local/share/claude/versions/`: Claude Code's updater prunes old
+versions there, and a pruned pin reads `the Claude Code executable … is not there`. Keep a checked
+copy where nothing prunes it, under the Workers' tools directory, which every agent sees read-only
+(as Codex's executable is kept):
+
+1. Check the version you copy: `~/.local/share/claude/versions/2.1.308 --version` names 2.1.308.
+2. Copy it: `install -D -m 0755 ~/.local/share/claude/versions/2.1.308 ~/.dsh/system/tools/claude/2.1.308/claude`,
+   then `~/.dsh/system/tools/claude/2.1.308/claude --version` prints the same.
+3. Point the pin there in the profile patch (a targeted patch replaces the row's whole config, so
+   keep its other keys):
+
+   ```yaml
+   - id: runtime-claude-agent-sdk
+     config:
+       executable: /home/me/.dsh/system/tools/claude/2.1.308/claude
+   ```
+
+4. `system check`, restart, and `system account list`: each Claude Code account reads `ready` again
+   once verified (`system account verify <accountId>`; a quarantine never lifts by itself).
+
+A newer version is pinned only once the reader is verified on it (a release that adds it to
+`VERIFIED_IDENTITY_VERSIONS`); keep the old copy until then. Signing in again
+(`CLAUDE_CONFIG_DIR=… claude`, `/login`) uses whichever `claude` you run; the Workers use the pin.
+
 ### Codex Workers
 
 The `runtime-codex-sdk` row is off by default (PROP-0004). Its Workers are admitted only where the
@@ -941,18 +975,29 @@ its Workers stop (PROP-0012 open question 4).
 - **Free a slot:** `system account remove <accountId>` (or `<runtime> --slot <n>`). The home and
   the sign-in in it are kept; to remove the sign-in itself, sign out with the runtime's own
   command in that home (for example `CODEX_HOME=… codex logout`).
-- **The Antigravity CLI** has no verified way to read who is signed in: its accounts enroll
-  `unverified`. Slot 1's hand-named Workers run as before enrollment; no Worker derived for one of
-  its accounts takes work until a reader is verified (PROP-0012 open question 1).
+- **The Antigravity CLI** has no verified way to read who is signed in, so
+  `system account login antigravity-cli` is refused before anything is taken (`config_error`,
+  exit 1): adopting its home would only hold the hand-named Worker running there, and its account
+  could never read `ready`. Its hand-named Workers run on as before; no Worker derived for it takes
+  work until a reader is verified (PROP-0012 open question 1). A slot taken before this release
+  stays `unverified`; free it if you like (`system account remove antigravity-cli --slot <n>`): its
+  home and sign-in are kept.
 - **A new runtime version:** the readers are pinned to the versions they were checked on (Codex
-  0.164.0, Claude Code 2.1.308). On another version an account reads `unverified`; slot 1's
-  Workers still run as before, and the reader waits for a check on that version.
+  0.164.0, Claude Code 2.1.308). On another version an account reads `unverified`, saying the
+  version found and the ones admitted; slot 1's hand-named Workers still run as before, derived
+  ones do not, and the reader waits for a check on that version. For Claude Code, keep a checked
+  copy pinned ([keep Claude Code's pinned version](#keep-claude-codes-pinned-version)).
+- **A label for each account** (optional): give its assignment a `label` in the `agent-workers`
+  row, such as `science` or `lead` (plain text, at most 64 characters). The roster and the Workers
+  tab then name its Workers `Claude Code · science · develop [code]`, and `system account list`
+  shows it. It is for people only: ids, routing, and records do not change.
 
 ## Resolve a quarantined agent account
 
 `system health` shows `agent-accounts` degraded, naming each account that takes no work, and
-`system account list` shows its `status` and `reason`. A quarantine never clears by itself; only
-your `system account verify` or `login` lifts it.
+`system account list` shows its `status`, `reason`, and `detail` (what the reading that
+quarantined it found). A quarantine never clears by itself; only your `system account verify` or
+`login` lifts it.
 
 | Reason | What happened | Resolve |
 |---|---|---|
@@ -960,7 +1005,7 @@ your `system account verify` or `login` lifts it.
 | `changed` | the home now signs in as another person | sign it in again as the account it was (`system account login <accountId>`), or take the new person as a new account: `system account verify <runtime> --slot <n> --accept` (the old id keeps its history) |
 | `duplicate` | two slots of one runtime sign in as one person (both are quarantined) | sign one slot in as another person, or `system account remove` it; then `system account verify` the other |
 | `ambiguous` | the sign-in names no whole person (an API-key sign-in, a damaged state file), or two people share one short id | sign the slot in with a personal login; for a short-id clash, remove one of them and enroll it again |
-| `unverified` | no reader is verified for the runtime or its version (the Antigravity CLI; an upgraded Codex or Claude Code) | nothing to do on the account: slot 1's hand-named Workers run as before, its derived Workers take no work; wait for a reader verified on that version |
+| `unverified` | no reader is verified for the runtime or its version (a slot of the Antigravity CLI taken before; an upgraded Codex or Claude Code); `detail` names the version found and the ones admitted | pin an admitted version and `system account verify` it ([Claude Code](#keep-claude-codes-pinned-version)); otherwise slot 1's hand-named Workers run as before, its derived Workers take no work, until a reader is verified on that version |
 
 A run that was already queued when its home changed person fails before anything is sent
 (`config_error`, naming the quarantine); `system continue <runId>` once it is resolved.
@@ -979,18 +1024,23 @@ Before you start: back up (`system backup`), and read the Antigravity note in st
 
 1. **Enroll slot 1 of each runtime the rows use** (its existing home, adopted where it is; see
    [enroll an agent account](#enroll-an-agent-account)): `system account login claude-agent-sdk`,
-   `system account login codex-sdk`, `system account login antigravity-cli`. Each must read
-   `ready`, except the Antigravity CLI's (step 2).
+   `system account login codex-sdk`. Each must read `ready`. The Antigravity CLI cannot be
+   enrolled (no reader: `system account login antigravity-cli` is refused, and its Worker runs on;
+   step 2).
 2. **Print the move:** `system account migrate`. Nothing changes. It prints what each hand-named
    Worker becomes, what stops the move (exit 1), and, once nothing does, the new `agent-workers`
-   row and any pool templates for the `resources` row. For the live patch: one role `review` (the
-   checkout, read-only, standard; `maxTurns: 4` on Claude Code, the model on the Antigravity CLI),
-   assigned to the Claude Code and Codex accounts by their ids.
-   - **The Antigravity CLI** cannot be verified (no reader): its account is `unverified`, and a
-     derived Worker takes work only on a `ready` account. The move waits for its reader (PROP-0012
-     open question 1). To move now anyway, stop its Worker at the cutover: `--stop
-     antigravity-cli` (`agy-review` then becomes no Worker, and anything that names it, such as the
-     first experiment, waits for it).
+   row and any pool templates for the `resources` row. Each role keeps its rows' `kinds`, and
+   their `description` when they all give the same one (rule version 3). For the live patch: one
+   role `review` (the checkout, read-only, standard; `maxTurns: 4` on Claude Code, the model on the
+   Antigravity CLI), assigned to the Claude Code and Codex accounts by their ids; with the work
+   kinds patch, also `develop` (`kinds: [code]`) and `develop-2` (`kinds: [docs, tests]`).
+   - **The Antigravity CLI** cannot be verified (no reader): no account of it can be enrolled
+     (one enrolled before is `unverified`), and a derived Worker takes work only on a `ready`
+     account. The move waits for its reader (PROP-0012 open question 1). To move now anyway, stop
+     its Worker at the cutover: `--stop antigravity-cli` (`agy-review` then becomes no Worker, and
+     anything that names it, such as the first experiment, waits for it).
+   - The printed row assigns slot 1's accounts only and names no label: add the later slots'
+     assignments, and a `label` per account if you want one, before you put it in.
    - Any other stop is named with what to do (enroll slot 1, resolve a quarantine, give a
      runtime's rows one pool).
 3. **Drain:** `system drain` (the move is refused while a run of a hand-named Worker is queued or
@@ -999,7 +1049,9 @@ Before you start: back up (`system backup`), and read the Antigravity note in st
    records an `enrollment` decision per Worker and one for the cutover (`system explain <decision>`),
    and moves each Worker's agent sessions and runs to its new id, so a continued conversation stays
    on its account. Run again, it changes nothing. From now on the running hand-named Workers take
-   no work.
+   no work. If it prints `account_migrate would make an output its schema refuses (a defect), so
+   nothing changed`, nothing was decided or moved: the hand-named Workers run on; report the
+   message (a defect of the release, not of your patch).
 5. **Put the printed row in the profile patch** (`~/.dsh/profiles/system/cordis.patch.yml`): it
    replaces the `agent-workers` row's whole config (`workers` gone; `providers`, `roles`,
    `assignments` in). Add any printed `templates` to the `resources` row's config. Then
