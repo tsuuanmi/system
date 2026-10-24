@@ -333,3 +333,36 @@ describe('agent accounts: the operator\'s MCP tools (mcp-agent-accounts@1.0)', (
     expect(accounts(b).list()).toEqual([])
   })
 })
+
+describe('agent runs: the operator\'s MCP tool agent_run_free (mcp-agent-runs@1.0; PROP-0013)', () => {
+  /** A run as a restart leaves it when its verdicts stayed unknown: failed, for the operator, its session held. */
+  const unknownRun = (b: Booted, id: string): void => {
+    const at = new Date().toISOString()
+    b.ctx.store.db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, submitted_at, error, liveness_looks, liveness_verdict, liveness_decision, created_at, updated_at)
+      VALUES (?, ?, 'agent:reviewer', 'ses_held', 'p', 'operator-shared', 'failed', ?, '{"kind":"reconciliation_failed","disposition":"USER_ACTION","message":"not known to be gone"}', 3, 'unknown', ?, ?, ?)`)
+      .run(id, `key-${id}`, at, `sha256:${'1'.repeat(64)}`, at, at)
+    b.ctx.store.db.prepare('INSERT OR IGNORE INTO agent_sessions (session_id, worker, native_handle, created_at) VALUES (?, ?, NULL, ?)').run('ses_held', 'agent:reviewer', at)
+  }
+
+  it('frees a held run on the operator\'s word, operator scope, its output as its schema says, and refuses an input its schema refuses, doing nothing', async () => {
+    const b = await boot()
+    expect(b.mcp.tools.get('agent_run_free')!.spec.scope).toBe('operator')
+    const id = 'arun_00000000000000aa'
+    unknownRun(b, id)
+    // Without the operator's word, or for no run of this shape: refused by the schema, nothing done.
+    for (const args of [{ agentRun: id }, { agentRun: id, agentGone: false }, { agentRun: 'run_1', agentGone: true }, { agentRun: id, agentGone: true, force: true }]) {
+      const result = await call(b, 'agent_run_free', args)
+      expect(result.isError, JSON.stringify(args)).toBe(true)
+      expect(result.content[0]!.text).toMatch(/^invalid input, nothing done/)
+    }
+    expect(await b.ctx.workers.held!('ses_held')).toMatch(/ended without being known to be gone/)
+    const missing = await call(b, 'agent_run_free', { agentRun: 'arun_00000000000000bb', agentGone: true })
+    expect(missing).toMatchObject({ isError: true, content: [{ text: 'invalid_input: no agent run arun_00000000000000bb; nothing was freed' }] })
+    const freed = await call(b, 'agent_run_free', { agentRun: id, agentGone: true, note: 'rebooted' })
+    expect(freed.isError).toBeUndefined()
+    schemas.assertDef('mcp-agent-runs@1.0', 'agent-run-free-output', freed.structuredContent)
+    expect(freed.structuredContent).toMatchObject({ agentRun: id, worker: 'agent:reviewer', again: false, freed: ['session ses_held'], worktrees: [] })
+    expect(freed.content[0]!.text).toMatch(new RegExp(`^freed ${id} \\(decision sha256:[0-9a-f]{64}\\): session ses_held$`))
+    expect(await b.ctx.workers.held!('ses_held')).toBeUndefined()
+  })
+})

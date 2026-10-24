@@ -4,7 +4,8 @@
  * `account_remove` (free a slot), `account_agents` (every slot and what it holds), and
  * `account_migrate` (plan, apply, or undo the move from hand-named Workers to account × role). Input
  * and output are checked against `mcp-agent-accounts@1.1` (ADR-0037); nothing in them holds a
- * principal or a token (INV-8).
+ * principal or a token (INV-8). Beside them, `agent_run_free` (`mcp-agent-runs@1.0`): the operator
+ * frees what a run that ended with its liveness unknown holds (PROP-0013).
  * @module
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -14,15 +15,16 @@ import zod from 'zod'
 import type { AgentAccounts, SlotRef } from './accounts.ts'
 
 const TAG = 'mcp-agent-accounts@1.1'
+const RUNS_TAG = 'mcp-agent-runs@1.0'
 const schemas = new SchemaRegistry()
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** One call: its input checked, the work done, its output checked; a refusal does nothing more. */
-async function call(tool: string, args: Record<string, unknown>, work: () => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) {
+/** One call of a tool of schema `tag`: its input checked, the work done, its output checked; a refusal does nothing more. */
+async function checked(tag: string, tool: string, args: Record<string, unknown>, work: () => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) {
   const def = tool.replaceAll('_', '-')
   try {
-    schemas.assertDef(TAG, `${def}-input`, args)
+    schemas.assertDef(tag, `${def}-input`, args)
   } catch (error) {
     return refused(`invalid input, nothing done: ${(error as Error).message}`)
   }
@@ -34,16 +36,49 @@ async function call(tool: string, args: Record<string, unknown>, work: () => Pro
     return refused(`${typeof kind === 'string' ? `${kind}: ` : ''}${(error as Error).message}`)
   }
   try {
-    schemas.assertDef(TAG, `${def}-output`, out)
+    schemas.assertDef(tag, `${def}-output`, out)
   } catch (error) {
     return refused(`${tool} made an output its schema refuses (a defect): ${(error as Error).message}`)
   }
   return { content: [{ type: 'text' as const, text: text(out) }], structuredContent: out }
 }
 
+const call = (tool: string, args: Record<string, unknown>, work: () => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) => checked(TAG, tool, args, work, text)
+
 const refOf = (args: Record<string, unknown>): SlotRef => (typeof args.accountId === 'string'
   ? { accountId: args.accountId }
   : { provider: String(args.provider), ...(typeof args.slot === 'number' ? { slot: args.slot } : {}) })
+
+/** What frees a run's holds, as the `agents` source does it. */
+export interface Freer {
+  free(input: { agentRun: string; agentGone: boolean; commitWorktree?: boolean; note?: string }): Promise<object>
+}
+
+/**
+ * The operator's tool that frees what an agent run that ended without being known to be gone holds
+ * (PROP-0013, ADR-0056): `agent_run_free`, operator scope, its input and output checked against
+ * `mcp-agent-runs@1.0`.
+ */
+export function registerRunTools(ctx: Context, freer: Freer): void {
+  ctx.mcp.tool('agent_run_free', {
+    scope: 'operator',
+    description: 'Operator tool: free the session and worktree an agent run holds because it ended with its liveness unknown, on your word that its agent is gone (agentGone). Recorded as your decision. Refused while its liveness is still looked at, a process holds it, or its holder or agent process is present. A worktree is removed only when clean, or with commitWorktree after its changes are committed on its branch; the branch stays.',
+    inputSchema: {
+      agentRun: zod.string().max(64).describe('The agent run (arun_…) status or explain lists as unknown'),
+      agentGone: zod.boolean().describe('Your word that no process of its agent runs; required true'),
+      commitWorktree: zod.boolean().optional().describe('Commit a dirty worktree\'s changes on its branch, then remove it'),
+      note: zod.string().max(1000).optional().describe('Why, kept on the decision'),
+    },
+  }, async (args) => checked(RUNS_TAG, 'agent_run_free', args, async () => ({ ...await freer.free({
+    agentRun: String(args.agentRun), agentGone: args.agentGone === true, commitWorktree: args.commitWorktree === true, ...(typeof args.note === 'string' ? { note: args.note } : {}),
+  }) }), (out) => {
+    const freed = out as { agentRun: string; decision: string; again: boolean; freed: string[]; worktrees: Array<{ path: string; outcome: string; why: string; commit?: string }> }
+    return [
+      `${freed.again ? 'freed again' : 'freed'} ${freed.agentRun} (decision ${freed.decision})${freed.freed.length ? `: ${freed.freed.join(', ')}` : ''}`,
+      ...freed.worktrees.map((w) => `  worktree ${w.path}: ${w.outcome}${w.commit ? ` (committed ${w.commit})` : ''}: ${w.why}`),
+    ].join('\n')
+  }))
+}
 
 /** The move from hand-named rows to derived Workers, as the `agents` source runs it. */
 export interface Migrator {

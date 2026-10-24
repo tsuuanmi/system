@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-agent-runs:v1",
+  "title": "MCP agent run tools",
+  "description": "Input and output of the operator's agent run tool `agent_run_free` (PROP-0013, ADR-0056): free the session and worktree an agent run holds because it ended without being known to be gone, on the operator's word that its agent is gone. The root describes one call (tool, input, structured output); the provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "enum": [
+        "agent_run_free"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "output": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "agent_run_free"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/agent-run-free-input"
+          },
+          "output": {
+            "$ref": "#/$defs/agent-run-free-output"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "agentRun": {
+      "description": "An agent run of the agents Worker source.",
+      "type": "string",
+      "pattern": "^arun_[0-9a-f]{16}$"
+    },
+    "agent-run-free-input": {
+      "type": "object",
+      "required": [
+        "agentRun",
+        "agentGone"
+      ],
+      "properties": {
+        "agentRun": {
+          "$ref": "#/$defs/agentRun"
+        },
+        "agentGone": {
+          "description": "The operator's word that no process of the run's agent runs: only true frees anything.",
+          "const": true
+        },
+        "commitWorktree": {
+          "description": "A worktree that holds uncommitted changes has them committed on its branch, then is removed; without it such a worktree stays.",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "Why, in the operator's words: kept on the decision as its rationale.",
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent-run-free-output": {
+      "type": "object",
+      "required": [
+        "agentRun",
+        "worker",
+        "decision",
+        "again",
+        "freed",
+        "worktrees"
+      ],
+      "properties": {
+        "agentRun": {
+          "$ref": "#/$defs/agentRun"
+        },
+        "worker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "decision": {
+          "description": "The operator's `reconciliation` decision (decider `operator.free`), recorded before anything was freed.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "again": {
+          "description": "The run was freed already: only its worktree was looked at again.",
+          "type": "boolean"
+        },
+        "freed": {
+          "description": "What the run held that is free now, in words (its session, its worktree); empty when it was freed already.",
+          "type": "array",
+          "maxItems": 65,
+          "items": {
+            "type": "string",
+            "maxLength": 4500
+          }
+        },
+        "worktrees": {
+          "description": "Each worktree of the run's workflow run, removed or kept in place, and why.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "branch",
+              "outcome",
+              "why"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "outcome": {
+                "enum": [
+                  "removed",
+                  "kept"
+                ]
+              },
+              "why": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "commit": {
+                "description": "The commit that kept the worktree's changes on its branch before it was removed.",
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
