@@ -14,7 +14,7 @@ import { type Action, type ApprovalRequest, ApprovalsError, type AutonomyPolicy,
 import Artifacts from '@tsuuanmi/system-artifacts'
 import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z as zod } from 'zod'
@@ -731,6 +731,36 @@ describe('a policy change through the queue (docs/design/approvals.md#a-policy-c
     const policy = await booted.mcp().tools.get('approvals_policy')!.handler({}, { scope: 'client' })
     schemas.assertDef('mcp-approvals@1.2', 'approvals-policy-output', policy.structuredContent)
     expect((policy.structuredContent as { set: { source: string } }).set.source).toBe('configuration')
+  })
+
+  it('checks the output of approvals_decide and approvals_policy_propose before anything commits: one its schema refuses (a defect) decides and stores nothing (INV-2, INV-14)', async () => {
+    const booted = await boot({ mcp: true })
+    const { ctx } = booted
+    const merge = await asked(ctx, { class: 'merge' }, 'merge', new Date())
+    const { change, request } = await booted.approvals.proposePolicy({ policy: NO_MERGE }, new Date())
+    // A defect: the output of every tool that changes the queue is one its schema refuses.
+    const assertDef = SchemaRegistry.prototype.assertDef
+    const spy = vi.spyOn(SchemaRegistry.prototype, 'assertDef').mockImplementation(function (this: SchemaRegistry, tag, def, value) {
+      if (tag.startsWith('mcp-approvals@') && (def === 'approvals-decide-output' || def === 'approvals-policy-propose-output')) throw new SchemaError(`${tag}#/$defs/${def}`, [], 'a defect')
+      assertDef.call(this, tag, def, value)
+    })
+    onTestFinished(() => spy.mockRestore())
+    const requests = await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })
+    const changes = await booted.approvals.policyChanges()
+    // The merge approved and the policy change approved together: neither verdict applies, so no set changes.
+    const verdicts = [{ requestId: merge.requestId, subject: merge.subject, verdict: 'approved' }, { requestId: request.requestId, subject: request.subject, verdict: 'approved' }]
+    for (const [name, args] of [['approvals_decide', { verdicts }], ['approvals_policy_propose', { policy: { ...NO_MERGE, version: 5 } }]] as const) {
+      const reply = await booted.mcp().tools.get(name)!.handler(args, { scope: 'operator' })
+      expect([reply.isError, (reply.content[0] as { text: string }).text], name).toEqual([true, expect.stringMatching(new RegExp(`^approvals: ${name} would make an output its schema refuses \\(a defect\\), so nothing changed`))])
+    }
+    expect(await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).toEqual(requests)
+    expect(await booted.approvals.policyChanges()).toEqual(changes)
+    expect((await ctx.approvals.policy()).set).toMatchObject({ source: 'configuration' })
+    // Once the output checks, the same verdicts apply.
+    spy.mockRestore()
+    const reply = await booted.mcp().tools.get('approvals_decide')!.handler({ verdicts }, { scope: 'operator' })
+    expect((reply.structuredContent as { results: VerdictResult[] }).results.map((r) => r.state)).toEqual(['approved', 'approved'])
+    expect((await booted.approvals.policyChanges()).find((c) => c.changeId === change.changeId)).toMatchObject({ state: 'applied' })
   })
 })
 

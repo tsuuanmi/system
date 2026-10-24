@@ -419,12 +419,27 @@ export class StoreApprovals extends Approvals {
     return made
   }
 
-  async decide(verdicts: Verdict[], at: Date = new Date()): Promise<VerdictResult[]> {
+  /**
+   * Apply the operator's verdicts. `check` sees every verdict's result before any of them commits:
+   * with it the verdicts apply in one transaction, so one that throws applies none of them, and an
+   * open request is judged again under a policy one would have approved only once all committed.
+   */
+  async decide(verdicts: Verdict[], at: Date = new Date(), check?: (results: VerdictResult[]) => void): Promise<VerdictResult[]> {
     const when = this.instant(at)
     if (!Array.isArray(verdicts)) throw invalid('verdicts is not a list')
     verdicts.forEach((v, i) => this.validVerdict(v, i))
     // A stored record that fails its schema refuses the whole call before any verdict applies.
     for (const v of verdicts) this.read(v.requestId)
+    if (!check) return this.applyVerdicts(verdicts, when)
+    return this.ctx.store.transaction(() => {
+      const results = this.applyVerdicts(verdicts, when)
+      check(results)
+      return results
+    })
+  }
+
+  /** {@link decide}'s verdicts, each in its own transaction (a savepoint inside the caller's). */
+  private applyVerdicts(verdicts: Verdict[], when: Date): VerdictResult[] {
     // Each verdict is its own transaction: a refused one changes nothing, and the others still
     // apply. One that fails (a busy store, a write that went stale) is reported as failed, never
     // hidden behind an error that drops the outcomes of the others.
@@ -490,8 +505,9 @@ export class StoreApprovals extends Approvals {
    * class is judged under the studio's policies (a project's policy: the project's), and on `ask`
    * one request is queued on the proposed set's hash, in the transaction that stores the change.
    * Only the operator's channels call it (the web UI, MCP `approvals_policy_propose`; INV-6).
+   * `check` sees the change and its request before they commit: one that throws stores neither.
    */
-  async proposePolicy(proposal: { policy: AutonomyPolicy; note?: string }, at: Date = new Date()): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
+  async proposePolicy(proposal: { policy: AutonomyPolicy; note?: string }, at: Date = new Date(), check?: (proposed: { change: PolicyChange; request: ApprovalRequest }) => void): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
     const when = this.instant(at)
     if (!isObject(proposal) || !isObject(proposal.policy)) throw invalid('a proposal is {policy, note?}: one autonomy-policy@1.0 record')
     const note = proposal.note
@@ -501,7 +517,7 @@ export class StoreApprovals extends Approvals {
     } catch (error) {
       throw invalid(`the proposed policy is not a valid autonomy-policy@1.0: ${(error as Error).message}`)
     }
-    return this.propose(structuredClone(proposal.policy), note, when)
+    return this.propose(structuredClone(proposal.policy), note, when, undefined, check)
   }
 
   /**
@@ -510,8 +526,9 @@ export class StoreApprovals extends Approvals {
    * are stored in one transaction on the set in force. The queue's own proposal also records its
    * `policy-change` decision there (INV-13), and is refused while any change is asked, once its
    * shape is barred, or when its shape's requests no longer read as they did when it was counted.
+   * `check`, as {@link proposePolicy}'s, runs last in that transaction.
    */
-  private async propose(policy: AutonomyPolicy, note: string | undefined, when: Date, from?: Repeated): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
+  private async propose(policy: AutonomyPolicy, note: string | undefined, when: Date, from?: Repeated, check?: (proposed: { change: PolicyChange; request: ApprovalRequest }) => void): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
     const base = this.current()
     const made = proposedSet(base.set, policy)
     if ('problems' in made) throw invalid(made.problems.join('; '))
@@ -572,7 +589,9 @@ export class StoreApprovals extends Approvals {
       }
       this.ctx.store.db.prepare('INSERT INTO policy_changes (change_id, state, hash, base_hash, config_hash, request_id, proposed_ms, applied_seq, revision, record, origin_shape) VALUES (?, \'asked\', ?, ?, ?, ?, ?, NULL, 0, ?, ?)')
         .run(changeId, hash, baseHash, change.configHash, request.requestId, when.getTime(), JSON.stringify(change), from?.shape ?? null)
-      return { change: structuredClone(change), request }
+      const proposed = { change: structuredClone(change), request }
+      check?.(proposed)
+      return proposed
     })
   }
 
