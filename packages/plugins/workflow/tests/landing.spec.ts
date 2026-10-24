@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import StoreApprovals from '@tsuuanmi/system-approvals'
+import StoreApprovals, { checkConfig } from '@tsuuanmi/system-approvals'
 import type { AutonomyPolicy, Mode } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import StoreBoard from '@tsuuanmi/system-board'
@@ -157,19 +157,26 @@ describe('ctx.workflow lands an accepted result through the source that holds it
     expect(optionsOf(ctx, merged)).toEqual(['commit', 'merge'])
   })
 
-  it('refuses the merge a forbid policy forbids, recorded, asking no one; an auto policy merges without asking (REQ-WF-13, INV-2)', async () => {
+  it('refuses the merge a forbid policy forbids, recorded, asking no one; a merge always asks, whatever the policy says, and a denied one merges nothing (D56, REQ-WF-13, INV-2)', async () => {
     const forbidden = await boot('forbid', new Lander())
     const refused = await until(forbidden.ctx, forbidden.runId, 'refused')
     expect(refused).toMatchObject({ cause: 'forbidden', reason: expect.stringMatching(/forbids merge/) })
     expect(optionsOf(forbidden.ctx, refused)).toEqual(['commit', 'refuse'])
     expect(await merges(forbidden.ctx)).toEqual([])
 
+    // No policy merges on its own word: one that gives merge auto or notify is refused when the queue loads it (ALWAYS_ASK).
+    for (const mode of ['auto', 'notify'] as const) expect(checkConfig({ policies: [policy(mode)] })).toContain(`policy studio: merge always asks; its rule may not say ${mode}`)
+
+    // The merge waits on the operator's approval: the request says so, and denied, nothing is merged.
     const lander = new Lander()
-    const auto = await boot('auto', lander)
-    const merged = await until(auto.ctx, auto.runId, 'merged')
-    expect(merged.requestId).toBeUndefined()
-    expect(lander.steps.map((s) => s.step)).toEqual(['commit', 'merge'])
-    expect(await merges(auto.ctx)).toEqual([])
+    const denied = await boot('ask', lander)
+    const asked = await until(denied.ctx, denied.runId, 'asked')
+    const [request] = await merges(denied.ctx)
+    expect(request!.action.consequences).toContain('A merge always asks the operator (D56), whatever the policy\'s mode for merge.')
+    await denied.ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'rejected' }])
+    const rejected = await until(denied.ctx, denied.runId, 'rejected')
+    expect(rejected.reason).toMatch(/was not approved \(the operator denied it\): nothing is merged/)
+    expect(lander.steps.map((s) => s.step)).toEqual(['commit'])
   })
 
   it('lands nothing when no Worker source holds the tree, and waits while the source says a run may still write it (INV-15)', async () => {

@@ -113,6 +113,9 @@ describe('configuration', () => {
       // Remediation always asks: a load-time rule, since the record's schema predates it.
       [[{ ...STUDIO, rules: [{ actionClass: 'remediation', mode: 'auto' }] }], /^policy studio: remediation always asks; its rule may not say auto$/],
       [[{ ...STUDIO, rules: [{ actionClass: 'remediation', mode: 'notify' }] }], /^policy studio: remediation always asks; its rule may not say notify$/],
+      // A merge always asks (D56, ADR-0060): a load-time rule too, in a studio policy or a project's.
+      [[{ ...STUDIO, rules: [{ actionClass: 'merge', mode: 'auto' }] }], /^policy studio: merge always asks; its rule may not say auto$/],
+      [[STUDIO, { ...PROJECT, rules: [{ actionClass: 'merge', mode: 'notify' }] }], /^policy p1\.policy: merge always asks; its rule may not say notify$/],
       // A commands entry is whole words, none empty, none with a shell metacharacter.
       [[{ ...STUDIO, commands: [' '] }], /^policy studio: the commands entry " " has an empty word/],
       [[{ ...STUDIO, commands: ['pnpm  test'] }], /^policy studio: the commands entry "pnpm  test" has an empty word/],

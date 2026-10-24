@@ -81,7 +81,7 @@ describe('the store-backed board over this queue: a policy change', () => {
     const { approvalRequest } = await ctx.board.charter({ projectId: 'p2', title: 'project p2', charter: CHARTER }, base)
     await decide(ctx, approvalRequest, at(0.1))
     await ctx.board.sweep(at(0.1))
-    const loose = await ctx.board.propose(task('loose', 'merge'), at(0.2))
+    const loose = await ctx.board.propose(task('loose', 'command'), at(0.2))
     const tight = await ctx.board.propose(task('tight', 'deploy'), at(0.2))
     const spent = await ctx.board.propose(task('spent', 'read'), at(0.2))
     await ctx.board.sweep(at(0.2))
@@ -96,11 +96,11 @@ describe('the store-backed board over this queue: a policy change', () => {
     }
     await first.stop()
 
-    // The operator's change, then a restart: the studio's next version lets merge run and forbids deploy.
+    // The operator's change, then a restart: the studio's next version lets a command run and forbids deploy (a merge always asks, D56).
     const [studio, ...rest] = POLICIES
     const changed: AutonomyPolicy = {
       ...studio!, version: studio!.version + 1,
-      rules: [...studio!.rules.filter((r) => r.actionClass !== 'merge' && r.actionClass !== 'deploy'), { actionClass: 'merge', mode: 'auto' }, { actionClass: 'deploy', mode: 'forbid' }],
+      rules: [...studio!.rules.filter((r) => r.actionClass !== 'command' && r.actionClass !== 'deploy'), { actionClass: 'command', mode: 'auto' }, { actionClass: 'deploy', mode: 'forbid' }],
     }
     ;({ ctx } = await start(dir, [changed, ...rest]))
     // At load, before any sweep, the queue withdrew every one of them, naming the policy change.
@@ -115,7 +115,7 @@ describe('the store-backed board over this queue: a policy change', () => {
     const ready = (await ctx.board.task(loose.taskId))!
     expect(ready).toMatchObject({ state: 'ready' })
     const readied = boardDecision(ready.lastDecision)
-    expect(readied).toMatchObject({ decisionType: 'board', outcome: { option: 'ready', detail: { reason: 'approval-needed', actionClass: 'merge', mode: 'auto', withdrawn: waits.get(loose.taskId) } } })
+    expect(readied).toMatchObject({ decisionType: 'board', outcome: { option: 'ready', detail: { reason: 'approval-needed', actionClass: 'command', mode: 'auto', withdrawn: waits.get(loose.taskId) } } })
     expect(readied.inputs).toContain((await ctx.approvals.get(waits.get(loose.taskId)!))!.resolution!.decision)
     expect(readied.candidates.map((c) => [c.option, c.selected])).toEqual([['ready', true], ['waiting-for-approval', false], ['cancelled', false]])
     for (const candidate of readied.candidates) expect(candidate.reasons.join('').trim()).not.toBe('')

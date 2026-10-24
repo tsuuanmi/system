@@ -76,13 +76,15 @@ request that never expires (INV-9).
 - Irreversible effects (`external-send`, `deploy`, `delete-data`, `spend`), the investor's
   decisions (`charter`, `funding`, `policy-change`), `remediation` (a fix that writes, or a
   lost run going on, waits for a person: the workflow's remediation gate and the board ask the
-  queue about it), and `promotion` (a plugin moved to `default` on an accepted evaluation, so the
+  queue about it), `promotion` (a plugin moved to `default` on an accepted evaluation, so the
   feedback loop never approves its own change:
-  [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)) are never `auto` or
-  `notify` (`ALWAYS_ASK`).
-  The schema refuses a policy that says so (for `remediation`, which the schema predates, a
-  load-time rule does), and the provider raises each of them to at least `ask` whatever a rule
-  says.
+  [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)), and `merge` (a merge
+  always asks the operator, D56:
+  [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md))
+  are never `auto` or `notify` (`ALWAYS_ASK`).
+  The schema refuses a policy that says so (for `remediation` and `merge`, which the schema
+  predates, a load-time rule does), and the provider raises each of them to at least `ask`
+  whatever a rule says.
 - A failed required check sends the action back to the lead as work, not to the operator. A
   check nobody reported is not a failure: the board holds such a review for the operator's own
   acceptance ([board](board.md#required-checks-bind-at-acceptance)).
@@ -393,24 +395,28 @@ policy.
 The workflow engine [lands](workflow-engine.md#landing-an-accepted-result) a board task's accepted
 result made in a run's worktree
 ([ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md),
-proposed): once the result is committed on the run's branch, it judges `merge` with `check` for the
-task's project.
+accepted): once the result is committed on the run's branch, it judges `merge` with `check` for the
+task's project. A merge always asks the operator, whatever the policy's mode for `merge` (D56):
+`merge` is in `ALWAYS_ASK`, so the verdict is `ask` or `forbid`.
 
 | Verdict | The merge | Recorded |
 |---|---|---|
 | `forbid` | refused; nothing is asked | the `autonomy` decision, the landing's `gate` decision (`refuse`) |
-| `auto`, `notify` | the branch is merged at once; a rule that requires checks refuses it, since a landing runs none | the `autonomy` decision, named by the landing's `gate` decision (`merge` or `refuse`) |
 | `ask` | one request; merged once it is approved | the `autonomy` decision, the request, the operator's `approval` decision, the `gate` decision (`merge`) |
+| `auto`, `notify` | never given (`ALWAYS_ASK`); a provider that gave one is refused, and nothing is merged | the `autonomy` decision, the landing's `gate` decision (`refuse`) |
 
 - **The request** binds to exactly that (INV-5): subject `{ type: git-head, ref: system/run/<runId>,
   version: landing:merge:<base head>:<branch head> }`, class `merge`, requester `workflow` with the
   run, its final step, the task, and the project; its summary names the task and the base branch,
-  its consequences the SHAs, what approving and denying do, and the `git diff --stat`.
+  its consequences the SHAs, what approving and denying do, that a merge always asks the operator
+  (D56), and the `git diff --stat`.
 - **Approved**, the branch is merged only while both heads are still the version's; a base that
   moved is refused and asked again on a new request. Rejected or expired: nothing is merged. Withdrawn
   on a policy change: put to the policy in force again, as the board does.
-- The studio policy asks for `merge`. Whether `merge` joins `ALWAYS_ASK` is
-  [PROP-0013](../proposals/0013-feedback-from-work.md#open-questions)'s open question 5.
+- `merge` joined `ALWAYS_ASK` by the operator's decision D56 (2026-10-24), which answers
+  [PROP-0013](../proposals/0013-feedback-from-work.md#open-questions)'s open question 5: a policy
+  that gives `merge` `auto` or `notify` is refused when loaded, and a proposed change that would is
+  refused too.
 
 ## A policy change
 

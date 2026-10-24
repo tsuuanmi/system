@@ -1,6 +1,6 @@
 # ADR-0060: An accepted result lands in its repository on the operator's merge approval
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-24, by the operator, D56)
 - **Date:** 2026-10-24
 - **Related:** [PROP-0013](../../proposals/0013-feedback-from-work.md#landing-merge-or-apply) (W5),
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
@@ -39,10 +39,13 @@ observer stay deferred.
    reviews of that tree, and the acceptance decision, and a `System-Subject` trailer. Only while no
    agent run of the workflow run can still write it, and only while the tree is still the accepted
    subject; a tree that moved is refused, and nothing is committed.
-3. **Merge on approval, exactly.** The engine puts `merge` to the autonomy policy: `ask` opens one
-   request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`, the base being the
-   repository's checked-out branch at its head then, its consequences the `git diff --stat`; `forbid`
-   refuses; `auto` and `notify` merge without asking, as the policy says. On the approval, the source
+3. **Merge on approval, exactly; a merge always asks.** The engine puts `merge` to the autonomy
+   policy: `ask` opens one request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`,
+   the base being the repository's checked-out branch at its head then, its consequences the
+   `git diff --stat` and that a merge always asks the operator; `forbid` refuses. A merge always
+   asks, whatever the policy's mode for `merge` (D56): `merge` joins the classes that always ask
+   (`ALWAYS_ASK`), so a policy that gives it `auto` or `notify` is refused when loaded, like one
+   that gives `deploy` either, and nothing merges on the policy's word alone. On the approval, the source
    merges the branch into the repository's checkout as one merge commit, only while the branch is at
    `head`, the checked-out branch is the base at `base`, and its tracked files are clean. A conflict
    is aborted so the repository is as it was. Never a force, a reset, a deletion, or a push: pushing
@@ -67,12 +70,15 @@ observer stay deferred.
 
 - An accepted result reaches the repository the next tasks are cut from, on one approval, with its
   history: the system's commit on the branch, then a merge commit naming the approval.
-- The repository's main working tree is now written, but only by a merge the operator approved (or
-  the policy allowed), checked against the exact SHAs it was approved on. The rest of the
-  "never written" rule for worktrees stands.
+- The repository's main working tree is now written, but only by a merge the operator approved,
+  checked against the exact SHAs it was approved on. The rest of the "never written" rule for
+  worktrees stands.
 - Each accepted result costs the operator one more decision on the queue (counted as an
-  interruption in the report). A policy may make `merge` `auto`; whether `merge` should be always
-  asked (`ALWAYS_ASK`) is PROP-0013's open question 5, unchanged here.
+  interruption in the report), always: no policy makes `merge` `auto` or `notify`. This answers
+  PROP-0013's open question 5 (should `merge` be in `ALWAYS_ASK`): yes, by the operator's decision
+  D56 (2026-10-24). A configured policy or a proposed change that gives `merge` `auto` or `notify`
+  is refused when loaded; the `autonomy-policy@1.0` schema predates the rule, so it is a load-time
+  rule, as for `remediation` ([schemas](../../reference/schemas.md#autonomy-policy)).
 - The engine holds no lease on the base branch: one change at a time per repository within the
   daemon, and the SHA checks, guard it; a second daemon on the same repository is not supported.
 - An artifact-subject result lands only when one of its result artifacts names the tree (the

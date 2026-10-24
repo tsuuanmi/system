@@ -12,9 +12,10 @@
  * - **Recorded** (INV-13): the commit, the merge, and every refusal is a `gate` decision of rule
  *   `workflow.landing` under the run's final step, so `explain` shows it; the request has the
  *   policy's `autonomy` decision and the operator's `approval` decision.
- * - **Fails closed** (INV-2): nothing merges without the policy's word (`ask`: the operator's
- *   approval; `forbid`: refused); with no queue, it waits; a conflict, a dirty base, or a source that
- *   cannot answer changes nothing.
+ * - **Fails closed** (INV-2): nothing merges without the operator's approval: a merge always asks
+ *   (D56; `merge` is in `ALWAYS_ASK`, so no policy gives it `auto` or `notify`), and `forbid`
+ *   refuses; with no queue, it waits; a conflict, a dirty base, or a source that cannot answer
+ *   changes nothing.
  * - **Restart is reconciliation** (INV-4): the landing's state is durable on the run's
  *   `workflow_tasks` row, a request asked before a crash is adopted, and each step of the source
  *   finds its own work done instead of doing it twice. Never a force, a reset, or a push.
@@ -162,7 +163,12 @@ export class TaskLandings {
     return committed
   }
 
-  /** Put the merge to the autonomy policy: `ask` opens one request on its exact version (an earlier one adopted), `forbid` refuses, `auto` and `notify` merge. */
+  /**
+   * Put the merge to the autonomy policy: `ask` opens one request on its exact version (an earlier
+   * one adopted), `forbid` refuses. A merge always asks the operator (D56, ADR-0060): `merge` is in
+   * `ALWAYS_ASK`, so the policy never gives it `auto` or `notify`, and a verdict that did would be
+   * refused here, never merged on the policy's word alone.
+   */
   private async ask(row: TaskRow, board: Board, landing: TaskLanding): Promise<TaskLanding | undefined> {
     const approvals = queueOf(this.e)
     if (!approvals) return landing.reason ? this.touch(row, landing) : { ...landing, reason: 'no approval queue (ctx.approvals) is loaded: the merge waits for one', at: now() }
@@ -172,7 +178,8 @@ export class TaskLandings {
     if (verdict.mode === 'forbid') return this.refuse(row, landing, 'merge', 'forbidden', `the autonomy policy ${verdict.policy.id} forbids merge, so ${landing.branch} is not merged; it keeps the commit ${landing.head}`, [verdict.decision])
     // A rule's required checks bind where a result is applied, and a landing runs none (docs/design/approvals.md#a-verdict-is-not-yet-a-permission).
     if (verdict.failedChecks?.length) return this.refuse(row, landing, 'merge', 'checks', `the autonomy policy ${verdict.policy.id} requires ${verdict.failedChecks.join(', ')} before a merge, and no landing runs them: merge ${landing.branch} by hand once they pass`, [verdict.decision])
-    if (verdict.mode !== 'ask') return { ...landing, state: 'merging', approval: verdict.decision, at: now() }
+    // A merge always asks (D56): a queue whose policy gave it anything but ask is not one this landing merges on.
+    if (verdict.mode !== 'ask') return this.refuse(row, landing, 'merge', 'failed', `a merge always asks the operator (D56), but the autonomy policy ${verdict.policy.id} gives merge ${verdict.mode}: nothing is merged; merge ${landing.branch} by hand`, [verdict.decision])
     const subject: Subject = { type: 'git-head', ref: landing.branch!, version: landingVersion(landing.base!.sha, landing.head!) }
     if (subject.version!.length > 128) return this.refuse(row, landing, 'merge', 'failed', `a landing version of this repository's object ids is longer than a request's subject holds (${subject.version!.length} > 128): merge ${landing.branch} by hand`, [verdict.decision])
     const request = await this.adopt(approvals, row, subject, project) ?? await approvals.request({
@@ -183,6 +190,7 @@ export class TaskLandings {
         consequences: [
           `Approved: system merges ${landing.branch} (at ${landing.head}) into ${landing.base!.branch} (at ${landing.base!.sha}) in ${landing.repository}, as one merge commit. Never a force or a push; a conflict or a moved branch changes nothing.`,
           `Denied or unanswered: nothing is merged; ${landing.branch} keeps the commit.`,
+          'A merge always asks the operator (D56), whatever the policy\'s mode for merge.',
           landing.stat ? `\n${landing.stat}` : '',
         ].join(' ').slice(0, 2000),
         ...(landing.decisions?.length ? { refs: landing.decisions.slice(-1) } : {}),
