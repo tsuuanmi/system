@@ -277,6 +277,40 @@ The **`agents` Worker source**: agent runtimes as Workers
     fails the run unsubmitted (`config_error`). The prompt names the files
     only when they are written: a run of no workflow run, or of a Worker
     without `worktreePerRun`, gets none;
+  - **a worktree's setup** (`worktreeSetup`, [`src/setup.ts`](src/setup.ts),
+    ADR-0058 proposed, [design](../../../docs/design/agent-runtimes.md#a-worktrees-setup),
+    [runbook](../../../docs/operations/runbooks.md#set-up-a-runs-worktree)): per
+    repository (a `worktreePerRun` Worker's workspace, else refused at load), 1 to
+    16 command lines (words split on single spaces, no shell metacharacter, at most
+    200 characters, the policy's bound), optional `views`, and `timeoutSeconds`
+    (default 600, at most 3600). Before an agent run works in a workflow run's
+    worktree, after it is acquired and before the brief's files are written, the
+    worktree is set up unless its setup already ran under the definition loaded now
+    (its hash, stored on the worktree, migration 13; cleared when the worktree is
+    added again). One setup at a time per worktree:
+    - each command is judged by `ctx.approvals.check` as a `command` with its exact
+      argv: `forbid` refuses; `auto` and `notify` run it, checks pending; `ask`
+      opens one request per command (subject `content`
+      `agent-worktree-setup:<repository key>/<run id>:<n>` at the setup's hash,
+      requester `worker` with the agent run; kept in `agent_tool_requests`, scope
+      the worktree), which the next run takes once approved (all together), waits
+      on while open, and refuses on when rejected, expired, or withdrawn, queuing
+      nothing new. No queue loaded: nothing runs;
+    - the commands run in order, each under the read confinement with the host
+      read-only but the worktree, no network (`confinedCommand` options), the
+      worktree as its directory, the daemon's scrubbed environment, and the
+      setup's deadline (SIGKILL), after `proveConfinement`. A view shows a host
+      directory as a fresh private one under `<worktreeRoot>/.setup`, its `copy`
+      files copied in (never through a link, at most 1 GiB each; one the host lacks
+      is skipped) and its `readOnly` paths bound back read-only, removed after; a
+      view of, or holding, a hidden path, reached through a link, or overlapping the
+      worktree is refused;
+    - a setup refused, waiting, or failing (exit code, signal, deadline, with the
+      last 1,500 characters of its output) fails the run as `config_error`, unsent;
+      the next run tries again. Each setup is a `gate` decision (rule
+      `agent-workers.worktree-setup`, `start` or `refuse`) among the run's
+      decisions, and an `agent-workers.worktree.setup` event (`ran`, `refused`,
+      `waits`);
   - an agent can write the worktree's `.git` file, so git never follows it: a
     run whose worktree's `.git` file no longer points to the worktree's own
     directory fails as `reconciliation_failed`, and the worktree is left for

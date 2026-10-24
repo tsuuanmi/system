@@ -376,7 +376,7 @@ function mismatch(request: ApprovalRequest, call: { ref: string; version: string
 
 const RULE = { type: 'rule', id: 'agent-workers.tool-gate', version: '1' } as const
 /** The checks a policy rule can require (`autonomy-policy@1.0`): the only ones a verdict may leave pending. */
-const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+export const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
 
 /**
  * The gate of one run. `ctx.approvals` is read when a call comes (optional: none, and every call is

@@ -108,7 +108,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable, and
   only a runtime that proves its commands confined (`executes`) gives a writable Worker `validate`.
   Runs are durable, one at a time per Worker and up to `maxConcurrentRunsPerAccount` per account,
-  and a run that started is never rerun by itself.
+  and a run that started is never rerun by itself. Before a run works in a workflow run's new
+  worktree, it runs the repository's setup there (commands the policy allows, confined, offline;
+  [a worktree's setup](../design/agent-runtimes.md#a-worktrees-setup)).
   It keeps each runtime's enrollment slots and the agent accounts in them, identified by a keyed
   hash of the verified login (the key in `ctx.credentials`), quarantines a missing, changed,
   ambiguous, duplicate, or unverified one, and offers the operator's `account_enroll`,

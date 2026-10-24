@@ -86,6 +86,14 @@
 | `maxUnknownVerdicts` | number (1…20) | `3` | Verdicts other than dead a started run gets in a row, looked at again with a bounded backoff, before it goes to the operator, never declared dead |
 | `worktreeRoot` | string |  | Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees) |
 | `worktreeRetentionHours` | number (0…) | `168` | Hours a workflow run's worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them) |
+| `worktreeSetup` | object[] | `[]` | Per repository, the setup of a workflow run's new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058) |
+| `worktreeSetup[].repository` (required) | string |  | The repository (absolute): the workspace of the worktreePerRun Workers whose worktrees it sets up |
+| `worktreeSetup[].commands` (required) | string[] | `[]` | 1 to 16 commands run in order in a new worktree before any agent run works in it, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv |
+| `worktreeSetup[].views` | object[] | `[]` | Host directories the setup sees as private copies; never a path hidden from agents |
+| `worktreeSetup[].views[].path` (required) | string |  | A host directory (absolute) the setup sees as a private, writable directory of its own, removed when the setup ends |
+| `worktreeSetup[].views[].copy` | string[] | `[]` | Files of it (names) copied into the private directory first, for example a package store's index |
+| `worktreeSetup[].views[].readOnly` | string[] | `[]` | Paths inside it (relative) bound back read-only into the private directory, for example a package store's files |
+| `worktreeSetup[].timeoutSeconds` | number (1…3600) | `600` | The whole setup's deadline |
 
 ## `approvals`
 

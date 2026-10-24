@@ -118,7 +118,8 @@ default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
   host (user namespaces refused inside a namespace, or no `bwrap` on the
   daemon's PATH): the Worker stays read-only (`review` only) until it does.
   Commands that need the network (installing packages) fail inside a Worker:
-  prepare dependencies in the repository first.
+  in a run's worktree, the repository's [setup](#set-up-a-runs-worktree)
+  installs them first, offline.
 - **Codex Worker home:** Codex Workers run with their own `CODEX_HOME`
   (`runtime-codex-sdk` config `home`, default `~/.dsh/system/codex-home`),
   never your `~/.codex`, which `system mcp-config codex` gives the `system` MCP
@@ -2252,3 +2253,63 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
   never taken over (`config_error`). Move it away.
 - **Disk:** each worktree is a full checkout, kept a week by default. Lower
   `worktreeRetentionHours` when disk is short.
+
+## Set up a run's worktree
+
+A new worktree holds what git tracks, so no dependencies, and a Worker's commands have no network:
+its tests, lint, and typecheck cannot run there until the repository's **setup** has run
+([a worktree's setup](../design/agent-runtimes.md#a-worktrees-setup),
+[ADR-0058](../decisions/adr/0058-a-run-worktree-is-set-up-offline-before-its-agent-starts.md),
+proposed). You declare it per repository; `system` runs it in each workflow run's new worktree
+before the agent starts, offline, confined, each command allowed by the autonomy policy. For the
+`system` repository with pnpm (every path absolute: `~` is not expanded):
+
+1. **The store.** `corepack pnpm store path` in the repository names it, for example
+   `/home/me/.local/share/pnpm/store/v11`. It must hold every package of the lockfile: after the
+   lockfile changes, run `corepack pnpm install --frozen-lockfile` once in your own checkout (online).
+   It must lie outside the paths hidden from agents (`~/.dsh`, `/tmp`, the credential stores;
+   [read confinement](#agent-workers)), and so must `node` and corepack's cache
+   (`~/.cache/node/corepack`), which must already hold the pnpm version `packageManager` names.
+2. **The setup**, in the `agent-workers` row of your profile patch, beside the Workers whose
+   workspace is the repository (they set `worktreePerRun: true`):
+
+   ```yaml
+   - id: agent-workers
+     config:
+       worktreeSetup:
+         - repository: /home/me/src/system
+           commands:
+             - corepack pnpm install --frozen-lockfile --offline --store-dir=/home/me/.local/share/pnpm/store/v11 --package-import-method=copy
+           views:
+             # The store's index is a database pnpm opens for writing: the setup gets a private
+             # copy of it; the packages' files stay the host's, read-only.
+             - { path: /home/me/.local/share/pnpm/store/v11, copy: [index.db, index.db-wal], readOnly: [files] }
+   ```
+
+   Why each part: `--offline`, since the setup has no network; `--store-dir`, since pnpm otherwise
+   moves to an empty store inside the worktree when it cannot link from the host's; and
+   `--package-import-method=copy`, since the store is read-only and on another mount, and a copy
+   keeps a Worker that writes its worktree from changing the store. Each worktree then holds its
+   own `node_modules` (about 700 MB for `system`), kept as long as the worktree.
+3. **The policy.** Each setup command is judged as a command, by its exact argv. Under the
+   bundle's studio policy it asks the operator: list the exact line in the studio policy's
+   `commands` ([change the autonomy policy](#change-the-autonomy-policy)) so it runs unasked, or
+   approve it per workflow run (below).
+4. `system check`, then restart. The next workflow run's first agent run sets its worktree up;
+   `system explain <runId>` shows the setup's decision (rule `agent-workers.worktree-setup`), and
+   `system events --type agent-workers.worktree.setup` each setup (`ran`, `refused`, `waits`).
+
+When a run fails at start (`config_error`, nothing sent to the agent), its message names the cause:
+
+| The message says | Do |
+|---|---|
+| `waits for the operator's approval of its command (approval request apr-…)` | approve it in the queue on `/ui` (its summary names the repository, the workflow run, and the command), then `system continue <runId>`; one approval covers that worktree's setup once, under that exact setup. A board task's next attempt is a new run with a worktree of its own, which asks again: for board work, list the command in the policy (step 3) |
+| `approval request apr-… was rejected by the operator` (or `unanswered when it expired`, `withdrawn`) | that worktree is never set up; start a new workflow run, or list the command in the policy |
+| `the autonomy policy forbids its command n` | the policy forbids commands: the setup cannot run until it allows them |
+| `its command n (…) exited with code c. Its output ended: …` | read the output. `snapshot not present in local store`: the store lacks a package of the lockfile, so install once online in your checkout (step 1), then `system continue <runId>`; the next run tries the setup again |
+| `did not finish within the setup's 600 s` | raise `timeoutSeconds` (at most 3600), or find what hangs |
+| `its view … lies inside, or holds, …, which is hidden from agents` | move the directory out of the hidden paths, or drop the view |
+| `its commands cannot be confined on this host` | as for an agent Worker: bubblewrap missing, or user namespaces refused ([read confinement](#agent-workers)) |
+
+A setup that ran is not run again in that worktree while its definition is unchanged; change the
+setup and every worktree is set up again before its next run (and asked about again).

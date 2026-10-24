@@ -59,6 +59,38 @@ describe('confinedCommand: the bubblewrap command line (ADR-0024)', () => {
     })
   })
 
+  it('with options: a read-only host with its own /dev, no network, a start directory, and views mounted last, in order', () => {
+    const view = join(h.root, 'view')
+    const store = join(h.root, 'store')
+    mkdirSync(join(store, 'files'), { recursive: true })
+    mkdirSync(view)
+    const c: Confinement = { bwrap: 'bwrap', hide: [h.home], readOnly: [], writable: [h.workerHome] }
+    expect(confinedCommand('sh', ['-c', 'true'], c, {
+      readOnly: true, network: false, chdir: h.workerHome,
+      views: [{ source: view, path: store, writable: true }, { source: join(store, 'files'), path: join(store, 'files'), writable: false }],
+    })).toEqual({
+      command: 'bwrap',
+      args: [
+        '--die-with-parent', '--unshare-pid', '--unshare-net', '--new-session', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
+        '--tmpfs', h.home, '--bind', h.workerHome, h.workerHome,
+        '--bind', view, store, '--ro-bind', join(store, 'files'), join(store, 'files'), '--chdir', h.workerHome,
+        '--', 'sh', '-c', 'true',
+      ],
+    })
+    // No options: exactly an agent child's command line.
+    expect(confinedCommand('true', [], c, {}).args.slice(0, 8)).toEqual(OPTIONS)
+  })
+
+  it('refuses a view that would expose a hidden path, one whose source is missing, and a relative path', () => {
+    const c: Confinement = { bwrap: 'bwrap', hide: [h.home, h.vaultKey], readOnly: [], writable: [] }
+    const view = (source: string, path = join(h.root, 'somewhere')) => () => confinedCommand('true', [], c, { views: [{ source, path, writable: false }] })
+    expect(view(join(h.home, 'system'))).toThrow(`the view of ${join(h.home, 'system')} would expose ${h.vaultKey}`)
+    expect(view(h.root)).toThrow(/would expose/)
+    expect(view(join(h.root, 'missing'))).toThrow(/does not exist/)
+    expect(view(h.tools, 'relative')).toThrow(/not absolute/)
+    expect(() => confinedCommand('true', [], c, { chdir: 'relative' })).toThrow(/not absolute/)
+  })
+
   it('refuses a bind that would re-expose a hidden path: one that holds a secret, or is one', () => {
     const run = (c: Partial<Confinement>) => () => confinedCommand('true', [], { bwrap: 'bwrap', hide: [h.home, h.vaultKey], readOnly: [], writable: [], ...c })
     expect(run({ readOnly: [join(h.home, 'system')] })).toThrow(`binding back ${join(h.home, 'system')} would expose ${h.vaultKey}`)
@@ -113,6 +145,40 @@ describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap c
   it('does not prove a confinement whose binds would expose a secret (each of these let the vault key be read before)', async () => {
     for (const extra of [{ readOnly: [join(h.home, 'system')] }, { writable: [join(h.home, 'system')] }, { writable: [join(h.workerHome, '..')] }]) {
       expect(await proveConfinement(confinement(extra))).toMatchObject({ confined: false, detail: expect.stringMatching(/would expose/) })
+    }
+  })
+
+  it('with options: the host is read-only but for its binds, there is no network but loopback, and a view shows another directory there', async () => {
+    const elsewhere = mkdtempSync(join(h.root, 'store-'))
+    try {
+      const view = join(h.root, 'view')
+      mkdirSync(view)
+      writeFileSync(join(view, 'index'), 'private copy')
+      mkdirSync(join(elsewhere, 'files'))
+      writeFileSync(join(elsewhere, 'files', 'pkg'), 'content')
+      const options = {
+        readOnly: true, network: false as const, chdir: h.workerHome,
+        views: [{ source: view, path: elsewhere, writable: true }, { source: join(elsewhere, 'files'), path: join(elsewhere, 'files'), writable: false }],
+      }
+      const run = (script: string) => {
+        const c = confinedCommand('sh', ['-c', script], confinement(), options)
+        return promisify(execFile)(c.command, c.args, { encoding: 'utf8' })
+      }
+      // Its start directory is the bound one, which it writes; the rest of the host it cannot.
+      expect((await run('pwd && touch made && echo ok')).stdout).toBe(`${h.workerHome}\nok\n`)
+      expect(statSync(join(h.workerHome, 'made')).isFile()).toBe(true)
+      await expect(run(`touch ${join(elsewhere, '..', 'planted')}`)).rejects.toThrow()
+      // Only its own loopback.
+      const devices = (await run('cat /proc/net/dev')).stdout.split('\n').slice(2).filter(Boolean).map((line) => line.trim().split(':')[0])
+      expect(devices).toEqual(['lo'])
+      // The view: the private directory at the host path, writable; the host's files back in it, read-only.
+      expect((await run(`cat ${join(elsewhere, 'index')} ${join(elsewhere, 'files', 'pkg')}`)).stdout).toBe('private copycontent')
+      await run(`touch ${join(elsewhere, 'written')}`)
+      expect(existsSync(join(view, 'written'))).toBe(true)
+      expect(existsSync(join(elsewhere, 'written'))).toBe(false)
+      await expect(run(`touch ${join(elsewhere, 'files', 'planted')}`)).rejects.toThrow()
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true })
     }
   })
 

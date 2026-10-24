@@ -20,7 +20,8 @@
 > compiles to a PreToolUse hook, and
 > [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) and
 > [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) ask through
-> a command hook bridged to the run. The [workflow engine](workflow-engine.md) consumes it too: a
+> a command hook bridged to the run; a repository's worktree setup asks it too
+> ([below](#a-worktrees-setup)). The [workflow engine](workflow-engine.md) consumes it too: a
 > remediation fix's gate asks it ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)),
 > an approved deferred call's session is continued
 > ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), and a plain run that wrote
@@ -347,6 +348,41 @@ ids, never the call's input.
   as pending on an `acceptance` decision (rule `workflow.run-acceptance`) for the operator to see
   ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)), and they bind
   wherever its result is applied.
+
+## A worktree's setup
+
+A repository's [worktree setup](agent-runtimes.md#a-worktrees-setup)
+([ADR-0058](../decisions/adr/0058-a-run-worktree-is-set-up-offline-before-its-agent-starts.md),
+proposed) runs commands the operator declared in a workflow run's new worktree, before its agent
+starts. The `agents` source judges each one as the gate judges a Worker's `Bash` call: `check` with
+class `command` and the command's exact argv (its words split on single spaces), under the studio
+policy.
+
+| Verdict | The command | Recorded |
+|---|---|---|
+| `forbid` | the setup is refused, and the run fails at start | the `autonomy` decision, then the setup's `gate` decision (`refuse`) |
+| `auto`, `notify` | runs; a rule's required checks stay pending, bound when the run's result is accepted (a pending check no rule can require refuses) | the `autonomy` decision, the setup's `gate` decision (`start`, naming them) |
+| `ask` | one request for this command of this setup in this worktree; the run fails at start, waiting on it | the `autonomy` decision, the request, the setup's `gate` decision (`refuse`, naming the request) |
+
+- **The request** binds to exactly that (INV-5): subject `{ type: content, ref:
+  agent-worktree-setup:<repository key>/<workflow run>:<n>, version: <the setup's hash> }`, class
+  `command`, its argv the command's, requester `worker` with the agent run that needed the setup
+  (and its session, if any); its summary names the repository, the workflow run, and the command,
+  and its consequences how it runs (confined, no network) and what approving or not does. The setup's
+  hash covers its whole definition (repository, commands, views, deadline), so a changed setup is
+  another subject.
+- **Approved**, the next run of that workflow run (the operator's `system continue <runId>`, or a
+  task's next attempt) takes it, once: an approval covers one setup of one worktree, under one
+  definition. While open, a run waits again on the same request, and nothing new is queued.
+  Rejected, expired, or withdrawn: that worktree's setup is refused, and nothing new is queued; a
+  new workflow run's worktree, or a changed setup, asks again. Several commands that ask are asked
+  together, and their approvals are taken together, only when all are approved.
+- **A standing permission** is the policy's, as for any command: list the command line in the studio
+  policy's `commands` ([a policy change](#a-policy-change)); it then runs as `workspace-write`. These
+  requests are studio `command` requests of one argv, so the queue may
+  [propose that line itself](#the-queue-proposes-a-policy-change) after repeated approvals.
+- With no queue loaded, no setup command runs (fail-closed rule 5). The requests are kept with the
+  gate's (`agent_tool_requests`, scope the worktree, tool `worktree-setup:<n>`, the setup's hash).
 
 ## A policy change
 

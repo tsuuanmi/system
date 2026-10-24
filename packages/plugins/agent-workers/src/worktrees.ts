@@ -268,11 +268,11 @@ export class Worktrees {
       const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
-      // Added again, it starts over: a later retirement is a decision of its own.
+      // Added again, it starts over: a later retirement is a decision of its own, and its setup runs again.
       this.ctx.store.transaction((db) => {
         db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
           ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
-          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL`).run(repository, runId, path, branch, gitdir, new Date().toISOString())
+          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL`).run(repository, runId, path, branch, gitdir, new Date().toISOString())
       })
       this.ctx.logger.info(`agent Workers: run ${runId} works in ${path} on ${branch}, ${exists ? 'added again from that branch' : `branched from the HEAD of ${repository}`}`)
       return path
