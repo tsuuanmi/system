@@ -62,7 +62,9 @@ describe('acp: the client side enforces the policy', () => {
     expect(await look(join(base, 'secret.txt'), reads)).toBe('look: absent')
     expect(await look(join(workspace, 'inside.txt'), reads)).toBe('look: present')
     expect(await runtime(true, {}, undefined, reads).probe()).toMatchObject({ readsConfined: true })
-  })
+    // Four agent starts, three under the real bubblewrap, and the probe's proof of it: up to 3.8 s of
+    // the 5 s default on a loaded host.
+  }, 15_000)
 
   it('rejects every permission request', async () => {
     expect((await runtime().run({ prompt: 'ask permission', workspace, sandbox: 'read-only' }, signal())).text).toBe('permission: no')
