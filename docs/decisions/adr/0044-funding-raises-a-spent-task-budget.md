@@ -1,7 +1,7 @@
 # ADR-0044: An approved funding request raises a spent task's budget by exactly the lines it names
 
-- **Status:** Accepted; an amendment of 2026-10-23 (no funding asked on a task's last attempt) is proposed
-- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
+- **Status:** Accepted; its amendment of 2026-10-23 (no funding asked on a task's last attempt) accepted 2026-10-24
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator; the amendment accepted 2026-10-24, by the operator, D38)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
   [ADR-0040](0040-briefs-on-the-workers-and-workflow-seams.md),
@@ -86,6 +86,8 @@ ledger cannot count the task's usage. Then the request asks only to go on.
   a share of each task's own lines.
 
 ## Amendment (2026-10-23): no funding asked on a task's last attempt
+
+Accepted 2026-10-24, by the operator (D38).
 
 This settles one item the record left open: the funding ask on a spent run that was the task's
 last attempt. That request could not serve the task. Approved, it raised nothing, and the task

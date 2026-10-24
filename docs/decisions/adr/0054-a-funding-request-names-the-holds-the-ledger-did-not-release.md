@@ -1,7 +1,7 @@
 # ADR-0054: A funding request names the holds the ledger did not release
 
-- **Status:** Proposed (it implements the operator's decision D31 (c) of 2026-10-24)
-- **Date:** 2026-10-24
+- **Status:** Accepted (it implements the operator's decision D31 (c) of 2026-10-24)
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator, D38)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0044](0044-funding-raises-a-spent-task-budget.md),
   [ADR-0047](0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md),

@@ -3,7 +3,7 @@
 - **Status:** Proposed (written on the operator's acceptance of PROP-0012, D23, and answer D24);
   supersedes [ADR-0034](0034-unsent-failover-to-a-sibling-account.md) in part, for assigned providers;
   superseded in part by [ADR-0055](0055-personal-accounts-may-be-pooled-on-the-operators-recorded-acceptance.md)
-  (proposed, D33: `pooled` is the operator's recorded decision, and a personal subscription
+  (accepted 2026-10-24, D38; D33: `pooled` is the operator's recorded decision, and a personal subscription
   qualifies when the operator records that they accept the risk under its terms)
 - **Date:** 2026-10-24
 - **Related:** [PROP-0012](../../proposals/0012-agent-accounts.md),

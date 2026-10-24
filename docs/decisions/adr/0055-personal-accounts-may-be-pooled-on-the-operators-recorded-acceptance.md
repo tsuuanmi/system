@@ -1,9 +1,9 @@
 # ADR-0055: A provider's personal accounts may be pooled when the operator records that they accept the risk
 
-- **Status:** Proposed (written on operator decision D33, 2026-10-24); supersedes
+- **Status:** Accepted (written on operator decision D33, 2026-10-24); supersedes
   [ADR-0052](0052-accounts-are-assigned-unless-pooling-is-recorded.md) in part, for when a
   provider may be `pooled`
-- **Date:** 2026-10-24
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator, D38)
 - **Related:** [ADR-0052](0052-accounts-are-assigned-unless-pooling-is-recorded.md),
   [ADR-0034](0034-unsent-failover-to-a-sibling-account.md),
   [PROP-0012](../../proposals/0012-agent-accounts.md), REQ-ACC-10, REQ-WRK-8,
