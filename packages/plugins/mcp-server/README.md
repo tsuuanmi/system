@@ -22,7 +22,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
   lifetime, so unloading the plugin removes it. A name is unique, except that a
   built-in placeholder may be replaced. For example, `login` contributes
   `account_list` and `account_save`.
-- **Built-in tools:** `status`, `ask`, `research`, `result` (`client` scope),
+- **Built-in tools:** `status`, `roster`, `ask`, `research`, `result` (`client` scope),
   and `events`, `evidence`, `artifact` (`operator` scope):
   - `evidence` and `artifact` read local-private content, which no client scope
     reads (INV-12): a drift outline, and any artifact's header and a bounded
@@ -78,6 +78,14 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     balance) reads every entry the log keeps. It reads the entries a page at a time, at most
     10,000, and past them it is degraded, saying so, never `ok`. A cap still counts such a run as
     0 (D25).
+  - `roster` (REQ-HOST-8) is the roster of every Worker
+    ([roster](../../../docs/design/roster.md)), read through `readRoster` in
+    [`gateway-core`](../../gateway-core/README.md#the-roster) from the mounted
+    `workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, `workflow`,
+    and `board`, each one absent or failing read as unknown with why. Its
+    structured content is the `mcp-roster@1.0` record, checked before it is
+    sent; its text content is the rendering `system roster` prints. A client
+    (the lead) gets it without account labels.
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
   (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is
@@ -89,7 +97,8 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
   (default 24), `storeCheckMinutes` (default 15).
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
   `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`,
-  `ctx.get('eventLog')`, `ctx.get('pluginHost')`, and `ctx.get('resources')` optionally.
+  `ctx.get('eventLog')`, `ctx.get('pluginHost')`, and `ctx.get('resources')` optionally, and for the
+  roster `ctx.get('agentWorkers')`, `ctx.get('workflow')`, and `ctx.get('board')`.
 
 ## Scopes
 
@@ -106,7 +115,7 @@ one scope another's rights).
 | Scope | Token file | Reaches | Handed out by |
 |---|---|---|---|
 | `operator` | `operator.token` | every MCP tool, and `/ui` | the `system` CLI's own tool calls, `system ui` |
-| `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `result`, `status`, `explain`, `usage`, `session_send`, `session_inbox`, `resources_pools`, `resources_usage`, the `board_*` tools except `board_pause`, `board_resume`, and `board_close`, and `approvals_list`, `approvals_get`, `approvals_policy` | `system mcp-headers` (an HTTP client's headers, such as Claude Code's `headersHelper`), `system mcp-stdio` (a stdio client, such as Codex) |
+| `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `result`, `status`, `roster`, `explain`, `usage`, `session_send`, `session_inbox`, `resources_pools`, `resources_usage`, the `board_*` tools except `board_pause`, `board_resume`, and `board_close`, and `approvals_list`, `approvals_get`, `approvals_policy` | `system mcp-headers` (an HTTP client's headers, such as Claude Code's `headersHelper`), `system mcp-stdio` (a stdio client, such as Codex) |
 | `model` | `model.token` | `/anthropic` and `/openai` only; `/mcp` and `/ui` answer `401` | `system claude-env`, `system codex-env`, `system mcp-token --scope model` (a Codex Worker on the Responses gateway); each refuses while its gateway row is off ([runbook](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)) |
 
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its

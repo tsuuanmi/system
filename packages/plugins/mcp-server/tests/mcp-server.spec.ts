@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { z as zod } from 'zod'
 import { FakePluginHost, manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import McpEndpoint from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -68,7 +69,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(statSync(join(dir, 'mcp.json')).mode & 0o777).toBe(0o600)
     const client = await connect(url, token)
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['artifact', 'ask', 'events', 'evidence', 'research', 'result', 'status'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['artifact', 'ask', 'events', 'evidence', 'research', 'result', 'roster', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
     // No milestone baked into the code: status reports what is mounted, not a roadmap stage.
@@ -110,6 +111,67 @@ describe('system MCP server on ctx.webServer', () => {
     for (let i = 0; i < 1000; i += 1) ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'interrupted', account: 'max', pool: 'max.agents', observedAt, reason: 'the host stopped while it ran, so no result came' } })
     ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_2', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
+  })
+
+  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.0 (REQ-HOST-8)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const at = '2026-10-24T09:29:58.000Z'
+    const plus = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' as const }
+    class Router extends Service {
+      constructor(c: Context) {
+        super(c, 'workers')
+      }
+      async list() {
+        return [
+          { worker: 'worker:plus/standard', provider: 'chatgpt-web', family: 'chatgpt-web', account: plus, load: { running: 1, queued: 0, pending: 0, slots: 2 }, tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote', state: 'ready', observedAt: at },
+          { worker: 'worker:plus/frontier', provider: 'chatgpt-web', family: 'chatgpt-web', account: { ...plus, limitUntil: '2026-10-24T11:00:00.000Z' }, tier: 'frontier', quotaClass: 'subscription-chat', locality: 'remote', state: 'quota-exhausted', observedAt: at },
+        ]
+      }
+      sources() {
+        return [{ source: 'website', state: 'described', at, workers: 2 }]
+      }
+      siblings() {
+        return ['worker:plus/frontier', 'worker:plus/standard']
+      }
+    }
+    class Catalog extends Service {
+      constructor(c: Context) {
+        super(c, 'accounts')
+      }
+      async list() {
+        return [{ id: 'plus', provider: 'chatgpt-web', label: 'Studio Plus', status: 'ready' }]
+      }
+      async duplicateIdentities() {
+        return []
+      }
+    }
+    const pool = { pool: 'plus.chat', account: 'plus', kind: 'interactive' as const, windows: [{ id: 'three-hour', kind: 'rolling' as const, seconds: 10_800 }] }
+    const fibers = [ctx.plugin(Router), ctx.plugin(Catalog), ctx.plugin(EventLog, {}), ctx.plugin(FakeResources, { pools: [pool] })]
+    await Promise.all(fibers)
+    cleanups.push(async () => {
+      for (const fiber of fibers.reverse()) await fiber.dispose()
+    })
+    const roster = async (token: string) => (await connect(url, token)).callTool({ name: 'roster', arguments: {} })
+    const operator = await roster(tokens.operator)
+    const schemas = new SchemaRegistry()
+    schemas.assertDef('mcp-roster@1.0', 'roster-output', operator.structuredContent)
+    expect(operator.structuredContent).toMatchObject({
+      counts: { ready: 0, busy: 1, resting: 1, unavailable: 0, quarantined: 0 },
+      workers: { value: [
+        { worker: 'worker:plus/frontier', availability: { state: 'resting', until: { value: '2026-10-24T11:00:00.000Z' } }, siblings: { value: ['worker:plus/standard'] } },
+        { worker: 'worker:plus/standard', role: { value: null }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } },
+          pools: { value: [{ pool: 'plus.chat', available: false, windows: [{ id: 'three-hour', state: 'unknown', used: { unknown: 'no reading yet' } }], unknownUsage: { value: { runs: 0, kinds: {} } } }] },
+          work: { unknown: 'the workflow engine (ctx.workflow) is not mounted' } },
+      ] },
+    })
+    expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/^Roster as of .*: 2 Worker\(s\): 0 ready, 1 busy, 1 resting, 0 unavailable, 0 quarantined\n/)
+    const client = await roster(tokens.client)
+    schemas.assertDef('mcp-roster@1.0', 'roster-output', client.structuredContent)
+    expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
+    expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 } })
+    // The model token reaches no MCP tool.
+    const model = await fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'roster', arguments: {} } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${tokens.model}` } })
+    expect(model.status).toBe(401)
   })
 
   it('reads each Worker source\'s last read into health, after listing the Workers: a silent one is named, never ok (INV-2)', async () => {
@@ -290,10 +352,10 @@ describe('scoped tokens', () => {
     ctx.mcp.tool('op_only', { description: 'operator action', inputSchema: {} }, async () => ({ content: [{ type: 'text' as const, text: 'done' }] }))
     ctx.mcp.tool('cl_tool', { description: 'client tool', inputSchema: {}, scope: 'client' }, async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }))
     const client = await connect(url, tokens.client)
-    expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'status'])
+    expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'roster', 'status'])
     const operator = await connect(url, tokens.operator)
     const listed = (await operator.listTools()).tools
-    expect(listed.map((t) => t.name).sort()).toEqual(['artifact', 'ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'status'])
+    expect(listed.map((t) => t.name).sort()).toEqual(['artifact', 'ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'roster', 'status'])
     // The reference page shows each tool's scope from the listing.
     expect(listed.find((t) => t.name === 'op_only')?._meta).toMatchObject({ 'system/scope': 'operator' })
     expect(listed.find((t) => t.name === 'cl_tool')?._meta).toMatchObject({ 'system/scope': 'client' })

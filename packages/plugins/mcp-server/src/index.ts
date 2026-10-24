@@ -12,7 +12,7 @@ import { readFileSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { assertSafeBind, endpointUrl, guardRequest, LOOPBACK_HOSTS, McpTools, readJsonBody, scopeTokens, SCOPES, tokenFile, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, endpointUrl, formatRoster, guardRequest, LOOPBACK_HOSTS, McpTools, readJsonBody, readRoster, type RosterServices, scopeTokens, SCOPES, tokenFile, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -355,6 +355,33 @@ export class McpEndpoint extends McpTools {
         return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status }
       },
     })
+    // The roster (docs/design/roster.md): every Worker in one read model, projected on read from the
+    // services that hold each fact; a client (the lead) sees it without account labels.
+    this.tools.set('roster', {
+      placeholder: false,
+      spec: { scope: 'client', description: 'The roster of every Worker, projected on read: its provider and family, account (id, label for the operator, enrolled or quarantined state), role, tier, quota class, availability (ready, busy N of M, resting at a limit until its reset, unavailable with why, quarantined), the steps and board tasks it serves now, its load, and its account\'s pools with each window\'s used share, reset, and the runs whose usage the ledger could not count. A fact a source could not give reads unknown, with why.', inputSchema: {} },
+      handler: async (_args, { scope }) => {
+        try {
+          const roster = await readRoster(this.rosterServices(), { scope })
+          return { content: [{ type: 'text', text: formatRoster(roster) }], structuredContent: roster as unknown as Record<string, unknown> }
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text', text: `the roster could not be made: ${(error as Error).message.slice(0, 500)}` }] }
+        }
+      },
+    })
+  }
+
+  /** The services the roster reads, each only when mounted. */
+  private rosterServices(): RosterServices {
+    return {
+      workers: this.ctx.get('workers'),
+      accounts: this.ctx.get('accounts'),
+      agentWorkers: this.ctx.get('agentWorkers' as never) as RosterServices['agentWorkers'],
+      resources: this.ctx.get('resources'),
+      eventLog: this.ctx.get('eventLog') as RosterServices['eventLog'],
+      workflow: this.ctx.get('workflow' as never) as RosterServices['workflow'],
+      board: this.ctx.get('board' as never) as RosterServices['board'],
+    }
   }
 }
 
