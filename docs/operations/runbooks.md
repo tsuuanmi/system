@@ -1551,6 +1551,12 @@ its Workers until it answers`.
   decision names the source (`system explain <runId>`, a candidate `source agents`). A source that
   `failed to describe its Workers` fails every route until it answers: no step is routed, and
   health is down.
+- **Right after a start**, a source whose first describe has not landed yet (the `agents` source
+  probes its runtimes first) reads `describing…`: health says `N available so far; source agents
+  describing… (its first describe since it registered has not landed …)`, and `system roster` (and
+  the Workers page and Home on `/ui`) says `N Worker(s) so far (source agents still describing its
+  Workers)` and `source agents describing…`. The Workers counted are those heard so far, not
+  every one: wait for the first probe, then read again, and both count every Worker.
 - **Read health again.** A source that was only slow answers in the next read, and health no
   longer names it. A step refused while it did not answer is run again with `system continue
   <runId> <nodeId>` or a new run.

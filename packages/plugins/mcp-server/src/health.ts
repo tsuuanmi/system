@@ -37,7 +37,7 @@ export interface HealthSources {
    * How each Worker source answered its last read (`ctx.workers.sources()`), read after `workers`:
    * a source that was silent or failed is not counted there, and a route then saw none of its Workers.
    */
-  workerSources?: () => Array<{ source: string; state: 'described' | 'silent' | 'failed'; at: string; detail?: string }>
+  workerSources?: () => Array<{ source: string; state: 'described' | 'silent' | 'failed'; at: string; detail?: string; describing?: true }>
   /**
    * The runs whose liveness needs the operator's look (`ctx.workers.liveness()`, PROP-0013): stalled,
    * being looked at, or ended without being known to be gone; and each source that could not tell.
@@ -228,7 +228,10 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       // A source that was silent or failed in its last read is counted nowhere, so a route then saw
       // none of its Workers: never ok while one is (INV-2).
       const unheard = (sources.workerSources?.() ?? []).filter((s) => s.state !== 'described')
-      const named = unheard.map((s) => `source ${s.source} ${s.detail ?? s.state} (at ${s.at})`).join('; ')
+      // A source whose first describe has not landed is still describing: its Workers are not known yet, so no count reads as all of them (T99 D8).
+      const named = unheard.map((s) => (s.describing
+        ? `source ${s.source} describing… (its first describe since it registered has not landed, at ${s.at})`
+        : `source ${s.source} ${s.detail ?? s.state} (at ${s.at})`)).join('; ')
       const runbook = '(docs/operations/runbooks.md#a-worker-source-does-not-answer)'
       if ('error' in listed) {
         if (!unheard.length) throw listed.error
@@ -242,7 +245,8 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         return { name: 'workers', state: 'down', detail: `no Worker can take work: ${[cannot, unheardNote].filter(Boolean).join('; ')}` }
       }
       if (waiting.length || unheard.length) {
-        return { name: 'workers', state: 'degraded', detail: [...(waiting.length ? [`cannot take work: ${cannot} (system explain shows why)`] : [`${workers.length} available`]), ...(unheard.length ? [unheardNote] : [])].join('; ') }
+        const sofar = unheard.some((s) => s.describing) ? ' so far' : ''
+        return { name: 'workers', state: 'degraded', detail: [...(waiting.length ? [`cannot take work: ${cannot} (system explain shows why)`] : [`${workers.length} available${sofar}`]), ...(unheard.length ? [unheardNote] : [])].join('; ') }
       }
       return ok('workers', `${workers.length} available`)
     }))

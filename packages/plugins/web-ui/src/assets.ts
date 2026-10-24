@@ -485,11 +485,14 @@ export const APP_JS = `'use strict'
       look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts
+    // A source still describing its Workers for the first time: the counts are so far.
+    const describing = roster && roster.sources && 'value' in roster.sources ? roster.sources.value.filter((s) => s.describing).map((s) => s.source) : []
     show(pageHead('home'),
       el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
         waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now.')),
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
-        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' idle · ' + c.resting + ' at a limit · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '') + ' ',
+        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' idle · ' + c.resting + ' at a limit · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
+          + (describing.length ? ' (so far: ' + describing.join(', ') + ' still describing its Workers)' : '') + ' ',
           el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'see each Worker'))
           : el('p', { class: 'muted' }, 'The Workers could not be read now.'),
         ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'see the board')) : null),
@@ -798,7 +801,9 @@ export const APP_JS = `'use strict'
       ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
-      unheard.length ? el('div', {}, unheard.map((s) => el('p', { class: 'state failed' }, 'The Worker source ' + s.source + ' was ' + s.state + ' ' + relative(s.at) + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
+      unheard.length ? el('div', {}, unheard.map((s) => s.describing
+        ? el('p', { class: 'muted' }, 'The Worker source ' + s.source + ' is still describing its Workers: its first read since it started has not landed (' + relative(s.at) + '). Its Workers are not listed yet, so the counts above are so far.')
+        : el('p', { class: 'state failed' }, 'The Worker source ' + s.source + ' was ' + s.state + ' ' + relative(s.at) + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
       known(roster.workers, (workers) => workers.length
         ? el('div', {}, ['busy', 'ready', 'resting', 'unavailable', 'quarantined'].map((state) => {
           const group = workers.filter((w) => w.availability.state === state)

@@ -168,6 +168,34 @@ describe('ctx.workers: configured preferences', () => {
     }
   })
 
+  it('says a silent source is still describing until one of its describes lands, even past the bound, and never after (T99 D8)', async () => {
+    const { ctx, dispose } = await boot()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      // Its first describe (a start's first probe) takes 7 s; every later one hangs.
+      let calls = 0
+      ctx.workers.register(source('slow', async () => {
+        calls++
+        await new Promise((resolve) => (calls === 1 ? setTimeout(resolve, 7000) : undefined))
+        return [worker('w:s')]
+      }))
+      ctx.workers.register(source('live', [worker('w:a')]))
+      const first = ctx.workers.list()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect((await first).map((w) => w.worker)).toEqual(['w:a'])
+      expect(ctx.workers.sources!().find((s) => s.source === 'slow')).toEqual({ source: 'slow', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s', describing: true })
+      // The first describe lands, late; a later silent read is no longer the source's first.
+      await vi.advanceTimersByTimeAsync(2000)
+      const second = ctx.workers.list()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect((await second).map((w) => w.worker)).toEqual(['w:a'])
+      expect(ctx.workers.sources!().find((s) => s.source === 'slow')).toEqual({ source: 'slow', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s' })
+    } finally {
+      vi.useRealTimers()
+      await dispose()
+    }
+  })
+
   it('refuses a source that describes an invalid or duplicate Worker', async () => {
     const { ctx, dispose } = await boot()
     try {

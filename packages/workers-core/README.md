@@ -45,8 +45,10 @@ Routing **seam definition**
 - **A source's last read** (`sources()`, optional): for each registered source, how it answered
   the last read of its Workers, by a route or `list`: `described` (how many), `silent` (it did not
   answer within the router's bound, so that read counted none of its Workers), or `failed` (its
-  `describe` threw), when that read started, and why. A provider that keeps none leaves a caller
-  unable to tell a silent source from one with no Workers; health reads it
+  `describe` threw), when that read started, and why; on a silent read, optionally, `describing`
+  while none of the source's describes has landed since it registered (its first is still
+  running), so its Workers are not known yet, never none. A provider that keeps none leaves a
+  caller unable to tell a silent source from one with no Workers; health and the roster read it
   ([routing](../../docs/design/routing.md#sources-that-do-not-answer)).
 - The conformance suite is [`conformance/workers.ts`](conformance/workers.ts); the seam is at
   contract 1.0:
@@ -64,7 +66,8 @@ Routing **seam definition**
   - restriction, determinism, and the decision artifacts;
   - a source that does not describe its Workers in time: routed past and named in the decision;
     with `sources()`, kept `silent` in its last read, a source whose describe fails kept `failed`,
-    and a source's read gone with the source;
+    and a source's read gone with the source; a provider that says `describing` says it of a
+    source that never answered, and no longer once one of its describes landed, even late;
   - provider-family exclusion: only another family is admitted, a Worker with no
     family is rejected, and the reasons name no family;
   - input length: a Worker that takes less than the input is refused, saying so,

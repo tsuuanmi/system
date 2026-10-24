@@ -25,6 +25,9 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   `describe` throws fails the read with its error, as before. `sources()` gives
   how each source answered its last read, by a route or `list` (`described`,
   `silent`, or `failed`, when, and why); a source's read goes with the source.
+  A silent read says `describing` while none of the source's describes has
+  landed since it registered (one that lands past the bound still counts), so a
+  first probe after a start reads as describing, not as no Workers.
   Health names every source silent or failed in it
   ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)). Each
   descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with

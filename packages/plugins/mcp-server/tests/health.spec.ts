@@ -60,6 +60,16 @@ describe('host health (REQ-HOST-6)', () => {
     expect((await healthReport(base({ workerSources: () => [silent] }))).state).toBe('degraded')
   })
 
+  it('says a source whose first describe has not landed is describing, and counts the Workers heard as so far, never as every one (T99 D8)', async () => {
+    const at = '2026-10-24T07:12:00.000Z'
+    const seven = Array.from({ length: 7 }, (_, i) => ({ worker: `w${i}`, state: 'ready' }))
+    const describing = { source: 'agents', state: 'silent' as const, at, detail: 'did not describe its Workers within 5 s', describing: true as const }
+    expect(await check({ workers: async () => seven, workerSources: () => [describing, { source: 'turns', state: 'described' as const, at }] }, 'workers')).toEqual({
+      name: 'workers', state: 'degraded',
+      detail: `7 available so far; source agents describing… (its first describe since it registered has not landed, at ${at}): routing sees none of its Workers until it answers (docs/operations/runbooks.md#a-worker-source-does-not-answer)`,
+    })
+  })
+
   it('is degraded by accounts signed in as one person, naming them and the runbook (REQ-ACC-7)', async () => {
     const duplicates = await check({ duplicateAccounts: async () => [['chatgpt-main', 'chatgpt-2']] }, 'accounts')
     expect(duplicates).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^chatgpt-main and chatgpt-2 are signed in as the same person, so none of them takes work: .*runbooks\.md#two-accounts-sign-in-as-one-person/) })

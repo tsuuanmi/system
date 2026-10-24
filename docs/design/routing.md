@@ -190,6 +190,14 @@ stays admissible: it only orders it later.
   source's read goes with the source. Health reads it after listing the Workers, names every
   source silent or failed in it, and is degraded while one is, down when no Worker answered or the
   read failed ([runbook](../operations/runbooks.md#a-worker-source-does-not-answer)).
+- **Describing.** A silent read of a source none of whose describes has landed since it registered
+  says so (`describing`, an optional field of the read): its first describe is still running (the
+  `agents` source's first probe of its runtimes, right after a start), so its Workers are not
+  known yet, never known to be none. A describe that lands past the bound still lands: the
+  source's later silent reads are plain `silent`. Health and the roster read the same reads after
+  the same listing, and both say the source is describing and that the Workers they count are so
+  far, never a count that reads as every Worker (T99 D8: the roster listed 7 Workers right after a
+  restart while a later health read counted 13).
 - **A source keeps its own describe fast.** The `agents` source refreshes its runtimes' probes in
   the background and, once a runtime's first probe has finished, never waits for one in a
   describe ([admission evidence](agent-runtimes.md#admission-evidence)).

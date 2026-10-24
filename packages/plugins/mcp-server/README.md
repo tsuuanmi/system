@@ -56,6 +56,9 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     within the router's 5 s) or failed, with when, and is degraded while one is,
     down when no Worker answered or a source's failure failed the read
     ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)).
+    A silent source whose first describe has not landed (`describing`, right after a start)
+    is named as `describing…`, and the Workers heard are counted `so far`, as the roster
+    counts them from the same reads (T99 D8).
     A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
     check is reused for `storeCheckMinutes`.
@@ -96,7 +99,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     [`gateway-core`](../../gateway-core/README.md#the-roster) from the mounted
     `workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, `workflow`,
     and `board`, each one absent or failing read as unknown with why. Its
-    structured content is the `mcp-roster@1.3` record, checked before it is
+    structured content is the `mcp-roster@1.4` record, checked before it is
     sent; its text content is the rendering `system roster` prints. A client
     (the lead) gets it without account labels.
   - `notifications` (with `eventLog`) is shown once the [notify](../notify/README.md) plugin

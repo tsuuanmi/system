@@ -116,7 +116,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
   })
 
-  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.3 (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.4 (REQ-HOST-8)', async () => {
     const { url, tokens, ctx } = await boot()
     const at = '2026-10-24T09:29:58.000Z'
     const plus = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' as const }
@@ -157,7 +157,7 @@ describe('system MCP server on ctx.webServer', () => {
     const roster = async (token: string) => (await connect(url, token)).callTool({ name: 'roster', arguments: {} })
     const operator = await roster(tokens.operator)
     const schemas = new SchemaRegistry()
-    schemas.assertDef('mcp-roster@1.3', 'roster-output', operator.structuredContent)
+    schemas.assertDef('mcp-roster@1.4', 'roster-output', operator.structuredContent)
     expect(operator.structuredContent).toMatchObject({
       counts: { ready: 0, busy: 1, resting: 1, unavailable: 0, quarantined: 0 },
       workers: { value: [
@@ -169,12 +169,61 @@ describe('system MCP server on ctx.webServer', () => {
     })
     expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/^Roster as of .*: 2 Worker\(s\): 0 ready, 1 busy, 1 resting, 0 unavailable, 0 quarantined\n/)
     const client = await roster(tokens.client)
-    schemas.assertDef('mcp-roster@1.3', 'roster-output', client.structuredContent)
+    schemas.assertDef('mcp-roster@1.4', 'roster-output', client.structuredContent)
     expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
     expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 } })
     // The model token reaches no MCP tool.
     const model = await fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'roster', arguments: {} } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${tokens.model}` } })
     expect(model.status).toBe(401)
+  })
+
+  it('says alike in the roster and in health that a source is still describing its Workers right after a start, and counts every Worker once its first describe lands (T99 D8)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const at = '2026-10-24T07:12:00.000Z'
+    const descriptor = (worker: string, provider: string) => ({ worker, provider, tier: 'standard', quotaClass: 'agent-plan', locality: 'local', state: 'ready', observedAt: at })
+    const website = Array.from({ length: 7 }, (_, i) => descriptor(`worker:w${i}/standard`, 'chatgpt-web'))
+    const agents = Array.from({ length: 6 }, (_, i) => descriptor(`agent:a${i}`, 'claude-agent-sdk'))
+    // The router as it reads right after a restart: the agents source's first describe (its runtimes' first probe) has not landed.
+    let landed = false
+    class Router extends Service {
+      constructor(c: Context) {
+        super(c, 'workers')
+      }
+      async list() {
+        return landed ? [...agents, ...website] : website
+      }
+      sources() {
+        return [
+          landed ? { source: 'agents', state: 'described', at, workers: 6 } : { source: 'agents', state: 'silent', at, workers: 0, detail: 'did not describe its Workers within 5 s', describing: true },
+          { source: 'website', state: 'described', at, workers: 7 },
+        ]
+      }
+      siblings(worker: string) {
+        return [worker]
+      }
+    }
+    const fiber = ctx.plugin(Router)
+    await fiber
+    onTestFinished(() => fiber.dispose())
+    const schemas = new SchemaRegistry()
+    const read = async () => {
+      const client = await connect(url, tokens.operator)
+      const roster = await client.callTool({ name: 'roster', arguments: {} })
+      schemas.assertDef('mcp-roster@1.4', 'roster-output', roster.structuredContent)
+      const status = (await client.callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }
+      return { roster, text: (roster.content as Array<{ text: string }>)[0]!.text, workers: status.health.checks.find((c) => c.name === 'workers')! }
+    }
+    const early = await read()
+    // Neither reads as if the seven were every Worker: both say the agents source is still describing.
+    expect(early.text).toMatch(/^Roster as of .*: 7 Worker\(s\) so far \(source agents still describing its Workers\): 7 ready/)
+    expect(early.text).toContain('source agents describing… at 2026-10-24T07:12:00.000Z: its first describe since it registered has not landed')
+    expect((early.roster.structuredContent as { sources: { value: Array<{ source: string; describing?: boolean }> } }).sources.value[0]).toMatchObject({ source: 'agents', state: 'silent', describing: true })
+    expect(early.workers).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^7 available so far; source agents describing… \(its first describe since it registered has not landed/) })
+    landed = true
+    const later = await read()
+    expect(later.text).toMatch(/^Roster as of .*: 13 Worker\(s\): 13 ready/)
+    expect(later.text).not.toContain('describing')
+    expect(later.workers).toEqual({ name: 'workers', state: 'ok', detail: '13 available' })
   })
 
   it('reads each Worker source\'s last read into health, after listing the Workers: a silent one is named, never ok (INV-2)', async () => {

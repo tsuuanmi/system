@@ -10,8 +10,8 @@
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.3`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.3'
+/** The schema of the roster (`mcp-roster@1.4`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.4'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -69,8 +69,11 @@ export interface RosterDescriptor {
   state: 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
   observedAt: string
 }
-/** How a Worker source answered the router's last read (`ctx.workers.sources()`). */
-export interface RosterSourceRead { source: string; state: 'described' | 'silent' | 'failed'; at: string; workers: number; detail?: string | undefined }
+/**
+ * How a Worker source answered the router's last read (`ctx.workers.sources()`); `describing`
+ * (`@1.4`) on a silent read whose source has not yet described its Workers once since it registered.
+ */
+export interface RosterSourceRead { source: string; state: 'described' | 'silent' | 'failed'; at: string; workers: number; detail?: string | undefined; describing?: true | undefined }
 /** One enrollment slot of an agent runtime (`agent-account@1.0`), without its home or identity. */
 export interface RosterAgentAccount {
   accountId?: string | undefined
@@ -466,7 +469,9 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
   return {
     asOf: options.now.toISOString(), workers, unlisted, counts,
     sources: isKnown(input.sources) && input.sources.value.length > ROSTER_BOUNDS.sources ? unknown(`${input.sources.value.length} Worker sources, more than the ${ROSTER_BOUNDS.sources} a roster lists`)
-      : isKnown(input.sources) ? known([...input.sources.value].sort((a, b) => cmp(a.source, b.source)).map((s) => ({ source: s.source, state: s.state, at: s.at, workers: s.workers, ...(s.detail ? { detail: clip(s.detail) } : {}) }))) : input.sources,
+      : isKnown(input.sources) ? known([...input.sources.value].sort((a, b) => cmp(a.source, b.source)).map((s) => ({
+        source: s.source, state: s.state, at: s.at, workers: s.workers, ...(s.detail ? { detail: clip(s.detail) } : {}), ...(s.state === 'silent' && s.describing ? { describing: true as const } : {}),
+      }))) : input.sources,
     unknownUsage: isKnown(usage) ? known({ unreadable: usage.value.unreadable, unconfigured: usage.value.unconfigured }) : unknown(usage.unknown),
   }
 }
@@ -592,9 +597,12 @@ const text = <T>(k: Known<T>, show: (value: T) => string = String): string => (i
 export function formatRoster(roster: Roster): string {
   const c = roster.counts
   const lines: string[] = []
+  // A source still describing for the first time has Workers not known yet: the count is so far, not every Worker.
+  const describing = isKnown(roster.sources) ? roster.sources.value.filter((s) => s.describing).map((s) => s.source) : []
   if (!isKnown(roster.workers)) lines.push(`Roster as of ${roster.asOf}: the Workers are unknown (${roster.workers.unknown})`)
   else {
-    lines.push(`Roster as of ${roster.asOf}: ${roster.workers.value.length} Worker(s): ${STATES.map((s) => `${c[s]} ${s}`).join(', ')}${roster.unlisted ? `; ${roster.unlisted} more not listed` : ''}`)
+    const sofar = describing.length ? ` so far (source ${describing.join(', ')} still describing its Workers)` : ''
+    lines.push(`Roster as of ${roster.asOf}: ${roster.workers.value.length} Worker(s)${sofar}: ${STATES.map((s) => `${c[s]} ${s}`).join(', ')}${roster.unlisted ? `; ${roster.unlisted} more not listed` : ''}`)
     for (const w of roster.workers.value) {
       lines.push('', `${w.name} (${w.worker})  ${w.availability.summary}`)
       lines.push(`  is         ${isKnown(w.description) ? w.description.value : `${w.derived} (derived: no description is configured)`}`)
@@ -615,7 +623,11 @@ export function formatRoster(roster: Roster): string {
     }
   }
   const unheard = isKnown(roster.sources) ? roster.sources.value.filter((s) => s.state !== 'described') : []
-  for (const s of unheard) lines.push('', `source ${s.source} ${s.state} at ${s.at}${s.detail ? `: ${s.detail}` : ''}: its Workers are not listed`)
+  for (const s of unheard) {
+    lines.push('', s.describing
+      ? `source ${s.source} describing… at ${s.at}: its first describe since it registered has not landed (${s.detail ?? 'silent'}); its Workers are not listed yet`
+      : `source ${s.source} ${s.state} at ${s.at}${s.detail ? `: ${s.detail}` : ''}: its Workers are not listed`)
+  }
   if (!isKnown(roster.sources)) lines.push('', `sources unknown (${roster.sources.unknown})`)
   if (isKnown(roster.unknownUsage)) {
     const u = roster.unknownUsage.value

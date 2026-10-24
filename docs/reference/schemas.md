@@ -1015,6 +1015,13 @@ guesses.
   id, and its role, else its tier. It is never an id to route by. A Worker its source describes
   ready, on which the engine runs a step, is `busy` whatever load its source reports, and its
   `summary` says so. Readers accept 1.0 to 1.3.
+- `mcp-roster@1.4` adds a source read's `describing` (`true`, on a `silent` read only): the source
+  has not described its Workers once since it registered, its first describe (a start's first
+  probe) still running, so its Workers are not known yet, never known to be none. The text then
+  counts the Workers listed as so far and names the source as describing; health reads the same
+  router reads and says the same
+  ([sources that do not answer](../design/routing.md#sources-that-do-not-answer)). Readers accept
+  1.0 to 1.4.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;
