@@ -44,12 +44,15 @@ Routing **seam definition**
   `describe` threw), when that read started, and why. A provider that keeps none leaves a caller
   unable to tell a silent source from one with no Workers; health reads it
   ([routing](../../docs/design/routing.md#sources-that-do-not-answer)).
-- The conformance suite is [`conformance/workers.ts`](conformance/workers.ts):
+- The conformance suite is [`conformance/workers.ts`](conformance/workers.ts); the seam is at
+  contract 1.0:
   - source lifetime and duplicate names;
+  - a session's affinity, handle, reset, and release asked of the source that owns it;
+  - Workers an earlier attempt failed on before sending left out, saying why;
   - capability admission, data locality, state, and tier bounds; a failure names
     each required capability no Worker proves;
   - scoped offers: an offer scoped to a kind of work proves its capability for that work only,
-    and a refusal says it is scoped;
+    and a refusal says it is scoped; a scope below the schema version that carries it is refused;
   - the order: lowest tier, then quota class, then id;
   - restriction, determinism, and the decision artifacts;
   - a source that does not describe its Workers in time: routed past and named in the decision;
@@ -65,4 +68,6 @@ Routing **seam definition**
     none is known or a limited Worker is not assigned; `pooled` holds nothing; `assignment` keeps
     work on one account; with one account per group the choice and decisions are exactly as
     before; an `account` below `@1.5` is refused;
-  - acceptance contracts and the `acceptance` decision.
+  - acceptance contracts and the `acceptance` decision; a structured result checked against its
+    schema before the contract;
+  - a malformed work requirement refused.

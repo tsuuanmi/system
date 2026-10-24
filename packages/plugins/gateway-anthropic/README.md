@@ -41,6 +41,13 @@ never printed, exported, or written to Claude Code's settings.
     only the conversation its own history came from.
   - A `tool_use` id (`toolu_…`) labels its `tool_result` in the next turn.
 
+- **Injects:** `webServer`, `workflow`, `store`.
+- **Config:** `path` (default `/anthropic`), `tokenDir` (default
+  `<DSH_HOME>/system`), `allowedHosts` (default loopback), `models` (model-name
+  patterns → tier), `classification` (default `operator-shared`), `timeoutMs`
+  (how long one exchange may run, default 15 min), and `pingMs` (the SSE `ping`
+  interval, default 10 s).
+
 It does not own the tools: the client runs every call under its own sandbox
 and approvals (INV-6).
 

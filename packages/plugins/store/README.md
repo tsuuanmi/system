@@ -23,7 +23,7 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
   - `synchronous=FULL` by default (configurable).
 - **Does not own:** domain tables. Each plugin migrates its own, as `artifacts`
   does.
-- **Config:** `path`, `busyTimeoutMs`, `synchronous`.
+- **Config:** `path`, `busyTimeoutMs` (default 5000), `synchronous` (`FULL` or `NORMAL`).
 - **Runtime check:** before opening, the store refuses to start on a runtime
   outside the supported range or whose `node:sqlite` cuts text at an embedded NUL
   (`sqliteRuntimeProblem` in `system-libs`; REQ-HOST-2,
@@ -34,7 +34,7 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
   registered secret paths while open, wherever `path` puts them ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Lifecycle:** the database opens in a `ctx.effect`. On unload it closes after
   the current dispose pass, so dependents can still write from their own disposers.
-- The conformance suite is [`conformance/store.ts`](conformance/store.ts):
+- The conformance suite is [`conformance/store.ts`](conformance/store.ts), at contract 1.0:
   - a transaction commits all its writes or none: a throw rolls them back and
     surfaces the error, a failed COMMIT leaves nothing behind or locked, and a
     nested step that fails rolls back only itself when the outer recovers;

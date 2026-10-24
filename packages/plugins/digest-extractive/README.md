@@ -31,7 +31,7 @@ same MCP tools; it depends on seam definitions only, and fails open.
 - **Citations from the extract:** a claim citing `"extract": "E3"` gets that span's source, quote,
   and offset from the extract, never from the answer; a claim citing a span it was not given cites
   no source and is dropped; a claim quoting a source itself is checked as it is. Then the seam's
-  quote check (`quoteCheck`), the one escalation (`escalation`, on the same extract), and the
+  quote check (`quoteCheck`, keeping at most `maxClaims`, default 20), the one escalation (`escalation`, on the same extract), and the
   settling decision (`settlement`), whose inputs also name the extract.
 - **Durable as `digest` is:** requests on `ctx.store` (its own table; request ids `dgx-…`),
   idempotent by `key`, at most `maxPending` pending (default 4); the extract, the brief, the start,

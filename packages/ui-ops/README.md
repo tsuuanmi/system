@@ -6,9 +6,9 @@ The **UI engine** for website drivers
 not a plugin: provider drivers create one `UiEngine` per turn page.
 
 - **`loadUiMap(text, overlay?)`:**
-  - validates a provider's map, `ui-map@1.0` to `ui-map@1.2` (YAML or JSON),
+  - validates a provider's map, `ui-map@1.0` to `ui-map@1.4` (YAML or JSON),
     and checks that every reference resolves;
-  - appends the local overlay's candidates after the shipped ones;
+  - appends the local overlay's candidates and error rules after the shipped ones;
   - returns the merged map with its content `hash`.
 - **`unverifiedEntries(map, ids)`:** which of the named elements and actions are
   marked `unverified: true` (`ui-map@1.2`) or missing: not yet checked on the live
@@ -19,6 +19,9 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
   - `resolve`: ordered candidates, exactly one visible match, within `scope`;
   - `act`: guards from the map's `errors`, then resolve, then a bounded heal,
     then the fallback, then `require`, the action, and the `verify` postcondition;
+  - `answerErrors`: the map's `on: answer` error rules (`ui-map@1.4`), looked for
+    inside one answer only, so a site's usage limit in its answer fails the turn
+    with the rule's kind and `feature` (ADR-0034);
   - `state`, `waitFor`, `count`, and `text`;
   - `copied`: what a copy control puts on the clipboard (cleared first, so an
     earlier copy never counts);
@@ -26,9 +29,10 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
 - **Reading answers** (shared by every website driver, REQ-PRV-5):
   `preWrapText` reads an element under `white-space: pre-wrap`, so code
   indentation survives; `copiedMarkdown` takes the answer's Markdown from its
-  Copy control and keeps it only when `sameWords` matches the rendered text,
-  then applies the site's own clean-up and drops tracking parameters from its
-  link targets (the rendered text otherwise). Either way, the answer's off-site links (`linksIn`) that the text lacks follow it as
+  Copy control and keeps it only when its words match the rendered text
+  (`compareWords`), then applies the site's own clean-up and drops tracking
+  parameters from its link targets (the rendered text otherwise; a Copy not kept
+  is reported to `onCopyRefused`, counts only). Either way, the answer's off-site links (`linksIn`) that the text lacks follow it as
   a `Sources:` list, so a cited answer keeps its URLs.
 - **Events:**
   - `onDrift` fires when a non-primary candidate wins (`fallback`), when an
@@ -62,7 +66,8 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
   threshold of 0.8 and a margin of 0.15, scoped to the element's scope.
   `aria-ref=` resolves the chosen node, and `normalize()` turns it into a durable
   locator. Any `heal` other than `off` heals deterministically: `model` is
-  parsed, and model proposals wait for a `ctx.models` seam (planned). The
+  parsed, but model proposals are not built (the `ctx.models` seam exists; the
+  engine does not use it yet). The
   action's `sideEffect` class is parsed but does not yet cap healing.
 - **Depends on:** `patchright-core` (peer), `yaml`, `@tsuuanmi/system-libs`
   (schema registry), and `@tsuuanmi/system-provider-core` (typed failures).

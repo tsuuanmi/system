@@ -28,7 +28,8 @@
   payload after routing.
   `agent` is an agent runtime Worker: it runs here, but its model is remote. An
   operator whose agent model runs on this machine widens
-  `workerClasses.agent` to admit `local-private`.
+  `workerClasses.agent` to admit `local-private`. The workflow engine reads
+  `defaultClassification` for a run that states none.
 - **Limits:** a scan cannot recognize every kind of private data, so the
   caller's classification stays authoritative. `local-private` never goes to a
   `website`, `agent`, or `model` Worker by default. Setting `workerClasses`

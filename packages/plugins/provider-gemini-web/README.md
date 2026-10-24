@@ -99,7 +99,8 @@ driver, its operations are data: a UI map,
 - **The answer is Markdown (REQ-PRV-5).** The answer's Copy gives Markdown with
   code indentation intact (`UiEngine.copied`). It is kept only if its words are
   the rendered answer's words (`sameWords`); otherwise the rendered text
-  stands. Copy adds a blank line before each closing fence, which is dropped.
+  stands, and the refused Copy is logged as counts only (event
+  `provider.copy-refused`). Copy adds a blank line before each closing fence, which is dropped.
 - **`snapshot(page, binding)`:** reopens `/app/<id>` for reconciliation. Only
   positive evidence counts: a conversation that does not open there, renders no
   prompt, or shows a prompt it cannot read is not observed. For Deep research,
@@ -185,4 +186,6 @@ driver, its operations are data: a UI map,
   nothing generating, no `page.overlay` dialog or menu) tells the turn runtime it
   may keep the page for the session's next turn.
 - **Config:** `origin`, `modes`, `defaultMode`, `researchMode`, `maxPromptChars`, `pageGapMs`.
-- **Injects:** `providers`.
+- **Injects:** `providers`. It uses `eventLog` and `artifacts` when present, for
+  its `ui.drift`, `provider.stall`, `provider.reload`, and `provider.copy-refused`
+  events and their evidence.

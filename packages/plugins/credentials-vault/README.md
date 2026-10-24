@@ -28,5 +28,10 @@ It replaces `dsh-credentials-local`, which stores plain YAML
   vault, which `status` health shows as advice.
 - **Hidden from agents:** the vault file and its key are registered secret
   paths while the plugin runs, wherever they are kept ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
-- **Account credentials** (email, password, TOTP secret) are stored as a
-  `grant` record under `system-accounts/<accountId>`.
+- **Website accounts** ([`accounts`](../accounts/README.md)) keep two `grant`
+  records each: the account record, with its portable browser state, under
+  `system-accounts/<accountId>`, and its login credentials (email, password,
+  TOTP secret) under `system-credentials/<accountId>`.
+- **Config:** `path` (default `<DSH_HOME>/system/vault.enc`), `keyFile` (default
+  `<DSH_HOME>/system/vault.key`), `lockWaitMs` (the cross-process lock wait,
+  default 30 s).

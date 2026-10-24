@@ -6,7 +6,8 @@
 - **Catalog:** configuration. Any number of accounts per provider, each with an id,
   provider, quota class, and a tier → mode map (P4). Each mapped tier is one
   website Worker for routing; a tier left unmapped is never served by the account.
-- **Storage:** each account's `account@1.0` record, including its portable browser
+- **Storage:** each account's record (`account@1.1`, written on every change; one
+  stored earlier reads as `account@1.0`), including its portable browser
   state, and its login credentials are separate **encrypted** grant records in
   `ctx.credentials` (`system-accounts/<id>`, `system-credentials/<id>`). Writes are
   guarded by revision.
@@ -21,6 +22,10 @@
   saved is refused with `reauth_required` and nothing is stored: stored
   credentials may have been changed by a client, and only a manual Save at the
   remote login may switch accounts.
+- **`setCredentials(id, { email, password, totpSecret? })`:** stores the login
+  credentials in their own encrypted record and switches the account to
+  credential login (code providers `totp-local` and `manual` with a TOTP secret,
+  else `manual`).
 - **`refreshState(id, state, expectedRevision)`:** the turn runtime's write-back.
   It applies only to a `ready` account and keeps the identity and verification.
   At any other revision it is refused, so a Save or relogin made while a turn

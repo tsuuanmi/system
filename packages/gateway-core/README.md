@@ -14,11 +14,17 @@ provider-runtime layer never imports the gateway's implementation:
 | Contributor | Tools |
 |---|---|
 | `login` | `account_list`, `account_login`, `account_set_credentials`, `account_relogin`, `account_code`, `account_save` |
-| `turns` | `account_probe` |
-| `workflow` | `ask`, `research`, `run`, `approve`, `stop`, `drain`, `resume`, `continue`, `delete`, `supersede`, `result`, `usage`, `explain` |
+| `turns` | `account_probe`, `account_verify`, `account_cooldowns`, `account_clear_cooldown`, `conversation_list`, `conversation_inspect` |
+| `agent-workers` | `account_enroll`, `account_remove`, `account_agents`, `account_migrate` |
+| `models` | `model_key` |
+| `workflow` | `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `approve`, `stop`, `drain`, `resume`, `continue`, `delete`, `supersede`, `result`, `usage`, `explain` |
 | `worker-sessions` | `session_send`, `session_inbox` |
 | `resources` | `resources_pools`, `resources_usage` |
-| `mcp-server` itself | `status` |
+| `approvals` | `approvals_list`, `approvals_get`, `approvals_policy`, `approvals_decide`, `approvals_policy_propose` |
+| `board` | `board_projects`, `board_charter`, `board_brief`, `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`, `board_cancel`, `board_pause`, `board_resume`, `board_close` |
+| the `ctx.digests` provider (`digest` or `digest-extractive`) | `digests_request`, `digests_get`, defined by [`digest-core`](../digest-core/README.md) |
+| `report` | `report` |
+| `mcp-server` itself | `status`, `events`, `artifact`, `evidence` |
 
 Each tool declares the scope that may call it; one that declares none is
 operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The exact
@@ -47,7 +53,7 @@ MCP endpoint, both protocol gateways (through
     result names the matched token's scope (`{ ok: true, scope }`).
     `x-api-key` is accepted only with `apiKeyHeader` (Anthropic clients). An
     empty token never matches.
-- **`scopeTokens(dir)`** reads every scope's token, creating a missing one (32
+- **`scopeTokens(dir)`** (one scope's: `scopeToken(dir, scope)`) reads every scope's token, creating a missing one (32
   random bytes, owner-only), as base64url; **`tokenFile(dir, scope)`** is its
   path, `<dir>/<scope>.token`. The scopes are `SCOPES`
   ([ADR-0023](../../docs/decisions/adr/0023-scoped-control-credentials.md),

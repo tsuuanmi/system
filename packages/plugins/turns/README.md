@@ -3,6 +3,8 @@
 **`ctx.turns`**: the website turn runtime: the website Worker's owning runtime,
 invoked by the [workflow engine](../workflow/README.md)
 ([provider turns](../../../docs/design/provider-turns.md#runtime-mvp-slice-1)).
+It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
+`capability-descriptor@1.5`.
 
 - **The `website` Worker source.**
   - **Describe:** one Worker `worker:<account>/<tier>` per account and per tier
@@ -59,10 +61,10 @@ invoked by the [workflow engine](../workflow/README.md)
 - **Execution:**
   - each account has its own `ProviderScheduler` (capacity
     `maxConcurrentTurnsPerAccount`; one session runs in order);
-  - every turn runs in a fresh `ctx.browser` context from the account's saved
-    state;
-  - the driver call uses the conversation mode (temporary by default;
-    `persist` / `sessionId` for a persistent `/c/<id>` binding);
+  - every turn runs on a page opened as set out under "Where an operation runs"
+    below;
+  - the driver call uses the conversation mode (temporary by default; a start
+    with a `sessionId` is persistent, bound to the site's conversation id);
   - the receipt is written in the driver's `beforeSend` hook.
 - **Where an operation runs:** every page the runtime opens goes through one helper.
   That covers turns, reconciliation, verify, probe, the sign-in check, and
@@ -121,6 +123,9 @@ invoked by the [workflow engine](../workflow/README.md)
   - **WAIT** looks again every 5 s with an abortable sleep, so an operator
     cancel or a runtime stop ends the wait at once. Consecutive WAITs are one
     decision (`turnReceipts.reconcile`).
+  - A page that no longer shows the answer the turn followed may still be
+    loading: it is looked at again, up to three times 5 s apart, before the turn
+    fails closed.
   - A stop leaves turns as they are for the next start.
 - **Tiers and modes:**
   - the Worker's tier maps through the account's catalog `tiers` to the
@@ -168,8 +173,10 @@ invoked by the [workflow engine](../workflow/README.md)
     `conversation:<account>:<binding>`, on the account's scheduler with
     `runExclusive`, through the driver's `deleteConversation`. A driver without
     it, a feature outside its `deletes`, or a removed account keeps the
-    conversation, with why. A signed-out account leaves it due. Three failed
-    attempts make it `failed` (health `conversations`). Events:
+    conversation, with why. A signed-out account, an account that cannot be read
+    now, or a delete flow with map entries not yet verified live leaves it due.
+    Three failed attempts make it `failed` (health `conversations`), and so does
+    one failure after the confirm was recorded, which is never clicked again. Events:
     `conversation.released`, `.deleted`, `.delete-retried`, `.delete-failed`.
   - `inspectConversation(account, binding)` stores the driver's read-only
     outlines of a recorded conversation as local-private evidence (event
@@ -223,8 +230,8 @@ invoked by the [workflow engine](../workflow/README.md)
 - **Stop:** a stopped runtime starts nothing. A turn caught before scheduling
   stays queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
-  `browser`, `providers`, `workers`. `mcp` and `login` are optional. `login` is used for
+  `browser`, `providers`, `workers`. `eventLog`, `mcp`, and `login` are optional. `login` is used for
   credential relogin, and a session-bound account needs it for its profile path.
-- **MCP:** `account_verify`, `account_probe`, `conversation_list`, and
-  `conversation_inspect` (operator); the workflow engine serves `ask`,
-  `research`, and `result` as runs.
+- **MCP:** `account_verify`, `account_probe`, `account_cooldowns`,
+  `account_clear_cooldown`, `conversation_list`, and `conversation_inspect`
+  (operator); the workflow engine serves `ask`, `research`, and `result` as runs.

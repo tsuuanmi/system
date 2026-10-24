@@ -17,15 +17,18 @@ guarantee seam: it fails closed (INV-2).
     there (instants compared, so an offset never reorders them; of two equal ones the later
     call stands). Refused: a pool, account, window id, or window kind not configured
     (`unknown-pool`); a schema violation or a time that does not parse (`invalid`), so a limit
-    never reads as already past.
+    never reads as already past; a reading timed more than 5 minutes in the future (`invalid`),
+    which would stand over every later one.
   - `reserve(request, at?)`: in one write transaction (`BEGIN IMMEDIATE`), checks that every
     pool of the request's lines is configured and available, and that every cap holds, then
     records a `decision@1.4` `budget` decision and, when reserved, holds the lines. Both
     candidates carry reasons; the decision's inputs are the evidence artifacts of the readings
     of the pools it drew on. A cap counts, for its scope (the task, else the project), every
     counted record of its pool plus every hold of its pool and unit, plus the lines asked for;
-    a cap with neither task nor project bounds the run's own lines. Amounts are compared at a
-    millionth. A malformed request (an id that is not one, no line, more than 64 lines or caps,
+    a cap with neither task nor project bounds the run's own lines. A counted record without the
+    figure of a cap's unit (no token counts, cost, turns, or duration) counts 0 of it
+    ([usage the ledger cannot count](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
+    Amounts are compared at a millionth. A malformed request (an id that is not one, no line, more than 64 lines or caps,
     a unit or amount out of `budgetLine`'s bounds) is refused `invalid`, recording nothing.
   - A reservation's holds last `holdSeconds` (the request's, else the configured default) and
     return its `expiresAt`; an expired hold stops counting against caps and is deleted at the next
@@ -63,17 +66,20 @@ guarantee seam: it fails closed (INV-2).
   `unknown`, default `unavailable`), `templates` (each `template` and `group`, names of letters,
   digits, `.`, `_`, `-`, at most 64; `kind`, `windows`, `unknown` as a pool's; at most 64, unique
   ids), `pageSize` (default 20), `maxRecords` (default 10000),
-  `holdSeconds` (default 14400). A reading timed more than 5 minutes in the future, or of a
-  window whose kind or account changed in configuration since, counts as no reading.
+  `holdSeconds` (default 14400). A stored reading of a window whose kind or account changed in
+  configuration since counts as no reading.
   Pools come from configuration only, never a plan named in code
   ([INV-11](../../../docs/architecture/invariants.md#inv-11-no-tool-lock-in)). At load, a
   duplicate pool or window id, a pool with no window or more than 8, more than 64 pools, or an
   id that is not one refuses the plugin. The bundle's row configures none: every pool is
   unavailable until the operator configures it.
 - **Injects:** `store`, `artifacts`; `mcp` is optional.
-- **Not yet:** only agent Workers report to it, and the engine reserves only for a board
-  task's run that declares a budget (its lines as caps), not before every run. Released and expired reservations, older readings, and duplicate
-  records stay (as rows and artifacts) until a retention rule exists for them.
+- **Not yet:** only agent Workers configured with a pool report to it (and reserve their own
+  runs); the engine reserves only before each step of a board task's run that declares a budget
+  (its lines as caps; ADR-0047, step 1), not before every run. Usage it cannot count is a 0
+  against a cap: the Worker source records the run as `usage.unknown`, and no cap fails closed
+  on it yet. Released and expired reservations, older readings, and duplicate records stay (as
+  rows and artifacts) until a retention rule exists for them.
 - Tests: [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`resources-core/conformance/resources.ts`](../../resources-core/conformance/resources.ts),
   at contract 1.1 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)

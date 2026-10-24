@@ -133,8 +133,9 @@ charters, and their tasks.
     `board_close` (`outcome`: `achieved` or `stopped`) also counts the open tasks it cancelled
     (`closeProject`, beyond the seam);
   - `board_projects` and `board_brief` give no `budget`: use comes from the resource ledger
-    (`ctx.resources`), which the board does not read yet, and the engine reserves nothing per
-    task;
+    (`ctx.resources`), which the board does not read yet. The workflow engine holds a task's
+    runs to its budget lines, reserving before each step
+    ([a task's budget](../../../docs/design/workflow-engine.md#a-tasks-budget));
   - `board_brief`'s `readFirst` lists the closed project's lessons and the accepted results of
     its latest done tasks (their digest, else their first artifact); `conventions` are the
     charter's constraint notes.

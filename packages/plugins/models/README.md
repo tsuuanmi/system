@@ -51,8 +51,8 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   - **Bounds (INV-9):** `maxConcurrentCalls` (default 4), the requirement's
     `budget.maxTokens`, and `callTimeoutMs`, the ceiling over every attempt and
     back-off (default 15 min; failure `timeout`).
-  - **Result:** a `report` artifact, `model-answer@1.0`, with the requirement's
-    classification and the token usage, which the usage report shows.
+  - **Result:** a `report` artifact, `model-answer@1.0`, as classified as its prompt and the
+    history it replayed, at the highest, with the token usage, which the usage report shows.
   - **Cancel (REQ-WRK-4):** a running call is aborted, a queued one never sent.
   - **Restart (INV-4):** a model call is safe to repeat with a bounded cost. A
     call that was running is sent once more; a call already sent twice fails as
@@ -73,7 +73,8 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   `maxHistoryChars`
   ([catalog](../../../docs/reference/configuration.md#models)).
 - **Injects:** `LlmModels` `llm`; `ModelWorkers` `store`, `artifacts`, `leases`,
-  `workers`, `egress`, `models`; the tool, optionally, `mcp` and `credentials`.
+  `workers`, `egress`, `models`, and appends to `eventLog` when it is loaded; the tool,
+  optionally, `mcp` and `credentials`.
 - **Tests:** the DSH rows mounted alone against a fake OpenAI-compatible server
   ([`tests/fake-openai.ts`](tests/fake-openai.ts)), the `ctx.models` conformance
   suite on `LlmModels`, and the Worker source on the seam's fake. The crash case

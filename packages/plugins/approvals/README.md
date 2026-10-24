@@ -159,7 +159,8 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   workflow engine, whose remediation gates ask the queue (`remediation`), which continues a
   deferred call's session once its request is approved, and which records the checks a plain
   run that wrote leaves pending (`check`, `request`, `list`, `get`, `withdraw`;
-  [workflow engine](../../../docs/design/workflow-engine.md#remediation-on-the-approval-queue)).
+  [workflow engine](../../../docs/design/workflow-engine.md#remediation-on-the-approval-queue));
+  and the baseline report, which reads the queue (`list`) and writes nothing.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`approvals-core/conformance/approvals.ts`](../../approvals-core/conformance/approvals.ts), at
   contract 1.1 with no known failure; [`tests/board.spec.ts`](tests/board.spec.ts) runs the

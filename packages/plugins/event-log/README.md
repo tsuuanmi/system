@@ -15,8 +15,10 @@
     every entry is kept. Freed space is reused, not returned to the disk.
 - **Rule:** an entry references artifacts or decisions. It never carries secrets
   or private content.
-- **Used by:** `workflow`, `turns`, and `provider-chatgpt-web` append;
-  `profile-scientific-research` listens to `system/event`.
+- **Used by:** `workflow`, `turns`, `agent-workers`, `models`, `approvals`,
+  `digest`, `digest-extractive`, `browser-patchright`, `provider-chatgpt-web`,
+  and `provider-gemini-web` append; `mcp-server` (the `events` tool and health)
+  and `report` query; `profile-scientific-research` listens to `system/event`.
 - **Injects:** `store`.
 - **Config:** `maxDataBytes`, `retainDays` (default 0: keep every entry).
 - The conformance suite is [`conformance/event-log.ts`](conformance/event-log.ts):

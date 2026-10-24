@@ -51,6 +51,13 @@ SYSTEM_MCP_TOKEN="$(… mcp-token --scope model)" codex -c model_provider=system
   - The stream ends with exactly one terminal event: `response.completed`
     (numeric usage) or `response.failed`.
   - `sequence_number` counts up from 0.
+- **Injects:** `webServer`, `workflow`, `store`.
+- **Config:** `path` (default `/openai`), `tokenDir` (default
+  `<DSH_HOME>/system`), `allowedHosts` (default loopback), `models` (model-name
+  patterns → tier, none by default), `classification` (default
+  `operator-shared`), `timeoutMs` (how long one exchange may run, default
+  15 min), and `pingMs` (the `response.in_progress` keepalive interval, default
+  10 s).
 
 ## Security
 
