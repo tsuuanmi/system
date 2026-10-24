@@ -10,6 +10,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ZodRawShape } from 'zod'
 
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
+export { outline, reply } from './reply.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

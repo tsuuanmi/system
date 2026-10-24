@@ -6,7 +6,7 @@ and the **request guard** every client endpoint shares.
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.mcp` | abstract `McpTools` with `tool(name, spec, handler)`, plus `ToolSpec` (with its `scope`), `ToolScope`, `ToolHandler`, and `ToolContext` (the caller's scope) | `@tsuuanmi/system-mcp-server` |
+| `ctx.mcp` | abstract `McpTools` with `tool(name, spec, handler)`, plus `ToolSpec` (with its `scope`), `ToolScope`, `ToolHandler`, and `ToolContext` (the caller's scope), and `reply` and `outline` for a handler's answer ([replies](#replies)) | `@tsuuanmi/system-mcp-server` |
 
 Plugins that contribute tools depend on this package only, so the
 provider-runtime layer never imports the gateway's implementation:
@@ -28,6 +28,20 @@ gateways are plain plugins and use no seam; they share the
 conformance suite is [`conformance/mcp-tools.ts`](conformance/mcp-tools.ts): a
 tool lives for its plugin's lifetime, and a tool that declares no scope is
 listed to the operator only.
+
+## Replies
+
+`reply.ts` holds how a tool answers, once (QA-12; the rule is in the mcp-server
+[token budget](../plugins/mcp-server/README.md#token-budget)):
+
+- **`reply(structured, summary)`**: the result whose `structuredContent` is the
+  answer and whose one text block is `summary`, a short line for a person, a log,
+  or a client that shows text only. Never the same JSON again.
+- **`outline(value)`**: a summary for a tool with none of its own: each top-level
+  field, a scalar as it is (a string over 60 characters cut), a list by its
+  length, an object by its own fields one level down; at most 300 characters.
+
+Tests: `tests/reply.spec.ts`.
 
 ## The request guard
 
