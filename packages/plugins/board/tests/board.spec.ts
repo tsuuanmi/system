@@ -6,6 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Action, ApprovalRequest, NewRequest } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type BudgetLine, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
+import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -65,11 +66,11 @@ interface Booted {
   stop: () => Promise<void>
 }
 
-async function boot(options: { dir?: string; board?: Config } = {}): Promise<Booted> {
+async function boot(options: { dir?: string; board?: Config; eventLog?: boolean } = {}): Promise<Booted> {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-board-'))
   if (!options.dir) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
-  const base = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(Leases, {}), ctx.plugin(FlakyApprovals), ctx.plugin(RecordingMcp)]
+  const base = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(Leases, {}), ctx.plugin(FlakyApprovals), ctx.plugin(RecordingMcp), ...(options.eventLog ? [ctx.plugin(EventLog, {})] : [])]
   await Promise.all(base)
   let fiber = ctx.plugin(StoreBoard, { sweepSeconds: 0, ...options.board })
   await fiber
@@ -619,6 +620,49 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the review is the operator's/) })
     expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: 'yes' } as unknown as Action['checks']), at(5)))).toBe('invalid')
     expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: true }), at(5))).toMatchObject({ state: 'done' })
+  })
+
+  it('announces a review held for the operator, and its end, as events in the move\'s transaction, so a surface tells the operator before the hold expires (T99 D6)', async () => {
+    const { ctx } = await boot({ eventLog: true })
+    await active(ctx)
+    const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel', version: 'abc123' }
+    const hold = async (title: string, ref: string): Promise<{ taskId: string; r: ArtifactRef; held: BoardTask }> => {
+      const t = await ready(ctx, task('p2', title, { actionClass: 'workspace-write', writes: { type: 'git-head', ref } }))
+      const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+      await ctx.board.start(t.taskId, generation, { runId: `run-${title}` }, at(3))
+      const r = result(ctx, title)
+      await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: { ...branch, ref } }, at(4))
+      const held = await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, { ...branch, ref }, { tests: true }), at(5))
+      return { taskId: t.taskId, r, held }
+    }
+    const events = (type: string) => ctx.eventLog.query({ type, limit: 100 })
+    const first = await hold('first', 'refs/heads/first')
+    expect(events('board.review.held').map((e) => e.data)).toEqual([{ taskId: first.taskId, projectId: 'p2', expiresAt: first.held.waiting!.expiresAt, pendingChecks: ['lint'], runId: 'run-first' }])
+    expect(events('board.review.held')[0]!.decision).toBe(first.held.lastDecision)
+    // A digest attached under the hold is no new hold; the operator's acceptance ends it.
+    expect(events('board.review.ended')).toEqual([])
+    await ctx.board.accept(first.taskId, acceptance(ctx, 'accept', first.taskId, first.r, { ...branch, ref: 'refs/heads/first' }, { tests: true, lint: true }), at(6))
+    expect(events('board.review.ended').map((e) => e.data)).toEqual([{ taskId: first.taskId, projectId: 'p2', state: 'done' }])
+    // A hold nobody decides ends at its expiry: the task waits for input.
+    const second = await hold('second', 'refs/heads/second')
+    await ctx.board.sweep(new Date(Date.parse(second.held.waiting!.expiresAt) + 1000))
+    expect(events('board.review.ended').map((e) => e.data).at(-1)).toEqual({ taskId: second.taskId, projectId: 'p2', state: 'waiting-for-input', reason: 'review-expired' })
+    expect(events('board.review.held')).toHaveLength(2)
+  })
+
+  it('gives a task the attempts its proposal names, else its template\'s from the configuration, else the default 3 (T99 D6)', async () => {
+    const { ctx, mcp } = await boot({ board: { templateAttempts: { 'algorithm-development': 6 } } })
+    await active(ctx)
+    expect((await ctx.board.propose(task('p2', 'plain'), at(2))).attempts).toEqual({ count: 0, max: 3 })
+    expect((await ctx.board.propose(task('p2', 'templated', { template: 'algorithm-development' }), at(2))).attempts).toEqual({ count: 0, max: 6 })
+    expect((await ctx.board.propose(task('p2', 'other', { template: 'agent-review' }), at(2))).attempts).toEqual({ count: 0, max: 3 })
+    expect((await ctx.board.propose(task('p2', 'named', { template: 'algorithm-development', maxAttempts: 2 }), at(2))).attempts).toEqual({ count: 0, max: 2 })
+    // The lead names it on board_propose, within 1 to 10.
+    const propose = (args: Record<string, unknown>) => mcp().tools.get('board_propose')!.handler({ projectId: 'p2', title: 't', goal: 'g', acceptance: [{ id: 'a1', statement: 's' }], actionClass: 'read', ...args }, { scope: 'client' }) as unknown as Promise<{ isError?: boolean; structuredContent?: { taskId: string } }>
+    const proposed = await propose({ maxAttempts: 5 })
+    expect(proposed.isError).toBeFalsy()
+    expect((await ctx.board.task(proposed.structuredContent!.taskId))!.attempts).toEqual({ count: 0, max: 5 })
+    for (const maxAttempts of [0, 11, 2.5]) expect((await propose({ maxAttempts })).isError, String(maxAttempts)).toBe(true)
   })
 
   it('checks a lost run\'s reported outcome before it withdraws the request the task waits on, so a refused report changes nothing (INV-4)', async () => {

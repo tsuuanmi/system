@@ -363,6 +363,7 @@ Scope: `client`
 | `template` | string |  |  |
 | `writes` | object |  |  |
 | `budget` | array |  |  |
+| `maxAttempts` | integer |  | Attempts the task gets, 1 to 10 (default: the board's for the task's template, else its maxAttempts, 3); every run that serves it is one, a rejected review included |
 | `clientRequestId` | string |  | Retry-safe request key |
 
 ## `board_resume`

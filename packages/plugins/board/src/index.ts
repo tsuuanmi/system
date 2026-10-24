@@ -12,6 +12,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-event-log'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type ProjectState, renderTasks, type RunOutcome, type Subject,
   type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
@@ -33,8 +34,13 @@ export interface Config {
   inputExpirySeconds?: number
   /** Lease length when a claim names none (`board_claim` without `ttlSeconds`), in seconds (default 600, the leases' own default cap); `leases.maxTtlMs` caps it. */
   leaseTtlSeconds?: number
-  /** Attempts a task gets when its proposal names none (default 3, at most 10). */
+  /** Attempts a task gets when its proposal names none and `templateAttempts` names none for its template (default 3, at most 10). */
   maxAttempts?: number
+  /**
+   * Attempts a task of a template gets when its proposal names none, by template name (each 1 to
+   * 10): a template whose attempts are each one hypothesis may need more than another's.
+   */
+  templateAttempts?: Record<string, number>
   /** The most items one page of `board_projects` or `board_tasks` holds (default 100, the tools' own maximum). */
   pageBound?: number
   /** The most tasks the `TASKS.md` projection lists, open ones first (default 200). */
@@ -186,7 +192,8 @@ export class StoreBoard extends Board {
     fundingMaxPercent: z.natural().max(1000).default(100).description('The most approved funding may raise a task\'s budget line in all, in percent of what the task declared; an ask past it opens no request'),
     inputExpirySeconds: z.natural().min(60).max(90 * 24 * 3600).default(7 * 24 * 3600).description('How long a wait for input lasts before it cancels the task, in seconds'),
     leaseTtlSeconds: z.natural().min(30).max(3600).default(600).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
-    maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts a task gets when its proposal names none'),
+    maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts a task gets when its proposal names none and templateAttempts names none for its template'),
+    templateAttempts: z.dict(z.natural().min(1).max(10)).default({}).description('Attempts a task of a template gets when its proposal names none, by template name (1 to 10 each)'),
     pageBound: z.natural().min(1).max(100).default(100).description('The most items one page of board_projects or board_tasks holds'),
     projectionMaxTasks: z.natural().min(1).max(10_000).default(200).description('The most tasks the TASKS.md projection lists, open ones first'),
     sweepSeconds: z.natural().max(3600).default(60).description('Seconds between the board\'s own sweeps, and one at start; 0 sweeps only when called'),
@@ -466,7 +473,8 @@ export class StoreBoard extends Board {
         if (this.readTask(dep)?.task.projectId !== input.projectId) throw new BoardError('invalid', `dependency ${dep} is not a task of ${input.projectId}`)
       }
       if (input.milestone !== undefined && !project.milestones.some((m) => m.id === input.milestone)) throw new BoardError('invalid', `${input.projectId} has no milestone ${input.milestone}`)
-      const max = input.maxAttempts ?? this.config.maxAttempts ?? 3
+      // The proposal's own, else the template's, else the board's default.
+      const max = input.maxAttempts ?? (input.template !== undefined ? this.config.templateAttempts?.[input.template] : undefined) ?? this.config.maxAttempts ?? 3
       if (!Number.isInteger(max) || max < 1 || max > 10) throw new BoardError('invalid', 'maxAttempts is a whole number from 1 to 10')
       const writes = writesKey(input.writes)
       if (writes && db.prepare('SELECT 1 FROM board_tasks WHERE writes = ?').get(writes)) throw new BoardError('conflict', `another open task writes ${input.writes!.type} ${input.writes!.ref} (INV-15)`)
@@ -1559,7 +1567,32 @@ export class StoreBoard extends Board {
     const changes = this.ctx.store.db.prepare('UPDATE board_tasks SET state = ?, revision = ?, record = ?, writes = ?, lease_token = ?, lease_ttl_ms = ? WHERE task_id = ? AND revision = ?')
       .run(next.state, next.revision, JSON.stringify(next), TERMINAL.includes(next.state) ? null : writesKey(next.writes), lease?.token ?? null, lease?.ttlMs ?? null, next.taskId, current.task.revision).changes
     if (Number(changes) !== 1) throw new BoardError('conflict', `${next.taskId} changed under this move`)
+    this.announceReview(current.task, next)
     return next
+  }
+
+  /**
+   * A review held for the operator, and its end, as events in the move's transaction
+   * (docs/design/board.md#a-review-held-for-the-operator), so a surface tells the operator before
+   * the hold expires unseen (notify's `review.expiring`): `board.review.held` names the task, its
+   * project, until when, and the checks still pending; `board.review.ended` the task, its project,
+   * and where it went (done, another attempt, a wait for input once it expired). Ids, states, and
+   * times only. The event log is optional here, as for the approval queue: an append that fails is
+   * logged, and the move stands.
+   */
+  private announceReview(before: BoardTask, after: BoardTask): void {
+    const held = (t: BoardTask): boolean => t.state === 'review' && t.waiting?.reason === 'operator-review'
+    const event = held(after) && !held(before)
+      ? { type: 'board.review.held', data: { taskId: after.taskId, projectId: after.projectId, expiresAt: after.waiting!.expiresAt, pendingChecks: after.waiting!.pendingChecks ?? [], ...(after.run ? { runId: after.run.runId } : {}) } }
+      : held(before) && !held(after)
+        ? { type: 'board.review.ended', data: { taskId: after.taskId, projectId: after.projectId, state: after.state, ...(after.waiting ? { reason: after.waiting.reason } : {}) } }
+        : undefined
+    if (!event) return
+    try {
+      this.ctx.get('eventLog')?.append({ ...event, ...(after.lastDecision ? { decision: after.lastDecision } : {}) })
+    } catch (error) {
+      this.ctx.logger.warn(`board: the ${event.type} event of ${after.taskId} was not appended: ${(error as Error).message}`)
+    }
   }
 
   /**

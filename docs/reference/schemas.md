@@ -608,9 +608,14 @@ guesses.
   `notify.delivery` event, which names its `id`.
 - `kind` and `subject` are what deduplication counts by: at most one notice per subject and kind in
   the configured window. `subject` is the request id (`approval.*`), the workflow run id
-  (`run.*`), the pool id, or the agent account id (`<provider>:slot-<n>` for a slot with no id
-  yet). `id` is `<kind>:<subject>:<event seq>`; an `approval.expiring` notice names the
-  `approvals.requested` entry it reminds of.
+  (`run.*`), the pool id, the agent account id (`<provider>:slot-<n>` for a slot with no id
+  yet), or the board task id (`review.*`). `id` is `<kind>:<subject>:<event seq>`; an
+  `approval.expiring` notice names the `approvals.requested` entry it reminds of, a
+  `review.expiring` notice the `board.review.held` entry.
+- `notification@1.1` adds the kind `review.expiring`: a board task's review held for the
+  operator expires within the lead time ([board](../design/board.md#a-review-held-for-the-operator));
+  a notice of it is `@1.1`, every other kind stays `@1.0`, and the kind is refused on `@1.0`.
+  Example: [`notification.review-expiring.json`](../../schemas/examples/notification.review-expiring.json).
 - `title`, `text`, and `act` are made by code from ids, classes, kinds, and times the producer's
   event names; a value that is not an id or a word is left out, never quoted. It carries no
   secret, prompt, answer, request summary, consequences, or command a request would run, and no
@@ -1072,7 +1077,7 @@ guesses.
 | `board_charter` | client | found a project or amend its charter; opens a `charter` approval request |
 | `board_brief` | client | one page for a new agent: intent, in progress, waiting, next, what to read first |
 | `board_tasks`, `board_task` | client | list tasks; read one |
-| `board_propose` | client | propose a task; the board makes it ready when its dependencies are done and the policy allows |
+| `board_propose` | client | propose a task, with the attempts it gets (`maxAttempts`, 1.2); the board makes it ready when its dependencies are done and the policy allows |
 | `board_claim` | client | take a ready task's lease; MCP `run` with the task and this claim starts the attempt, and that run submits and accepts its own result |
 | `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
 | `board_cancel` | client | cancel a task that is not running or in review |
@@ -1094,6 +1099,9 @@ guesses.
   token only, and each handler refuses any other caller (`invalid`). Each output names the
   `board` decision that records the move; `board_close` also counts the open tasks it cancelled.
   `mcp-board` 1.1 adds them.
+- `mcp-board` 1.2 adds `board_propose`'s optional `maxAttempts` (1 to 10): the attempts the task
+  gets, else the board's for its template, else its default
+  ([attempts](../design/board.md#attempts)).
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
   other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`; 1.2 adds

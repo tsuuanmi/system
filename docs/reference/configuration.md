@@ -132,7 +132,8 @@
 | `fundingMaxPercent` | number (0…1000) | `100` | The most approved funding may raise a task's budget line in all, in percent of what the task declared; an ask past it opens no request |
 | `inputExpirySeconds` | number (60…7776000) | `604800` | How long a wait for input lasts before it cancels the task, in seconds |
 | `leaseTtlSeconds` | number (30…3600) | `600` | Lease length when a claim names none, in seconds (leases.maxTtlMs caps it) |
-| `maxAttempts` | number (1…10) | `3` | Attempts a task gets when its proposal names none |
+| `maxAttempts` | number (1…10) | `3` | Attempts a task gets when its proposal names none and templateAttempts names none for its template |
+| `templateAttempts` | Record<string, number> | `{}` | Attempts a task of a template gets when its proposal names none, by template name (1 to 10 each) |
 | `pageBound` | number (1…100) | `100` | The most items one page of board_projects or board_tasks holds |
 | `projectionMaxTasks` | number (1…10000) | `200` | The most tasks the TASKS.md projection lists, open ones first |
 | `sweepSeconds` | number (0…3600) | `60` | Seconds between the board's own sweeps, and one at start; 0 sweeps only when called |
@@ -310,8 +311,8 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined |
-| `expiryLeadMinutes` | number (1…1440) | `60` | How long before an open approval request expires (and is denied) it is notified again, in minutes |
+| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring |
+| `expiryLeadMinutes` | number (1…1440) | `60` | How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes |
 | `dedupMinutes` | number (1…1440) | `10` | At most one notice per subject and kind in this many minutes |
 | `maxQueue` | number (1…1000) | `50` | Notices waiting to be sent, at most; one more is dropped, logged, and shown in health |
 | `pollSeconds` | number (1…3600) | `15` | How often the event log and the reminders are read, in seconds, beside each new event |

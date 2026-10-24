@@ -1,9 +1,10 @@
 /**
  * Out-of-band notifications to the operator (PROP-0010 B5, docs/design/notifications.md): a surface
  * plugin that reads the event log after its own cursor and tells the operator what needs them, an
- * approval request opened or close to its expiry (unanswered, it is denied), a run that failed for
- * the operator or was escalated, a step waiting for an account's limit, a pool closed at its limit,
- * an agent account quarantined, with the exact command to act. It reads recorded events only,
+ * approval request opened or close to its expiry (unanswered, it is denied), a board task's review
+ * held for the operator close to its expiry, a run that failed for the operator or was escalated, a
+ * step waiting for an account's limit, a pool closed at its limit, an agent account quarantined,
+ * with the exact command to act. It reads recorded events only,
  * never blocks or changes the producer of one (it reads after the commit, on its own clock), and
  * decides nothing. At most one notice per subject and kind per window; a bounded queue; one attempt
  * per sink, each outcome a `notify.delivery` event that health reads. Off by default in the bundle.
@@ -37,7 +38,7 @@ export const MAX_REMINDERS = 10_000
 export interface Config {
   /** The kinds of notice sent (default: every kind). */
   kinds?: Kind[]
-  /** How long before an open approval request expires it is notified again, in minutes (default 60). */
+  /** How long before an open approval request, or a review held for the operator, expires it is notified again, in minutes (default 60). */
   expiryLeadMinutes?: number
   /** At most one notice per subject and kind in this many minutes (default 10). */
   dedupMinutes?: number
@@ -63,8 +64,8 @@ export const DEFAULTS = {
 } as const
 
 export const Config: z<Config> = z.object({
-  kinds: z.array(z.union([...KINDS])).default([...KINDS]).description('The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined'),
-  expiryLeadMinutes: z.natural().min(1).max(1440).default(DEFAULTS.expiryLeadMinutes).description('How long before an open approval request expires (and is denied) it is notified again, in minutes'),
+  kinds: z.array(z.union([...KINDS])).default([...KINDS]).description('The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring'),
+  expiryLeadMinutes: z.natural().min(1).max(1440).default(DEFAULTS.expiryLeadMinutes).description('How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes'),
   dedupMinutes: z.natural().min(1).max(1440).default(DEFAULTS.dedupMinutes).description('At most one notice per subject and kind in this many minutes'),
   maxQueue: z.natural().min(1).max(1000).default(DEFAULTS.maxQueue).description('Notices waiting to be sent, at most; one more is dropped, logged, and shown in health'),
   pollSeconds: z.natural().min(1).max(3600).default(DEFAULTS.pollSeconds).description('How often the event log and the reminders are read, in seconds, beside each new event'),
@@ -165,8 +166,9 @@ export class Notifier {
         const due = db.prepare('SELECT request_id, expires_ms, reminder FROM notify_reminders WHERE remind_ms <= ? ORDER BY remind_ms LIMIT ?').all(now, PAGE) as Array<{ request_id: string; expires_ms: number; reminder: string }>
         for (const row of due) {
           db.prepare('DELETE FROM notify_reminders WHERE request_id = ?').run(row.request_id)
-          if (row.expires_ms > now && this.kinds.has('approval.expiring')) {
-            const notice = reminderNotice(JSON.parse(row.reminder) as Reminder, now, this.read)
+          const reminder = JSON.parse(row.reminder) as Reminder
+          if (row.expires_ms > now && this.kinds.has(reminder.review ? 'review.expiring' : 'approval.expiring')) {
+            const notice = reminderNotice(reminder, now, this.read)
             if (notice) made.push(notice)
           }
         }

@@ -59,7 +59,7 @@ export class DesktopSink implements Sink {
   send(notice: Notice, signal: AbortSignal): Promise<Outcome> {
     if (!this.command) return Promise.resolve({ sent: false, reason: this.unavailable! })
     const env = Object.fromEntries(DESKTOP_ENV.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]!]))
-    const urgency = notice.kind === 'approval.expiring' ? 'critical' : 'normal'
+    const urgency = notice.kind === 'approval.expiring' || notice.kind === 'review.expiring' ? 'critical' : 'normal'
     // `--` ends the options: a title or body that starts with `-` is text, never an option.
     const argv = ['--app-name=system', `--urgency=${urgency}`, '--', notice.title, desktopBody(notice)]
     return new Promise((resolve) => {

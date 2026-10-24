@@ -2,7 +2,7 @@
  * The `board_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_). The
  * lead's are client scope; `board_pause`, `board_resume`, and `board_close` are operator scope,
  * because a project's state moves only from the operator's channel (INV-6). Each call's input and
- * structured output are validated against `schemas/mcp-board.v1.json` (1.1) `$defs/<tool>-input`
+ * structured output are validated against `schemas/mcp-board.v1.json` (1.2) `$defs/<tool>-input`
  * and `-output`; a refused input executes nothing. No tool starts, submits, accepts, blocks, or
  * reconciles a task: the workflow run that serves an attempt does, as its owner (MCP `run` with
  * `task`), so one attempt has one writer (INV-15).
@@ -24,6 +24,8 @@ export const SCOPES: Record<BoardTool, ToolScope> = {
 }
 
 const schemas = new SchemaRegistry()
+/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`. */
+const MCP_BOARD = 'mcp-board@1.2'
 /** The `$defs` name of a tool's input or output: underscores written as hyphens. */
 const defOf = (tool: BoardTool, part: 'input' | 'output'): string => `${tool.replaceAll('_', '-')}-${part}`
 
@@ -73,7 +75,9 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
     projectId: id(), title: zod.string().min(1).max(200), goal: zod.string().min(1).max(4000),
     acceptance: zod.array(zod.strictObject({ id: id(), statement: shortText(), check: zod.enum(['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review', 'operator']).optional() })).min(1).max(32),
     dependsOn: zod.array(id()).max(64).optional(), actionClass: actionClass(), milestone: id().optional(), template: id().optional(),
-    writes: subject().optional(), budget: zod.array(budgetLine()).max(16).optional(), clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
+    writes: subject().optional(), budget: zod.array(budgetLine()).max(16).optional(),
+    maxAttempts: zod.number().int().min(1).max(10).optional().describe('Attempts the task gets, 1 to 10 (default: the board\'s for the task\'s template, else its maxAttempts, 3); every run that serves it is one, a rejected review included'),
+    clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
   board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update') },
   board_update: {
@@ -231,7 +235,7 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
 export function tool(name: BoardTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
-      schemas.assertDef('mcp-board@1.1', defOf(name, 'input'), args)
+      schemas.assertDef(MCP_BOARD, defOf(name, 'input'), args)
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
@@ -242,7 +246,7 @@ export function tool(name: BoardTool, handler: Handler): ToolHandler {
       return refused(error instanceof BoardError ? `${error.failure}: ${error.message}` : `board: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-board@1.1', defOf(name, 'output'), output)
+      schemas.assertDef(MCP_BOARD, defOf(name, 'output'), output)
     } catch (error) {
       return refused(`board: ${name} made an output its schema refuses (a defect; the move itself is recorded): ${(error as Error).message}`)
     }
