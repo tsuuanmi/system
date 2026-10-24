@@ -45,8 +45,13 @@ const ENV = {
 }
 const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'submodule.recurse=false']
 
-/** A worktree whose workflow run has no agent run queued or running, and whose last one ended before the cutoff (`?`). */
+/**
+ * A worktree whose workflow run has no agent run queued or running, none that ended without being
+ * known to be gone (its agent may still write there: the worktree stays, INV-15; PROP-0013), and
+ * whose last one ended before the cutoff (`?`).
+ */
 const IDLE = `NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.status IN ('queued', 'running'))
+  AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id AND r.liveness_decision IS NOT NULL AND COALESCE(r.liveness_verdict, '') != 'dead')
   AND COALESCE((SELECT MAX(r.updated_at) FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id), w.created_at) < ?`
 
 /** A worktree that cannot be prepared, checked, or retired; what git said, if it ran. */

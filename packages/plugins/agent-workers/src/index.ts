@@ -1405,6 +1405,10 @@ export class AgentWorkers extends Service {
     // it would hit it again (INV-2). Its own pool is its reservation's to check.
     const held = await this.accountGate(worker, false)
     if (held.state !== 'ready') throw new ProviderError(held.state === 'quota-exhausted' ? 'quota_exhausted' : 'config_error', `${row.worker}: ${held.why}; nothing was run`)
+    // One writer per worktree and one driver per native session (INV-15): an earlier run that ended
+    // without being known to be gone may still be acting there (PROP-0013).
+    const alive = this.notKnownGone(row, worker)
+    if (alive) throw new ProviderError('config_error', `${row.worker}: run ${alive.run_id} of ${alive.why} ended without being known to be gone (liveness ${alive.liveness_verdict ?? 'unknown'}, decision ${alive.liveness_decision}); its agent may still be acting, so nothing was run`)
     const workspace = await this.workspaceOf(row, worker)
     // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
     if (row.files && workspace !== worker.workspace) {
@@ -1498,6 +1502,23 @@ export class AgentWorkers extends Service {
     }
     if (meter) await this.account(row, worker, meter, result, 'completed', Date.now() - startedAt)
     return result
+  }
+
+  /**
+   * An earlier run that ended without being known to be gone (reconciled, not `dead`) on what this run
+   * would drive: its session, or, for a Worker with a worktree per run, its workflow run's worktree.
+   */
+  private notKnownGone(row: RunRow, worker: AgentWorkerConfig): { run_id: string; liveness_verdict: string | null; liveness_decision: string; why: string } | undefined {
+    const unknown = "run_id != ? AND liveness_decision IS NOT NULL AND COALESCE(liveness_verdict, '') != 'dead'"
+    const db = this.ctx.store.db
+    const session = row.session_id
+      ? db.prepare(`SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND ${unknown} LIMIT 1`).get(row.session_id, row.run_id) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
+      : undefined
+    if (session) return { ...session, why: `session ${row.session_id}` }
+    const worktree = worker.worktreePerRun && row.workflow_run_id
+      ? db.prepare(`SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE workflow_run_id = ? AND ${unknown} LIMIT 1`).get(row.workflow_run_id, row.run_id) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
+      : undefined
+    return worktree ? { ...worktree, why: `the worktree of workflow run ${row.workflow_run_id}` } : undefined
   }
 
   /**

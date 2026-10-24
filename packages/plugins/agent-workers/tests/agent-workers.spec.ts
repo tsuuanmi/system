@@ -1087,6 +1087,12 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
     expect(decision).toMatchObject({ outcome: { option: 'operator', detail: { verdict: 'unknown', looks: 2 } } })
     expect(decision.candidates[0]!.reasons).toContain('the agent process: unknown (never reported)')
     expect(await third.ctx.workers.held(session)).toMatch(new RegExp(`^its latest run ${id} ended without being known to be gone \\(liveness unknown, decision sha256:`))
+    // The source itself never drives that session again, whoever asks (INV-15).
+    const admitted = await third.ctx.workers.route(requirement())
+    const later = third.ctx.workers.source('agents')!.start({ key: 'k-later', worker: 'agent:reviewer', prompt: 'next', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
+    expect(await third.ctx.workers.source('agents')!.wait(later.id, 10_000)).toMatchObject({
+      status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining(`run ${id} of session ${session} ended without being known to be gone`) },
+    })
     expect([second.again.runs, third.again.runs]).toEqual([[], []])
     await third.stop()
   }, 30_000)
@@ -1541,6 +1547,25 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(git(workspace, 'symbolic-ref', '--short', 'HEAD')).toBe('system/run/run_done')
     expect(git(workspace, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'system/run/run_done'))
     untouched(repo, head)
+  })
+
+  it('keeps the worktree of a workflow run whose agent run ended without being known to be gone, and runs nothing more there, until a verdict says dead (INV-15, PROP-0013)', async () => {
+    const repo = repository()
+    const agent = new ScriptedAgent({ sandboxes: SANDBOXES, act: writes })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    const first = await run(ctx, 'agent:dev', 'k-1', 'run_unknown')
+    expect(first.status).toBe('completed')
+    const workspace = agent.runs[0]!.workspace
+    // As a restart leaves it when the verdicts stayed unknown: failed, for the operator, not dead.
+    const reconcile = (verdict: string) => ctx.store.db.prepare("UPDATE agent_runs SET status = 'failed', liveness_verdict = ?, liveness_decision = ? WHERE run_id = ?").run(verdict, `sha256:${'1'.repeat(64)}`, first.id)
+    reconcile('unknown')
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [] })
+    expect(existsSync(workspace)).toBe(true)
+    const refused = await run(ctx, 'agent:dev', 'k-2', 'run_unknown')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining(`run ${first.id} of the worktree of workflow run run_unknown ended without being known to be gone (liveness unknown`) } })
+    expect(agent.runs).toHaveLength(1)
+    reconcile('dead')
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
   })
 
   it('keeps a worktree while its workflow run has an agent run to finish, and leaves one it cannot remove in place, committed, for the next sweep (INV-9)', async () => {
