@@ -71,7 +71,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`), per state the most recently changed first, at most 50 each, `more` counting the rest per state |
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), per state the most recently changed first, at most 50 each, `more` counting the rest per state |
 | `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
 | `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
 | `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
@@ -90,7 +90,10 @@ Served when `ctx.board` is present; without it, every route answers `503`
   Each card gives the task's title, its project (when several are shown), its action class, when it
   last changed, what it waits on in words (a link to the approval card or the review), who works
   on it (the Worker's roster `name` and for how long, from the roster's current work), and a link
-  to its run.
+  to its run. A done task's card says where its accepted result is on its way into the repository:
+  **Accepted — waiting to merge into <base>: approve**, linked to its `merge` request
+  (`?request=<id>`), and also shown under *Waiting for you*; **Accepted and merged into <base> as
+  <commit>** (not pushed); **Accepted — not merged:** and why; or that the merge was not approved.
 - A close cancels every open task of the project (`project-closed`), releasing a claimed one's
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
@@ -120,14 +123,14 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
 
 The page shows each request as one entry: what is asked in plain words (a charter as *Found
 project …* or *Amend the charter of …*, a board task's step, a tool call, a budget raise, a fix,
-a policy change), who asked (the board for a task or project, an agent run, a run's step, the
+a policy change, an accepted result's merge, with its branch and both heads), who asked (the board for a task or project, an agent run, a run's step, the
 queue), the request's own text, what it is about with the exact subject behind **Exact
 subject**, what approving and what denying change, and when it expires, relative and absolute
 (unanswered by then, it counts as denied). The consequences a requester gave are shown as given;
 for a board charter or task request without them the page says what the board does with each
 verdict ([board](../design/board.md)), counting the project's proposed and open tasks from
 `GET projects` when the board runs. Each button names its effect (*Approve: activate project p1*,
-*Deny: hold the task*), and each entry has its own note; a batch has a note for all its requests.
+*Deny: hold the task*, *Approve: merge it*), and each entry has its own note; a batch has a note for all its requests.
 
 After a call the page reports, above the page until **Dismiss**, what happened: each verdict
 recorded, with its request and approval record and what happens next, or not recorded, with why

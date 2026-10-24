@@ -44,7 +44,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   by default); each project's header with its state, charter version, what of it waits for the
   operator (linked), and the moves; idle Workers and ready tasks; then a column per task state
   (Proposed, Ready, Working, Review, Waiting for you; Done and Cancelled folded), one card per task
-  with its title, who works on it (the Worker's name, since when), what it waits on, and its run.
+  with its title, who works on it (the Worker's name, since when), what it waits on, and its run;
+  a done task's card says where its accepted result is on its way into the repository
+  (**Accepted — waiting to merge into main: approve**, linked to its `merge` request and shown under
+  Waiting for you; merged, with the commit; or not merged, and why;
+  [landing](../../../docs/design/workflow-engine.md#landing-an-accepted-result)).
   The operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each opens a confirmation that says what the move does to this project (what goes on, what is

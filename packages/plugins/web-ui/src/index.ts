@@ -24,7 +24,7 @@ import { type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-workflow'
+import type { TaskLanding } from '@tsuuanmi/system-workflow'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
 export interface Config {
@@ -118,7 +118,7 @@ const ALL_STATES: readonly TaskState[] = [...OPEN_STATES, 'done', 'cancelled']
  * most {@link CARDS_PER_STATE} each (`more` counts the rest): what it is, its run, its lease's
  * holder, and what it waits on (an approval request the page links to its card).
  */
-export function cardsOf(tasks: readonly BoardTask[]): { tasks: Array<Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
+export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) => TaskLanding | undefined = () => undefined): { tasks: Array<Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
   const out: Array<Record<string, unknown>> = []
   const more: Partial<Record<TaskState, number>> = {}
   const changed = (t: BoardTask): string => t.updatedAt ?? t.createdAt
@@ -131,10 +131,27 @@ export function cardsOf(tasks: readonly BoardTask[]): { tasks: Array<Record<stri
         ...(t.run ? { run: { runId: t.run.runId, startedAt: t.run.startedAt } } : {}),
         ...(t.holder ? { holder: { owner: t.holder.owner, leaseExpiresAt: t.holder.leaseExpiresAt } } : {}),
         ...(t.waiting ? { waiting: { reason: t.waiting.reason, ...(t.waiting.approvalRequest ? { approvalRequest: t.waiting.approvalRequest } : {}), since: t.waiting.since, expiresAt: t.waiting.expiresAt } } : {}),
+        ...(t.state === 'done' && t.run ? landingCard(landingOf(t.run.runId)) : {}),
       })
     }
   }
   return { tasks: out, more }
+}
+
+/**
+ * Where a done task's accepted result stands on its way into the repository (ADR-0059), as its card
+ * shows it: the merge request it waits on, the merge commit, or why it was not merged. Nothing when
+ * there is nothing to land.
+ */
+function landingCard(landing: TaskLanding | undefined): Record<string, unknown> {
+  if (!landing || landing.state === 'none') return {}
+  return {
+    landing: {
+      state: landing.state, ...(landing.branch ? { branch: landing.branch } : {}), ...(landing.base ? { base: landing.base.branch } : {}),
+      ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}),
+      ...(landing.reason && (landing.state === 'refused' || landing.state === 'rejected') ? { reason: landing.reason } : {}),
+    },
+  }
 }
 
 /** Open and batched requests in listing order (by batch, then expiry), grouped by batch; the unbatched last. */
@@ -326,7 +343,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       const listed: Array<Record<string, unknown>> = []
       for (const project of await board.projects()) {
         const tasks = await board.tasks({ projectId: project.projectId, states: [...ALL_STATES] })
-        listed.push({ ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks) })
+        listed.push({ ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks, (runId) => ctx.workflow.landing(runId)) })
       }
       // A stable sort: in creation order, the closed ones last.
       listed.sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed'))
