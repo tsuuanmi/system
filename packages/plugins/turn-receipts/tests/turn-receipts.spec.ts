@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import { ProviderError, responseHash } from '@tsuuanmi/system-provider-core'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
 import TurnReceipts, { receiptId } from '../src/index.ts'
@@ -32,6 +31,8 @@ const submission = {
   mode: { verified: true as const, tier: 'frontier' as const, feature: 'deep-research' as const },
 }
 
+// The seam's contract is held by its conformance suite (conformance.spec.ts); these tests pin what
+// only this provider does.
 describe('ctx.turnReceipts', () => {
   it('derives identity from account, owning session, and request id', () => {
     const first = receiptId(id)
@@ -41,56 +42,6 @@ describe('ctx.turnReceipts', () => {
     expect(receiptId({ ...id, requestId: 'call-43' })).not.toBe(first)
     expect(() => receiptId({ ...id, sessionId: '' })).toThrow(/session/)
     expect(() => receiptId({ ...id, requestId: ' ' })).toThrow(/request/)
-  })
-
-  it('persists one schema-valid submitted request and rejects prompt or boundary drift', async () => {
-    const ctx = await boot()
-    const submitted = ctx.turnReceipts.submit(submission)
-    expect(submitted).toMatchObject({ schema: 'provider-turn-receipt@1.0', status: 'SUBMITTED', resubmits: 0, previousResponseHash: responseHash('old response') })
-    expect(ctx.turnReceipts.read(id)).toEqual(submitted)
-    expect(() => ctx.turnReceipts.submit({ ...submission, prompt: 'different prompt' })).toThrow(/different prompt/)
-    expect(() => ctx.turnReceipts.submit({ ...submission, previousResponse: 'moved on' })).toThrow(/boundary/)
-  })
-
-  it('counts resubmissions of the same logical request and stops at the schema bound (QA-8)', async () => {
-    const ctx = await boot()
-    ctx.turnReceipts.submit(submission)
-    expect(ctx.turnReceipts.submit(submission).resubmits).toBe(1)
-    expect(ctx.turnReceipts.submit(submission).resubmits).toBe(2)
-    expect(() => ctx.turnReceipts.submit(submission)).toThrow(ProviderError)
-  })
-
-  it('treats a new conversation as a null boundary', async () => {
-    const ctx = await boot()
-    const fresh = ctx.turnReceipts.submit({ ...submission, previousResponse: null, conversation: { provider: 'chatgpt-web', binding: '' } })
-    expect(fresh.previousResponseHash).toBeNull()
-  })
-
-  it('binds a conversation once and never rebinds it', async () => {
-    const ctx = await boot()
-    ctx.turnReceipts.submit({ ...submission, conversation: { provider: 'chatgpt-web', binding: '' } })
-    expect(ctx.turnReceipts.bindConversation(id, 'https://chatgpt.com/c/1').conversation.binding).toBe('https://chatgpt.com/c/1')
-    expect(ctx.turnReceipts.bindConversation(id, 'https://chatgpt.com/c/1').conversation.binding).toBe('https://chatgpt.com/c/1')
-    expect(() => ctx.turnReceipts.bindConversation(id, 'https://chatgpt.com/c/2')).toThrow(/rebound/)
-  })
-
-  it('completes idempotently and refuses conflicting content', async () => {
-    const ctx = await boot()
-    ctx.turnReceipts.submit(submission)
-    const completed = ctx.turnReceipts.complete(id, { response: 'late answer', providerTurnId: 'turn-1' })
-    expect(completed).toMatchObject({ status: 'COMPLETED', responseHash: responseHash('late answer'), providerTurnId: 'turn-1' })
-    expect(ctx.turnReceipts.complete(id, { response: '  late answer ', providerTurnId: 'turn-1' })).toEqual(completed)
-    expect(() => ctx.turnReceipts.complete(id, { response: 'other', providerTurnId: 'turn-1' })).toThrow(/conflicting/)
-    expect(() => ctx.turnReceipts.complete({ ...id, requestId: 'missing' }, { response: 'x', providerTurnId: 't' })).toThrow(/does not exist/)
-  })
-
-  it('records every reconciliation as a decision artifact referenced by the receipt (INV-13)', async () => {
-    const ctx = await boot()
-    ctx.turnReceipts.submit(submission)
-    const { outcome, decision } = ctx.turnReceipts.reconcile(id, { text: 'late answer', running: false })
-    expect(outcome).toBe('RECOVER')
-    expect(ctx.artifacts.get(decision)?.body).toMatchObject({ decisionType: 'reconciliation', outcome: { option: 'RECOVER' }, deterministic: true })
-    expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([decision])
   })
 
   it('says why each rejected outcome lost, from the rule and the snapshot (INV-13)', async () => {
@@ -114,26 +65,4 @@ describe('ctx.turnReceipts', () => {
     })
   })
 
-  it('records waiting once: a repeated WAIT reuses its decision, and a change of outcome is recorded (INV-9)', async () => {
-    const ctx = await boot()
-    ctx.turnReceipts.submit(submission)
-    const first = ctx.turnReceipts.reconcile(id, { text: '', running: true })
-    const again = ctx.turnReceipts.reconcile(id, { text: '', running: true })
-    expect([first.outcome, again.outcome]).toEqual(['WAIT', 'WAIT'])
-    expect(again.decision).toBe(first.decision)
-    expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([first.decision])
-    const done = ctx.turnReceipts.reconcile(id, { text: 'the answer', running: false })
-    expect(done.outcome).toBe('RECOVER')
-    expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([first.decision, done.decision])
-  })
-
-  it('deletes one receipt without touching the session\'s other turns (retention, INV-9)', async () => {
-    const ctx = await boot()
-    ctx.turnReceipts.submit(submission)
-    ctx.turnReceipts.submit({ ...submission, requestId: 'turn-2' })
-    expect(ctx.turnReceipts.delete(id)).toBe(true)
-    expect(ctx.turnReceipts.delete(id)).toBe(false)
-    expect(ctx.turnReceipts.read(id)).toBeUndefined()
-    expect(ctx.turnReceipts.read({ ...id, requestId: 'turn-2' })).toBeDefined()
-  })
 })

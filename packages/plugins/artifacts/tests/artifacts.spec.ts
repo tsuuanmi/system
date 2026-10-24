@@ -36,48 +36,9 @@ const route: Omit<Decision, 'schema'> = {
 }
 const producer = { type: 'policy', ref: 'routing.default' } as const
 
+// The seam's contract is held by its conformance suite (conformance.spec.ts); these tests pin what
+// only this provider does.
 describe('ctx.artifacts', () => {
-  it('stores a decision with a computed content id and deduplicates identical content (REQ-ART-2)', async () => {
-    const ctx = await boot()
-    const first = ctx.artifacts.recordDecision(route, { producer, runId: 'run-1', nodeId: 'research:1' })
-    expect(first.id).toMatch(/^sha256:[0-9a-f]{64}$/)
-    expect(ctx.artifacts.recordDecision(route, { producer, runId: 'run-1', nodeId: 'research:1' }).id).toBe(first.id)
-    expect(ctx.artifacts.list({ decisionType: 'route' })).toHaveLength(1)
-  })
-
-  it('clamps a decision\'s prose to its schema bounds on whole characters, marked, so a long reason never fails the decision (INV-13)', async () => {
-    const ctx = await boot()
-    // A reason whose 300th character is a surrogate pair (an emoji) must not be split.
-    const reason = `${'r'.repeat(298)}😀😀 and more`
-    const long = { ...route, question: `q${'?'.repeat(600)}`, rationale: 'x'.repeat(1200), candidates: route.candidates.map((c) => ({ ...c, reasons: [reason, ...c.reasons] })) }
-    const body = ctx.artifacts.recordDecision(long, { producer }).body as { question: string; rationale: string; candidates: Array<{ reasons: string[] }> }
-    const stored = body.candidates[0]!.reasons[0]!
-    expect([...stored]).toHaveLength(300)
-    expect(stored).toBe(`${'r'.repeat(298)}😀…`)
-    expect([...body.question]).toHaveLength(500)
-    expect([...body.rationale]).toHaveLength(1000)
-    expect(body.question.endsWith('…')).toBe(true)
-    // Short prose is untouched.
-    expect(ctx.artifacts.recordDecision(route, { producer }).body).toMatchObject({ candidates: route.candidates })
-  })
-
-  it('rejects a decision whose selected candidate differs from the outcome', async () => {
-    const ctx = await boot()
-    expect(() => ctx.artifacts.recordDecision({ ...route, outcome: { option: 'worker:chatgpt-2/deep-research' } }, { producer })).toThrow(/outcome/)
-  })
-
-  it('rejects a body that does not match its schema (INV-14)', async () => {
-    const ctx = await boot()
-    expect(() => ctx.artifacts.recordDecision({ ...route, candidates: [] }, { producer })).toThrow(/decision@1.0/)
-  })
-
-  it('never classifies a derived artifact below its strictest input', async () => {
-    const ctx = await boot()
-    const secret = ctx.artifacts.recordDecision(route, { producer, classification: 'local-private' })
-    const derived = ctx.artifacts.recordDecision({ ...route, inputs: [secret.id], question: 'derived' }, { producer, classification: 'public' })
-    expect(derived.classification).toBe('local-private')
-  })
-
   it('explains the decision chain behind an artifact', async () => {
     const ctx = await boot()
     const tier = ctx.artifacts.recordDecision(
@@ -116,38 +77,6 @@ describe('review fixes (PR #3 kernel review)', () => {
     expect(unique.size).toBe(n)
   })
 
-  it('rejects unknown input references (the classification floor cannot fail open)', async () => {
-    const ctx = await boot()
-    expect(() => ctx.artifacts.recordDecision({ ...route, inputs: [`sha256:${'9'.repeat(64)}`] }, { producer })).toThrow(/unknown input/)
-  })
-
-  it('refuses to downgrade on deduplication', async () => {
-    const ctx = await boot()
-    ctx.artifacts.recordDecision(route, { producer, classification: 'public' })
-    expect(() => ctx.artifacts.recordDecision(route, { producer, classification: 'local-private' })).toThrow(/classification/)
-  })
-
-  it('hashes the body schema and treats inputs as a set', async () => {
-    const ctx = await boot()
-    const a = ctx.artifacts.recordDecision(tierOf(1), { producer })
-    const b = ctx.artifacts.recordDecision(tierOf(2), { producer })
-    const ab = ctx.artifacts.recordDecision({ ...tierOf(3), inputs: [a.id, b.id] }, { producer })
-    const ba = ctx.artifacts.recordDecision({ ...tierOf(3), inputs: [b.id, a.id] }, { producer })
-    expect(ba.id).toBe(ab.id)
-  })
-
-  it('lists identical content under every run that produced it', async () => {
-    const ctx = await boot()
-    ctx.artifacts.recordDecision(route, { producer, runId: 'run-1' })
-    ctx.artifacts.recordDecision(route, { producer, runId: 'run-2' })
-    expect(ctx.artifacts.list({ runId: 'run-2' })).toHaveLength(1)
-  })
-
-  it('requires a model decider to be non-deterministic', async () => {
-    const ctx = await boot()
-    expect(() => ctx.artifacts.recordDecision({ ...route, decider: { type: 'model', id: 'm', version: '1' } }, { producer })).toThrow()
-  })
-
   it('collects only what nothing retained needs: unreferenced, past the grace period, of no run that still exists (INV-9)', async () => {
     const ctx = await boot()
     const day = 24 * 60 * 60_000
@@ -172,44 +101,18 @@ describe('review fixes (PR #3 kernel review)', () => {
     expect([gone, orphan, onlyEvents].some((id) => ctx.artifacts.get(id))).toBe(false)
   })
 
-  it('explains a collected input as expired, keeping its id (REQ-ART-3)', async () => {
-    const ctx = await boot()
-    const input = ctx.artifacts.recordDecision(route, { producer })
-    const child = ctx.artifacts.recordDecision({ ...route, question: 'Which Worker runs research:2?', inputs: [input.id] }, { producer })
-    ctx.store.db.prepare('DELETE FROM artifacts WHERE id = ?').run(input.id)
-    expect(ctx.artifacts.explain(child.id)!.inputs).toEqual([{ id: input.id, kind: 'expired', summary: 'expired: collected by retention', inputs: [] }])
-  })
-
   describe('read, for the operator', () => {
     const answer = (text: string) => ({
       kind: 'report' as const, bodySchema: 'provider-answer@1.0', classification: 'local-private' as const, producer: { type: 'worker' as const, ref: 'chatgpt-web/chatgpt-main' },
       body: { schema: 'provider-answer@1.0', provider: 'chatgpt-web', account: 'chatgpt-main', turnId: 'turn_1', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
     })
 
-    it('reads an answer\'s text with its header, in a window of characters that never splits a surrogate pair', async () => {
-      const ctx = await boot()
-      const stored = ctx.artifacts.put({ ...answer('a😀b😀c'), runId: 'run_1', nodeId: 'review:m2:propose' })
-      expect(ctx.artifacts.read(stored.id)).toMatchObject({
-        id: stored.id, state: 'stored', kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'local-private', runId: 'run_1', nodeId: 'review:m2:propose',
-        content: 'text', chars: 5, offset: 0, truncated: false, text: 'a😀b😀c',
-      })
-      // Counted in characters: the emoji is one, and a window starts and ends on whole ones.
-      expect(ctx.artifacts.read(stored.id, { offset: 1, max: 1 })).toMatchObject({ chars: 5, offset: 1, truncated: true, text: '😀' })
-      expect(ctx.artifacts.read(stored.id, { offset: 3, max: 10 })).toMatchObject({ offset: 3, truncated: false, text: '😀c' })
-      // Past the end: an empty window, at the end.
-      expect(ctx.artifacts.read(stored.id, { offset: 99 })).toMatchObject({ offset: 5, truncated: false, text: '' })
-      // A body without text reads as its JSON.
-      const decision = ctx.artifacts.recordDecision(route, { producer })
-      const read = ctx.artifacts.read(decision.id)
-      expect(read).toMatchObject({ state: 'stored', kind: 'decision', content: 'json', classification: 'operator-shared' })
-      expect(JSON.parse((read as { text: string }).text)).toEqual(decision.body)
-    })
-
-    it('reads an artifact past retention as expired, naming what still names it, and one nothing names as unknown, never as an error', async () => {
+    it('explains and reads a collected input as expired, keeping its id and naming what still names it, and reads one nothing names as unknown, never as an error (REQ-ART-3)', async () => {
       const ctx = await boot()
       const input = ctx.artifacts.recordDecision(route, { producer })
       const child = ctx.artifacts.recordDecision({ ...route, question: 'Which Worker runs research:2?', inputs: [input.id] }, { producer })
       ctx.store.db.prepare('DELETE FROM artifacts WHERE id = ?').run(input.id)
+      expect(ctx.artifacts.explain(child.id)!.inputs).toEqual([{ id: input.id, kind: 'expired', summary: 'expired: collected by retention', inputs: [] }])
       expect(ctx.artifacts.read(input.id)).toEqual({
         id: input.id, state: 'expired', referencedBy: { id: child.id, kind: 'decision', createdAt: child.createdAt },
         note: `expired: collected by retention; its content is gone (still named by decision ${child.id}, recorded ${child.createdAt})`,
