@@ -26,6 +26,13 @@ recent runs.
 
 ## Runs
 
+A run's page (`?run=<runId>`) says in one sentence what the run is, when it started, and where it
+is (finished, running which step on which Worker, failed at which step and why, or waiting for
+you); then what the operator can do (the plan's approval, the tie's vote, the fix's verdict link,
+**Stop run**, **Continue run**, each with what it does), the answer, and the steps as a timeline in
+words (done, running, failed, waiting for you, waiting for earlier steps), each with its Worker's
+roster `name` and tier; each step's decisions and the run's spec hash are folded.
+
 | Route | Body | Answer |
 |---|---|---|
 | `GET runs` | — | `{runs}`: the latest 100 runs |

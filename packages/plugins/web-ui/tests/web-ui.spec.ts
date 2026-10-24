@@ -420,6 +420,31 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('main').innerText()).not.toContain('← ')
   }, 60_000)
 
+  it.runIf(canRunBrowser)('shows a run as a sentence, what you can do, the answer, and its steps as a timeline in words, the decisions and spec folded (T97)', async () => {
+    const { origin, token } = await boot({ roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
+    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    const text = await page.locator('main').innerText()
+    expect(text).toContain('investigate run, started')
+    expect(text).toContain('It waits for you: its plan waits for your approval.')
+    expect(text).toContain('Step plan:1:gate waits for your approval of its plan before it runs.')
+    expect(text).toContain('No answer yet: it comes when the last step is done.')
+    const steps = page.locator('ol.timeline > li')
+    expect(await steps.count()).toBe(2)
+    expect(await steps.nth(0).innerText()).toMatch(/^plan:1 done · worker:a\/standard · standard tier/)
+    expect(await steps.nth(1).innerText()).toContain('plan:1:gate waiting for you · needs an economy tier Worker')
+    // Decisions and the spec are folded until asked for.
+    expect(await page.locator('details', { hasText: 'How it was decided (1)' }).getAttribute('open')).toBeNull()
+    expect(await page.getByText('proves reason').isVisible()).toBe(false)
+    await page.getByText('How it was decided (1)').click()
+    expect(await page.getByText('proves reason').isVisible()).toBe(true)
+    expect(await page.getByText('sha256:00').isVisible()).toBe(false)
+    expect(await page.getByText('ends it now: nothing more of it runs').count()).toBe(1)
+  }, 60_000)
+
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
     const { origin, token, workflow } = await boot()
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })

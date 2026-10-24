@@ -50,6 +50,9 @@ th, td.nowrap { white-space: nowrap; }
 .request label, .batch-actions label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
 .batch-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
 .soon { color: var(--wait); font-weight: 600; } details summary { cursor: pointer; color: var(--muted); }
+ol.timeline { list-style: none; padding: 0; margin: 8px 0; border-left: 2px solid var(--line); } ol.timeline li.step { padding: 4px 0 8px 12px; position: relative; overflow-wrap: anywhere; }
+ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.actions .muted { margin-right: 12px; } .state.ready { color: var(--ok); }
 .kanban { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; margin: 12px 0; }
 .column h3 { font-size: 14px; margin: 0 0 8px; } .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0 0 8px; overflow-wrap: anywhere; }
 .card > * { margin: 2px 0; } .folded details { margin: 8px 0; } .folded .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
@@ -508,49 +511,71 @@ export const APP_JS = `'use strict'
     }
   }
 
+  // A step's state in words, and what it means for the run.
+  const STEP = {
+    COMPLETED: ['done', 'completed'], RUNNING: ['running', 'running'], FAILED: ['failed', 'failed'], BLOCKED: ['waiting for you', 'running'],
+    WAITING: ['waiting for earlier steps', 'unknown'], READY: ['ready to start', 'ready'], RETIRED: ['dropped from the plan', 'unknown'],
+  }
   async function detail(runId) {
     const { run, explain } = await api('runs/' + encodeURIComponent(runId))
+    let roster = null
+    try { roster = await api('roster') } catch {}
+    const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
+    const nameOf = (worker) => names.get(worker) || worker
     const act = (action, body) => async () => {
       try { await api('runs/' + encodeURIComponent(runId) + '/' + action, body()) } catch (error) {
         report(false, 'Not done: ' + action + ' of run ' + runId, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing changed.'])
       }
       await detail(runId).catch((error) => { status.textContent = 'could not refresh: ' + error.message })
     }
-    const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note' })
-    const rationale = el('input', { placeholder: 'rationale (required)', 'aria-label': 'Rationale' })
+    const note = el('input', { id: 'plan-note' })
+    const rationale = el('input', { id: 'vote-rationale' })
     const tie = run.blocked && run.blocked.kind === 'tie' ? run.blocked : null
     const vote = (option) => act('vote', () => ({ decision: tie.decision, option, rationale: rationale.value }))
     const decisions = new Map((explain ? explain.nodes : []).map((n) => [n.nodeId, n.decisions]))
+    const failed = run.nodes.find((n) => n.state === 'FAILED')
+    const running = run.nodes.filter((n) => n.state === 'RUNNING')
+    // The run in one sentence: what it is, when it started, and where it is.
+    const sentence = run.status === 'completed' ? 'It finished: every step is done.'
+      : run.status === 'failed' ? 'It failed' + (failed ? ' at step ' + failed.nodeId : '') + ': ' + (run.error ? failureText(run.error) : failed && failed.error ? failureText(failed.error) : 'no reason was recorded') + '.'
+      : run.blocked ? 'It waits for you: ' + needsLook(run) + '.'
+      : running.length ? 'It is running: ' + running.map((n) => 'step ' + n.nodeId + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ') + '.'
+      : 'It is ' + run.status + '.'
     show(
       pageHead('run', 'Run ' + run.runId),
-      el('p', {}, el('span', { class: 'state ' + run.status }, run.status)),
-      el('p', { class: 'muted' }, run.template + ' · spec ', el('code', {}, run.specHash)),
-      run.error ? el('p', { class: 'state failed' }, run.error.kind + ': ' + run.error.message) : null,
+      el('p', {}, el('span', { class: 'state ' + run.status }, run.status), ' · ' + run.template + ' run, started ', ago(run.createdAt), ', last changed ', ago(run.updatedAt), '. ' + sentence),
       tie ? el('div', { class: 'panel' },
-        el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + new Date(tie.until).toLocaleString() + ' it waits for a deciding vote, then ends inconclusive.'),
+        el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + relative(tie.until) + ' (' + absolute(tie.until) + ') it waits for your deciding vote, then ends inconclusive.'),
         el('ul', {}, tie.options.map((o) => el('li', {}, el('strong', {}, o.option + ': '), o.summary))),
-        rationale,
-        tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
-        el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive')) : null,
+        el('div', { class: 'actions' }, el('label', { for: 'vote-rationale' }, 'Why (required)', rationale),
+          tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
+          el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive'))) : null,
       run.blocked && !tie && run.blocked.approvalRequest ? el('div', { class: 'panel' },
         el('p', {}, 'The fix at ', run.blocked.nodeId, ' waits for your verdict on approval request ', el('code', {}, run.blocked.approvalRequest),
           run.blocked.until ? ', until ' + relative(run.blocked.until) + ' (' + absolute(run.blocked.until) + ')' : '', '. '),
         el('p', {}, decideLink(run.blocked.approvalRequest, 'Decide it'))) : null,
       run.blocked && !tie && !run.blocked.approvalRequest ? el('div', { class: 'panel' },
-        el('p', {}, 'Waiting for your approval of plan ', el('code', {}, run.blocked.plan), ' at ', run.blocked.nodeId, '.'),
-        note,
-        el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),
-        el('button', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }, 'Reject plan')) : null,
-      el('p', {},
-        run.status === 'running' ? el('button', { onclick: act('stop', () => ({ reason: 'stopped from the web UI' })) }, 'Stop run') : null,
-        run.status === 'failed' ? el('button', { onclick: act('continue', () => ({})) }, 'Continue run') : null),
-      run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer)) : null,
+        el('p', {}, 'Step ', run.blocked.nodeId, ' waits for your approval of its plan before it runs. ', el('details', {}, el('summary', {}, 'Plan id'), el('code', {}, run.blocked.plan))),
+        el('div', { class: 'actions' }, el('label', { for: 'plan-note' }, 'Note (optional)', note),
+          el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),
+          el('button', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }, 'Reject plan'))) : null,
+      run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions' },
+        run.status === 'running' ? [el('button', { onclick: act('stop', () => ({ reason: 'stopped from the web UI' })) }, 'Stop run'), el('span', { class: 'muted' }, 'ends it now: nothing more of it runs')] : null,
+        run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Continue run'), el('span', { class: 'muted' }, 'runs its failed step again as a new attempt; the steps that are done are kept')] : null) : null,
+      run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
+        : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       el('h3', {}, 'Steps'),
-      table(['Step', 'State', 'Tier', 'Quota', 'Worker', 'Decisions'], run.nodes.map((n) => el('tr', {},
-        el('td', {}, n.nodeId), el('td', { class: 'state ' + n.state }, n.state + (n.error ? ' · ' + n.error.kind : '')),
-        el('td', {}, n.tier || n.minTier), el('td', {}, n.quotaClass || '-'), el('td', {}, n.worker || '-'),
-        el('td', {}, (decisions.get(n.nodeId) || []).map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))),
-      ))),
+      el('ol', { class: 'timeline' }, run.nodes.map((n) => {
+        const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
+        const made = decisions.get(n.nodeId) || []
+        return el('li', { class: 'step' },
+          el('div', {}, el('strong', {}, n.nodeId), ' ', el('span', { class: 'state ' + cls }, word),
+            n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + ' · ' + (n.tier || n.minTier) + ' tier' + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
+          n.error ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
+          made.length ? el('details', {}, el('summary', {}, 'How it was decided (' + made.length + ')'),
+            made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))) : null)
+      })),
+      el('details', {}, el('summary', {}, 'Technical details'), el('p', { class: 'muted' }, 'Template ' + run.template + ' · spec ', el('code', {}, run.specHash), run.sessionId ? ' · session ' + run.sessionId : '')),
     )
   }
 
