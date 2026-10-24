@@ -33,7 +33,9 @@
  * end ends the agent) and each SDK message as activity (`RunObserver`, PROP-0013).
  * The SDK's session stays native; only its id crosses as the run's handle (INV-7). What a run
  * consumed is read from the SDK's own messages (the result's `modelUsage`, `rate_limit_event`),
- * never from the model's text, and reported for a failed run too.
+ * never from the model's text, and reported for a failed run too. An account's usage report
+ * (`limits`, ADR-0059) is the SDK's `get_usage` control request, in a session sent no message, on a
+ * Claude Code version whose answer was checked (`limits.ts`).
  * @module @tsuuanmi/system-runtime-claude-agent-sdk
  */
 import { execFile, spawn } from 'node:child_process'
@@ -44,12 +46,15 @@ import { type HookCallback, type HookJSONOutput, type SandboxSettings, type Spaw
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LoginCommand, type ModelUsage, type ProbeOptions, type RunMetering, type RunResult, type RunSpec,
-  type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand, homeProblem, identityHmac, maskEmail, observe,
-  proveConfinement, readHomeJson, withMetering,
+  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
+  type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand,
+  homeProblem, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
+import { VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
+
+export { VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
 
 export type QueryFn = typeof query
 
@@ -359,6 +364,76 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     }
     const hint = typeof fields.emailAddress === 'string' ? maskEmail(fields.emailAddress) : undefined
     return { status: 'verified', hmac: identityHmac(key, this.kind, { accountUuid: fields.accountUuid, organizationUuid: fields.organizationUuid }), ...pinned, ...(hint ? { hint } : {}) }
+  }
+
+  /**
+   * The usage report of the account signed in to `options.home` (its own home when absent), every
+   * plan window it reports as an observation (ADR-0059; `limits.ts`). Only on a Claude Code version
+   * whose `get_usage` answer was checked (`VERIFIED_LIMIT_VERSIONS`): Claude Code starts as a run's
+   * does, under the confinement with its home bound back and the run's environment, in a session that
+   * is sent no message (streaming input that never yields, so no model turn starts), with no tool, no
+   * settings, no MCP server, and no session written (`persistSession: false`); the SDK asks it
+   * `get_usage` with `skipBehaviors` (no scan of local transcripts), and the session is closed. Never
+   * throws: anything it cannot read is `unreadable`, with why.
+   */
+  async limits(options: LimitsOptions, signal: AbortSignal): Promise<LimitReport> {
+    const unreadable = (why: string): LimitReport => ({ unreadable: `claude-agent-sdk: ${why}` })
+    if (signal.aborted) return unreadable('the read was stopped')
+    // A named home is one account's (ADR-0051): an owner-only directory that exists, never made here.
+    const named = options.home !== undefined ? homeProblem(options.home) : undefined
+    if (named) return unreadable(named)
+    const home = options.home ?? this.home
+    const executable = this.executable()
+    if (!executable) return unreadable('Claude Code is not installed (no claude executable on PATH)')
+    let version: string
+    try {
+      version = await (this.options.version ?? claudeVersion)(executable)
+    } catch (error) {
+      return unreadable(`claude --version failed: ${firstLine(error)}`)
+    }
+    if (!VERIFIED_LIMIT_VERSIONS.includes(version)) return unreadable(`the usage report of Claude Code ${version} is not verified (verified: ${VERIFIED_LIMIT_VERSIONS.join(', ')})`)
+    if (!this.options.confine) return unreadable('no read confinement is configured; its usage report is not read with the host state readable (ADR-0024)')
+    let confinement: Confinement
+    try {
+      confinement = this.confinement(home, { writable: [home] })
+    } catch (error) {
+      return unreadable(firstLine(error))
+    }
+    if (signal.aborted) return unreadable('the read was stopped')
+    const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    signal.addEventListener('abort', abort, { once: true })
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    // Streaming input that sends nothing: the session waits for a message that never comes, and its input ends with the read.
+    const input: AsyncIterable<never> = { [Symbol.asyncIterator]: () => ({ next: () => finished.then(() => ({ done: true as const, value: undefined as never })) }) }
+    let session: ReturnType<QueryFn> | undefined
+    try {
+      session = this.query({
+        prompt: input,
+        options: {
+          cwd: home, tools: [], allowedTools: [], permissionMode: 'dontAsk', permissionPrompts: 'none', settingSources: [], mcpServers: {}, strictMcpConfig: true,
+          persistSession: false, pathToClaudeCodeExecutable: executable, abortController: controller,
+          spawnClaudeCodeProcess: (spawned) => this.spawnConfined(spawned, confinement), env: this.environment(home),
+        },
+      })
+      const answer: unknown = await session.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })
+      if (signal.aborted) return unreadable('the read was stopped')
+      return limitsFromUsage(answer, Date.now())
+    } catch (error) {
+      return unreadable(signal.aborted ? 'the read was stopped' : `get_usage failed: ${firstLine(error)}`)
+    } finally {
+      finish()
+      try {
+        session?.close()
+      } catch {
+        // Closing a session that already ended changes nothing.
+      }
+      controller.abort()
+      signal.removeEventListener('abort', abort)
+    }
   }
 
   /** Claude Code in `home`, where the operator signs in (`/login`) in their own terminal, without D-Bus (ADR-0051). */

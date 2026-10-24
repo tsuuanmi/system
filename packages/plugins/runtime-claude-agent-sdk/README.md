@@ -147,6 +147,32 @@ installed.
     `rateLimitType` names no window and is not reported, except a rejection:
     it is reported as window `*`, which no configuration maps, so the ledger
     closes every window of the pool. Overage fields are not read.
+- **An account's usage report** (`limits({ home }, signal)`,
+  [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
+  `src/limits.ts`): the SDK's `get_usage` control request
+  (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`),
+  only on a Claude Code version whose answer was checked
+  (`VERIFIED_LIMIT_VERSIONS`; any other is `unreadable`, naming it, and nothing
+  starts). Claude Code starts as a run's does (the read confinement with its home
+  bound back writable, the run's environment, the home as its directory) in a
+  session that is sent no message: streaming input that never yields, so no
+  model turn starts; no tool (`tools: []`), no settings, no MCP server, no hook,
+  and no session written (`persistSession: false`). The answer is read, the
+  session closed. Read: `rate_limits_available: true` with `rate_limits` an
+  object; each window of it that is `{ utilization, resets_at }` with a numeric
+  `utilization` (0 to 100) is an observation of its name (`five_hour`,
+  `seven_day`, `seven_day_oauth_apps`, `seven_day_opus`, `seven_day_sonnet`: the
+  names a `rate_limit_event` uses), `usedPercentage` its utilization (above 100
+  read as 100), `rejected` at 100 or more, else `allowed`, with `resetsAt` when
+  `resets_at` is an ISO time within 400 days (and ahead, for a rejection). A
+  window whose utilization is null is no reading. `rate_limits_available: false`
+  (an API key, a third-party provider) is `unreadable`; so is any window not in
+  that shape (a number, a reset as Unix seconds, a share as text, a negative
+  share): nothing in such an answer is believed. Not read: `session`,
+  `subscription_type`, `model_scoped`, `extra_usage`, `behaviors`. A window at
+  100 % closes even when the account's extra usage could pay past it. Fixtures:
+  `tests/fixtures/claude-get-usage.json`; the provider passes the usage report
+  suite.
 - **Config:** `executable` (default: `claude` on PATH; keep it outside the
   hidden paths, `~/.claude/local` among them); `home`, the Workers' Claude Code
   home (absolute; default `<DSH_HOME>/system/claude-home`); `forwardEnv`,
