@@ -50,6 +50,11 @@ th, td.nowrap { white-space: nowrap; }
 .request label, .batch-actions label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
 .batch-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
 .soon { color: var(--wait); font-weight: 600; } details summary { cursor: pointer; color: var(--muted); }
+.kanban { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; margin: 12px 0; }
+.column h3 { font-size: 14px; margin: 0 0 8px; } .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.card > * { margin: 2px 0; } .folded details { margin: 8px 0; } .folded .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
+@media (max-width: 900px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .kanban { grid-template-columns: 1fr; } }
 button:disabled { opacity: 0.6; cursor: progress; } button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
@@ -153,6 +158,9 @@ export const APP_JS = `'use strict'
     policy: ['Autonomy policy', 'Which actions run on their own, which ask you first, and the changes proposed to that.'],
     run: ['Run', 'One run: what it answered, its steps in order, and what you can do with it.'],
   }
+  // Idle capacity, and the step that puts it to work.
+  const capacityText = (idle, ready) => (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker idle' : ' Workers idle')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
+    + (ready ? '. A ready task starts when the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
   const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
@@ -458,6 +466,7 @@ export const APP_JS = `'use strict'
     const reviewed = await reviews()
     let roster = null
     try { roster = await api('roster') } catch {}
+    const ready = await readyTasks()
     const asked = queued ? queued.querySelectorAll('article.request').length : 0
     const toReview = reviewed ? reviewed.querySelectorAll('article.request').length : 0
     const look = runs.filter(needsLook)
@@ -474,7 +483,8 @@ export const APP_JS = `'use strict'
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
         c ? el('p', {}, c.busy + ' working · ' + c.ready + ' idle · ' + c.resting + ' at a limit · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '') + ' ',
           el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'see each Worker'))
-          : el('p', { class: 'muted' }, 'The Workers could not be read now.')),
+          : el('p', { class: 'muted' }, 'The Workers could not be read now.'),
+        ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'see the board')) : null),
       queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
       reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
       look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs that need a look' }, el('h2', {}, 'Runs that need a look'),
@@ -549,6 +559,7 @@ export const APP_JS = `'use strict'
   // is refused and nothing moves. The page does not refresh while a confirmation is open.
   const OPEN = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
   let confirming = false
+  let boardProject = 'all'
   async function boardView() {
     let projects
     try { ({ projects } = await api('projects')) } catch (error) {
@@ -609,17 +620,68 @@ export const APP_JS = `'use strict'
         charter ? el('div', {}, p.state === 'proposed' ? 'Its charter waits for your verdict: ' : 'Its amendment waits for your verdict: ', decideLink(charter.requestId, 'decide it')) : null,
         asksOf(p).length ? el('div', {}, asksOf(p).length + ' task(s) wait for your approval: ', asksOf(p).flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])) : null)
     }
+    // Who works on a task: the Worker the engine runs its run's step on, by its name, and since when.
+    let roster = null
+    try { roster = await api('roster') } catch {}
+    const working = new Map()
+    if (roster && 'value' in roster.workers) for (const w of roster.workers.value) if ('value' in w.work) for (const i of w.work.value.items) working.set(i.runId, { name: w.name, worker: w.worker, since: i.since })
+    const shownProjects = boardProject === 'all' ? projects : projects.filter((p) => p.projectId === boardProject)
+    const pick = el('select', { id: 'board-project', onchange: () => { boardProject = pick.value; boardView() } },
+      el('option', { value: 'all' }, 'All projects (' + projects.length + ')'), projects.map((p) => el('option', { value: p.projectId }, p.title)))
+    pick.value = shownProjects.length === projects.length ? 'all' : boardProject
+    const ready = shownProjects.reduce((n, p) => n + (p.open.ready || 0), 0)
+    const head = (p) => el('article', { class: 'panel request', 'aria-labelledby': 'project-' + p.projectId },
+      el('h3', { id: 'project-' + p.projectId }, p.title),
+      el('p', { class: 'meta' }, el('span', { class: 'tag' }, p.state), ' project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ', amendment ' + p.amendment + ' waits' : '') + ' · ' + count(p, OPEN) + ' open task(s)' + (p.closure ? ' · closed (' + p.closure.outcome + ')' : '')),
+      stateOf(p),
+      moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))) : null)
+    const WAITS = {
+      'approval-needed': 'waits for your approval', 'budget-spent': 'its budget is spent: waits for your funding verdict', 'reconciliation-failed': 'its run could not be settled: waits for your verdict',
+      'retries-spent': 'used all its attempts: waits for input', question: 'asked a question: waits for an answer', rejected: 'was rejected: waits for input', 'review-expired': 'its review expired', 'operator-review': 'waits for your review',
+    }
+    const cardOf = (p, t) => {
+      const run = t.run ? working.get(t.run.runId) : undefined
+      const since = t.updatedAt || t.createdAt
+      return el('article', { class: 'card', 'aria-label': t.title },
+        el('strong', {}, t.title),
+        boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
+        el('div', { class: 'muted' }, el('span', { class: 'tag' }, t.actionClass), ' ', ago(since)),
+        t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
+        t.state === 'ready' ? el('div', {}, 'Waits for the lead to start it') : null,
+        t.state === 'claimed' || t.state === 'running' ? el('div', {}, run ? [run.name + ', ', 'value' in run.since ? 'for ' + relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time'] : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
+        t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
+        t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
+        t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'open its run')) : null)
+    }
+    const tasksIn = (states) => shownProjects.flatMap((p) => (p.tasks || []).filter((t) => states.includes(t.state)).map((t) => [p, t]))
+    const moreIn = (states) => shownProjects.reduce((n, p) => n + states.reduce((m, s) => m + ((p.more || {})[s] || 0), 0), 0)
+    const column = (name, states, hint) => {
+      const cards = tasksIn(states)
+      return el('section', { class: 'column', 'aria-label': name },
+        el('h3', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
+        cards.length ? cards.map(([p, t]) => cardOf(p, t)) : el('p', { class: 'muted' }, hint),
+        moreIn(states) ? el('p', { class: 'muted' }, moreIn(states) + ' older not shown') : null)
+    }
+    const folded = (name, states) => {
+      const cards = tasksIn(states)
+      return el('details', { class: 'column' }, el('summary', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
+        cards.length ? el('div', { class: 'cards' }, cards.map(([p, t]) => cardOf(p, t))) : el('p', { class: 'muted' }, 'None.'))
+    }
+    const idle = roster ? roster.counts.ready : undefined
     show(
       pageHead('board'),
-      projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet.'),
-      projects.length ? table(['Project', 'State', 'Charter', 'Open tasks', 'Move'], projects.map((p) => el('tr', {},
-        el('td', {}, el('strong', {}, p.title), el('div', { class: 'muted' }, p.projectId)),
-        el('td', { class: 'state' }, stateOf(p)),
-        el('td', {}, 'version ' + p.charter.version + (p.amendment ? '; amendment ' + p.amendment + ' waits' : '')),
-        el('td', {}, OPEN.filter((s) => p.open[s]).map((s) => s + ' ' + p.open[s]).join(', ') || '-'),
-        el('td', {}, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))),
-      )), 'queue') : null,
-      shown)
+      projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet. A project starts when the lead proposes its charter and you approve it.'),
+      projects.length ? el('p', {}, el('label', { for: 'board-project' }, 'Show ', pick)) : null,
+      projects.length ? el('p', { 'aria-label': 'Capacity' }, capacityText(idle, ready)) : null,
+      shownProjects.map(head),
+      shown,
+      projects.length ? el('div', { class: 'kanban' },
+        column('Proposed', ['proposed'], 'None proposed.'),
+        column('Ready', ['ready'], 'None ready.'),
+        column('Working', ['claimed', 'running'], 'Nothing runs now.'),
+        column('Review', ['review'], 'Nothing to review.'),
+        column('Waiting for you', ['waiting-for-input', 'waiting-for-approval'], 'Nothing waits for you.')) : null,
+      projects.length ? el('div', { class: 'folded' }, folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
   }
 
   // The Workers (the roster, docs/design/roster.md): one card per Worker, grouped by what it does
@@ -638,8 +700,13 @@ export const APP_JS = `'use strict'
     const clock = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
     return relative(iso) + ' (' + (d.toDateString() === today.toDateString() ? clock : absolute(iso)) + ')'
   }
+  // Tasks ready across the board's projects, or undefined when the board cannot be read.
+  const readyTasks = async () => {
+    try { return (await api('projects')).projects.reduce((n, p) => n + (p.open.ready || 0), 0) } catch { return undefined }
+  }
   async function workersView() {
     const roster = await api('roster')
+    const ready = await readyTasks()
     const isKnown = (k) => 'value' in k
     const known = (k, render) => isKnown(k) ? render(k.value) : el('span', { class: 'unknown' }, 'unknown (' + k.unknown + ')')
     const text = (k, render) => isKnown(k) ? (render ? render(k.value) : String(k.value)) : 'unknown (' + k.unknown + ')'
@@ -672,7 +739,8 @@ export const APP_JS = `'use strict'
           isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
     }
     const card = (w) => el('article', { class: 'panel request', 'aria-labelledby': 'worker-' + w.worker },
-      el('h4', { id: 'worker-' + w.worker }, w.worker),
+      el('h4', { id: 'worker-' + w.worker }, w.name),
+      el('p', { class: 'muted' }, 'Worker id ', el('code', {}, w.worker)),
       isKnown(w.description) ? el('p', {}, w.description.value)
         : el('p', { class: 'muted' }, el('span', { class: 'tag' }, 'derived'), ' ' + w.derived + ' (no description is configured)'),
       el('p', { class: 'state ' + w.availability.state }, statusOf(w)),
@@ -690,13 +758,14 @@ export const APP_JS = `'use strict'
     show(
       pageHead('workers'),
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
+      ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
       unheard.length ? el('div', {}, unheard.map((s) => el('p', { class: 'state failed' }, 'The Worker source ' + s.source + ' was ' + s.state + ' ' + relative(s.at) + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
       known(roster.workers, (workers) => workers.length
         ? el('div', {}, ['busy', 'ready', 'resting', 'unavailable', 'quarantined'].map((state) => {
           const group = workers.filter((w) => w.availability.state === state)
-          return group.length ? el('section', { 'aria-label': STATUS[state].group }, el('h3', {}, STATUS[state].group + ' (' + group.length + ')'), group.map(card)) : null
+          return group.length ? el('section', { 'aria-label': STATUS[state].group }, el('h3', {}, STATUS[state].group + ' (' + group.length + ')' + (state === 'ready' ? ': each takes work as soon as a run is routed to it' : '')), group.map(card)) : null
         }))
         : el('p', { class: 'muted' }, 'No Worker is configured.')))
   }

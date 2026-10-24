@@ -10,7 +10,7 @@ Every route is under `/ui/api` and passes the shared request guard first
 (`content-type: application/json`, else `415`), of at most 16 KiB (else `413`; 128 KiB for
 `policy/propose`). Errors are `{error}`.
 
-## The page
+## Home
 
 One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
 current one marked (`aria-current`) and named in the window's title; a run's page counts as Home's.
@@ -64,7 +64,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt` |
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`), per state the most recently changed first, at most 50 each, `more` counting the rest per state |
 | `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
 | `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
 | `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
@@ -75,6 +75,15 @@ Served when `ctx.board` is present; without it, every route answers `503`
 - The move goes to `ctx.board` as the operator's (INV-6), at the server's clock. A refusal by the
   board is `409` with its failure: `invalid-transition` for a move from another state, or a close
   while a task of the project runs or is in review.
+- The **Board** page is a Kanban: a project filter (all projects by default), each shown
+  project's header (title, state, charter version, what of it waits for the operator, linked to
+  its card, and **Pause**, **Resume**, **Close**), how many Workers are idle and tasks ready and how
+  a ready task gets a Worker, then a column per state: *Proposed*, *Ready*, *Working* (claimed and
+  running), *Review*, *Waiting for you* (input and approval), with *Done* and *Cancelled* folded.
+  Each card gives the task's title, its project (when several are shown), its action class, when it
+  last changed, what it waits on in words (a link to the approval card or the review), who works
+  on it (the Worker's roster `name` and for how long, from the roster's current work), and a link
+  to its run.
 - A close cancels every open task of the project (`project-closed`), releasing a claimed one's
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
@@ -159,7 +168,7 @@ Served always; each service it reads that is not mounted reads as unknown with w
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET roster` | — | the roster, an `mcp-roster@1.1` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+| `GET roster` | — | the roster, an `mcp-roster@1.2` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
 
 - Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
   (working, idle, at a limit with when the first is back, unavailable, and quarantined when any),

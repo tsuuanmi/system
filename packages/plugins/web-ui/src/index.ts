@@ -109,6 +109,34 @@ export function projectOf(project: Project, open: readonly BoardTask[]): Record<
   }
 }
 
+/** Tasks a project's board lists per state at most, the most recently changed first; the rest are counted. */
+export const CARDS_PER_STATE = 50
+const ALL_STATES: readonly TaskState[] = [...OPEN_STATES, 'done', 'cancelled']
+
+/**
+ * A project's tasks as the board's cards show them, per state the most recently changed first, at
+ * most {@link CARDS_PER_STATE} each (`more` counts the rest): what it is, its run, its lease's
+ * holder, and what it waits on (an approval request the page links to its card).
+ */
+export function cardsOf(tasks: readonly BoardTask[]): { tasks: Array<Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
+  const out: Array<Record<string, unknown>> = []
+  const more: Partial<Record<TaskState, number>> = {}
+  const changed = (t: BoardTask): string => t.updatedAt ?? t.createdAt
+  for (const state of ALL_STATES) {
+    const of = tasks.filter((t) => t.state === state).sort((a, b) => (changed(a) < changed(b) ? 1 : changed(a) > changed(b) ? -1 : 0))
+    if (of.length > CARDS_PER_STATE) more[state] = of.length - CARDS_PER_STATE
+    for (const t of of.slice(0, CARDS_PER_STATE)) {
+      out.push({
+        taskId: t.taskId, title: t.title, state: t.state, actionClass: t.actionClass, createdAt: t.createdAt, ...(t.updatedAt ? { updatedAt: t.updatedAt } : {}),
+        ...(t.run ? { run: { runId: t.run.runId, startedAt: t.run.startedAt } } : {}),
+        ...(t.holder ? { holder: { owner: t.holder.owner, leaseExpiresAt: t.holder.leaseExpiresAt } } : {}),
+        ...(t.waiting ? { waiting: { reason: t.waiting.reason, ...(t.waiting.approvalRequest ? { approvalRequest: t.waiting.approvalRequest } : {}), since: t.waiting.since, expiresAt: t.waiting.expiresAt } } : {}),
+      })
+    }
+  }
+  return { tasks: out, more }
+}
+
 /** Open and batched requests in listing order (by batch, then expiry), grouped by batch; the unbatched last. */
 export function byBatch(requests: readonly ApprovalRequest[]): Array<{ batchId?: string; requests: ApprovalRequest[] }> {
   const groups: Array<{ batchId?: string; requests: ApprovalRequest[] }> = []
@@ -296,7 +324,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'projects') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
       const listed: Array<Record<string, unknown>> = []
-      for (const project of await board.projects()) listed.push(projectOf(project, await board.tasks({ projectId: project.projectId, states: [...OPEN_STATES] })))
+      for (const project of await board.projects()) {
+        const tasks = await board.tasks({ projectId: project.projectId, states: [...ALL_STATES] })
+        listed.push({ ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks) })
+      }
       // A stable sort: in creation order, the closed ones last.
       listed.sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed'))
       return json(res, 200, { projects: listed })

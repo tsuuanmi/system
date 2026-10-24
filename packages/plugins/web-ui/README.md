@@ -38,9 +38,12 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   each with its project, exact subject, result artifacts, the checks still pending, its run, and
   until when it waits, and the operator's **Accept / Reject**. Without it the reviews routes
   answer `503`;
-- when `ctx.board` is present, the **board** page (`?view=board`): every project, the closed ones
-  last, with its state, charter version, a pending amendment, and its open tasks per state, and
-  the operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
+- when `ctx.board` is present, the **board** page (`?view=board`), a Kanban: a project filter (all
+  by default); each project's header with its state, charter version, what of it waits for the
+  operator (linked), and the moves; idle Workers and ready tasks; then a column per task state
+  (Proposed, Ready, Working, Review, Waiting for you; Done and Cancelled folded), one card per task
+  with its title, who works on it (the Worker's name, since when), what it waits on, and its run.
+  The operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each opens a confirmation that says what the move does to this project (what goes on, what is
   cancelled and released, which approval requests are withdrawn, or why a close is refused), and
@@ -121,7 +124,7 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), the roster route (operator only, valid against
-`mcp-roster@1.1`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
+`mcp-roster@1.2`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
 the queue (labels by effect, a batch verdict, a refused one as an alert), a press a refresh lands
 on that still counts, a verdict not recorded that stays as an alert through refreshes until
 dismissed, and the Workers tab (counts, cards by status, a description or a derived line marked,
