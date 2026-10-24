@@ -331,13 +331,18 @@ runs the work the router admitted to them. Callers never reach a source directly
   shows the approval queue by batch and passes the operator's verdicts to `ctx.approvals`, when
   that is present, and the board's reviews and projects, with the operator's acceptance and
   project moves, when `ctx.board` is ([web UI API](../reference/web-ui.md)).
+- **Roster** (in `gateway-core`): every Worker in one read model, projected on read from the
+  Worker registry, the account and enrollment records, the resource ledger, the event log, the
+  workflow runs, and the board, each fact it cannot read shown as unknown with why; no state of
+  its own. Served as MCP `roster` (client scope), `system roster`, and the web UI's Roster page
+  ([roster](../design/roster.md)).
 - **Report** (`report`): the baseline report of a period, for one project or every one, from
   recorded data only (the board, the approval queue, the resource ledger, the event log), as the
   MCP tool `report` and `system report`; by default the weekly investor report. It writes and
   decides nothing ([reports](../design/reports.md)).
 - **Does not own:** orchestration state. Gateways translate protocols and enforce transport
   security only.
-- **Design:** [gateways](../design/gateways.md), [reports](../design/reports.md); wire details in
+- **Design:** [gateways](../design/gateways.md), [reports](../design/reports.md), [roster](../design/roster.md); wire details in
   [reference](../reference/gateways.md).
 - **Packages:** [mcp-server](../../packages/plugins/mcp-server/README.md),
   [gateway-core](../../packages/gateway-core/README.md),
