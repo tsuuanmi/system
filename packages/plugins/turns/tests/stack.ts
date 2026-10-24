@@ -1,8 +1,8 @@
 /**
  * The real stack the turn runtime's browser tests run on: the kernel, accounts and login, the
  * browser, and a website driver against its fake site. A test file calls {@link turnsStack} once,
- * at its top: that registers the cleanup after each test and the file's one Xvfb, and returns the
- * boots.
+ * at its top: that registers the file's one Xvfb and returns the boots, whose stacks are stopped
+ * when their test finishes.
  */
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -25,7 +25,7 @@ import Store from '@tsuuanmi/system-store'
 import TurnReceipts from '@tsuuanmi/system-turn-receipts'
 import WorkerRouter, { type Tier, type WorkRequirement } from '@tsuuanmi/system-workers'
 import { chromium } from 'patchright-core'
-import { afterEach } from 'vitest'
+import { onTestFinished } from 'vitest'
 import { fileDisplay, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
@@ -70,14 +70,10 @@ export function liveChecked(ctx: Context): void {
 export interface BootOptions { fake?: FakeOptions; accounts?: CatalogEntry[]; providers?: ProviderAccounts[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> }
 
 /**
- * The test file's stack: `cleanups` run after each test, newest first, and every boot draws its
- * browsers on the file's one Xvfb. Call it once, at the top of the file.
+ * The test file's stack: every boot draws its browsers on the file's one Xvfb, and is stopped,
+ * with its fake site and directory, when its test finishes. Call it once, at the top of the file.
  */
 export function turnsStack() {
-  const cleanups: Array<() => unknown> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
   /** The file's one Xvfb: every test's browser draws on it, as a profile's browsers share display-virtual's. */
   const TestDisplay = fileDisplay()
 
@@ -85,8 +81,8 @@ export function turnsStack() {
     const fake = options.shared ?? new FakeChatGpt({ answer: 'OK', ...options.fake })
     if (!options.shared) await fake.start()
     const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-turns-'))
-    if (!options.dir) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-    if (!options.shared) cleanups.push(() => fake.stop())
+    if (!options.dir) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    if (!options.shared) onTestFinished(() => fake.stop())
     const ctx = new Context()
     const fibers = [
       ctx.plugin(Store, { path: join(dir, 'system.db') }),
@@ -109,7 +105,7 @@ export function turnsStack() {
     const stop = async (): Promise<void> => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     }
-    cleanups.push(stop)
+    onTestFinished(stop)
     for (const id of options.shared ? [] : options.ready ?? ['chatgpt-main']) {
       await ctx.accounts.saveState(id, {
         state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-11T00:00:00Z' },
@@ -129,9 +125,9 @@ export function turnsStack() {
   async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<string, unknown> } = {}) {
     const fake = new FakeGemini({ startOnSpark: false, deviceBound: true, answer: 'From the profile.', ...options.fake })
     await fake.start()
-    cleanups.push(() => fake.stop())
+    onTestFinished(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-bound-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     const fibers = [
       ctx.plugin(Store, { path: join(dir, 'system.db') }),
@@ -151,7 +147,7 @@ export function turnsStack() {
       ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
     ]
     await Promise.all(fibers)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     })
     const profile = await chromium.launchPersistentContext(ctx.login.profileDir('gemini-main'), { executablePath: testChrome!, headless: true })
@@ -170,9 +166,9 @@ export function turnsStack() {
   async function bootBoundChatGpt(options: { fake?: FakeOptions; turns?: Record<string, unknown> } = {}) {
     const fake = new FakeChatGpt({ deviceBound: true, answer: 'From the ChatGPT profile.', ...options.fake })
     await fake.start()
-    cleanups.push(() => fake.stop())
+    onTestFinished(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-bound-chatgpt-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     const fibers = [
       ctx.plugin(Store, { path: join(dir, 'system.db') }),
@@ -192,7 +188,7 @@ export function turnsStack() {
       ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
     ]
     await Promise.all(fibers)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     })
     const profile = await chromium.launchPersistentContext(ctx.login.profileDir('chatgpt-main'), { executablePath: testChrome!, headless: true })
@@ -205,5 +201,5 @@ export function turnsStack() {
     return { ctx, fake }
   }
 
-  return { boot, bootBound, bootBoundChatGpt, cleanups }
+  return { boot, bootBound, bootBoundChatGpt }
 }

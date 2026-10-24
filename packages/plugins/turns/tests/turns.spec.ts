@@ -4,11 +4,11 @@ import { join } from 'node:path'
 import { contentId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type WorkRequirement } from '@tsuuanmi/system-workers'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import { account, ask, fromCopies, turnsStack } from './stack.ts'
 
-const { boot, cleanups } = turnsStack()
+const { boot } = turnsStack()
 
 describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   it('answers a one-shot ask in Temporary chat, in Chat mode, with a receipt, a route decision, and an answer artifact', async () => {
@@ -285,7 +285,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('cools an account the site answers with its usage limit, keeps its status ready, and ends the limit by a used feature or the operator (ADR-0034)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     // The operator's overlay recognizes the site's limit answers, with no release.
     writeFileSync(join(dir, 'none.yaml'), [
       'elements:',
@@ -336,7 +336,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('never takes a limit an earlier answer of the conversation gave for the next answer\'s (ADR-0034)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     writeFileSync(join(dir, 'none.yaml'), [
       'elements:',
       '  answer.limit:',

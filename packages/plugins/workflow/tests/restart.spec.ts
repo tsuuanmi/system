@@ -4,12 +4,12 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import { source } from '../../../workers-core/conformance/workers.ts'
 import { browserStack, until } from './stack.ts'
 
-const { boot, cleanups } = browserStack()
+const { boot } = browserStack()
 
 describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, explain, and MCP', () => {
   it('never resends a submitted prompt: a timeout after sending fails the node, without a retry (INV-4)', async () => {
@@ -59,13 +59,12 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
     ctx.workflow.start({ template: 'ask', input: 'caught mid-route' })
     await entered
     await stop()
-    cleanups.splice(cleanups.indexOf(stop), 1)
     expect(fake.sent).toEqual([])
   }, 60_000)
 
   it('supersedes a run left with a running node after a restart: a turn that answered meanwhile stays history, never taken or resent, and the node runs again once (INV-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const step = (nodeId: string, prompt: string, extra: Record<string, unknown> = {}) => ({ nodeId, objective: nodeId, prompt, capabilities: ['reason'], tier: 'standard' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer', ...extra })
     // The slow step answers in its own conversation; its sibling needs a capability no Worker has, so the run fails beside it.
     const templates = { 'fan-out': [
@@ -81,7 +80,6 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
     await until(() => slowTurn() !== undefined && first.ctx.turns.get(slowTurn()!)?.binding !== undefined, 150_000, 'the slow step bound')
     const orphan = slowTurn()!
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     const slow = (context: string) => first.fake.sent.filter((s) => s.prompt.startsWith(`Slow step on: ${context}`))
     // The site answers while no host runs; the restarted turn runtime recovers that answer.
     const second = await boot({ dir, shared: first.fake, workflow: { templates } })
@@ -120,7 +118,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
 
   it('recovers a run after a restart without sending the research prompt again (REQ-WF-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { researchMs: 6000 } })
     const run = first.ctx.workflow.start({ template: 'deep-research', input: 'survive a crash' })
     await until(() => {
@@ -128,7 +126,6 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
       return id !== undefined && first.ctx.turns.get(id)?.binding !== undefined
     })
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     const second = await boot({ dir, shared: first.fake })
     const done = await second.ctx.workflow.wait(run.runId, 90_000)
     expect(done).toMatchObject({ status: 'completed', answer: 'Synthesis: plugins matter (https://src.example/catalog).' })
@@ -137,12 +134,11 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
 
   it('clears a finished run\'s private text after the retention period, but keeps the run while run retention is off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, workflow: { retainRunsDays: 0 } })
     const done = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'private words' }).runId, 30_000)
     first.ctx.store.db.prepare("UPDATE workflow_runs SET updated_at = '2000-01-01T00:00:00.000Z'").run()
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     const second = await boot({ dir, shared: first.fake, workflow: { retainRunsDays: 0 } })
     await until(() => (second.ctx.store.db.prepare('SELECT input FROM workflow_runs').get() as { input: string }).input === '')
     expect(second.ctx.store.db.prepare('SELECT prompt FROM workflow_nodes').get()).toEqual({ prompt: null })
@@ -151,7 +147,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
 
   it('expires finished runs past retainRunsDays, keeps a session\'s latest run, then collects what only they needed (INV-9)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir })
     const one = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'standalone' }).runId, 30_000)
     const s1 = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'session one', persist: true }).runId, 30_000)
@@ -163,7 +159,6 @@ describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, expl
     const old = '2000-01-01T00:00:00.000Z'
     for (const sql of ['UPDATE workflow_runs SET updated_at = ?', 'UPDATE turns SET updated_at = ?', 'UPDATE artifacts SET created_at = ?']) first.ctx.store.db.prepare(sql).run(old)
     await first.stop()
-    cleanups.splice(cleanups.indexOf(first.stop), 1)
     const second = await boot({ dir, shared: first.fake, workflow: { retainRunsDays: 1 }, turns: { retainDays: 1 } })
     await until(() => !second.ctx.workflow.get(one.runId) && !second.ctx.workflow.get(s1.runId))
     await until(() => (second.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM turns').get() as { n: number }).n === 0)

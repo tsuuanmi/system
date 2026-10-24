@@ -11,7 +11,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { FakeModels, type FakeScript } from '../../../models-core/conformance/models.ts'
 import type { CapabilityDescriptor, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { source, worker } from '../../../workers-core/conformance/workers.ts'
@@ -19,11 +19,6 @@ import { ModelWorkers } from '../../models/src/index.ts'
 import Workflow from '../src/index.ts'
 import type { RunView } from '../src/types.ts'
 import { TEST_TEMPLATES } from './templates.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 const CATALOG: ModelEntry[] = [{ id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }]
 
@@ -39,7 +34,8 @@ async function boot(script: FakeScript = {}, workflow: Record<string, unknown> =
   await Promise.all(fibers)
   // Start-up recovery has run, so nothing scheduled then can take a run back by chance.
   await new Promise((resolve) => setTimeout(resolve, 200))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
   return { ctx }

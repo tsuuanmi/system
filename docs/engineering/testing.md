@@ -102,6 +102,10 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   plugin and asserts cleanup (plugin rule 3).
 - **Mock only the expensive boundary.** Keep the real registry, store, and
   engine downstream of a scripted provider.
+- **Clean up with the test.** What a test or its helper starts (a store, a fake
+  site, a browser) is released by `onTestFinished`, newest first, so a helper that
+  boots something registers its own cleanup and a test file keeps no list of its
+  own.
 - **Wait for the event, not the clock.** A test waits with `vi.waitFor` for what
   it must see (a row's state, the next read of a poll or sweep), or runs a long
   timer on fake time. A fixed sleep stays only where a test shows that nothing

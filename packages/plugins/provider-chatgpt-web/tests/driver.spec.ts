@@ -4,7 +4,7 @@ import Providers from '@tsuuanmi/system-providers'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { type DriftEvent, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../fixtures/fake-chatgpt.ts'
 import ChatGptWebPlugin, { ChatGptWebDriver, type DriverTimeouts, shippedMap } from '../src/index.ts'
@@ -30,17 +30,13 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
   })
   afterAll(async () => close())
 
-  const cleanups: Array<() => Promise<unknown>> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
-
   async function site(all: FakeOptions & { timeouts?: DriverTimeouts } = {}): Promise<{ fake: FakeChatGpt; page: Page; context: BrowserContext; driver: ChatGptWebDriver }> {
     const { timeouts, ...options } = all
     const fake = new FakeChatGpt(options)
     await fake.start()
     const context = await browser.newContext()
-    cleanups.push(() => fake.stop(), () => context.close())
+    onTestFinished(() => fake.stop())
+    onTestFinished(() => context.close())
     const page = await context.newPage()
     const driver = new ChatGptWebDriver({
       origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100, researchStartMs: 3000, ...timeouts },

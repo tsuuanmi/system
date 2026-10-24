@@ -22,16 +22,11 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 const WORKSPACE = mkdtempSync(join(tmpdir(), 'system-gate-ws-'))
 afterAll(() => rmSync(WORKSPACE, { recursive: true, force: true }))
@@ -96,7 +91,7 @@ async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | nul
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
-  cleanups.push(async () => {
+  onTestFinished(async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     rmSync(dir, { recursive: true, force: true })
   })
@@ -683,7 +678,7 @@ describe('the continuation of a deferred call by the workflow engine', { timeout
     ]
     await Promise.all(fibers)
     ctx.agentRuntimes.register(agent)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     })

@@ -1,8 +1,8 @@
 /**
  * The real stack the engine's browser tests run on: the kernel, both website drivers against their
  * fake sites, the engine, and the MCP endpoint, with the team members' answers those tests script.
- * A test file calls {@link browserStack} once, at its top: that registers the cleanup after each
- * test and the file's one Xvfb, and returns `boot`.
+ * A test file calls {@link browserStack} once, at its top: that registers the file's one Xvfb and
+ * returns `boot`, whose stack is stopped when its test finishes.
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,7 +27,7 @@ import Turns from '@tsuuanmi/system-turns'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
-import { afterEach } from 'vitest'
+import { onTestFinished } from 'vitest'
 import { fileDisplay, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
@@ -67,14 +67,10 @@ export const until = async (check: () => boolean, ms = 30_000, what = ''): Promi
 export interface BootOptions { fake?: FakeOptions; gemini?: FakeGeminiOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; sessions?: Record<string, unknown>; ready?: boolean; accounts?: string[] }
 
 /**
- * The test file's stack: `cleanups` run after each test, newest first, and every boot draws its
- * browsers on the file's one Xvfb. Call it once, at the top of the file.
+ * The test file's stack: every boot draws its browsers on the file's one Xvfb, and is stopped,
+ * with its fake sites and directory, when its test finishes. Call it once, at the top of the file.
  */
 export function browserStack() {
-  const cleanups: Array<() => unknown> = []
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()!()
-  })
   /** The file's one Xvfb: every test's browser draws on it, as a profile's browsers share display-virtual's. */
   const TestDisplay = fileDisplay()
 
@@ -89,11 +85,11 @@ export function browserStack() {
     const gemini = options.gemini ? new FakeGemini({ startOnSpark: false, ...options.gemini }) : undefined
     if (gemini) {
       await gemini.start()
-      cleanups.push(() => gemini.stop())
+      onTestFinished(() => gemini.stop())
     }
     const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-workflow-'))
-    if (!options.dir) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-    if (!options.shared) cleanups.push(() => fake.stop())
+    if (!options.dir) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    if (!options.shared) onTestFinished(() => fake.stop())
     const ctx = new Context()
     const fibers = [
       ctx.plugin(Store, { path: join(dir, 'system.db') }),
@@ -125,7 +121,7 @@ export function browserStack() {
     const stop = async (): Promise<void> => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     }
-    cleanups.push(stop)
+    onTestFinished(stop)
     if (!options.shared && options.ready !== false) {
       for (const [index, id] of ids.entries()) {
         await ctx.accounts.saveState(id, {
@@ -139,5 +135,5 @@ export function browserStack() {
     return { ctx, fake, gemini, dir, stop }
   }
 
-  return { boot, cleanups }
+  return { boot }
 }

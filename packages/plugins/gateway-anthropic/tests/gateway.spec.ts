@@ -4,14 +4,9 @@ import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import * as Gateway from '../src/index.ts'
 import { type MessagesRequest, messageOf, streamEvents, systemText, turnsOf } from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 describe('Messages ↔ neutral turns', () => {
   it('drops client billing metadata from the system prompt, and maps tool use and results', () => {
@@ -63,7 +58,8 @@ async function boot() {
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(StubWorkflow), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(Gateway, { tokenDir: dir })]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const base = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}/anthropic`
   const auth = { authorization: `Bearer ${Buffer.alloc(32, 9).toString('base64url')}`, 'content-type': 'application/json' }
   return { base, auth, workflow: (ctx as unknown as { workflow: StubWorkflow }).workflow }
@@ -83,7 +79,7 @@ describe('Anthropic Messages gateway over HTTP', () => {
     }
     const ctx = new Context()
     const dir = mkdtempSync(join(tmpdir(), 'system-gw-lan-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     await ctx.plugin(Store, { path: join(dir, 'system.db') })
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)

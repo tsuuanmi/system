@@ -17,7 +17,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { CATALOG, FakeModels, type FakeScript, modelsConformance } from '../../../models-core/conformance/models.ts'
 import * as Models from '../src/index.ts'
 import { type CatalogEntry, LlmModels, ModelWorkers } from '../src/index.ts'
@@ -26,14 +26,9 @@ import { type FakeOpenAi, fakeOpenAi } from './fake-openai.ts'
 // A credential-shaped value made at run time: no key-shaped literal sits in the repository.
 const awsKeyId = (): string => `AKIA${Array.from(randomBytes(16), (b) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'[b % 32]).join('')}`
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 const temp = (prefix: string): string => {
   const dir = mkdtempSync(join(tmpdir(), prefix))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -63,9 +58,9 @@ const routed = (catalog: readonly ModelEntry[]): CatalogEntry[] => catalog.map((
 describe('the DSH llm rows (spike, ADR-0025): they mount without dsh-base and stream a completion', () => {
   it('mounts llm and llm-pi-ai with only ctx.credentials, and the route key resolves through the vault (REQ-WRK-10)', async () => {
     const server = await fakeOpenAi()
-    cleanups.push(() => server.close())
+    onTestFinished(() => server.close())
     const { ctx, fibers } = await llmRows(server)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     })
     expect(ctx.llm.listProviders()).toEqual([{ id: 'fake', name: 'fake' }])
@@ -111,7 +106,7 @@ describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', 
       server.requests.length = 0
     }
     await ctx.plugin(LlmModels, { models: routed(CATALOG), maxRetries, ...(idleTimeoutMs ? { idleTimeoutMs } : {}) })
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       await server.close()
     })
@@ -216,7 +211,7 @@ async function boot(options: { script?: FakeScript; workers?: Record<string, unk
     stopped = true
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
-  cleanups.push(stop)
+  onTestFinished(stop)
   return { ctx, dir, stop, fake: ctx.models as FakeModels }
 }
 
@@ -541,17 +536,17 @@ describe('the models row', () => {
       ctx.plugin(Models, { models: [{ id: 'fast', route: 'fake', model: 'm1', tier: 'economy', quotaClass: 'metered', locality: 'remote', maxTokens: 4096 }] }),
     )
     await Promise.all(fibers)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       await server.close()
     })
     await expect.poll(async () => (await ctx.workers.list()).map((w) => [w.worker, w.state, w.quotaClass, w.locality])).toEqual([['model:fast', 'ready', 'metered', 'remote']])
     const empty = new Context()
     const store = mkdtempSync(join(tmpdir(), 'system-models-empty-'))
-    cleanups.push(() => rmSync(store, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(store, { recursive: true, force: true }))
     const parts = [empty.plugin(LlmRuntime), empty.plugin(Store, { path: join(store, 'system.db') }), empty.plugin(Artifacts, {}), empty.plugin(Leases, {}), empty.plugin(Egress, {}), empty.plugin(WorkerRouter, {}), empty.plugin(Models, { models: [] })]
     await Promise.all(parts)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...parts].reverse()) await fiber.dispose()
     })
     await expect.poll(async () => empty.get('models') !== undefined).toBe(true)
@@ -571,7 +566,7 @@ describe('the models row', () => {
       ctx.plugin(Models, { models: [{ id: 'fast', route: 'fake', model: 'm1', tier: 'economy', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }], maxRetries: 0, idleTimeoutMs: 100 }),
     )
     await Promise.all(fibers)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       await server.close()
     })

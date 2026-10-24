@@ -3,12 +3,12 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import type { RunView } from '../src/types.ts'
 import { ballot, browserStack, isProposal, kind, proposal, until } from './stack.ts'
 
-const { boot, cleanups } = browserStack()
+const { boot } = browserStack()
 
 describe.runIf(canRunBrowser)('ctx.workflow: teams that vote, and their ties', () => {
   it('fails a member whose conversation the site no longer has at once, naming it, with no attempt spent reopening it (live 2026-10-16)', async () => {
@@ -109,7 +109,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: teams that vote, and their ties', (
     const { url, tokenFiles } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFiles: { client: string } }
     const client = new Client({ name: 'caller', version: '0' })
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFiles.client).toString('base64url')}` } } }) as unknown as Transport)
-    cleanups.push(() => client.close())
+    onTestFinished(() => client.close())
     const run = (await client.callTool({ name: 'brainstorm', arguments: { question: 'When do we ship?' } })).structuredContent as { runId: string }
     // The waiter learns at once that the run waits on a deciding vote.
     const tied = await ctx.workflow.wait(run.runId, 120_000)

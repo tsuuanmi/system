@@ -1,7 +1,7 @@
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
-import { boot as bootUi, reviewed } from './store-backed.ts'
+import { boot, reviewed } from './store-backed.ts'
 
 // End to end over the store-backed board, approval queue, and engine, under the bundle's own
 // default studio policy, with the operator's verdicts through the web UI's API. Only Worker
@@ -9,13 +9,6 @@ import { boot as bootUi, reviewed } from './store-backed.ts'
 vi.setConfig({ testTimeout: 120_000 })
 
 const schemas = new SchemaRegistry()
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
-const boot = () => bootUi(cleanups)
 
 describe('web UI: the operator accepts or rejects a board review held for the operator', () => {
   it('holds a workspace-write task\'s review past its run\'s lease, lists it with its pending checks, and takes only the operator\'s acceptance: done', async () => {

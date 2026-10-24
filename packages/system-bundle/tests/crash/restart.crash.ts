@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, testChrome } from '../../../plugins/browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../../plugins/provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini } from '../../../plugins/provider-gemini-web/fixtures/fake-gemini.ts'
@@ -19,11 +19,6 @@ import { FakeGemini } from '../../../plugins/provider-gemini-web/fixtures/fake-g
 const HARNESS = fileURLToPath(new URL('./crash-harness.mjs', import.meta.url))
 /** A session-bound account (ADR-0030): its turns run in its login profile. */
 const PROFILE_HARNESS = fileURLToPath(new URL('./profile-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Engine { child: ChildProcess; runId: Promise<string>; done: Promise<{ status: string; answer?: string; error?: { kind: string } }> }
 
@@ -37,7 +32,7 @@ function engine(dir: string, fake: { origin: string }, args: string[], harness =
       // already gone
     }
   }
-  cleanups.push(crash)
+  onTestFinished(crash)
   let resolveRun!: (id: string) => void
   let resolveDone!: (view: never) => void
   const runId = new Promise<string>((resolve) => { resolveRun = resolve })
@@ -74,9 +69,9 @@ const until = async (check: () => boolean, ms: number): Promise<void> => {
 async function scenario(options: Partial<FakeOptions>, conversation: 'persist' | 'temporary', crashWhen: (fake: FakeChatGpt, dir: string) => boolean) {
   const fake = new FakeChatGpt({ answer: 'The answer, once.', ...options })
   await fake.start()
-  cleanups.push(() => fake.stop())
+  onTestFinished(() => fake.stop())
   const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
   const first = engine(dir, fake, ['start', conversation, 'survive a crash'])
   const runId = await first.runId
   await until(() => crashWhen(fake, dir), 90_000)
@@ -140,16 +135,16 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
   it('after a deletion was clicked on the site, before it was recorded: the site shows it gone, so it is recorded deleted and never clicked again (PROP-0004 Phase 5)', async () => {
     const fake = new FakeChatGpt({ answer: 'Delete me later.' })
     await fake.start()
-    cleanups.push(() => fake.stop())
+    onTestFinished(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
     const first = engine(dir, fake, ['delete', 'a chat to delete'])
     await first.runId
     // The site took the deletion; the ledger still says it is due.
     await until(() => fake.deleteRequests.length === 1 && ledger(dir).includes('due'), 180_000)
     await crash(first)
     const second = spawn(process.execPath, [HARNESS, dir, fake.origin, testChrome!, 'settle'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-    cleanups.push(() => {
+    onTestFinished(() => {
       try {
         process.kill(-second.pid!, 'SIGKILL')
       } catch {
@@ -167,9 +162,9 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
   it('a run that failed beside a running node, superseded after a restart: the orphaned turn is cancelled before the node runs again, and its prompt is never resent (INV-4)', async () => {
     const fake = new FakeChatGpt({ thinkMs: 40_000, answer: (prompt) => (prompt.startsWith('Context for') ? 'the old context' : 'a slow answer') })
     await fake.start()
-    cleanups.push(() => fake.stop())
+    onTestFinished(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
     const first = engine(dir, fake, ['fan-out', 'a question'])
     const runId = await first.runId
     const slow = (context: string) => fake.sent.filter((s) => s.prompt.startsWith(`Slow step on: ${context}`))
@@ -196,9 +191,9 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
   it('a session-bound account, killed after the prompt was sent and bound: the restart clears the dead browser\'s profile lock, reopens the conversation in the profile, and adopts the answer (ADR-0030)', async () => {
     const fake = new FakeGemini({ startOnSpark: false, deviceBound: true, answer: `${'Slowly streamed words. '.repeat(80)}Done.` })
     await fake.start()
-    cleanups.push(() => fake.stop())
+    onTestFinished(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
     const first = engine(dir, fake, ['start', 'survive a crash in the profile'], PROFILE_HARNESS)
     const runId = await first.runId
     await until(() => fake.sent.length === 1 && bound(dir), 120_000)

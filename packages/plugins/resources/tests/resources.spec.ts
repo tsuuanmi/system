@@ -12,7 +12,7 @@ import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gate
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type LimitState, type PoolConfig, type PoolTemplate, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools, validateTemplates } from '../src/index.ts'
 
 /** A `ctx.mcp` that keeps contributed tools, so a test calls a handler as a scope would. */
@@ -32,14 +32,9 @@ const T0 = new Date('2026-10-22T09:00:00Z')
 const at = (minutes: number): Date => new Date(T0.getTime() + minutes * 60_000)
 const schemas = new SchemaRegistry()
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 const tempDir = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'system-resources-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -54,14 +49,14 @@ async function boot(dir: string = tempDir(), config: Config = { pools: POOLS }) 
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     await new Promise((resolve) => setImmediate(resolve))
   }
-  cleanups.push(stop)
+  onTestFinished(stop)
   return Object.assign(ctx, { dir, stop })
 }
 
 async function withMcp(ctx: Context) {
   const fiber = ctx.plugin(RecordingMcp)
   await fiber
-  cleanups.push(() => fiber.dispose())
+  onTestFinished(() => fiber.dispose())
   await new Promise((resolve) => setTimeout(resolve, 0))
   return (ctx as unknown as { mcp: RecordingMcp }).mcp
 }
@@ -137,7 +132,7 @@ describe('configuration', () => {
     const ctx = new Context()
     const store = ctx.plugin(Store, { path: join(tempDir(), 'system.db') })
     await store
-    cleanups.push(() => store.dispose())
+    onTestFinished(() => store.dispose())
     await ctx.plugin(Artifacts, {})
     for (const pools of [[pool('p'), pool('p')], [pool('p', [window, window])]]) {
       const fiber = ctx.plugin(StoreResources, { pools })

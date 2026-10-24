@@ -18,7 +18,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
@@ -74,7 +74,7 @@ function workingTree(): string {
   git('add', '.')
   git('commit', '-q', '-m', 'init')
   writeFileSync(join(dir, 'kernel.c'), 'int main(void) { return 1; }\n')
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -91,11 +91,6 @@ class ShortLeaseBoard extends StoreBoard {
     return super.renew(taskId, generation, Math.min(ttlMs, ShortLeaseBoard.CAP_MS), at)
   }
 }
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Booted {
   ctx: Context
@@ -129,7 +124,8 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; boa
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
   await engine
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     await engine.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
@@ -767,7 +763,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     // The second reservation of the batch waits until the first step finished (as a sibling waking from a back-off would).
     let open!: () => void
     const late = new Promise<void>((resolve) => (open = resolve))
-    cleanups.push(() => open())
+    onTestFinished(() => open())
     const reserve = ctx.resources.reserve.bind(ctx.resources)
     const spy = vi.spyOn(ctx.resources, 'reserve').mockImplementation(async (request) => {
       if (spy.mock.calls.length === 2) await late

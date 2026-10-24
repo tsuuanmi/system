@@ -10,7 +10,7 @@ import Leases from '@tsuuanmi/system-leases'
 import { type Brief, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { BENCH, type Drafter, FakeDigests, LOG } from '../../../digest-core/conformance/digests.ts'
 import { DigestWorker } from '../../../digest-core/conformance/worker.ts'
 import ExtractiveDigests, { type Config, type DigestExtract } from '../src/index.ts'
@@ -18,10 +18,6 @@ import { sourcesOfExtract } from './helpers.ts'
 
 vi.setConfig({ testTimeout: 60_000 })
 const schemas = new SchemaRegistry()
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 /** A test log longer than what the Worker is given: 60 passing tests, two failures, a warning, and its totals. */
 const LONG_LOG = [
@@ -59,7 +55,8 @@ async function boot(drafter: Drafter | undefined, config: Config = {}, before: (
     body: { schema: 'provider-answer@1.0', provider: 'raw', account: 'raw', turnId: `t-${text.length}`, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
   }).id as ArtifactRef
   const refs = { log: raw(LONG_LOG), bench: raw(BENCH, 'public'), short: raw(LOG) }
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     await provider.dispose()
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
@@ -219,7 +216,8 @@ describe('ctx.digests, extractive-first', () => {
     await Promise.all(fibers)
     fibers.push(ctx.plugin(FakeDigests, {}))
     await fibers.at(-1)
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
     })
     const second = ctx.plugin(ExtractiveDigests, {})

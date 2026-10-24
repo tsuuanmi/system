@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import VirtualDisplay, { type SpawnXvfb, startXvfb } from '../src/index.ts'
 import { removeStaleDisplay } from '../src/xvfb.ts'
 
@@ -49,13 +49,11 @@ function fakeSpawner(onSpawn: (child: FakeXvfb) => void = (c) => setImmediate(()
   return { spawn, calls }
 }
 
-const cleanups: Array<() => unknown> = []
 afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
   vi.unstubAllEnvs()
 })
 
-async function boot(spawn: SpawnXvfb, platform: NodeJS.Platform = 'linux', config: Record<string, unknown> = {}): Promise<Context> {
+async function boot(spawn: SpawnXvfb, platform: NodeJS.Platform = 'linux', config: Record<string, unknown> = {}): Promise<{ ctx: Context; dispose: () => Promise<void> }> {
   class TestDisplay extends VirtualDisplay {
     protected override platform = platform
     protected override spawnXvfb = spawn
@@ -63,8 +61,8 @@ async function boot(spawn: SpawnXvfb, platform: NodeJS.Platform = 'linux', confi
   const ctx = new Context()
   const fiber = ctx.plugin(TestDisplay, { startupTimeoutMs: 200, shutdownTimeoutMs: 50, ...config })
   await fiber
-  cleanups.push(() => fiber.dispose())
-  return ctx
+  onTestFinished(() => fiber.dispose())
+  return { ctx, dispose: () => fiber.dispose() }
 }
 
 describe('startXvfb (ported from tsuuanmi/internet)', () => {
@@ -157,7 +155,7 @@ describe('startXvfb (ported from tsuuanmi/internet)', () => {
 describe('ctx.display: display-virtual', () => {
   it('prepares an invisible headed display on a plugin-owned Xvfb (REQ-ACC-6)', async () => {
     const { spawn } = fakeSpawner()
-    const ctx = await boot(spawn)
+    const { ctx } = await boot(spawn)
     const display = await ctx.display.prepare('invisible')
     expect(display).toMatchObject({ kind: 'virtual', env: { DISPLAY: ':7' }, windowArgs: ['--window-size=1920,1080'], viewport: null, generation: 1 })
     expect(display.lost.aborted).toBe(false)
@@ -165,7 +163,7 @@ describe('ctx.display: display-virtual', () => {
 
   it('shares one Xvfb between concurrent callers', async () => {
     const { spawn, calls } = fakeSpawner()
-    const ctx = await boot(spawn)
+    const { ctx } = await boot(spawn)
     const [a, b] = await Promise.all([ctx.display.prepare('invisible'), ctx.display.prepare('invisible')])
     expect(calls).toHaveLength(1)
     expect(a.generation).toBe(b.generation)
@@ -174,7 +172,7 @@ describe('ctx.display: display-virtual', () => {
   it('signals loss when Xvfb dies and starts a new generation on the next prepare', async () => {
     let n = 7
     const { spawn, calls } = fakeSpawner((c) => setImmediate(() => c.ready(String(n++))))
-    const ctx = await boot(spawn)
+    const { ctx } = await boot(spawn)
     const first = await ctx.display.prepare('invisible')
     calls[0]!.child.exit(1)
     await vi.waitFor(() => expect(first.lost.aborted).toBe(true))
@@ -186,14 +184,14 @@ describe('ctx.display: display-virtual', () => {
   it('never falls back to the operator DISPLAY when Xvfb cannot start (QA-3)', async () => {
     vi.stubEnv('DISPLAY', ':0')
     const { spawn } = fakeSpawner((c) => setImmediate(() => c.exit(1)))
-    const ctx = await boot(spawn)
+    const { ctx } = await boot(spawn)
     await expect(ctx.display.prepare('invisible')).rejects.toMatchObject({ kind: 'config_error' })
   })
 
   it('retries Xvfb on a later prepare instead of caching a startup failure', async () => {
     let fail = true
     const { spawn, calls } = fakeSpawner((c) => setImmediate(() => (fail ? c.exit(1) : c.ready('9'))))
-    const ctx = await boot(spawn)
+    const { ctx } = await boot(spawn)
     await expect(ctx.display.prepare('invisible')).rejects.toThrow()
     fail = false
     await expect(ctx.display.prepare('invisible')).resolves.toMatchObject({ env: { DISPLAY: ':9' } })
@@ -202,23 +200,23 @@ describe('ctx.display: display-virtual', () => {
 
   it('stops Xvfb when the plugin is disposed', async () => {
     const { spawn, calls } = fakeSpawner()
-    const ctx = await boot(spawn)
+    const { ctx, dispose } = await boot(spawn)
     const display = await ctx.display.prepare('invisible')
-    await cleanups.pop()!()
+    await dispose()
     expect(calls[0]!.child.kills).toEqual(['SIGTERM'])
     expect(display.lost.aborted).toBe(true)
   })
 
   it('refuses invisible mode off Linux (the MVP is Linux-only)', async () => {
     const { spawn, calls } = fakeSpawner()
-    const ctx = await boot(spawn, 'darwin')
+    const { ctx } = await boot(spawn, 'darwin')
     await expect(ctx.display.prepare('invisible')).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/Linux/) })
     expect(calls).toHaveLength(0)
   })
 
   it('uses the operator DISPLAY for visible mode, and requires one', async () => {
     const { spawn, calls } = fakeSpawner()
-    const ctx = await boot(spawn)
+    const { ctx } = await boot(spawn)
     vi.stubEnv('DISPLAY', '')
     await expect(ctx.display.prepare('visible')).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/DISPLAY/) })
     vi.stubEnv('DISPLAY', ':0')

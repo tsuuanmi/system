@@ -15,22 +15,18 @@ import { contentId } from '@tsuuanmi/system-libs'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import Providers from '@tsuuanmi/system-providers'
 import { chromium } from 'patchright-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import Login from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 describe.runIf(canRunBrowser)('ctx.login.save', () => {
   async function boot(): Promise<{ ctx: Context; fake: FakeChatGpt; dir: string }> {
     const fake = new FakeChatGpt({ requireCookie: true, userId: 'user-42' })
     await fake.start()
     const dir = mkdtempSync(join(tmpdir(), 'system-login-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }), () => fake.stop())
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => fake.stop())
     const ctx = new Context()
     const fibers = [
       ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
@@ -44,7 +40,7 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
       ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
     ]
     await Promise.all(fibers)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of fibers.reverse()) await fiber.dispose()
     })
     return { ctx, fake, dir }
@@ -83,7 +79,7 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
     const { url, tokenFiles } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFiles: { operator: string } }
     const client = new Client({ name: 'cli', version: '0' })
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFiles.operator).toString('base64url')}` } } }) as unknown as Transport)
-    cleanups.push(() => client.close())
+    onTestFinished(() => client.close())
     const saved = await client.callTool({ name: 'account_save', arguments: { account: 'chatgpt-main' } })
     expect(saved.isError).toBeFalsy()
     expect(saved.structuredContent).toMatchObject({ id: 'chatgpt-main', status: 'ready' })
@@ -116,7 +112,9 @@ describe.runIf(canRunBrowser)('ctx.login.relogin (credential login with local TO
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ]
     await Promise.all(fibers)
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }), () => fake.stop(), async () => { for (const f of fibers.reverse()) await f.dispose() })
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => fake.stop())
+    onTestFinished(async () => { for (const f of fibers.reverse()) await f.dispose() })
     await ctx.accounts.setCredentials('chatgpt-main', { email: fake.options.email, password: fake.options.password, totpSecret: fake.options.totpSecret })
     return { ctx, fake, dir }
   }

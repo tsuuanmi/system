@@ -6,14 +6,9 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { ApprovalRequest, Verdict, VerdictResult } from '@tsuuanmi/system-approvals-core'
 import { chromium } from 'patchright-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import * as WebUi from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 const RUN = {
   runId: 'run_abc', template: 'investigate', status: 'running', specHash: 'sha256:00', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:01Z',
@@ -69,7 +64,8 @@ async function boot(options: { approvals?: boolean } = {}) {
   const ctx = new Context()
   const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
-  cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
   return { ctx, origin, token, workflow: (ctx as unknown as { workflow: StubWorkflow }).workflow, approvals: () => (ctx as unknown as { approvals: StubApprovals }).approvals }
 }
@@ -85,7 +81,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       register(route: unknown): () => void { routes.push(route); return () => undefined }
     }
     const dir = mkdtempSync(join(tmpdir(), 'system-ui-lan-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)
@@ -212,7 +208,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it.runIf(canRunBrowser)('shows the approval queue in a real browser and approves a batch on the subjects it shows', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     const queue = page.getByRole('region', { name: 'Approval queue' })
@@ -237,7 +233,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
     const { origin, token, workflow } = await boot()
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     await page.getByRole('link', { name: 'run_abc' }).click()

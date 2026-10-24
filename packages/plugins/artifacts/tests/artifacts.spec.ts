@@ -3,22 +3,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import Artifacts, { type Decision } from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function boot(): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
   const artifacts = ctx.plugin(Artifacts, {})
   await Promise.all([store, artifacts])
-  cleanups.push(() => store.dispose())
+  onTestFinished(() => store.dispose())
   return ctx
 }
 
@@ -144,12 +139,12 @@ describe('review fixes (PR #3 kernel review)', () => {
 
   it('keeps a candidate that something written after the scan names, deletes in short batches, and reads every page (INV-9)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
     const artifacts = ctx.plugin(Artifacts, { collectBatch: 2 })
     await Promise.all([store, artifacts])
-    cleanups.push(() => store.dispose())
+    onTestFinished(() => store.dispose())
     const day = 24 * 60 * 60_000
     const note = (text: string) => ctx.artifacts.recordDecision({ ...route, question: text }, { producer }).id
     const orphans = Array.from({ length: 5 }, (_, i) => note(`orphan ${i}`))

@@ -2,11 +2,11 @@ import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { ArtifactRef, Project } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { chromium } from 'patchright-core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
-import { type Booted, boot as bootUi, OPERATOR, reviewed } from './store-backed.ts'
+import { type Booted, boot, OPERATOR, reviewed } from './store-backed.ts'
 
 // The operator's project moves end to end, through the web UI's API, over the store-backed board,
 // approval queue, and engine, under the bundle's own default studio policy
@@ -14,11 +14,6 @@ import { type Booted, boot as bootUi, OPERATOR, reviewed } from './store-backed.
 vi.setConfig({ testTimeout: 120_000 })
 
 const schemas = new SchemaRegistry()
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-const boot = () => bootUi(cleanups)
 
 /** The page's listing of one project. */
 async function listed(booted: Booted, projectId = 'p1'): Promise<Record<string, any>> {
@@ -138,7 +133,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await readyTask(ctx, 'ready')
     const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
-    cleanups.push(() => browser.close())
+    onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     await page.getByRole('link', { name: 'Board' }).click()

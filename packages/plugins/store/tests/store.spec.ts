@@ -2,21 +2,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import Store from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function boot(): Promise<{ ctx: Context; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-store-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const fiber = ctx.plugin(Store, { path: join(dir, 'db', 'system.db') })
   await fiber
-  cleanups.push(() => fiber.dispose())
+  onTestFinished(() => fiber.dispose())
   return { ctx, dir }
 }
 
@@ -38,7 +33,7 @@ describe('ctx.store', () => {
 describe('review fixes (PR #3 kernel review)', () => {
   it('keeps the database open for dependents that write while disposing', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-store-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ctx = new Context()
     const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
     let wrote = false

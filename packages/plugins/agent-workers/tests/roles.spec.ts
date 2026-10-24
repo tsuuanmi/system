@@ -18,17 +18,13 @@ import type { PoolTemplate } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { CapabilityDescriptor, WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { FakeAgentRuntime } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { planMigration } from '../src/migrate.ts'
 import { deriveWorkers } from '../src/roles.ts'
 import AgentWorkers, { type AgentWorkerConfig, type Config } from '../src/index.ts'
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 const schemas = new SchemaRegistry()
 
 class RecordingMcp extends McpTools {
@@ -84,7 +80,7 @@ interface Booted {
  */
 async function boot(config: Partial<Config>, options: { dir?: string; ledger?: boolean } = {}): Promise<Booted> {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-  if (!options.dir) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  if (!options.dir) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const homes = Object.fromEntries([A, B, C].map((kind) => [kind, join(dir, `home-${kind}`)]))
   for (const home of Object.values(homes)) mkdirSync(home, { recursive: true, mode: 0o700 })
   mkdirSync(join(dir, 'ws'), { recursive: true })
@@ -109,7 +105,7 @@ async function boot(config: Partial<Config>, options: { dir?: string; ledger?: b
   const stop = async (): Promise<void> => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
-  cleanups.push(stop)
+  onTestFinished(stop)
   return { ctx, dir, homes, runtimes, mcp: (ctx as unknown as { mcp: RecordingMcp }).mcp, stop }
 }
 
@@ -192,7 +188,7 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
 describe('Workers = account × role: in the agents source (ADR-0051, REQ-ACC-11)', () => {
   it('admits an account\'s Workers only while it is ready, runs each in its account\'s home, and names every role of an account as siblings', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     // Enrolled first on a row with no Workers, then the row assigns the accounts by the ids verified.
     const first = await boot({ providers: [{ provider: A, slots: 2 }] }, { dir })
     const acc1 = await enroll(first, A, 'alice@example.test')
@@ -227,7 +223,7 @@ describe('Workers = account × role: in the agents source (ADR-0051, REQ-ACC-11)
 
   it('takes no work on an unverified account (no verified reader), unlike a hand-named Worker in its home', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const b = await boot({}, { dir })
     await accounts(b).begin({ provider: C })
     FakeAgentRuntime.signIn(b.homes[C]!, 'dana@example.test')
@@ -241,7 +237,7 @@ describe('Workers = account × role: in the agents source (ADR-0051, REQ-ACC-11)
 describe('Workers = account × role: per account (PROP-0012 phase F)', () => {
   async function twoRoles(maxConcurrentRunsPerAccount?: number) {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ providers: [{ provider: A, slots: 2 }] }, { dir })
     const acc1 = await enroll(first, A, 'alice@example.test')
     const acc2 = await enroll(first, A, 'bob@example.test')
@@ -297,7 +293,7 @@ describe('Workers = account × role: per account (PROP-0012 phase F)', () => {
 
   it('meters each account on its own pool of the provider\'s template, declared to the ledger for ready accounts only: a limit on one account never closes another\'s', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ providers: [{ provider: A, slots: 2 }] }, { dir })
     const acc1 = await enroll(first, A, 'alice@example.test')
     const acc2 = await enroll(first, A, 'bob@example.test')
@@ -335,7 +331,7 @@ const LIVE = (ws: string): AgentWorkerConfig[] => [
 describe('before the move: the hand-named rows route exactly as before (PROP-0012 phase F rollout)', () => {
   it('describes them as before this phase (no load, the runtime as the account, every Worker of a runtime its siblings), runs two of one runtime at once, counts nothing pending, and declares nothing to the ledger', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ws = join(dir, 'ws')
     const b = await boot({ workers: [...LIVE(ws), { id: 'claude-second', runtime: A, workspace: ws, sandbox: 'read-only', tier: 'standard' }] }, { dir, ledger: true })
     const workers = await described(b)
@@ -371,7 +367,7 @@ describe('before the move: the hand-named rows route exactly as before (PROP-001
 describe('system account migrate (PROP-0012 phase F: migration from hand-named rows)', () => {
   async function live() {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const ws = join(dir, 'ws')
     const config = { workers: LIVE(ws) }
     const b = await boot(config, { dir })

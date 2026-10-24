@@ -9,7 +9,7 @@ import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CONFIG, ScriptedWorkers } from '../conformance/workflow.ts'
 import Workflow, { type NodeTemplate, type RunView } from '../src/index.ts'
 
@@ -21,11 +21,6 @@ const step = (nodeId: string, extra: Partial<NodeTemplate> = {}): NodeTemplate =
   nodeId, objective: `Do ${nodeId}`, prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...extra,
 })
 const CHAIN = [step('a', { prompt: 'A: {{input}}' }), step('b', { prompt: 'B: {{node:a}}', dependsOn: ['a'] })]
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 /** The engine over scripted Workers, with `templates` configured. */
 async function boot(templates: Record<string, NodeTemplate[]>): Promise<{ ctx: Context; workers: ScriptedWorkers }> {
@@ -39,7 +34,8 @@ async function boot(templates: Record<string, NodeTemplate[]>): Promise<{ ctx: C
     ctx.plugin(Workflow, { ...CONFIG, templates }),
   ]
   await Promise.all(fibers)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
   return { ctx, workers }

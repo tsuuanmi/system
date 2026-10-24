@@ -12,7 +12,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import StoreResources from '@tsuuanmi/system-resources'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { FakeDigests } from '../../../digest-core/conformance/digests.ts'
 import { attempt, bootPilot, charter, decide, operatorAccepts, type Pilot, POLICY, propose, queued, reported, until } from '../../profile-software-development/tests/pilot.ts'
 import * as Report from '../src/index.ts'
@@ -39,15 +39,10 @@ const call = async (ctx: Context, args: Record<string, unknown>): Promise<Called
   return { ...(result.isError ? { isError: true } : {}), text, ...(result.structuredContent ? { report: result.structuredContent as unknown as Report.Report } : {}) }
 }
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 /** A project of two tasks: one accepted by the operator after a fix through the queue, one held for the operator. */
 async function pilotWeek(): Promise<Pilot> {
   const pilot = await bootPilot({ changes: 1 }, [RecordingMcp, Report])
-  cleanups.push(() => pilot.dispose())
+  onTestFinished(() => pilot.dispose())
   const { ctx } = pilot
   await charter(ctx, 'p1')
   await charter(ctx, 'p2')
@@ -140,7 +135,7 @@ describe('the report tool without its sources', () => {
     await Promise.all(fibers)
     // A provider's fiber settles before its service is up: wait for the board to be served.
     if (rows.board !== false) await until(() => ctx.get('board'), 'the board')
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of [...fibers].reverse()) await fiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     })

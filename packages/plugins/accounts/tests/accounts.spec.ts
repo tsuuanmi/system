@@ -4,13 +4,8 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import Accounts, { type PortableState } from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 const catalog = [
   { id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat' as const, tiers: { economy: 'instant', frontier: 'pro' } },
@@ -19,11 +14,11 @@ const catalog = [
 
 async function boot(accounts = catalog): Promise<{ ctx: Context; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-accounts-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const fibers = [ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }), ctx.plugin(Accounts, { accounts })]
   await Promise.all(fibers)
-  cleanups.push(() => fibers[0]!.dispose())
+  onTestFinished(() => fibers[0]!.dispose())
   return { ctx, dir }
 }
 

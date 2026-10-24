@@ -3,21 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import Leases from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function boot(): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'system-leases-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Leases, {})]
   await Promise.all(fibers)
-  cleanups.push(() => fibers[0]!.dispose())
+  onTestFinished(() => fibers[0]!.dispose())
   return ctx
 }
 

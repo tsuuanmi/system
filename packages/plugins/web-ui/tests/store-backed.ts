@@ -19,7 +19,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow, { type RunView } from '@tsuuanmi/system-workflow'
-import { expect } from 'vitest'
+import { expect, onTestFinished } from 'vitest'
 import { parse } from 'yaml'
 import { CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../../workflow/conformance/workflow.ts'
 import * as WebUi from '../src/index.ts'
@@ -60,12 +60,12 @@ export interface Booted {
  * queue's configuration (the bundle's policies by default). A queue that refuses to start leaves
  * the board unstarted, as in the bundle, and the UI serving without them.
  */
-export async function boot(cleanups: Array<() => unknown>, options: { dir?: string; approvals?: Partial<ApprovalsConfig> } = {}): Promise<Booted> {
+export async function boot(options: { dir?: string; approvals?: Partial<ApprovalsConfig> } = {}): Promise<Booted> {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-ui-store-'))
   if (!options.dir) {
     writeFileSync(join(dir, 'operator.token'), Buffer.from(OPERATOR, 'base64url'), { mode: 0o600 })
     writeFileSync(join(dir, 'client.token'), Buffer.from(CLIENT, 'base64url'), { mode: 0o600 })
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   }
   const workers = new ScriptedWorkers()
   const ctx = new Context()
@@ -91,7 +91,7 @@ export async function boot(cleanups: Array<() => unknown>, options: { dir?: stri
     stopped = true
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
-  cleanups.push(stop)
+  onTestFinished(stop)
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
   const call = async (path: string, body?: unknown, token = OPERATOR): Promise<{ status: number; value: Record<string, unknown> }> => {
     const response = await fetch(`${origin}/ui/api/${path}`, body === undefined

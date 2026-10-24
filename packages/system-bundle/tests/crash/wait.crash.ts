@@ -10,21 +10,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 const HARNESS = fileURLToPath(new URL('./wait-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 type Done = { status: string; answer?: string; nodes: Array<{ attempt: number }>; started: string[] }
 interface Engine { child: ChildProcess; runId: Promise<string>; waiting: Promise<{ until: string; attempt: number; started: string[] }>; done: Promise<Done> }
 
 function engine(args: string[]): Engine {
   const child = spawn(process.execPath, [HARNESS, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-  cleanups.push(() => {
+  onTestFinished(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
     } catch {
@@ -55,7 +50,7 @@ function engine(args: string[]): Engine {
 describe('crash injection while a node waits for an assigned account\'s limit (REQ-ACC-10, INV-4)', () => {
   it('a waiting node killed mid-wait waits on after a restart, sends nothing before the reset, and then runs once on that account', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-wait-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     // Long enough to outlast the kill and the dead process's 30 s leases (leases.mjs), with more of
     // the wait left after the restart takes the run than the 60 s leases left before, short enough
     // for the suite.

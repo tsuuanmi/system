@@ -20,14 +20,9 @@ import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import type { ArtifactRef, CapabilityDescriptor, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import Workflow from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 const CONVERSING = ['reason', 'persistent-conversation']
 
@@ -113,7 +108,8 @@ async function boot() {
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
   ]
   await Promise.all(fibers)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => {
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
   return { ctx }

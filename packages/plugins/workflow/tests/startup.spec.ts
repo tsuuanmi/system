@@ -9,22 +9,17 @@ import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import Workflow from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function engine(templates: Record<string, unknown>): Promise<{ error: Error | undefined; served: boolean; refused: Array<{ name: string; reason: string }> }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-startup-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}), ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {})]
   await Promise.all(fibers)
   const workflow = ctx.plugin(Workflow, { templates } as never)
-  cleanups.push(async () => { for (const f of [workflow, ...fibers].reverse()) await f.dispose() })
+  onTestFinished(async () => { for (const f of [workflow, ...fibers].reverse()) await f.dispose() })
   let error: Error | undefined
   try {
     await workflow

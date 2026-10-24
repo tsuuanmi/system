@@ -10,20 +10,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 const HARNESS = fileURLToPath(new URL('./agent-harness.mjs', import.meta.url))
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 interface Engine { child: ChildProcess; runId: Promise<string>; done: Promise<{ status: string; error?: { kind: string } }> }
 
 function engine(args: string[]): Engine {
   const child = spawn(process.execPath, [HARNESS, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-  cleanups.push(() => {
+  onTestFinished(() => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
     } catch {
@@ -64,7 +59,7 @@ describe('crash injection while an agent Worker runs (QA-1, INV-4)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-agent-'))
     const workspace = join(dir, 'workspace')
     mkdirSync(workspace)
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const first = engine([dir, workspace, 'start', 'Review the change for correctness'])
     const runId = await first.runId
     await until(() => starts(dir) === 1, 60_000)

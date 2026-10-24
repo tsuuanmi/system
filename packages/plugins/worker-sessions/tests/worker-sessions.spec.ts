@@ -5,7 +5,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import WorkerSessions from '../src/index.ts'
 
@@ -17,19 +17,14 @@ class RecordingMcp extends McpTools {
   }
 }
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 async function boot(at?: string) {
   const dir = at ?? mkdtempSync(join(tmpdir(), 'system-sessions-'))
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(WorkerSessions, {})]
   await Promise.all(fibers)
-  if (!at) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  if (!at) onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const stop = async () => { for (const f of [...fibers].reverse()) await f.dispose() }
-  cleanups.push(stop)
+  onTestFinished(stop)
   return Object.assign(ctx, { dir, stop })
 }
 
@@ -71,7 +66,7 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     team(ctx, false)
     const fiber = ctx.plugin(RecordingMcp)
     await fiber
-    cleanups.push(() => fiber.dispose())
+    onTestFinished(() => fiber.dispose())
     await new Promise((resolve) => setTimeout(resolve, 0))
     const mcp = (ctx as unknown as { mcp: RecordingMcp }).mcp
     const send = mcp.tools.get('session_send')!

@@ -9,22 +9,17 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import EventLog from '@tsuuanmi/system-event-log'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { z as zod } from 'zod'
 import { FakePluginHost, manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import McpEndpoint from '../src/index.ts'
 
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
-
 type Tokens = Record<'operator' | 'client' | 'model', string>
 
-async function boot(): Promise<{ url: string; token: string; tokens: Tokens; dir: string; ctx: Context }> {
+async function boot(): Promise<{ url: string; token: string; tokens: Tokens; dir: string; ctx: Context; stop: () => Promise<void> }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-mcp-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
   const fibers = [
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
@@ -33,18 +28,20 @@ async function boot(): Promise<{ url: string; token: string; tokens: Tokens; dir
     ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
   ]
   await Promise.all(fibers)
-  cleanups.push(async () => {
-    for (const fiber of fibers.reverse()) await fiber.dispose()
-  })
+  // Unloaded when the test finishes, or before, by a test that looks at what unloading does.
+  const stop = async (): Promise<void> => {
+    for (const fiber of [...fibers].reverse()) await fiber.dispose()
+  }
+  onTestFinished(stop)
   const discovery = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFiles: Tokens }
   const tokens = Object.fromEntries(Object.entries(discovery.tokenFiles).map(([scope, file]) => [scope, readFileSync(file).toString('base64url')])) as Tokens
-  return { url: discovery.url, token: tokens.operator, tokens, dir, ctx }
+  return { url: discovery.url, token: tokens.operator, tokens, dir, ctx, stop }
 }
 
 async function connect(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'test', version: '0' })
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
-  cleanups.push(() => client.close())
+  onTestFinished(() => client.close())
   return client
 }
 
@@ -94,7 +91,7 @@ describe('system MCP server on ctx.webServer', () => {
     const pool = { pool: 'max.agents', account: 'max', kind: 'programmatic' as const, unknown: 'available' as const, windows: [{ id: 'five-hour', kind: 'rolling' as const, seconds: 18_000 }] }
     const fibers = [ctx.plugin(EventLog, {}), ctx.plugin(FakeResources, { pools: [pool] })]
     await Promise.all(fibers)
-    cleanups.push(async () => {
+    onTestFinished(async () => {
       for (const fiber of fibers.reverse()) await fiber.dispose()
     })
     type Check = { name: string; state: string; detail: string }
@@ -132,7 +129,7 @@ describe('system MCP server on ctx.webServer', () => {
     }
     const fiber = ctx.plugin(Router)
     await fiber
-    cleanups.push(() => fiber.dispose())
+    onTestFinished(() => fiber.dispose())
     type Health = { state: string; checks: Array<{ name: string; state: string; detail?: string }> }
     const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: Health }).health
     const operator = await health(tokens.operator)
@@ -152,7 +149,7 @@ describe('system MCP server on ctx.webServer', () => {
     }
     const host = ctx.plugin(FakePluginHost, { composition, ledger: new Map() })
     await host
-    cleanups.push(() => host.dispose())
+    onTestFinished(() => host.dispose())
     type Status = { plugins?: Array<Record<string, unknown>>; health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }
     const status = async (token: string) => (await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as Status
     const operator = await status(tokens.operator)
@@ -175,7 +172,7 @@ describe('system MCP server on ctx.webServer', () => {
     const { url, tokens, ctx } = await boot()
     const fiber = ctx.plugin(EventLog, {})
     await fiber
-    cleanups.push(() => fiber.dispose())
+    onTestFinished(() => fiber.dispose())
     for (const type of ['a.one', 'b.two', 'a.three']) ctx.eventLog.append({ type, runId: 'r1' })
     const operator = await connect(url, tokens.operator)
     const read = async (args: Record<string, unknown>) => (await operator.callTool({ name: 'events', arguments: args })).structuredContent as { events: Array<{ seq: number; type: string }>; next: number }
@@ -204,7 +201,8 @@ describe('system MCP server on ctx.webServer', () => {
     const broken = ctx.plugin({ name: 'broken-plugin', apply: () => { throw new Error('bad config') } } as never, {} as never)
     const waiting = ctx.plugin({ name: 'waiting-plugin', inject: ['nowhere'], apply: () => {} } as never, {} as never)
     await Promise.resolve(broken).catch(() => undefined)
-    cleanups.push(() => broken.dispose(), () => waiting.dispose())
+    onTestFinished(() => broken.dispose())
+    onTestFinished(() => waiting.dispose())
     const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { state: string; checks: Array<{ name: string; state: string; detail: string }> } }).health
     expect(health.state).toBe('down')
     expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'down', detail: expect.stringMatching(/broken-plugin failed: bad config; waiting-plugin pending: waiting for service nowhere/) })
@@ -214,7 +212,7 @@ describe('system MCP server on ctx.webServer', () => {
     const { url, tokens, ctx } = await boot()
     const fine = ctx.plugin({ name: 'fine-plugin', apply: (c: Context) => { c.inject(['settings'], () => {}) } } as never, {} as never)
     await fine
-    cleanups.push(() => fine.dispose())
+    onTestFinished(() => fine.dispose())
     const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }).health
     expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'ok' })
   })
@@ -250,8 +248,8 @@ describe('system MCP server on ctx.webServer', () => {
   })
 
   it('removes the discovery file when the plugin unloads', async () => {
-    const { dir } = await boot()
-    while (cleanups.length > 1) await cleanups.pop()!()
+    const { dir, stop } = await boot()
+    await stop()
     expect(() => statSync(join(dir, 'mcp.json'))).toThrow()
   })
 })
@@ -335,10 +333,10 @@ describe('scoped tokens', () => {
 
 describe('discovery file ownership (PR #3 security review)', () => {
   it("does not delete another instance's discovery file on unload", async () => {
-    const { dir } = await boot()
+    const { dir, stop } = await boot()
     const { writeFileSync } = await import('node:fs')
     writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:1/mcp', tokenFile: 'x', pid: process.pid + 1 }))
-    while (cleanups.length > 1) await cleanups.pop()!()
+    await stop()
     expect(JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')).pid).toBe(process.pid + 1)
   })
 })
@@ -348,7 +346,7 @@ let endpoint: { url: string; tokens: Tokens } | undefined
 mcpToolsConformance('mcp-server', async () => {
   const booted = await boot()
   endpoint = { url: booted.url, tokens: booted.tokens }
-  return { ctx: booted.ctx, dispose: async () => { while (cleanups.length) await cleanups.pop()!() } }
+  return { ctx: booted.ctx, dispose: booted.stop }
 }, async (_ctx, scope) => {
   // What a real MCP client holding that scope's token sees over the authenticated endpoint.
   const client = await connect(endpoint!.url, endpoint!.tokens[scope])

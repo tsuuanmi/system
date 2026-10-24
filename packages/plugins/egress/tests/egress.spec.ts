@@ -5,20 +5,16 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import Egress from '../src/index.ts'
-
-const cleanups: Array<() => unknown> = []
-afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!()
-})
 
 async function boot(config: Record<string, unknown> = {}): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'system-egress-'))
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(Egress, config)]
   await Promise.all(fibers)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => { for (const f of fibers.reverse()) await f.dispose() })
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(async () => { for (const f of fibers.reverse()) await f.dispose() })
   return ctx
 }
 
