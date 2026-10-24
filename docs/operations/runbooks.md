@@ -356,6 +356,93 @@ message says why); a replay longer than `maxReplayChars` (default 200,000
 characters) fails the same way, and so does an Antigravity turn over its
 100,000-byte prompt limit.
 
+## Route work by kind
+
+Give each writing agent Worker the **kinds of work** it takes, and each step goes to a Worker of its
+kind ([work kinds](../design/routing.md#work-kinds),
+[ADR-0056](../decisions/adr/0056-route-work-by-kind.md), proposed). This is configuration: which
+runtime takes which kind is the Worker list's, never a template's.
+
+What names a kind today ([templates](../reference/workflow-templates.md#algorithm-development)):
+
+| Step | Kind |
+|---|---|
+| `algorithm-development` `develop:1`, and the fix a review grows from it | `code`; `docs` in the `docs` variant, `tests` in the `tests` variant |
+| `algorithm-development` `validate:1` | `tests` |
+| every review (`algorithm-development` `review:1` and its re-reviews, `agent-review`), a planner's steps, every website step (`ask`, `brainstorm`, `review` teams, `research`), digests | none |
+
+A Worker given kinds takes only steps of those kinds, and never a step that names none; a Worker
+given none takes any step it proves the capabilities for. With no Worker given kinds, everything
+routes as before.
+
+**The live install's split** (operator decisions D35 and D36, 2026-10-24): source-code changes on
+Claude Code, docs and test work on Codex, reviews on any reviewer, a writing Claude Code Worker on
+the system repository with a worktree per run. The rows are in
+[`examples/work-kinds.patch.yml`](examples/work-kinds.patch.yml).
+
+1. **Before:** Claude Code's commands are proven confined on this host
+   ([confined commands](#agent-workers): `bubblewrap` and `socat`); otherwise the writing Claude
+   Code Worker is unavailable and nothing takes `code` work. Codex is installed and signed in inside
+   its Worker home ([Codex Workers](#codex-workers)); its commands are confined by its own sandbox,
+   which the probe proves (`executes`), or no Worker takes `validate:1`. Back up (`system backup`).
+2. **Merge the example's rows** into `~/.dsh/profiles/system/cordis.patch.yml` by row id
+   (`runtime-codex-sdk`, `runtime-antigravity-cli`, `agent-workers`,
+   `profile-software-development`). What it sets:
+   - `claude-code`: `sandbox: workspace-write`, `worktreePerRun: true`, `kinds: [code]`, on
+     `/home/tan/workspaces/system` (D36). Each workflow run writes in its own worktree on the branch
+     `system/run/<runId>`, never in the checkout ([a run's worktree](#a-runs-worktree)); merging a
+     branch is yours.
+   - `codex-writer`: the same on Codex, `kinds: [docs, tests]`: it writes in the `docs` and `tests`
+     variants and runs `validate:1`.
+   - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
+     every review and digest. Each now sets `worktreePerRun: true`: every Worker on a workspace must
+     agree, so a reviewer reads the writer's worktree, and the load refuses a row that disagrees.
+   - `claude-member` keeps its empty directory, never a worktree.
+3. **The approval policy that gates the writers' commands** (ADR-0038) is the bundle's studio
+   policy, unchanged: reads and edits run (`workspace-write` is `auto`, with `tests` and `lint`
+   required at acceptance, so every result waits for your review), and every command asks. In a
+   step with a session (`develop:1`) a command waits on the approval queue
+   ([a deferred tool call](#a-workers-tool-call-is-deferred-on-an-approval)); in `validate:1`, which
+   has none, it is denied and reported not run. Listing a command
+   ([change the autonomy policy](#change-the-autonomy-policy)) lets it run unasked, as the exact
+   argv. Before you list one for this repository, check it runs in a fresh worktree with no
+   network: a run's worktree has no `node_modules`, so `corepack pnpm check` fails there until its
+   dependencies are present; until then every validation of this repository reports its commands not
+   run, and you run the checks in the worktree yourself.
+4. **Check, then restart:** `system check` until it says `ok` (it names a malformed kind, kinds on a
+   review member, or Workers of one workspace that disagree on `worktreePerRun`), then
+   `system shutdown`, `system start`. `system explain` (or `/ui`) shows each Worker ready, or why
+   not; a Worker given kinds lists them.
+5. **Run by kind.** The lead starts `algorithm-development` for a board task with MCP `run` and
+   `task`: source-code work with no variant, docs work with `variant: docs`, test work with
+   `variant: tests` (CLI: `system run algorithm-development --variant docs …`). `system explain
+   <runId>` names each step's Worker; its route decision says `takes code work, one of its kinds`,
+   and a writer that lost says `takes docs, tests work only; this work is code work`.
+
+What this split does not reach, and why:
+
+- **Brainstorms stay on website Workers.** A `brainstorm` member's step needs `reason`, which an
+  agent Worker offers only for a review member's steps
+  ([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)); adding the Codex
+  or Antigravity CLI to brainstorms needs a decision of its own, not configuration. A `review` team
+  can already take them as review members ([above](#agent-workers-as-review-team-members)).
+- **The Antigravity CLI reviews, and writes nothing here.** `develop:1` keeps a conversation, which
+  agy cannot resume, and `validate:1` runs commands, which agy has none of; a writing agy Worker given
+  `docs` would never be admitted to either. It stays a reviewer.
+- **A step that names no kind needs a Worker given none.** Once every writer has kinds, a writing
+  step that names none (a planner's `develop` step, where a template's growth policy allows one, or
+  a configured template's) finds no writer and fails admission, saying `no Worker that proves
+  develop … takes work that names no kind`; give one writer no kinds to take such steps.
+- **`validate:1` is test work.** With Codex unable to confine its commands on this host, it fails
+  admission; giving `claude-code` `tests` too moves both the validation and test writing to Claude
+  Code.
+- **After the move to accounts × roles** ([below](#migrate-agent-workers-to-accounts--roles)), the
+  kinds go on the roles (`roles: [{ id: code, …, kinds: [code] }]`), and the assignments decide which
+  accounts take them; `system account migrate` keeps each row's kinds on its role.
+
+To undo, remove `kinds` from the Workers (and the writers, if you no longer want them) and restart:
+every Worker then takes every step it proves the capabilities for.
+
 ## Turn an off row back on
 
 The default composition (PROP-0004) keeps these rows in the system bundle but

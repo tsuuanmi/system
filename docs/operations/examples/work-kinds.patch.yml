@@ -1,0 +1,109 @@
+# Route work by kind (operator decisions D35 and D36, 2026-10-24; ADR-0056, proposed), on the live
+# install's hand-named agent Workers (runbook: Route work by kind,
+# docs/operations/runbooks.md#route-work-by-kind).
+#
+#   source-code updates -> Claude Code             (a writer given `code`)
+#   docs and test work  -> Codex CLI               (a writer given `docs` and `tests`)
+#   brainstorm          -> website Workers         (unchanged; see the runbook for the CLIs)
+#   reviews, digests    -> any reviewer given no kinds (Claude Code, Codex, Antigravity CLI)
+#
+# Merge by row id into ~/.dsh/profiles/system/cordis.patch.yml: each row here replaces the live
+# patch's row of that id (a patch that targets a row replaces its whole config). Every other row of
+# the live patch stays as it is (accounts, login, workers, provider-gemini-web, workflow, turns,
+# llm-pi-ai, models). Then `system check`, `system shutdown`, `system start`.
+
+# D35 turns Codex back on for docs and test work (D34 had it off). Its executable is the npm install
+# under the Workers' tools directory, which the read confinement binds back read-only.
+- id: runtime-codex-sdk
+  disabled: false   # D35; was true (D34)
+  config:
+    executable: /home/tan/.dsh/system/tools/codex/node_modules/.bin/codex
+
+# D35 turns the Antigravity CLI back on. It reviews (any review step, given no kinds); it writes no
+# docs or tests here: `algorithm-development`'s writing step keeps a conversation, which agy cannot
+# resume, and its validation runs commands, which agy has none of (runbook: Route work by kind).
+- id: runtime-antigravity-cli
+  disabled: false   # D35; was true (D34)
+  config:
+    executable: /home/tan/.local/bin/agy
+
+# The agent Workers. This list replaces the whole list.
+#
+# Every Worker on /home/tan/workspaces/system sets `worktreePerRun: true`: a writer works in each
+# workflow run's own git worktree (branch system/run/<runId>), never in the checkout, and a reviewer
+# must read the tree it reviews, so the load refuses Workers of one workspace that disagree.
+# claude-member works in its own empty directory, never a worktree, so it keeps it off.
+#
+# What gates a writer's commands (ADR-0038): the bundle's studio policy, which this patch does not
+# change (no `approvals` row). Reads and edits run (`read`, `workspace-write: auto`, with `tests` and
+# `lint` required at acceptance, so every result waits for the operator's review); every command
+# (`Bash` for Claude Code, Codex's shell) is a `command`, which asks: in a step with a session
+# (develop:1) it waits on the approval queue, in one without (validate:1) it is denied and reported
+# not run. The policy lists no command, so nothing runs unasked. See the runbook before listing one:
+# a run's fresh worktree has no node_modules and the Worker has no network.
+- id: agent-workers
+  config:
+    workers:
+      # D36: writes the system repository, a worktree per run; D35: source-code work only. Its
+      # commands run in Claude Code's own sandbox, confined to the worktree with no network, once the
+      # probe proves both confinements on this host (`executes`); until then it writes nothing.
+      - id: claude-code
+        runtime: claude-agent-sdk
+        workspace: /home/tan/workspaces/system
+        sandbox: workspace-write
+        tier: standard
+        worktreePerRun: true
+        kinds: [code]
+      # D35: docs and test work: it writes them (the `docs` and `tests` variants of
+      # algorithm-development) and runs the tests (`validate:1` is `tests` work), its commands in
+      # Codex's own sandbox inside the confinement.
+      - id: codex-writer
+        runtime: codex-sdk
+        workspace: /home/tan/workspaces/system
+        sandbox: workspace-write
+        tier: standard
+        worktreePerRun: true
+        kinds: [docs, tests]
+      # The reviewers: given no kinds, they take every step that names none (each algorithm-
+      # development review, agent-review, a planner's steps, digests), and never a kinded step they
+      # cannot do (they are read-only: no develop, no validate).
+      - id: claude-research   # renamed from claude-review (operator, 2026-10-24)
+        runtime: claude-agent-sdk
+        workspace: /home/tan/workspaces/system
+        sandbox: read-only
+        tier: standard
+        maxTurns: 4
+        worktreePerRun: true   # was off: a writer now shares the workspace
+      - id: codex-review
+        runtime: codex-sdk
+        workspace: /home/tan/workspaces/system
+        sandbox: read-only
+        tier: standard
+        worktreePerRun: true   # was off
+      - id: agy-review
+        runtime: antigravity-cli
+        workspace: /home/tan/workspaces/system
+        sandbox: read-only
+        model: gemini-3.8-flash-high
+        tier: standard
+        worktreePerRun: true   # was off
+      # A review team member (ADR-0049) in an empty directory outside the repository; unchanged.
+      - id: claude-member
+        runtime: claude-agent-sdk
+        workspace: /home/tan/experiments/review-member/empty
+        sandbox: read-only
+        tier: standard
+        reviewMember: true
+        family: claude-agent-sdk
+    # D33, unchanged from the live patch.
+    providers:
+      - provider: claude-agent-sdk
+        accounts: pooled
+        pooledTerms:
+          confirmedBy: operator
+          confirmedAt: "2026-10-24T07:44:00+07:00"
+          terms: "Not a reading that Anthropic's plan terms allow pooling. Operator decision D33 (2026-10-24): move work between the operator's own personal accounts of this provider when one is busy or at its limit; the operator accepts the risk under the personal-plan terms."
+
+# The algorithm-development template, whose steps name their kinds: on, as in the live patch (D30).
+- id: profile-software-development
+  disabled: false
