@@ -205,6 +205,70 @@ into the run's own worktree before the agent starts, under a `.system/` that git
 and never read back ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace));
 a run with no worktree of its own gets none.
 
+### A worktree's setup
+
+> Decision: [ADR-0058](../decisions/adr/0058-a-run-worktree-is-set-up-offline-before-its-agent-starts.md)
+> (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/setup.ts`).
+
+A new worktree is a checkout, with no dependencies, and a Worker's commands have no network
+([confined commands](#confined-commands)). So the operator may declare, per repository, a
+**setup** (`worktreeSetup`): commands the `agents` source runs in a workflow run's worktree before
+any agent works in it, so the repository's checks can run there offline, from what the host
+already holds.
+
+```yaml
+worktreeSetup:
+  - repository: /home/me/src/project      # a worktreePerRun Worker's workspace
+    commands:                             # words split on single spaces; no shell
+      - corepack pnpm install --frozen-lockfile --offline --store-dir=/home/me/.local/share/pnpm/store/v11 --package-import-method=copy
+    views:
+      - { path: /home/me/.local/share/pnpm/store/v11, copy: [index.db, index.db-wal], readOnly: [files] }
+    timeoutSeconds: 600
+```
+
+- **When.** Before an agent run that works in a workflow run's worktree starts, after the worktree
+  is acquired and before the brief's files are written or anything reaches the agent, unless the
+  worktree's setup already ran under the definition loaded now (its hash, stored on the worktree).
+  So it runs once per worktree and definition, before the first agent run, and a later run,
+  reviewers included, works in the worktree as it is; a changed definition runs again; a worktree
+  added again from its branch is set up again. One setup at a time per worktree. A run of no
+  workflow run works in the configured workspace and gets none.
+- **The policy allows each command**, by its exact argv, as it does a Worker's `Bash` call
+  ([approvals](approvals.md#a-worktrees-setup)): `forbid` refuses the setup, `auto` and `notify`
+  run the command, and `ask` waits on one request per command bound to the worktree and the setup's
+  hash, used once. With no queue loaded, nothing runs.
+- **Confined.** Each command runs under the read confinement with more: the host's file system
+  read-only except the worktree (`confinedCommand`'s `readOnly`), no network but its own loopback
+  (`network: false`), the worktree as its directory, a private `/tmp`, its own PID namespace and
+  session, the daemon's scrubbed environment (`childEnvironment`), and the setup's deadline
+  (SIGKILL; bubblewrap takes the namespace with it). The confinement is proven on the host
+  (`proveConfinement`) before each setup.
+- **Views.** A host directory the setup must write, though its content must stay the host's (a
+  package store whose index is a database opened for writing), is a view: the setup sees, at its
+  path, a fresh private directory under `<worktreeRoot>/.setup`, with the files `copy` names copied
+  in (as themselves, never through a link, at most 1 GiB each; a file the host lacks is not copied)
+  and the paths `readOnly` names bound back read-only; it is removed when the setup ends. A view
+  of, or holding, a path hidden from agents, one reached through a link, or one overlapping the
+  worktree is refused. Since the store is read-only and on another mount, the installer copies into
+  the worktree and never links: a Worker that writes its worktree cannot change the host's store.
+- **Fails closed** ([INV-2](../architecture/invariants.md#inv-2-fail-closed)): a setup not allowed,
+  waiting for an approval, or failing (a command's exit code or signal, the deadline, a view or the
+  confinement refused) fails the run as `config_error`, unsent, its message naming the command and
+  the last part of its output. It is never skipped: the next run of the workflow run tries again.
+- **Recorded** ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)): a
+  `gate` decision of rule `agent-workers.worktree-setup` (`start`, or `refuse` with why; its inputs
+  the policy's decisions and the approvals used; its detail the worktree, the setup's hash, and the
+  failed command), named among the run's decisions, and an `agent-workers.worktree.setup` event
+  (`ran`, `refused`, or `waits`).
+- **Checked at load:** a setup for a repository no `worktreePerRun` Worker works in, two for one
+  repository, a command a policy could not list (empty word, shell metacharacter, over 200
+  characters), more than 16 commands, or a view with a relative path, a name that is not plain, or
+  a path that climbs is refused (`config_error`).
+
+What the setup writes stays in the worktree. Files the repository ignores (`node_modules/`) are not
+in the run's subject, and go with the worktree at its retention.
+
 Worktrees are bounded ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)):
 once every agent run of a workflow run has finished and the retention has passed, a
 `retention` decision ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact))
@@ -526,8 +590,9 @@ The Antigravity CLI offers no command tool (`run_command` is denied), so its Wor
 `validate`: agy's own terminal sandbox (`--sandbox`) has no model-free proof.
 
 Commands that need the network (installing packages) fail inside a Worker: dependencies are
-prepared in the repository before the run. The sandbox runtime does not claim to stop a kernel
-escape ([threat model](../security/threat-model.md#threats-and-controls)).
+prepared before the run, in a worktree by its repository's [setup](#a-worktrees-setup), offline
+from what the host holds. The sandbox runtime does not claim to stop a kernel escape
+([threat model](../security/threat-model.md#threats-and-controls)).
 
 ## Metering
 
