@@ -37,6 +37,11 @@
       "description": "A kind of work a scoped capability offer is limited to (ADR-0049): review-member, a step of a review team's member.",
       "enum": ["review-member"]
     },
+    "workKind": {
+      "description": "A kind of work the operator routes by (ADR-0056): an opaque label a workflow step names and an operator's Worker configuration lists, such as code or docs; never a tool, model, or vendor name.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
     "capability": {
       "description": "Named capability; 'connector:<name>' for website connectors.",
       "type": "string",

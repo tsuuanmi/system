@@ -15,7 +15,11 @@
   ],
   "properties": {
     "schema": {
-      "enum": ["work-requirement@1.0", "work-requirement@1.1"]
+      "enum": ["work-requirement@1.0", "work-requirement@1.1", "work-requirement@1.2"]
+    },
+    "kind": {
+      "description": "@1.2: the kind of work this is, for Workers the operator gives kinds (ADR-0056): such a Worker takes it only when it lists this kind, and takes no work that names none. Set by the workflow engine from the admitted spec (a template step, or the variant the caller chose), never from model text (INV-6).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workKind"
     },
     "scope": {
       "description": "@1.1: the kind of work this is, for capability offers scoped to it (ADR-0049): review-member, a step of a review team's member. Set by the workflow engine from the admitted spec, never by a template or model text (INV-6).",
@@ -163,7 +167,11 @@
   "allOf": [
     {
       "if": { "properties": { "scope": { "type": "string" } }, "required": ["scope"] },
-      "then": { "properties": { "schema": { "const": "work-requirement@1.1" } } }
+      "then": { "properties": { "schema": { "enum": ["work-requirement@1.1", "work-requirement@1.2"] } } }
+    },
+    {
+      "if": { "properties": { "kind": { "type": "string" } }, "required": ["kind"] },
+      "then": { "properties": { "schema": { "const": "work-requirement@1.2" } } }
     }
   ]
 }

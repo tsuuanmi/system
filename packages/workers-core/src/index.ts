@@ -56,6 +56,20 @@ export const provesFor = (offer: CapabilityOffer, requirement: Pick<WorkRequirem
   offer.scope === undefined || offer.scope === requirement.scope
 
 /**
+ * A kind of work the operator routes by (ADR-0056; `schemas/common.v1.json` `workKind`): an opaque
+ * label a workflow step names (`WorkRequirement.kind`) and the operator's Worker configuration lists
+ * (`CapabilityDescriptor.kinds`), such as `code` or `docs`. Never a tool, model, or vendor name (INV-11).
+ */
+export const WORK_KIND = /^[a-z][a-z0-9-]{0,31}$/
+
+/**
+ * Whether a Worker takes this work by its kind (ADR-0056): a Worker that lists no kinds takes work of
+ * any kind, or of none; one that lists kinds takes only work that names one of them. Equality only.
+ */
+export const takesKind = (worker: Pick<CapabilityDescriptor, 'kinds'>, requirement: Pick<WorkRequirement, 'kind'>): boolean =>
+  worker.kinds === undefined || (requirement.kind !== undefined && worker.kinds.includes(requirement.kind))
+
+/**
  * How a provider's accounts are used (ADR-0052): `assigned` (the default), each account serving its
  * own work, a limit never moving that work to another account of the provider; or `pooled`, only on
  * the operator's recorded decision to pool that provider (ADR-0055).
@@ -78,7 +92,7 @@ export interface WorkerAccount {
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -105,6 +119,11 @@ export interface CapabilityDescriptor {
    * with none is routed as before.
    */
   account?: WorkerAccount
+  /**
+   * The kinds of work the operator gives it (`@1.6`; ADR-0056): it takes only work whose requirement
+   * names one of them ({@link takesKind}; check `capability`). Absent: work of any kind, or of none.
+   */
+  kinds?: string[]
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
@@ -113,9 +132,9 @@ export interface CapabilityDescriptor {
   observedAt: string
 }
 
-/** The input to routing (`work-requirement@1.0`; `@1.1` adds `scope`). */
+/** The input to routing (`work-requirement@1.0`; `@1.1` adds `scope`, `@1.2` `kind`). */
 export interface WorkRequirement {
-  schema: 'work-requirement@1.0' | 'work-requirement@1.1'
+  schema: 'work-requirement@1.0' | 'work-requirement@1.1' | 'work-requirement@1.2'
   objective: string
   capabilities: string[]
   /**
@@ -123,6 +142,12 @@ export interface WorkRequirement {
    * engine from the admitted spec (a review team member's step), never from a template or model text.
    */
   scope?: WorkScope
+  /**
+   * The kind of work this is (`@1.2`; ADR-0056), for Workers the operator gives kinds: such a Worker
+   * takes it only when it lists this kind. Set by the workflow engine from the admitted spec (a
+   * template step, or the variant the caller chose), never from model text (INV-6).
+   */
+  kind?: string
   data: { classification: Classification; refs: ArtifactRef[] }
   /** Policy id from a trusted envelope (INV-6, INV-12). */
   egressPolicy: string

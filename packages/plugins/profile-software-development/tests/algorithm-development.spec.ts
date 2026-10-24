@@ -125,6 +125,33 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     untouched(pilot)
   })
 
+  it('routes by kind of work when the operator gives the writers kinds: code and its fix on the code writer, the tests on the other, the review on the reviewer given none; the docs variant writes on the docs writer (REQ-WRK-11, ADR-0056)', async () => {
+    const pilot = await boot({ changes: 1, kinds: true })
+    const { ctx } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    await decide(ctx, (await queued(ctx, run.runId)).approvalRequest)
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    expect(done.nodes.map((n) => [n.nodeId, n.worker])).toEqual([
+      ['develop:1', 'agent:developer'], ['review:1', 'agent:reviewer'], ['review:1:approve:1', undefined], ['review:1:fix:1', 'agent:developer'],
+      ['review:1:review:2', 'agent:reviewer'], ['validate:1', 'agent:tester'],
+    ])
+    // The route decision of the code step says why the other writer lost it.
+    const routeId = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'develop:1')!.decisions.find((d) => d.type === 'route')!.id
+    const candidates = (ctx.artifacts.get(routeId as ArtifactRef)!.body as { candidates: Array<{ option: string; reasons: string[] }> }).candidates
+    expect(candidates.find((c) => c.option === 'agent:tester')!.reasons).toEqual(['takes docs, tests work only; this work is code work'])
+    // The docs variant of the same template: its develop step is docs work, on the docs writer (once
+    // the first task is done, as one subject has one writer, INV-15).
+    expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
+    const docs = await propose(pilot, 'p1', 'document add()')
+    const written = await ctx.workflow.start({ template: 'algorithm-development', variant: 'docs', input: 'Document what add() returns', classification: 'operator-shared', task: { taskId: docs.taskId } })
+    const finished = await reported(ctx, written.runId)
+    expect(finished.nodes.find((n) => n.nodeId === 'develop:1')!.worker).toBe('agent:tester')
+    expect(finished.nodes.find((n) => n.nodeId === 'validate:1')!.worker).toBe('agent:tester')
+  })
+
   it('denies a validation command the policy does not list, asking no one: the validation reports it not run, and the result goes to the operator so (approvals: a Worker\'s tool calls)', async () => {
     const pilot = await boot({ validate: 'npm run bench' })
     const { ctx, agent } = pilot

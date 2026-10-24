@@ -201,10 +201,11 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   append(e, run, node, [
     { ...step, literal: true, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
       tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const, remediation: { subject } },
+    // The fix is the same kind of work as the change it fixes, and the re-review as the review (ADR-0056).
     { ...step, literal: true, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
-      capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [gateId] },
+      capabilities: producer!.capabilities, tier: producer!.tier, ...(producer!.kind !== undefined ? { kind: producer!.kind } : {}), acceptance: 'acceptance.answer', dependsOn: [gateId] },
     { ...step, ...(reviewed.literal ? { literal: true } : {}), nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: reviewed.prompt,
-      ...(reviewed.resultSchema ? { resultSchema: reviewed.resultSchema } : {}),
+      ...(reviewed.resultSchema ? { resultSchema: reviewed.resultSchema } : {}), ...(spec.kind !== undefined ? { kind: spec.kind } : {}),
       capabilities: spec.capabilities, tier: spec.tier, acceptance: spec.acceptance, dependsOn: [fixId], cycle: cycle + 1, reviewOf: base },
   ], [gateId, fixId, recheckId], lease)
   e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: [gateId, fixId, recheckId], plan, cycle: cycle + 1 } })

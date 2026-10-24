@@ -18,6 +18,13 @@ second execution path (INV-1).
     (`variant`), and its fields replace the node's own before the spec is hashed.
     An unknown variant is refused as `invalid_input`
     ([design](../../../docs/design/workflow-engine.md#variants)).
+  - **Kinds of work.** A node may name its `kind` (a label such as `code`; a
+    variant may change it), which its requirement carries (`work-requirement@1.2`),
+    so a Worker the operator gives kinds takes it only when it lists that kind
+    ([work kinds](../../../docs/design/routing.md#work-kinds),
+    [ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)). A remediation
+    fix has the kind of the step whose change it fixes, its re-review the review's;
+    a planner's step has none.
   - **Different provider families.** A node with `differentFrom: [nodeId…]`
     waits until those nodes have Workers, then routes excluding their provider
     families; a named node that failed stops it, and a Worker whose family
@@ -93,9 +100,10 @@ second execution path (INV-1).
       the engine's team ballots use) is refused;
     - exactly one final node, whose result is the run's;
     - `differentFrom` names only other, non-team nodes;
-    - a team node has no `differentFrom`, `grows`, or `resultSchema`;
+    - a team node has no `differentFrom`, `grows`, `resultSchema`, or `kind`;
     - a source step (`snapshot: true`) has no `team`, `grows`, `variants`,
-      `differentFrom`, or `resultSchema`.
+      `differentFrom`, `resultSchema`, or `kind`;
+    - a `kind`, a node's or a variant's, matches `^[a-z][a-z0-9-]{0,31}$`.
   - A configured template that fails its check is refused alone, with why: it
     is not served, `refusedTemplates()` lists it (health shows it as
     `templates`), and starting it says why. The engine and every other template
@@ -137,7 +145,9 @@ second execution path (INV-1).
     admitted there and nowhere else
     ([scoped offers](../../../docs/design/routing.md#scoped-offers),
     [ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)).
-    A board task's session is resumed only on an unscoped `persistent-conversation`.
+    A node that names its `kind` carries it (`work-requirement@1.2`). A board
+    task's session is resumed only on an unscoped `persistent-conversation`, and
+    only on a Worker that takes the kind of every step that would continue it.
   - The engine routes it through `ctx.workers` (a session keeps its affinity),
     then records its **brief** (`brief@1.1`, an `objective` artifact: the
     instructions, its goal and criteria, the pointers, the budget, the Worker's

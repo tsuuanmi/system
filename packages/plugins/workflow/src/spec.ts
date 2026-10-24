@@ -4,7 +4,7 @@
  * binds to exactly what was admitted.
  */
 import { BRIEF_LIMITS, type BriefPointer, type BriefSegment, contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
-import { type ArtifactRef, TIERS, type Tier } from '@tsuuanmi/system-workers-core'
+import { type ArtifactRef, TIERS, type Tier, WORK_KIND } from '@tsuuanmi/system-workers-core'
 
 export interface NodeTemplate {
   nodeId: string
@@ -19,6 +19,12 @@ export interface NodeTemplate {
   capabilities: string[]
   /** Minimum tier (REQ-WRK-9). */
   tier: Tier
+  /**
+   * The kind of work this step is (ADR-0056), such as `code` or `docs`: a Worker the operator gives
+   * kinds takes it only when it lists this one; a Worker given none takes it as any work. An opaque
+   * label, never a tool. Not on a team or a source step.
+   */
+  kind?: string
   /** The caller's `tier` replaces this node's (an `ask` asks for a tier; a pipeline's steps keep theirs). */
   callerTier?: boolean
   /**
@@ -64,8 +70,8 @@ export interface NodeTemplate {
   snapshot?: true
 }
 
-/** What a variant may change of a node: what it needs, where it runs, and how it is judged. */
-export type NodeVariant = Partial<Pick<NodeTemplate, 'objective' | 'prompt' | 'capabilities' | 'tier' | 'conversation' | 'acceptance'>>
+/** What a variant may change of a node: what it needs, what kind of work it is, where it runs, and how it is judged. */
+export type NodeVariant = Partial<Pick<NodeTemplate, 'objective' | 'prompt' | 'capabilities' | 'tier' | 'kind' | 'conversation' | 'acceptance'>>
 
 export interface TeamPolicy {
   /** `brainstorm`: each member's recommendation is an option. `review`: the options are `pass` and `changes`, over the members' findings. */
@@ -135,7 +141,7 @@ export interface RepositoryRequest {
   focus?: string[]
 }
 
-const VARIANT_FIELDS = new Set(['objective', 'prompt', 'capabilities', 'tier', 'conversation', 'acceptance'])
+const VARIANT_FIELDS = new Set(['objective', 'prompt', 'capabilities', 'tier', 'kind', 'conversation', 'acceptance'])
 const TEXT = (v: unknown): boolean => typeof v === 'string' && v.length > 0
 
 /** Variants stay narrow: plain Worker nodes only, only the fields a NodeVariant names, and valid values. */
@@ -148,6 +154,7 @@ function checkVariants(node: NodeTemplate): void {
     if (extra.length) throw new TypeError(`node ${node.nodeId}, variant ${name}: ${extra.join(', ')} cannot vary`)
     const bad = Object.entries(fields).filter(([key, value]) => !(
       key === 'tier' ? ['economy', 'standard', 'frontier'].includes(value as string)
+        : key === 'kind' ? typeof value === 'string' && WORK_KIND.test(value)
         : key === 'conversation' ? ['temporary', 'persistent', 'caller', 'own'].includes(value as string)
           : key === 'capabilities' ? Array.isArray(value) && value.length > 0 && value.every(TEXT)
             : TEXT(value)))
@@ -330,6 +337,11 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
     if (node.variants !== undefined && node.variants !== null) checkVariants(node)
     if (node.snapshot && (node.team || node.grows || node.variants || node.differentFrom?.length || node.resultSchema)) {
       throw new TypeError(`node ${node.nodeId}: a source step has no team, grows, variants, differentFrom, or resultSchema`)
+    }
+    // A kind is an opaque label of what the step is (ADR-0056); a team's members and a source step name none.
+    if (node.kind !== undefined) {
+      if (typeof node.kind !== 'string' || !WORK_KIND.test(node.kind)) throw new TypeError(`node ${node.nodeId}: kind ${JSON.stringify(node.kind)} is not a kind of work (${WORK_KIND})`)
+      if (node.team || node.snapshot) throw new TypeError(`node ${node.nodeId}: a ${node.team ? 'team' : 'source step'} has no kind`)
     }
     if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)

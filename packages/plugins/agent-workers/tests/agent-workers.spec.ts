@@ -282,6 +282,40 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     await expect(proven.ctx.workers.route(validate, { restrict: { workers: ['agent:reviewer'], reason: 'the reviewer only' } })).rejects.toThrow(/no Worker can take this work/)
   })
 
+  it('describes the kinds of work the operator gives a Worker, so each writer takes only its own kind and a reviewer given none takes any (REQ-WRK-11, ADR-0056)', async () => {
+    const write = { sandbox: 'workspace-write' as const }
+    const config = { workers: [worker(), worker({ id: 'coder', ...write, kinds: ['code'] }), worker({ id: 'documenter', ...write, kinds: ['docs', 'tests'] })] }
+    const { ctx } = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], executes: true }), config)
+    const listed = new Map((await ctx.workers.list()).map((d) => [d.worker, d]))
+    expect(listed.get('agent:coder')).toMatchObject({ schema: 'capability-descriptor@1.6', kinds: ['code'] })
+    expect(listed.get('agent:documenter')).toMatchObject({ schema: 'capability-descriptor@1.6', kinds: ['docs', 'tests'] })
+    expect(listed.get('agent:reviewer')!.schema).toBe('capability-descriptor@1.5')
+    expect(listed.get('agent:reviewer')).not.toHaveProperty('kinds')
+    const kinded = (kind: string | undefined, capabilities: string[]): WorkRequirement => requirement({ ...(kind ? { schema: 'work-requirement@1.2' as const, kind } : {}), capabilities })
+    const routed = async (r: WorkRequirement): Promise<string> => {
+      const admitted = await ctx.workers.route(r)
+      admitted.release()
+      return admitted.worker.worker
+    }
+    expect(await routed(kinded('code', ['develop', 'local-data']))).toBe('agent:coder')
+    expect(await routed(kinded('docs', ['develop', 'local-data']))).toBe('agent:documenter')
+    expect(await routed(kinded('tests', ['validate', 'local-data']))).toBe('agent:documenter')
+    // A review names no kind: the reviewer, given none, takes it; so it would a kinded review.
+    expect(await routed(kinded(undefined, ['review', 'local-data']))).toBe('agent:reviewer')
+    expect(await routed(kinded('docs', ['review', 'local-data']))).toBe('agent:reviewer')
+    // A writing step that names no kind: every writer is given kinds, so none takes it, fail closed.
+    await expect(ctx.workers.route(kinded(undefined, ['develop', 'local-data']))).rejects.toThrow(/no Worker that proves develop, local-data takes work that names no kind/)
+  })
+
+  it('refuses kinds of work that are malformed or on a review member, at load (ADR-0056)', async () => {
+    for (const kinds of [[], ['Docs'], ['docs', 'docs']]) {
+      const { ctx } = await boot(new ScriptedAgent(), { workers: [worker({ kinds })] })
+      expect(ctx.get('agentWorkers')).toBeUndefined()
+    }
+    const member = await boot(new ScriptedAgent(), { workers: [worker({ reviewMember: true, family: 'fam-a', kinds: ['code'] })] })
+    expect(member.ctx.get('agentWorkers')).toBeUndefined()
+  })
+
   it('runs work once with the policy from configuration, and stores the result as agent-result@1.1 (REQ-WRK-6, INV-6)', async () => {
     const agent = new ScriptedAgent()
     const { ctx } = await boot(agent)

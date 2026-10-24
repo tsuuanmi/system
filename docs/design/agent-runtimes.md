@@ -431,8 +431,11 @@ the trusted envelope of account choice
 ```
 
 - **A role** holds what the work needs (workspace, sandbox, tier, quota class, `worktreePerRun`,
-  `reviewMember`) and, under `runtimes.<runtime>`, what differs per runtime (`tools`, `model`,
-  `maxTurns`, `family`), never a routing input.
+  `reviewMember`, and the `kinds` of work its Workers take,
+  [work kinds](routing.md#work-kinds)) and, under `runtimes.<runtime>`, what differs per runtime
+  (`tools`, `model`, `maxTurns`, `family`), never a routing input. So which runtime takes a kind
+  of work is the assignments': a role `code` given `kinds: [code]` and assigned to one runtime's
+  accounts keeps source-code steps on them (ADR-0056).
 - **The Worker** of an account in a role is `agent:<accountId>/<role>`, derived (a pure function of
   the configuration: the same roles and assignments always give the same Workers). Its runtime is
   the account's provider, its family the role's `family` for that runtime or the runtime, its
@@ -469,8 +472,9 @@ Hand-named Workers (`workers`) are the shape before phase F; one row holds one s
 Workers to derived ones. It plans by default and changes nothing; `--apply` applies the plan;
 `--rollback` undoes it.
 
-- **The plan** (rule `agent-workers.migration`, pure): each runtime's configured home is slot 1 of
-  its provider, adopted where it is; rows that agree on the work's settings become one role
+- **The plan** (rule `agent-workers.migration` version 2, pure): each runtime's configured home is slot 1 of
+  its provider, adopted where it is; rows that agree on the work's settings (their `kinds`
+  included) become one role
   (`review` when read-only, `develop` when writing; another of a kind `review-2`, …; a second row of
   one runtime starts another role), with what each runtime set under `runtimes`; the account in
   slot 1 is assigned the roles of its runtime's rows, by its verified id; an old `pool` becomes the

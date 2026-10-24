@@ -36,6 +36,7 @@ export interface HandNamedRow {
   limitCooldownSeconds?: number | undefined
   family?: string | undefined
   reviewMember?: boolean | undefined
+  kinds?: string[] | undefined
 }
 
 /** What becomes of one hand-named Worker. */
@@ -78,9 +79,9 @@ const DEFAULT_COOLDOWN = 3600
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
 /**
- * The move from the hand-named rows (a pure rule, `agent-workers.migration` version 1):
+ * The move from the hand-named rows (a pure rule, `agent-workers.migration` version 2):
  * - **Roles.** Rows that agree on what the work needs (workspace, sandbox, tier, quota class,
- *   `worktreePerRun`, `reviewMember`) are one role, with what each runtime sets (`tools`, `model`,
+ *   `worktreePerRun`, `reviewMember`, `kinds`) are one role, with what each runtime sets (`tools`, `model`,
  *   `maxTurns`, `family`) under `runtimes`; a second row of one runtime in such a group starts another
  *   role, since one account has one Worker per role. A read-only role is `review`, a writing one
  *   `develop`, and later ones of a kind `review-2`, … in the order of their first row's id.
@@ -100,7 +101,7 @@ export function planMigration(input: PlanInput): MigrationPlan {
   const groups = new Map<string, Array<Map<string, HandNamedRow>>>()
   const order: Array<Map<string, HandNamedRow>> = []
   for (const row of rows) {
-    const key = canonicalJson([resolve(row.workspace), row.sandbox, row.tier, row.quotaClass ?? 'agent-plan', row.worktreePerRun === true, row.reviewMember === true])
+    const key = canonicalJson([resolve(row.workspace), row.sandbox, row.tier, row.quotaClass ?? 'agent-plan', row.worktreePerRun === true, row.reviewMember === true, row.kinds ? [...row.kinds].sort(byString) : null])
     const layers = groups.get(key) ?? []
     groups.set(key, layers)
     let layer = layers.find((l) => !l.has(row.runtime))
@@ -132,6 +133,7 @@ export function planMigration(input: PlanInput): MigrationPlan {
       id, workspace: first.workspace, sandbox: first.sandbox, tier: first.tier,
       ...(first.quotaClass && first.quotaClass !== 'agent-plan' ? { quotaClass: first.quotaClass } : {}),
       ...(first.worktreePerRun ? { worktreePerRun: true } : {}), ...(first.reviewMember ? { reviewMember: true } : {}),
+      ...(first.kinds ? { kinds: [...first.kinds].sort(byString) } : {}),
       ...(Object.keys(runtimes).length ? { runtimes } : {}),
     }
   })
@@ -231,7 +233,8 @@ export const CUTOVER_MIGRATION = {
   CREATE TABLE agent_cutover_moves (kind TEXT NOT NULL, key TEXT NOT NULL, old_worker TEXT NOT NULL, new_worker TEXT NOT NULL, PRIMARY KEY (kind, key));`,
 }
 
-const DECIDER = { type: 'rule' as const, id: 'agent-workers.migration', version: '1' }
+/** Version 2: rows that differ in `kinds` (ADR-0056) are different roles, and a role keeps its rows' kinds. */
+const DECIDER = { type: 'rule' as const, id: 'agent-workers.migration', version: '2' }
 const PRODUCER = { producer: { type: 'system' as const, ref: 'agent-workers' } }
 const now = (): string => new Date().toISOString()
 

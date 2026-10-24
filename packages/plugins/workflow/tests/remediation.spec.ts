@@ -40,6 +40,8 @@ const TEMPLATES: Record<string, NodeTemplate[]> = {
   // The review reads the developer's answer too: a re-review reads the fix's in its place.
   bound: [step('develop', { prompt: 'Develop: {{input}}' }), step('review', { prompt: 'Review: {{input}}\n<change>{{node:develop}}</change>', capabilities: ['review'], dependsOn: ['develop'] })],
   read: [step('answer', { capabilities: ['reason'] })],
+  // Each step names its kind of work (ADR-0056): a fix is the change's kind, a re-review the review's.
+  kinded: [step('develop', { prompt: 'Develop: {{input}}', kind: 'code' }), step('review', { prompt: 'Review: {{input}}', capabilities: ['review'], kind: 'review', dependsOn: ['develop'] })],
 }
 
 /** Scripted Workers that answer as agents in one git working tree, each result an `agent-result@1.1` on the tree's subject then. */
@@ -248,6 +250,21 @@ describe('remediation on the approval queue', () => {
     expect(done.nodes.map((n) => [n.nodeId, n.state])).toEqual([
       ['develop', 'COMPLETED'], ['review', 'COMPLETED'], ['review:approve:1', 'COMPLETED'], ['review:fix:1', 'COMPLETED'], ['review:review:2', 'COMPLETED'],
     ])
+  })
+
+  it('routes a fix as the kind of work of the change it fixes, and a re-review as the review\'s (REQ-WRK-11, ADR-0056)', async () => {
+    const { ctx, workers } = await boot()
+    // The only Worker given code work comes first by id among the writers, so a kinded step lands on it.
+    workers.extra.push(worker('w:coder', { schema: 'capability-descriptor@1.6', kinds: ['code'], tier: 'standard', proves: ['develop'] }))
+    const run = ctx.workflow.start({ template: 'kinded', input: 'Fix add()', classification: 'public' })
+    const waiting = await queued(ctx, run.runId)
+    await decide(ctx, (await ctx.approvals.get(waiting.blocked.approvalRequest))!, 'approved')
+    expect((await finished(ctx, run.runId)).status).toBe('completed')
+    expect(workers.started.map((s) => [s.worker, s.requirement.schema, s.requirement.kind])).toEqual([
+      ['w:coder', 'work-requirement@1.2', 'code'], ['w:reviewer', 'work-requirement@1.2', 'review'],
+      ['w:coder', 'work-requirement@1.2', 'code'], ['w:reviewer', 'work-requirement@1.2', 'review'],
+    ])
+    expect(fixes(workers)).toBe(1)
   })
 
   it('ends the cycle on a rejection, and asks again on continue', async () => {

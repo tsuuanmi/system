@@ -53,6 +53,23 @@ describe('workflow specs', () => {
     expect(() => preflight([node('a', { variants: { Deep: {} } })])).toThrow(/variant name "Deep"/)
   })
 
+  it('keeps a step\'s kind of work, lets a variant change it, and refuses a kind that is no label or sits on a team or a source step (REQ-WRK-11, ADR-0056)', () => {
+    const nodes = [node('a', { kind: 'code', variants: { docs: { kind: 'docs' } } }), node('b', { dependsOn: ['a'] })]
+    const plain = resolve('t', nodes, {})
+    const docs = resolve('t', nodes, { variant: 'docs' })
+    expect(plain.nodes.map((n) => [n.nodeId, n.kind])).toEqual([['a', 'code'], ['b', undefined]])
+    expect(docs.nodes[0]!.kind).toBe('docs')
+    // The kind is part of what was admitted.
+    expect(docs.specHash).not.toBe(plain.specHash)
+    expect(resolve('t', [node('a')], {}).specHash).not.toBe(resolve('t', [node('a', { kind: 'code' })], {}).specHash)
+    expect(() => preflight([node('a', { kind: 'Code' })])).toThrow('node a: kind "Code" is not a kind of work')
+    expect(() => preflight([node('a', { kind: '' })])).toThrow('node a: kind "" is not a kind of work')
+    expect(() => preflight([node('a', { kind: null as never })])).toThrow('node a: kind null is not a kind of work')
+    expect(() => preflight([node('a', { variants: { docs: { kind: 'Docs work' } } })])).toThrow('node a, variant docs: invalid kind')
+    expect(() => preflight([node('team', { kind: 'code', team: { kind: 'brainstorm' } })])).toThrow('node team: a team has no kind')
+    expect(() => preflight([node('source', { kind: 'code', snapshot: true }), node('b', { dependsOn: ['source'] })])).toThrow('node source: a source step has no kind')
+  })
+
   it('gives an own-conversation node a persistent conversation of its own, and refuses two parallel nodes on the run\'s one conversation', () => {
     const fork = (conversation: NodeTemplate['conversation']) => [node('a'), node('b', { dependsOn: ['a'], conversation }), node('c', { dependsOn: ['a'], conversation }), node('d', { dependsOn: ['b', 'c'] })]
     const own = resolve('t', fork('own'), {})

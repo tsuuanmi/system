@@ -1,0 +1,33 @@
+{
+  "schema": "capability-descriptor@1.6",
+  "worker": "agent:writer-b",
+  "provider": "runtime-b",
+  "family": "family-b",
+  "account": {
+    "id": "runtime-b",
+    "group": "runtime-b",
+    "mode": "assigned"
+  },
+  "kinds": ["docs", "tests"],
+  "tier": "standard",
+  "quotaClass": "agent-plan",
+  "locality": "local",
+  "capabilities": [
+    {
+      "capability": "local-data",
+      "evidence": {
+        "kind": "probe",
+        "at": "2026-10-24T00:00:00Z"
+      }
+    },
+    {
+      "capability": "develop",
+      "evidence": {
+        "kind": "probe",
+        "at": "2026-10-24T00:00:00Z"
+      }
+    }
+  ],
+  "state": "ready",
+  "observedAt": "2026-10-24T00:00:00Z"
+}

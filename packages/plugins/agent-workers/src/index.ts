@@ -52,7 +52,7 @@ import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration } from './migrate.ts'
 import { Probes, refused } from './probes.ts'
 import {
-  type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, type DerivedWorker, deriveWorkers, MAX_CONCURRENT_PER_ACCOUNT, setsDerivedOnly,
+  type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT, setsDerivedOnly,
 } from './roles.ts'
 import { registerAccountTools } from './tools.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
@@ -115,6 +115,12 @@ export interface AgentWorkerConfig {
    * `read-only`, `family` is set, and `worktreePerRun` is off.
    */
   reviewMember?: boolean
+  /**
+   * The kinds of work the operator gives it (ADR-0056), such as `code` or `docs`: it takes only work
+   * whose step names one of them, never work that names none. Unset: it takes any work. Never with
+   * `reviewMember` (a member's steps name no kind).
+   */
+  kinds?: string[]
 }
 
 /** A Worker as this source runs it: a hand-named row, or one derived as account × role (`derived`). */
@@ -273,6 +279,67 @@ interface AccountGate { state: 'ready' | 'quota-exhausted' | 'unavailable'; unti
 /** The board task and project a run serves, as its reservation and usage record name them. */
 const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
+/**
+ * The row's Workers as its configuration names them (hand-named, or derived as account × role), and
+ * its runtimes' account settings, checked as the load checks them: a malformed Worker or role, a
+ * review member that is not read-only or names no family, malformed `kinds` (ADR-0056), Workers of
+ * one workspace that disagree on `worktreePerRun`. Throws `config_error`, naming the first problem.
+ */
+function configuredWorkers(config: Partial<Config>): { derived: boolean; workers: Map<string, WorkerSpec>; accounts: Map<string, AccountSetting> } {
+  const providers = config.providers ?? []
+  checkProviders(providers)
+  const derived = !!(config.roles?.length || config.assignments?.length)
+  if (derived && config.workers?.length) {
+    throw new ProviderError('config_error', 'agent-workers: workers (hand-named) and roles with assignments are two shapes of one row; load one of them (system account migrate prints the roles and assignments the hand-named Workers become)')
+  }
+  const derivedOnly = providers.find(setsDerivedOnly)
+  if (!derived && derivedOnly) {
+    throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, and limitCooldownSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
+  }
+  const workers = new Map<string, WorkerSpec>()
+  for (const worker of [...config.workers ?? [], ...derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []] as WorkerSpec[]) {
+    if (!worker.derived && !ID.test(worker.id)) throw new ProviderError('config_error', `agent Worker id ${worker.id} must match ${ID}`)
+    if (typeof worker.workspace !== 'string' || !isAbsolute(worker.workspace)) throw new ProviderError('config_error', `agent Worker ${worker.id}: workspace must be an absolute path`)
+    if (workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
+    if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
+    if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
+    if (worker.family !== undefined && (typeof worker.family !== 'string' || !worker.family.length || worker.family.length > 128)) throw new ProviderError('config_error', `agent Worker ${worker.id}: family must be 1 to 128 characters`)
+    if (worker.reviewMember) {
+      // A writer never reviews: a review is independent of the change (INV-15).
+      if (worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
+      // Members are kept apart by provider family, which a runtime's name does not tell (ADR-0027).
+      if (worker.family === undefined) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member names its provider family (family), the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart`)
+      // Its workspace is an empty directory outside any repository: a worktree per run is neither.
+      if (worker.worktreePerRun) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member works in an empty directory outside any repository, never a worktree per run (worktreePerRun)`)
+    }
+    const kinds = kindsProblem(worker.kinds, worker.reviewMember)
+    if (kinds) throw new ProviderError('config_error', `agent Worker ${worker.id}: kinds ${kinds}`)
+    // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
+    const other = [...workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
+    if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
+    workers.set(PREFIX + worker.id, worker)
+  }
+  try {
+    return { derived, workers, accounts: accountSettings(config.providers, 'agent-workers.providers') }
+  } catch (error) {
+    throw new ProviderError('config_error', (error as Error).message)
+  }
+}
+
+/**
+ * What the load would refuse in this row's Workers, before a host starts on it (`system check`):
+ * the first problem {@link configuredWorkers} finds, or none. What only the host can tell (a runtime,
+ * a sign-in, a repository) is checked when the Workers are probed.
+ */
+export function checkConfig(config: Partial<Config> = {}): string[] {
+  try {
+    configuredWorkers(config)
+    return []
+  } catch (error) {
+    return [(error as Error).message]
+  }
+}
+
 export class AgentWorkers extends Service {
   static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
 
@@ -294,6 +361,8 @@ export class AgentWorkers extends Service {
       limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down'),
       family: z.string().min(1).max(128).description('Its provider family (ADR-0027; default: the runtime): the same as other Workers\' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
+      // Not z.array: an omitted array would come back as [], a Worker given no kind at all; checked at load.
+      kinds: z.any().description('The kinds of work it takes (ADR-0056), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member'),
     })).default([]).description('Hand-named agent-runtime Workers (the shape before Workers are account × role): they run as before until system account migrate --apply, then are refused; never with roles or assignments. Each policy comes from here only (INV-6)'),
     roles: z.array(z.object({
       id: z.string().pattern(/^[a-z][a-z0-9-]{0,31}$/).required().description('Role id: its Workers are agent:<accountId>/<role>'),
@@ -303,6 +372,8 @@ export class AgentWorkers extends Service {
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).default('agent-plan'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace, as a hand-named Worker\'s'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family'),
+      // Not z.array, as a hand-named Worker's.
+      kinds: z.any().description('The kinds of work its Workers take (ADR-0056), as a hand-named Worker\'s; unset, any work. Not for a review member'),
       runtimes: z.dict(z.object({
         tools: z.array(z.string()),
         model: z.string(),
@@ -370,42 +441,11 @@ export class AgentWorkers extends Service {
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
     const providers = config.providers ?? []
-    checkProviders(providers)
+    const configured = configuredWorkers(config)
     this.providerOf = new Map(providers.map((p) => [p.provider, p]))
-    this.derived = !!(config.roles?.length || config.assignments?.length)
-    if (this.derived && config.workers?.length) {
-      throw new ProviderError('config_error', 'agent-workers: workers (hand-named) and roles with assignments are two shapes of one row; load one of them (system account migrate prints the roles and assignments the hand-named Workers become)')
-    }
-    const derivedOnly = providers.find(setsDerivedOnly)
-    if (!this.derived && derivedOnly) {
-      throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, and limitCooldownSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
-    }
-    const derived: WorkerSpec[] = this.derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []
-    for (const worker of [...config.workers ?? [], ...derived]) {
-      if (!(worker as WorkerSpec).derived && !ID.test(worker.id)) throw new ProviderError('config_error', `agent Worker id ${worker.id} must match ${ID}`)
-      if (!isAbsolute(worker.workspace)) throw new ProviderError('config_error', `agent Worker ${worker.id}: workspace must be an absolute path`)
-      if (this.workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
-      if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
-      if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
-      if (worker.family !== undefined && (typeof worker.family !== 'string' || !worker.family.length || worker.family.length > 128)) throw new ProviderError('config_error', `agent Worker ${worker.id}: family must be 1 to 128 characters`)
-      if (worker.reviewMember) {
-        // A writer never reviews: a review is independent of the change (INV-15).
-        if (worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
-        // Members are kept apart by provider family, which a runtime's name does not tell (ADR-0027).
-        if (worker.family === undefined) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member names its provider family (family), the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart`)
-        // Its workspace is an empty directory outside any repository: a worktree per run is neither.
-        if (worker.worktreePerRun) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member works in an empty directory outside any repository, never a worktree per run (worktreePerRun)`)
-      }
-      // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
-      const other = [...this.workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
-      if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
-      this.workers.set(PREFIX + worker.id, worker)
-    }
-    try {
-      this.accounts = accountSettings(config.providers, 'agent-workers.providers')
-    } catch (error) {
-      throw new ProviderError('config_error', (error as Error).message)
-    }
+    this.derived = configured.derived
+    for (const [id, worker] of configured.workers) this.workers.set(id, worker)
+    this.accounts = configured.accounts
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     this.worktrees = new Worktrees(ctx, config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees'))
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
@@ -607,8 +647,9 @@ export class AgentWorkers extends Service {
       const load = loads && worker.derived ? this.loadOf(worker, loads) : undefined
       const state = !ready ? 'unavailable' : pool === 'ready' && load && load.running >= load.slots ? 'busy' : pool
       return {
-        // The operator's family, else the runtime, who serves the work (ADR-0027).
-        schema: 'capability-descriptor@1.5', account,
+        // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
+        // the operator gives it, so it takes no other (ADR-0056).
+        schema: worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state, observedAt,
       }

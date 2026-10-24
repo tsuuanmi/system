@@ -66,6 +66,12 @@ export interface Script {
   validate?: string
   /** Whether the runtime proves its commands confined (default true): without it, no Worker proves `validate`. */
   executes?: boolean
+  /**
+   * Route by kind of work (ADR-0056), as docs/operations/examples/work-kinds.patch.yml does: the
+   * developer is given `code` work, and a second writer, `tester`, `docs` and `tests` work; the
+   * reviewer and the digest Worker are given none.
+   */
+  kinds?: boolean
 }
 
 /** The scripted agent runtime: every run asks its gate before each tool call, then acts as its role does. */
@@ -162,16 +168,19 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   git(repo, 'add', '.')
   git(repo, 'commit', '-q', '-m', 'init')
   const agent = new PilotAgent(script)
-  const worker = (id: string, sandbox: 'read-only' | 'workspace-write', tier: 'economy' | 'standard') => ({
-    id, runtime: 'scripted', workspace: repo, sandbox, tier, worktreePerRun: true, pool: POOL, account: 'plan',
+  const worker = (id: string, sandbox: 'read-only' | 'workspace-write', tier: 'economy' | 'standard', kinds?: string[]) => ({
+    id, runtime: 'scripted', workspace: repo, sandbox, tier, worktreePerRun: true, pool: POOL, account: 'plan', ...(kinds ? { kinds } : {}),
   })
+  const writers = script.kinds
+    ? [worker('developer', 'workspace-write', 'standard', ['code']), worker('tester', 'workspace-write', 'standard', ['docs', 'tests'])]
+    : [worker('developer', 'workspace-write', 'standard')]
   const ctx = new Context()
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }),
     ctx.plugin(StoreResources, { pools: [{ pool: POOL, account: 'plan', kind: 'programmatic', unknown: 'available', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }] }] }),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(AgentRuntimeRegistry),
-    ctx.plugin(AgentWorkers, { workers: [worker('developer', 'workspace-write', 'standard'), worker('reviewer', 'read-only', 'standard'), worker('digester', 'read-only', 'economy')], worktreeRoot: join(dir, 'worktrees') }),
+    ctx.plugin(AgentWorkers, { workers: [...writers, worker('reviewer', 'read-only', 'standard'), worker('digester', 'read-only', 'economy')], worktreeRoot: join(dir, 'worktrees') }),
     ctx.plugin(StoreBoard, { sweepSeconds: 0 }), ctx.plugin(StoreDigests, {}),
     ctx.plugin(Workflow, { retryDelayMs: 50, maxAttempts: 2, approvalPollSeconds: 1 }),
   ]

@@ -6,15 +6,19 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, optional `sources()` (how each source answered its last read, `WorkerSourceRead`), `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, optional `held(sessionId)` (why a session takes no input now, from its source; PROP-0013, ADR-0056), `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, held, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033; `account`, ADR-0052), `WorkerAccount`, `AccountMode`, `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`), `WorkScope`, `provesFor(offer, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure` (with `limitUntil`, ADR-0052), `AdmissionCheck`, `ADMISSION_CHECKS`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, optional `sources()` (how each source answered its last read, `WorkerSourceRead`), `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, optional `held(sessionId)` (why a session takes no input now, from its source; PROP-0013, ADR-0056), `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, held, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033; `account`, ADR-0052; `kinds`, ADR-0056), `WorkerAccount`, `AccountMode`, `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`; `kind`, ADR-0056), `WorkScope`, `provesFor(offer, requirement)`, `WORK_KIND`, `takesKind(worker, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure` (with `limitUntil`, ADR-0052), `AdmissionCheck`, `ADMISSION_CHECKS`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
-- The types mirror `capability-descriptor@1.5` (its optional `family`, an opaque
+- The types mirror `capability-descriptor@1.6` (its optional `family`, an opaque
   provider family; `maxInputChars`, the longest input the Worker takes; `load` and `cooldowns`;
-  a capability offer's `scope`; and the `account` it runs on, `{ id, group, mode, limitUntil? }`)
-  and `work-requirement@1.1` (its optional `scope`). A scoped
+  a capability offer's `scope`; the `account` it runs on, `{ id, group, mode, limitUntil? }`;
+  and the `kinds` of work the operator gives it) and `work-requirement@1.2` (its optional `scope`
+  and `kind`). A scoped
   offer proves its capability only for work whose requirement names that scope (`provesFor`,
   [scoped offers](../../docs/design/routing.md#scoped-offers),
-  [ADR-0049](../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)). The
+  [ADR-0049](../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)). A
+  Worker given kinds takes only work that names one of them; one given none takes any work
+  (`takesKind`, [work kinds](../../docs/design/routing.md#work-kinds),
+  [ADR-0056](../../docs/decisions/adr/0056-route-work-by-kind.md)). The
   schemas in `schemas/` are canonical. `RouteOptions`
   takes `restrict`, `exclude` (provider families no Worker may be of,
   [provider diversity](../../docs/design/routing.md#provider-diversity)), and
@@ -50,6 +54,9 @@ Routing **seam definition**
     each required capability no Worker proves;
   - scoped offers: an offer scoped to a kind of work proves its capability for that work only,
     and a refusal says it is scoped;
+  - work kinds: a Worker given kinds takes only work of those kinds, never work that names none,
+    one given none takes any, a kind proves no capability, a failure says no Worker takes the
+    kind, and kinds below `capability-descriptor@1.6` or `work-requirement@1.2` are refused;
   - the order: lowest tier, then quota class, then id;
   - restriction, determinism, and the decision artifacts;
   - a source that does not describe its Workers in time: routed past and named in the decision;

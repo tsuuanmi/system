@@ -12,7 +12,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
   type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, provesFor, type QuotaClass,
-  type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, type WorkerSourceRead, Workers,
+  type Rejection, type RouteOptions, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource, type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
 
 export * from '@tsuuanmi/system-workers-core'
@@ -228,13 +228,17 @@ export class WorkerRouter extends Workers {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
       // A capability no Worker proves now is the plainest reason, for example website-only work in a composition without website Workers.
       const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
+      // Next plainest: Workers prove all of it, and the operator gives each of them other kinds of work (ADR-0056).
+      const proving = workers.filter((w) => requirement.capabilities.every((c) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
+      const untaken = !unproven.length && proving.length > 0 && !proving.some((w) => takesKind(w, requirement))
       const limitUntil = waitUntil(limited)
       const why = unproven.length ? `no Worker proves ${unproven.join(', ')}`
+        : untaken ? `no Worker that proves ${requirement.capabilities.join(', ')} takes ${requirement.kind === undefined ? 'work that names no kind' : `${requirement.kind} work`}`
         : limitUntil ? `no Worker passes admission; the assigned accounts that could take it are at their limit, the first back at ${limitUntil}`
         : workers.length ? 'no Worker passes admission' : 'no Worker is registered'
       const decision = this.ctx.artifacts.recordDecision({
         decisionType: 'admission',
-        question: `Which Worker may take work needing ${requirement.capabilities.join(', ')} at tier ${requirement.tier.min} or above?`,
+        question: `Which Worker may take ${requirement.kind === undefined ? '' : `${requirement.kind} `}work needing ${requirement.capabilities.join(', ')} at tier ${requirement.tier.min} or above?`,
         inputs: [requirementRef],
         candidates: [
           ...rejections.map((r) => ({ option: r.worker, selected: false, reasons: r.failed.map((f) => f.reason) })),
@@ -259,7 +263,7 @@ export class WorkerRouter extends Workers {
     }, { producer, classification: requirement.data.classification })
     const route = this.ctx.artifacts.recordDecision({
       decisionType: 'route',
-      question: `Which Worker runs work needing ${requirement.capabilities.join(', ')}?`,
+      question: `Which Worker runs ${requirement.kind === undefined ? '' : `${requirement.kind} `}work needing ${requirement.capabilities.join(', ')}?`,
       inputs: [requirementRef, tier.id],
       candidates: [...workers.map((w) => {
         if (w === chosen) return { option: w.worker, selected: true, reasons: this.chosenReasons(w, requirement) }
@@ -356,6 +360,10 @@ export class WorkerRouter extends Workers {
       const scoped = worker.capabilities.filter((c) => missing.includes(c.capability) && c.scope !== undefined).map((c) => `${c.capability} only for ${c.scope} work`)
       fail('capability', `does not prove ${missing.join(', ')}${scoped.length ? ` (it proves ${scoped.join(', ')})` : ''}`)
     }
+    // A Worker the operator gives kinds takes work of those kinds only (ADR-0056); equality only.
+    if (!takesKind(worker, requirement)) {
+      fail('capability', `takes ${worker.kinds!.join(', ')} work only; this work ${requirement.kind === undefined ? 'names no kind' : `is ${requirement.kind} work`}`)
+    }
     // A site's usage limit on a capability the work needs (ADR-0034); a lapsed one no longer counts.
     const now = Date.now()
     const cooled = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now)
@@ -400,6 +408,7 @@ export class WorkerRouter extends Workers {
 
   private chosenReasons(worker: CapabilityDescriptor, requirement: WorkRequirement): string[] {
     const reasons = [`proves ${requirement.capabilities.join(', ')}${requirement.scope ? ` for ${requirement.scope} work` : ''}`, `lowest admissible tier ${worker.tier}`, `quota class ${worker.quotaClass}`]
+    if (requirement.kind !== undefined) reasons.push(worker.kinds ? `takes ${requirement.kind} work, one of its kinds` : 'takes work of any kind')
     if (worker.load) reasons.push(loadOf(worker.load))
     if ((this.config.priority ?? []).includes(worker.worker)) reasons.push('first in the configured priority list')
     return reasons
