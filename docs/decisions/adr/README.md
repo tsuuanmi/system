@@ -10,7 +10,7 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 |---|---|---|
 | [0001](0001-standalone-host.md) | `system` is a standalone host; other harnesses are clients or adapters | Superseded in part by 0018 |
 | [0002](0002-typescript-on-bun.md) | TypeScript on Bun, Node-compatible core | Superseded in part by 0018 (Node runtime) |
-| [0003](0003-sqlite-durable-store.md) | SQLite (WAL) + content-addressed blobs as the durable store | Accepted |
+| [0003](0003-sqlite-durable-store.md) | SQLite (WAL) + content-addressed blobs as the durable store | Accepted; amended 2026-10-12 (no blob store until a consumer exists) |
 | [0004](0004-single-workflow-runtime.md) | One workflow runtime combining DAG, input-hash durability, and lineage | Accepted |
 | [0005](0005-provider-runtime-interface.md) | Provider drivers behind one `ProviderDriver` interface | Accepted |
 | [0006](0006-protocol-introduction-gates.md) | Responses + Anthropic Messages + MCP now, ACP as Worker runtime, A2A deferred; no mirrored protocol objects | Accepted |
@@ -29,7 +29,7 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0019](0019-explicit-minimal-dsh-core.md) | Mount only the allow-listed DSH core rows; no `dsh-base` | Accepted |
 | [0020](0020-pinned-managed-chrome.md) | A pinned Chrome for Testing, installed by `system init`, when the host has no recent Chrome | Accepted |
 | [0021](0021-ui-operations-as-data.md) | Website UI operations are data (UI maps) resolved by a deterministic engine with bounded, verified self-healing | Accepted; amended 2026-10-19 (the overlay adds elements and error rules) |
-| [0022](0022-text-protocol-tool-calls-for-website-models.md) | Website models reach a client's tools through a text protocol in the turn (MCP tool inversion stays the target) | Accepted |
+| [0022](0022-text-protocol-tool-calls-for-website-models.md) | Website models reach a client's tools through a text protocol in the turn (MCP tool inversion stays the target) | Accepted; amended 2026-10-12 (calls go in a code block) |
 | [0023](0023-scoped-control-credentials.md) | Scoped static control credentials (`operator`, `client`, `model`) on loopback; OAuth deferred until CON-6 changes | Accepted |
 | [0024](0024-agent-workers-confined-for-reads.md) | Agent Workers are confined for reads; the DSH home is never readable (bubblewrap where a runtime's own sandbox does not confine reads) | Accepted; superseded in part by 0038 |
 | [0025](0025-api-first-composition.md) | An `api-first` preset in one bundle; website Workers and model gateways are opt-in there | Accepted |

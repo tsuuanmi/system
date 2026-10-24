@@ -3,6 +3,8 @@
 The `system` command: a thin wrapper around the pinned `dsh` launcher, which is
 the supported way to run a DSH harness
 ([ADR-0018](../../docs/decisions/adr/0018-build-on-dsh-core.md)).
+Every command and its flags are in the [CLI reference](../../docs/reference/cli.md);
+the table below says how this package carries them out.
 
 | Command | Does |
 |---|---|
@@ -16,12 +18,14 @@ the supported way to run a DSH harness
 | `system supersede <runId> <nodeId> (<text> \| -)` | replaces a completed step's result with a corrected one (MCP `supersede`); everything downstream runs again |
 | `system ui` | prints the operator web UI link (`/ui/#token=…`, the operator token in the fragment only): the approval queue's verdicts, accept or reject for the reviews of board tasks, runs with their steps and decision chains (approve, vote, stop, continue), the Board page's projects (pause, resume, close), the Roster page, and the Autonomy policy page (propose a change) ([web UI API](../../docs/reference/web-ui.md)) |
 | `system result <runId>` | waits for a run and prints its answer |
-| `system usage [<limit>]` | the 10 most recent runs, or `<limit>` (at most 500): per step, the Worker, tier, and quota class that served it, and the tokens a model Worker reported (usage report) |
+| `system usage [<limit>]` | the 10 most recent runs, or `<limit>` (at most 500): per step, the Worker, tier, and quota class that served it, the tokens a model Worker reported, and `usage unknown (<why>)` for a step whose usage the resource ledger could not count (usage report) |
 | `system report [--project <id>] [--since <time> \| --days <n>] [--until <time>] [--json]` | the baseline report of a period through the `report` tool, printed as its one-screen rendering (`--json`: the report itself); by default the last 7 days, the weekly investor report ([reports](../../docs/design/reports.md)) |
 | `system model key <NAME>` | stores a model route's API key, read from stdin (never from arguments), encrypted in the vault under the credential reference `<NAME>` the route's `apiKeyEnv` names (MCP `model_key`, operator scope) |
 | `system explain <runId\|artifact>` | a run's decision chain per step (egress, tier, route or admission, acceptance), or any artifact's input tree |
-| `system account login <id>` | opens the remote login desktop through the running profile (`account_login`). Prints the `ssh -L` command and URL, then waits until Save has stored the account (its revision increases) |
-| `system account list` / `system account save <id>` | call the running profile's `account_list` / `account_save` MCP tools, authenticated from the discovery file. Save runs after an interactive login |
+| `system account login <id>` | a website account: opens the remote login desktop through the running profile (`account_login`). Prints the `ssh -L` command and URL, then waits until Save has stored the account (its revision increases) |
+| `system account login <runtime> [--slot <n>]`, `system account login <accountId>`, `system account verify <accountId \| runtime --slot <n>> [--accept]`, `system account remove <accountId \| runtime --slot <n>>` | an agent account ([ADR-0051](../../docs/decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)), named by its id (it has a `:`) or by a runtime `account_agents` lists; any other name is a website account. A login takes a slot through `account_enroll` (`begin`), runs the runtime's own sign-in command in the slot's home in this terminal, without D-Bus, then records who signed in (`verify`); a slot 1 that just adopted the runtime's own home is verified as it is. Exit 0 when the account is `ready`. `remove` calls `account_remove` |
+| `system account migrate [--apply \| --rollback] [--stop <runtime>]…` | the move from hand-named agent Workers to Workers derived as account × role, through `account_migrate`: prints the plan and the new row (exit 1 while something stops it), applies it, or undoes it ([runbook](../../docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)) |
+| `system account list` / `system account save <id>` | call the running profile's `account_list` / `account_save` MCP tools, authenticated from the discovery file. The list adds each website account's limits in force (`account_cooldowns`) and the agent accounts beside them (`account_agents`), when those tools are served. Save runs after an interactive login |
 | `system browser install` | installs the managed Chrome pinned in `chrome.lock.json` under `<DSH_HOME>/system/browsers` |
 | `system start [dsh args]` | runs `dsh --profile system …` with `DSH_TELEMETRY_DISABLED=1`. Like `init`, it first refuses a Node runtime outside [CON-2](../../docs/requirements/constraints.md) (the range and a `node:sqlite` NUL round trip) with the reason and exit 1, before writing or spawning anything |
 | `system mcp-config claude\|codex` | prints the client configuration from the running profile's discovery file. For Claude Code it is a `claude mcp add-json --scope user` command whose `headersHelper` runs `system mcp-headers`, so the token never sits in Claude Code's config. For Codex it is a `[mcp_servers.system]` block that runs `system mcp-stdio`. The token is never printed into the command |
@@ -37,6 +41,13 @@ the supported way to run a DSH harness
 | `system mcp-token --scope model` | prints only the model token, for example `export SYSTEM_MCP_TOKEN="$(system mcp-token --scope model)"` (a Codex Worker on the Responses gateway). No other scope is printed: the CLI keeps the operator token to itself, and `mcp-headers` / `mcp-stdio` read the client token on each connection. Refused while both gateway rows are off |
 | `system mcp-stdio` | an MCP server on stdio that forwards tool listing and calls to the running profile, authenticating with the client token. Codex (and any client without a header helper) runs it as a local server, so no token sits in its config or environment |
 | `system mcp-headers` | prints `{"Authorization": "Bearer …"}` with the client token for Claude Code's `headersHelper`, read from its `0600` token file on every connection |
+| `system conversations [--state <s>]`, `system conversation inspect <account> <binding>` | the website conversations the profile recorded, as JSON (MCP `conversation_list`), and one conversation's page and menu outlined, choosing nothing (`conversation_inspect`) |
+
+The other commands (`brainstorm`, `review`, `vote`, `watch`, `artifact`, `evidence`, `check`,
+and the website `account` commands `credentials`, `relogin`, `code`, `clear-cooldown`, and
+`verify <id>`) each call the running profile's MCP tool of the same purpose, or for `check` load
+the profile against this install's code; the [CLI reference](../../docs/reference/cli.md) says
+what each does.
 
 **Gateway helpers.** The gateway rows are off in the default composition
 (PROP-0004). `claude-env`, `codex-env`, and `mcp-token --scope model` read the
@@ -60,3 +71,6 @@ scope matrix, and [`tests/api-first.e2e.ts`](tests/api-first.e2e.ts) the
 [`tests/surface.e2e.ts`](tests/surface.e2e.ts) holds the default composition's MCP
 surface to its token budget
 ([token budget](../plugins/mcp-server/README.md#token-budget)).
+[`tests/upgrade/upgrade.e2e.ts`](tests/upgrade/upgrade.e2e.ts) boots the shipped profile on
+each seeded store fixture (`tests/upgrade/fixtures`, generated from a release's code, never
+edited): old runs still answer `explain` and `result`, and every record validates.

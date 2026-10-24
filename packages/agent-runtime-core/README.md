@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`, `confinement`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).

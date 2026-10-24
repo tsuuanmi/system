@@ -2,7 +2,10 @@
 
 - **Layering.** A package imports only from packages in the same layer
   or a lower one ([layer map](../architecture/README.md#layer-map)). No CI rule
-  checks this yet, so reviewers do.
+  refuses an upward dependency, so reviewers check it. The generated
+  [package graph](../architecture/packages.md#seam-edges-that-point-up-a-layer)
+  lists every seam edge that points up a layer, so `check:packages` makes a new one
+  a visible change.
 - **Small modules.** Provider drivers, gateways, and engines are split by
   mechanism. A file that grows past roughly 800 lines is a design smell to address.
   The reference repos' multi-thousand-line files are the counterexample.

@@ -1,6 +1,6 @@
 # ADR-0003: SQLite (WAL) with content-addressed blobs as the durable store
 
-- **Status:** Accepted (2026-10-11, with PROP-0001)
+- **Status:** Accepted (2026-10-11, with PROP-0001); amended 2026-10-12 (no blob store until a consumer exists)
 - **Date:** 2026-10-11
 - **Related:** PROP-0001, QA-4, INV-4
 

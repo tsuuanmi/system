@@ -1,6 +1,6 @@
 # ADR-0022: Website models reach a client's tools through a text protocol in the turn
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-12 (calls go in a code block)
 - **Date:** 2026-10-12
 - **Related:** [ADR-0009](0009-claude-and-codex-first-class.md),
   [gateways](../../design/gateways.md#mcp-tool-inversion),

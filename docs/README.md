@@ -29,14 +29,15 @@ other documents link to it instead of repeating it.
 
 | To … | Read |
 |---|---|
-| run or recover the built system | [operations](operations/README.md): runbooks (first start, a waiting board task, a review, an expired request, a policy change, a limited pool, a run's worktree) and playbooks (a stuck run, quota, a provider UI change) |
+| run or recover the built system | [operations](operations/README.md): runbooks for routine procedures (first start, accounts and agent accounts, the board, the approval queue, the resource ledger, upgrades), the Base pilot, and playbooks for incidents (a stuck run, quota, a provider UI change) |
 | know what the Base release (v0.8) must deliver, and what is built | [release scope](requirements/release-scope.md#base-v08), [PROP-0010](proposals/0010-base-version.md), the [roadmap](proposals/roadmap.md) |
-| understand the board, the approval queue, or the resource ledger | [board](design/board.md), [approvals](design/approvals.md), [resources](design/resources.md), their [record semantics](reference/schemas.md), and the package READMEs they name |
-| understand the feedback loop (experiments, evaluations, verdicts, lessons) | [PROP-0011](proposals/0011-feedback-loop.md), [experiments](design/experiments.md), [evaluations](design/evaluations.md), [statistics](design/statistics.md), [ADR-0045](decisions/adr/0045-feedback-loop-guarantee-seams.md), [ADR-0046](decisions/adr/0046-evaluation-and-promotion-integrity.md) |
+| understand the board, the approval queue, the resource ledger, digests, or the plugin host | [board](design/board.md), [approvals](design/approvals.md), [resources](design/resources.md), [digests](design/digests.md), [plugin host](design/plugin-host.md), their [record semantics](reference/schemas.md), and the package READMEs they name |
+| add agent Workers, or enroll several sign-ins of one agent runtime | [agent runtimes](design/agent-runtimes.md) and its [agent accounts](design/agent-runtimes.md#agent-accounts), [PROP-0012](proposals/0012-agent-accounts.md), the [runbook](operations/runbooks.md#agent-workers) |
+| understand the feedback loop (experiments, evaluations, verdicts, lessons) | [PROP-0011](proposals/0011-feedback-loop.md), [experiments](design/experiments.md), [evaluations](design/evaluations.md), [statistics](design/statistics.md), [ADR-0045](decisions/adr/0045-feedback-loop-guarantee-seams.md), [ADR-0046](decisions/adr/0046-evaluation-and-promotion-integrity.md); what is built: the [roadmap](proposals/roadmap.md#feedback-loop-prop-0011) |
 | see every Worker: its account, role, availability, current work, and quota | [roster](design/roster.md): MCP `roster`, `system roster`, the `/ui` Roster page |
 | call a tool or use the operator page | [MCP tools](reference/mcp-tools.md), [web UI API](reference/web-ui.md), [CLI](reference/cli.md) |
 | run an experiment on the live install | [experiments](validation/experiments/README.md): lead agnosticism, worker agnosticism on `review` (its pre-registered records) |
-| see why the core is shaped this way | [ADR-0036](decisions/adr/0036-guarantee-core-and-capability-plugins.md) to [ADR-0039](decisions/adr/0039-base-guarantee-seam-contract-changes.md) |
+| see why the core is shaped this way, and each decision since | [ADR-0036](decisions/adr/0036-guarantee-core-and-capability-plugins.md) (the guarantee core and capability plugins) and [ADR-0037](decisions/adr/0037-schema-and-protocol-first.md) (schema and protocol first), then the [ADR index](decisions/adr/README.md), one line per decision |
 
 ## Authority and durability
 

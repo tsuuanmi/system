@@ -81,7 +81,7 @@ sources, 50 claims checked, `maxClaims` kept (default 20).
 ## The Worker
 
 The provider asks `ctx.workers` for work, never for a Worker by name (INV-11): capabilities
-`review` and `local-data`, which only a read-only agent Worker proves today
+`review` and `local-data`, which only a read-only agent Worker proves
 ([routing](routing.md#capability-vocabulary)), on the configured tier as both its minimum and its
 maximum (`tier`, default `economy`; [once on `standard`](#one-escalation) after an escalation), at
 the sources' strictest classification. With the agent

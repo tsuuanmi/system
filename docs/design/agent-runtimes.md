@@ -6,15 +6,21 @@
 > Implemented in [`agent-runtime-core`](../../packages/agent-runtime-core/README.md),
 > [`agent-workers`](../../packages/plugins/agent-workers/README.md), and the four runtime
 > plugins below; differs from target: `persistent-conversation` rests on the probe's `resume`
-> flag, not on a resume conformance test (planned), or, for a review member's steps on a runtime
+> flag, not on a resume conformance test, or, for a review member's steps on a runtime
 > without it, on the source's exact replay; a started run is never reconciled from the
 > agent's own records (it fails as `reconciliation_failed` once a liveness verdict finds it gone,
 > [restart and liveness](#restart-and-liveness)); only Claude Code reports its agent process, so
-> another runtime's started runs reach the operator as `unknown`; evidence beyond the final message
+> another runtime's started runs reach the operator as `unknown`; its usage is not reconciled from
+> the agent's session transcript; evidence beyond the final message
 > and the workspace's git subject is not stored; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
-> Workers; the Antigravity CLI gates only on an agy version verified live (1.4.6), and offers no
-> sandbox on any other.
+> Workers; the Antigravity CLI gates only on an agy version verified live (1.4.6), offers no
+> sandbox on any other, and has no [identity reader](#identity-readers); the Codex and Claude Code
+> readers rest on the fields seen on this host and on fixtures, not on PROP-0012 phase A's
+> supervised check on the operator's real accounts; and until the operator applies the
+> [move from hand-named rows](#migration-from-hand-named-rows) (PROP-0012's migration step 5),
+> hand-named Workers run in their runtime's own home, also while its account is `unverified`
+> (REQ-ACC-11 holds for derived Workers).
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
 counterpart of the [gateways](gateways.md), where the same agents act as clients. The
@@ -46,10 +52,12 @@ abstract class AgentRuntimes extends Service {     // ctx.agentRuntimes
   abstract register(provider: AgentRuntimeProvider): void;  // for the plugin's lifetime
   abstract get(kind: string): AgentRuntimeProvider | undefined;
   abstract list(): string[];
+  abstract confinement(bind?: { readOnly?: string[]; writable?: string[] }): Confinement;  // the read confinement (below)
 }
 
 interface AgentRuntimeProvider {
   readonly kind: string;                    // "claude-agent-sdk", "codex-sdk", "acp:<name>", "antigravity-cli"
+  readonly home?: string;                   // its own configured home, adopted as slot 1 (below)
   probe(options?: { home?: string }): Promise<RuntimeEvidence>;  // a named home: through probeIn only
   run(spec: RunSpec, signal: AbortSignal,
       onHandle?: (nativeHandle: string) => void,
@@ -319,7 +327,7 @@ Several sign-ins per runtime are told apart by who is signed in, never by a name
   names the home and no session bus; a run in a named home runs, and a relative one is refused.
   Every provider also passes the provider suite's refusal of a home it does not run in.
   `FakeAgentRuntime` (scripted homes) passes both.
-- **One account, every role** (PROP-0012 phase C, built). The Workers of one account are its
+- **One account, every role** (PROP-0012 phase C). The Workers of one account are its
   `siblings`: a derived Worker's account is its own ([below](#workers--account--role)); hand-named
   Workers run in their runtime's one home, so all of a runtime's are one account, whose
   `account.id` is the runtime. A cooldown or a closed pool of any of them holds them all
@@ -342,7 +350,7 @@ operator's forwarded variables. Only the keyed hash (and a masked email) leaves 
 
 - **Version-pinned** as agy's hook is ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)):
   `VERIFIED_IDENTITY_VERSIONS` in each runtime; on any other version a reading is `unverified`.
-- **Evidence, and what is still owed.** The file and field names were seen on this host (two Codex
+- **Evidence.** The file and field names were seen on this host (two Codex
   homes signed in as two accounts showed two `tokens.account_id`; values were never read into any
   record), and each reader is tested against redacted fixtures of that shape and passes the
   identity suite. **Phase A's supervised check on the operator's real accounts is still owed**: that
@@ -552,7 +560,7 @@ What a run consumed comes from the runtime's own objective numbers, never from t
 them in provider-neutral names (`RunMetering`); a run that fails attaches them to its error
 (`withMetering`), so a failed or aborted run is metered too. The provider conformance suite
 checks that what a provider reports holds together: input includes its cached part, and
-per-model counts sum to the totals. A provider that reports nothing passes. Today the Claude
+per-model counts sum to the totals. A provider that reports nothing passes. The Claude
 Agent SDK provider reports usage (from the result's `modelUsage`) and rate-limit observations
 ([its README](../../packages/plugins/runtime-claude-agent-sdk/README.md)); the Antigravity CLI
 provider reports turns, usage from agy's own result (normalized by the one reading whose sum is
@@ -686,7 +694,7 @@ source never waits for a re-probe in a describe:
 | `review` | the sandbox is `read-only`: a review is independent of the change ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)) |
 | `develop` | the sandbox is `workspace-write` |
 | `validate` | the sandbox is `workspace-write` and the probe reports `executes` ([confined commands](#confined-commands)) |
-| `persistent-conversation` | the probe reports `resume`. Target: a resume conformance test passes (planned). This is what qualifies a runtime as a long-lived [team member](teams.md#membership-model-a) |
+| `persistent-conversation` | the probe reports `resume`. Target: a resume conformance test passes. This is what qualifies a runtime as a long-lived [team member](teams.md#membership-model-a) |
 | `reason`, for a review member's steps only | the Worker is under the [review-member profile](#review-members) (`reviewMember`, read-only), granted by the profile while it is enforced: the Worker is ready, so its runtime enforces the read-only sandbox, `readsConfined`, and `gatesToolCalls` |
 | `persistent-conversation`, for a review member's steps only | the Worker is under the profile and the probe does not report `resume`: the source keeps the member's conversation by an exact, recorded replay (evidence `conformance`) |
 
@@ -751,7 +759,8 @@ is off.
 - **Idempotency.** Every run is keyed by a logical request id. Target: where the agent writes
   a local session or rollout record, reconciliation reads it before restarting a run. Today a
   run that started before a stop is never run again: once a [liveness verdict](#restart-and-liveness)
-  finds it gone, it fails as `reconciliation_failed` and names its native session. A run whose
+  finds it gone, it fails as
+  `reconciliation_failed` and names its native session. A run whose
   lease another process holds is looked at again when that lease would expire, so a crashed
   holder never strands it.
 - **Completion.** The SDK's terminal event means *provider terminal*, not acceptance. The

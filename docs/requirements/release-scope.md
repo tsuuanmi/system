@@ -67,7 +67,7 @@ for free. The Responses and Messages gateways, which make `system` look like a
 
 The MVP research flow is a **static two-node DAG** that runs on the real engine.
 It is a subset of the engine, not separate code
-([ADR-0012](../decisions/adr/0012-dag-execution-model.md), INV-1). It is now the
+([ADR-0012](../decisions/adr/0012-dag-execution-model.md), INV-1). It was the
 built-in `deep-research` template, which PROP-0004 removed; the name `research` went to the
 scientific-research procedure (production-ready), whose `deep` variant reviews with Deep
 research:
@@ -192,10 +192,10 @@ Claude Code Workers under the operator's Claude Max plan.
 | Area | Adds |
 |---|---|
 | Specification | a schema for every new record and payload, MCP tool input and output included; a definition, a protocol, and a conformance suite for every new seam; conformance suites for the existing guarantee seams (ADR-0037) |
-| Core | `resources` (usage records, limit states), `board` (projects with charters, board tasks), `approvals` (autonomy policy, batched queue), plugin manifests with a recorded lifecycle state (REQ-HOST-7), run budgets, the crash suite at every reconcile point |
+| Core | `resources` (usage records, limit states), `board` (projects with charters, board tasks), `approvals` (autonomy policy, batched queue), plugin manifests with a recorded lifecycle state (REQ-HOST-7), a board task's budget reserved before each step of its run ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md)), the crash suite at every reconcile point |
 | Workers | Claude Code Workers on by default: a workspace per writing task, remediation through the gate, every agent's credential directories hidden, commands confined to the workspace (`validate`), token usage in `agent-result@1.2`, briefs (`brief@1.0`) |
 | Families | `digest@1.0` by a read-only Claude Code Worker, and a second digest provider to replace it by configuration (exit criterion 6); the `algorithm-development` template |
-| Surface | MCP tools `board_*`, `approvals_*`, `resources_*`; the board and the queue on `/ui`; a weekly investor report |
+| Surface | MCP tools `board_*`, `approvals_*`, `resources_*`, `digests_*`, and `report`; the board and the queue on `/ui`; a weekly investor report |
 
 ### Rows the pilot turns on
 

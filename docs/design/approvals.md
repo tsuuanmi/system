@@ -17,7 +17,10 @@
 > ([`web-ui`](../../packages/plugins/web-ui/README.md), [API](../reference/web-ui.md)); a
 > Worker's tool calls pass the gate of [`agent-workers`](../../packages/plugins/agent-workers/README.md),
 > which [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md)
-> compiles to a PreToolUse hook. The [workflow engine](workflow-engine.md) consumes it too: a
+> compiles to a PreToolUse hook, and
+> [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) and
+> [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) ask through
+> a command hook bridged to the run. The [workflow engine](workflow-engine.md) consumes it too: a
 > remediation fix's gate asks it ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)),
 > an approved deferred call's session is continued
 > ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), and a plain run that wrote

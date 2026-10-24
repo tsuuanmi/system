@@ -117,8 +117,10 @@ approval queue, and engine under the bundle's own default studio policy, for thr
 exact hash and applied only on approval, with its `policy-change` decision, a waiting board task
 re-gated by the board's next sweep; a rejection that changes nothing; a restart that keeps the
 applied set, a changed configuration that refuses the queue until it supersedes the stored set; a
-client token refused; proposals the load-time or version rules refuse; and, with a browser, the
-policy page's diff, a proposal, its queue entry, and its approval.
+client token refused; proposals the load-time or version rules refuse; a change the queue proposed
+itself, shown with its origin and applied only on the operator's approval; and, with a browser,
+the policy page's diff, a proposal, its queue entry, and its approval, and a queue entry that says
+the queue proposed the change, and why.
 [`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
 client token, bound to the subject shown, accepted to done; a rejection as another attempt; and a

@@ -9,20 +9,12 @@ the **request guard** every client endpoint shares, and the **roster** every sur
 | `ctx.mcp` | abstract `McpTools` with `tool(name, spec, handler)`, plus `ToolSpec` (with its `scope`), `ToolScope`, `ToolHandler`, and `ToolContext` (the caller's scope), and `reply` and `outline` for a handler's answer ([replies](#replies)) | `@tsuuanmi/system-mcp-server` |
 
 Plugins that contribute tools depend on this package only, so the
-provider-runtime layer never imports the gateway's implementation:
-
-| Contributor | Tools |
-|---|---|
-| `login` | `account_list`, `account_login`, `account_set_credentials`, `account_relogin`, `account_code`, `account_save` |
-| `turns` | `account_probe` |
-| `workflow` | `ask`, `research`, `run`, `approve`, `stop`, `drain`, `resume`, `continue`, `delete`, `supersede`, `result`, `usage`, `explain` |
-| `worker-sessions` | `session_send`, `session_inbox` |
-| `resources` | `resources_pools`, `resources_usage` |
-| `mcp-server` itself | `status`, `roster` |
+provider-runtime layer never imports the gateway's implementation.
+The tools each plugin contributes and their contracts are in
+[MCP tools](../../docs/reference/mcp-tools.md).
 
 Each tool declares the scope that may call it; one that declares none is
-operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The exact
-contracts are in [MCP tools](../../docs/reference/mcp-tools.md). The client-protocol
+operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The client-protocol
 gateways are plain plugins and use no seam; they share the
 [`gateway-turns`](../gateway-turns/README.md) library. The
 conformance suite is [`conformance/mcp-tools.ts`](conformance/mcp-tools.ts): a
@@ -61,7 +53,7 @@ MCP endpoint, both protocol gateways (through
     result names the matched token's scope (`{ ok: true, scope }`).
     `x-api-key` is accepted only with `apiKeyHeader` (Anthropic clients). An
     empty token never matches.
-- **`scopeTokens(dir)`** reads every scope's token, creating a missing one (32
+- **`scopeTokens(dir)`** (one scope's: `scopeToken(dir, scope)`) reads every scope's token, creating a missing one (32
   random bytes, owner-only), as base64url; **`tokenFile(dir, scope)`** is its
   path, `<dir>/<scope>.token`. The scopes are `SCOPES`
   ([ADR-0023](../../docs/decisions/adr/0023-scoped-control-credentials.md),

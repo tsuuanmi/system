@@ -17,8 +17,11 @@ It is ported from tsuuanmi/internet's receipt store, and its tests were ported f
     (the `turns` retention purge, INV-9).
 - **Records:** validated against [`provider-turn-receipt@1.0`](../../../schemas/provider-turn-receipt.v1.json)
   on every write.
+- **Config:** `maxResubmits`, the bound on resubmissions per receipt (default 2, the schema's
+  maximum).
 - **Injects:** `store`, `artifacts`.
-- The conformance suite is [`conformance/turn-receipts.ts`](conformance/turn-receipts.ts):
+- The conformance suite is [`conformance/turn-receipts.ts`](conformance/turn-receipts.ts), at
+  contract 1.0:
   - `submit` persists a schema-valid `SUBMITTED` receipt, keyed by account,
     session, and request id, and refuses an empty part of that identity;
   - a reused request id with another prompt or boundary is refused; at most two

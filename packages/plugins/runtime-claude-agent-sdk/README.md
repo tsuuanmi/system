@@ -144,8 +144,9 @@ installed.
     `Date.now() / 1000`, Claude Code 2.1.308), reported in ISO time and
     dropped when it is more than 400 days from now; `utilization` is a
     fraction, reported as `usedPercentage`. An event without a
-    `rateLimitType` names no window and is not reported; overage fields are
-    not read.
+    `rateLimitType` names no window and is not reported, except a rejection:
+    it is reported as window `*`, which no configuration maps, so the ledger
+    closes every window of the pool. Overage fields are not read.
 - **Config:** `executable` (default: `claude` on PATH; keep it outside the
   hidden paths, `~/.claude/local` among them); `home`, the Workers' Claude Code
   home (absolute; default `<DSH_HOME>/system/claude-home`); `forwardEnv`,
@@ -163,6 +164,8 @@ installed.
   ([dependency register](../../../docs/engineering/dependencies.md)). Its
   sandbox ships in Claude Code itself; nothing new is depended on.
 - **Dependencies:** `@anthropic-ai/claude-agent-sdk`, `agent-runtime-core`
-  (`askToolGate`, `childEnvironment`, `confinedCommand`, `proveConfinement`), `system-libs`
+  (`askToolGate`, `childEnvironment`, `confinedCommand`, `proveConfinement`,
+  `withMetering`, and for a named home and its identity `homeProblem`,
+  `identityHmac`, `maskEmail`, `readHomeJson`), `system-libs`
   (`dshHome`, `ensurePrivateDir`), `provider-core`.
 - **Injects:** `agentRuntimes`.

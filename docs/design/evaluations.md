@@ -172,6 +172,6 @@ recorded plus the next reservation must stay within the funded lines.
 ## Conformance
 
 [`evaluations-core/conformance/evaluations.ts`](../../packages/evaluations-core/conformance/evaluations.ts),
-8 scenarios at contract 1.0, run against the fake engine over the experiments fake. The
-store-backed provider (F4) runs the same suite, its `World` backed by board tasks served by
+8 scenarios at contract 1.0, run against the fake engine over the experiments fake; a
+store-backed provider (F4) will run the same suite, its `World` backed by board tasks served by
 workflow runs on scripted Workers.

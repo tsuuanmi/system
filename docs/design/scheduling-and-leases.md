@@ -12,9 +12,12 @@
 
 ## Per-account scheduler
 
-There is one scheduler per account (and one per agent Worker, with capacity 1).
+There is one scheduler per account: a website account's, and an agent account's, which runs its
+Workers' runs one per Worker ([agent runtimes](agent-runtimes.md#workers--account--role)). A
+hand-named agent Worker has one of its own, with capacity 1.
 
-- **Capacity:** `maxConcurrentTurnsPerAccount` (default 2).
+- **Capacity:** `maxConcurrentTurnsPerAccount` for a website account (default 2);
+  `maxConcurrentRunsPerAccount` for an agent account (default 1).
 - **Ordering:** turns in the same conversation session run strictly in order.
   Turns from different sessions may run in parallel up to capacity. The order is
   decided from durable state, so it holds across processes and restarts: a later
@@ -22,7 +25,7 @@ There is one scheduler per account (and one per agent Worker, with capacity 1).
   whose lease a crashed process still holds.
 - **Exclusive fence:** `runExclusive(job)` waits for every earlier turn to finish,
   runs `job` alone, then releases later turns (FIFO). It is meant for visible
-  runs and account close; nothing calls it yet. Login does not take it: a
+  runs and account close. Login does not take it: a
   relogin runs inside a turn that already holds a slot, so the fence would wait
   on itself. A sign-in that races a turn is settled by the account revision
   instead ([browser runtime](browser-runtime.md): the turn's write-back is

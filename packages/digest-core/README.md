@@ -8,12 +8,12 @@ changes by a versioned definition and this conformance suite
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.digests` | abstract `Digests` with `request({ sources, key? })`, `get(requestId)`, `wait(requestId, timeoutMs)`; `DigestRequest`, `DigestView`, `DigestState`, `DigestBody`, `DigestClaim`, `DigestError`, `DIGEST_LIMITS`; the quote check `quoteCheck(draft, sources, read, maxClaims)` (with why there is no digest, `QuoteFailure`), the one escalation `escalation(request, check, answer)` (`ESCALATION_TIER`), and the settling decision `settlement(request, outcome)` every provider applies; the MCP tools every provider serves, `registerDigestTools(ctx, digests)` (`digests_request`, `digests_get`; `digestToolHandlers`, `digestTool`); `DIGESTS_CONTRACT` (1.1) | [`digest`](../plugins/digest/README.md) (on `ctx.store`, its row on); [`digest-extractive`](../plugins/digest-extractive/README.md) (on `ctx.store`, extractive-first, its row off); the fake `FakeDigests` |
+| `ctx.digests` | abstract `Digests` with `request({ sources, key? })`, `get(requestId)`, `wait(requestId, timeoutMs)`; `DigestRequest`, `DigestView`, `DigestState`, `DigestBody`, `DigestClaim`, `DigestError`, `DIGEST_LIMITS`; the quote check `quoteCheck(draft, sources, read, maxClaims)` (with why there is no digest, `QuoteFailure`), the one escalation `escalation(request, check, answer)` (`ESCALATION_TIER`), and the settling decision `settlement(request, outcome)` every provider applies; the MCP tools every provider serves, `registerDigestTools(ctx, digests)` (`digests_request`, `digests_get`; `DIGEST_TOOLS`, `DIGEST_TOOL_INPUTS`, `digestToolHandlers`, `digestTool`); `DIGESTS_CONTRACT` (1.1) | [`digest`](../plugins/digest/README.md) (on `ctx.store`, its row on); [`digest-extractive`](../plugins/digest-extractive/README.md) (on `ctx.store`, extractive-first, its row off); the fake `FakeDigests` |
 
 - The types mirror `digest@1.0` and `mcp-digests@1.1`; the schemas in `schemas/` are canonical.
   It depends on Cordis, [`libs`](../libs/README.md) (`bodyText`, the text a quote is checked
   against, which a brief renders too; the schema registry), and the `ctx.mcp` definition in
-  [`gateway-core`](../gateway-core/README.md), for the tools.
+  [`gateway-core`](../gateway-core/README.md) with `zod` (a peer), for the tools.
 - **The MCP tools** belong to the seam, not to a provider: each provider registers them through
   `registerDigestTools` from `ctx.inject(['mcp'], …)`, so replacing the provider keeps the lead's
   tools as they are. Each call's input and structured output are checked against

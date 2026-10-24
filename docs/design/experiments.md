@@ -227,5 +227,5 @@ makes it history, shown as possibly stale:
 ## Conformance
 
 [`experiments-core/conformance/experiments.ts`](../../packages/experiments-core/conformance/experiments.ts),
-11 scenarios at contract 1.0, run against the fake provider. The store-backed provider (F3) runs
-the same suite.
+11 scenarios at contract 1.0, run against the fake provider; a store-backed provider (F3) will run the same
+suite.

@@ -13,13 +13,15 @@ Capability **seam definition** for API and local models
   output bound of every call (INV-9), and an optional opaque `family`, the
   provider family of its Worker. How a provider reaches the model stays
   with the provider. It may also set its own session bounds
-  (`maxSessionTurns`, `maxHistoryChars`).
+  (`maxSessionTurns`, `maxHistoryChars`) and `maxInputChars`, the longest prompt it is sent
+  ([ADR-0032](../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
 - A request's `history` is a session's earlier turns, in order, as user and
   assistant text. A provider sends them before the prompt.
 - No vendor, model, or library is named here
   ([INV-11](../../docs/architecture/invariants.md#inv-11-no-tool-lock-in)).
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-workers-core` (`Tier`).
-- The conformance suite is [`conformance/models.ts`](conformance/models.ts):
+- The conformance suite is [`conformance/models.ts`](conformance/models.ts), unversioned, so
+  the seam's contract is 1.0:
   - the catalog listed by id with its routing attributes and availability, each
     entry with a family;
   - a completion with text, token usage, and finish;

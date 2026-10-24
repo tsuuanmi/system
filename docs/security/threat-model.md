@@ -8,10 +8,8 @@
 > [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md))
 > and `/admin/*` routes.
 >
-> The default composition mounts the Claude Code agent rows (PROP-0010 B3) with no Worker, and
-> none of the Codex, ACP, and Antigravity CLI rows, nor the model gateways (PROP-0004); the Codex and
-> Antigravity CLI rows can be turned on ([Codex Workers](../operations/runbooks.md#codex-workers),
-> [Antigravity CLI Workers](../operations/runbooks.md#antigravity-cli-workers)). The agent threats (an agent
+> Which rows the default composition mounts, and which it leaves off, is in the
+> [bundle](../../packages/system-bundle/README.md). The agent threats (an agent
 > process reading host state, or running commands) arise once the operator
 > [adds a Worker](../operations/runbooks.md#agent-workers); the gateway threats (a gateway
 > client, the model token in use) once the operator
@@ -32,13 +30,15 @@
   provider reads, and any other secret the operator exported.
 - API keys of model routes, stored encrypted in the vault under the credential reference the
   route names (`system model key`); the configuration names only the reference.
+- Agent accounts: each sign-in in a home of its own under the DSH home, and the per-install key
+  in the vault that agent account ids are hashed with.
 
 ## Trust boundaries
 
 | Zone | Who |
 |---|---|
 | trusted | the operator, the host process, the account vault, operator configuration, plugins the operator installed |
-| semi-trusted | local clients (Codex, Claude Code, MCP agents), trusted for their own envelope, sandbox, and approvals; agent-runtime Workers (Claude Code, Codex, ACP agents), confined for reads by bubblewrap and for writes and commands by their own runtime's sandbox, under the operator's policy |
+| semi-trusted | local clients (Codex, Claude Code, MCP agents), trusted for their own envelope, sandbox, and approvals; agent-runtime Workers (Claude Code, Codex, ACP agents, the Antigravity CLI), confined for reads by bubblewrap and for writes and commands by their own runtime's sandbox, each tool call judged by the run's gate, under the operator's policy |
 | untrusted | provider websites, model output, tool output, repository content, web pages, other local processes, other users on the machine |
 
 ## Threats and controls
@@ -105,11 +105,23 @@
   scrub of the daemon environment (`childEnvironment` in
   [`agent-runtime-core`](../../packages/agent-runtime-core/README.md)): names
   matching `KEY`, `PASSWORD`, `SECRET`, or `TOKEN`, and every `DSH_*` name, are
-  removed. A credential the agent needs is forwarded by name (`forwardEnv`), so its
+  removed, and so are the variables that lead to the operator's session (its message bus,
+  key agents, and displays). A credential the agent needs is forwarded by name (`forwardEnv`), so its
   value never sits in configuration, and only the named variable reaches the agent.
 - **Account state cross-contamination between accounts.** One browser process and
   context per account; state limited to the driver's `stateOrigins`; records `0600`
   in a `0700` vault ([browser runtime](../design/browser-runtime.md)).
+- **Another login lands in an agent account's home (a re-login as someone else, or one login
+  in two homes), so work and its transcripts go to an account the operator did not assign.**
+  Each agent account is an enrollment slot: an owner-only home under the DSH home, hidden from
+  every agent, and a run binds back only its own account's home. The account id is a keyed
+  hash of the verified login (the key in the vault), never a name. The login is read again at
+  each probe and before each run; a changed, missing, ambiguous, duplicate, or unverifiable
+  identity is quarantined or signed out, recorded first, and only the operator's verify lifts
+  it. A Worker derived from an account takes work only while the account is `ready`; hand-named
+  Workers keep their earlier rule until the operator applies `system account migrate`
+  ([enrollment and quarantine](../design/agent-runtimes.md#enrollment-and-quarantine),
+  [ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
 - **Stolen password or TOTP secret.** Credentials encrypted at rest and decrypted
   only in memory; never logged or sent to models; TOTP computed locally, never sent
   to sites like 2fa.live; credential login runs only after sign-out evidence, with
@@ -136,7 +148,10 @@
   onto the set it was proposed on, so an approval never applies a set the operator was not shown.
 - **The safety layer loosened by something other than the operator.** A new autonomy policy comes
   into force only by the operator: an approved `policy-change` request, proposed from `/ui` or
-  MCP `approvals_policy_propose` (both operator only), or the configuration at a start, which no
+  MCP `approvals_policy_propose` (both operator only), or by the queue itself from repeated
+  identical approvals of a command, which it only proposes (off by default,
+  [ADR-0050](../decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md));
+  or the configuration at a start, which no
   Worker can write ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). A
   stored set the configuration no longer matches is never used, nor dropped silently: the queue
   is refused until the operator chooses
@@ -178,7 +193,10 @@
   ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)). A
   quote too short to identify one line confirms nothing, and a merged finding keeps each
   member's own report and shows its class and severity per report, so one member's quote never
-  confirms, or appears to confirm, another's blocking claim.
+  confirms, or appears to confirm, another's blocking claim. An agent Worker that is a member runs
+  under the review-member profile: its gate denies every tool call, in an empty workspace outside
+  any repository, so injected text cannot make it act
+  ([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)).
 - **A tampered backup writes outside the state directory on restore.** Restore
   accepts only `system.db`, `vault.enc`, and `vault.key` in a backup manifest; any
   other name (for example `../../.ssh/authorized_keys`) refuses the whole backup
@@ -189,8 +207,8 @@
   are random per reply); otherwise a fresh conversation opens
   ([`gateway-turns`](../../packages/gateway-turns/README.md)).
 - **An agent-runtime Worker acts outside its workspace or approvals.** The policy
-  comes only from operator configuration (each `agent-workers` row's workspace,
-  sandbox, and tools; INV-6). Each runtime enforces it with its own sandbox,
+  comes only from operator configuration (the `agent-workers` row: each Worker's or
+  role's workspace, sandbox, and tools; INV-6). Each runtime enforces it with its own sandbox,
   exactly, or the run is refused before it starts (REQ-WRK-6):
   - Claude Code (`runtime-claude-agent-sdk`): only the listed built-in tools
     exist and are pre-approved, each file tool scoped to the workspace, reads
@@ -288,7 +306,8 @@
   display cookie, and the remote-login socket; the service's credentials; the
   usual credential stores in the home directory; and every secret path a plugin
   registered, wherever the operator keeps it. Only the operator's tools
-  (read-only), the Worker's own home, and its workspace come back. The probe
+  (read-only), the Worker's own home (its account's, so never another account's sign-in), and
+  its workspace come back. The probe
   proves it positively on the host and the source checks it again before each
   run. Not covered: abstract Unix sockets (an X server's still needs the hidden
   cookie), and other files in the home directory, which an operator adds to the
@@ -311,7 +330,7 @@
     sandbox runtime claims to stop;
   - reads inside the confinement: a command can read what Claude Code itself
     can, including its own home (its sign-in, and the transcripts of every
-    Claude Code Worker session on this host) and the variables the operator
+    Claude Code session run in that home: every role of its account) and the variables the operator
     forwards to it (`forwardEnv`). It cannot send them off the host (no
     network), but it can show them to the model or write them into the
     worktree; forward only what the Worker needs, and keep Workers of different
@@ -445,7 +464,11 @@
   except DSH, whose pin is bumped by hand (CON-8)
   ([CI gates](../engineering/testing.md#ci-gates)).
 - **Provider terms or abuse controls lead to account loss.** Bounded per-account
-  concurrency; no evasion features; operator responsibility (CON-3).
+  concurrency; no evasion features; operator responsibility (CON-3). A provider's accounts,
+  website and agent, are assigned by default: a limit on one makes its work wait instead of
+  moving it to another account of that provider, and pooling them needs the operator's
+  recorded `pooledTerms`
+  ([ADR-0052 (proposed)](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)).
 
 ## Out of scope (until a requirement exists)
 

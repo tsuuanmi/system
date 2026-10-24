@@ -5,7 +5,7 @@ The **ChatGPT Web provider driver**
 [UI operations](../../../docs/design/ui-operations.md)).
 
 - **Procedures only.** Every element, action, state, and network signal lives in
-  [`ui/chatgpt-web.ui.yaml`](ui/chatgpt-web.ui.yaml), validated as `ui-map@1.1`.
+  [`ui/chatgpt-web.ui.yaml`](ui/chatgpt-web.ui.yaml), validated as `ui-map@1.3`.
   A UI change is a map change. A local overlay (`Config.overlayPath`, default
   `<DSH_HOME>/system/ui/chatgpt-web.overlay.yaml`) adds healed candidates.
 - **`ask(page, prompt, { conversation, binding, mode, feature })`:**
@@ -89,7 +89,8 @@ The **ChatGPT Web provider driver**
   - The finished answer's own Copy button gives the Markdown. It is read from
     the clipboard and kept only if its words are the rendered answer's words,
     since the clipboard may be shared. Otherwise the rendered text stands, read
-    under `white-space: pre-wrap`.
+    under `white-space: pre-wrap`, and the refused Copy is logged as counts only
+    (event `provider.copy-refused`).
   - Copy rebuilds code blocks from the page and loses their line breaks, so
     each fenced block's text comes from its rendered element (`answer.code`).
   - Emphasis and a fence's language do not come back, which matches the
@@ -160,7 +161,7 @@ The **ChatGPT Web provider driver**
   never resent. For Deep research only the run after the last prompt counts.
 - **Live checks:** what was verified on the live site, and when, is in the
   [release checklist](../../../docs/validation/release-checklist.md).
-- **Config:** `origin`, `overlayPath`, `modes`, `defaultMode`.
+- **Config:** `origin`, `overlayPath`, `modes`, `defaultMode`, `pageGapMs`.
 - **Injects:** `providers`. It uses `artifacts` and `eventLog` when present,
   for the heal audit.
 - **Not yet:**

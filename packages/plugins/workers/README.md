@@ -30,6 +30,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;
+  - it is not one the caller leaves out (`excluded`: an earlier attempt failed on it before
+    sending, ADR-0034);
   - it is of none of the provider families the caller excludes, if any
     (`diversity`); a Worker that declares no family cannot differ, so it fails
     too ([provider diversity](../../../docs/design/routing.md#provider-diversity));
@@ -78,7 +80,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     `limitUntil` is the earliest known reset, and the decision says when the first is back.
 - **Acceptance (REQ-WRK-3).** `contract(id, check)` registers a deterministic
   contract for the plugin's lifetime. `accept(result, contract)` checks a stored
-  result and records an `acceptance` decision. `contracts()` lists the
+  result and records an `acceptance` decision; with a `resultSchema`, the result's JSON must first
+  be valid against that schema (REQ-ART-5). `contracts()` lists the
   registered ids, so a caller can refuse an unknown contract before any work
   runs. An unknown contract or result
   throws: it never accepts silently. Two contracts are built in:

@@ -42,8 +42,9 @@ decides nothing, and no model takes part.
 - **Bundle:** its row, `report`, is on. Off, nothing else changes.
 - **Tests:** [`tests/report.spec.ts`](tests/report.spec.ts) checks the computation on a week of
   records (period bounds, scope, waits, attention against the charter, usage per pool, the
-  baseline, determinism, the bounds, the rendering);
+  baseline, determinism, the bounds, the rendering, what a cap counts as 0);
   [`tests/pilot.spec.ts`](tests/pilot.spec.ts) runs the `algorithm-development` template on the
   software-development profile's [pilot in miniature](../profile-software-development/tests/pilot.ts)
   and reads what it recorded through the tool: a project's report, the studio's, the same period
-  twice, the refusals, no board, a trimmed event log.
+  twice, the refusals, no board, a trimmed event log, runs whose usage the ledger could not count,
+  and a digest the provider loaded does not know after a swap.

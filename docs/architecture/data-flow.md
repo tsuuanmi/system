@@ -3,8 +3,8 @@
 > Target state. Boundaries are defined in [components](components.md); mechanisms in
 > [design](../design/README.md).
 
-Every step below that chooses between alternatives (tier, route, admission, egress, reconcile,
-accept, escalate, recover, grow, gate) writes a decision artifact before its effect
+Every step below that chooses between alternatives (tier, route, admission, egress, budget,
+reconcile, accept, escalate, recover, grow, gate) writes a decision artifact before its effect
 ([INV-13](invariants.md#inv-13-every-decision-is-an-artifact)). `system explain <runId>` reads
 the chain back.
 
@@ -21,12 +21,12 @@ website Worker, as built today.
 | 1. Hand over intent | surface | `ctx.mcp`, gateways, CLI start a workflow run | built | — |
 | 2. Intake: work kind, tier, data class, artifacts to read | decision | `ctx.decisions` ([PROP-0002](../proposals/0002-decision-assisted-routing.md)); today the run's input and template | planned | the work kind's default tier |
 | 3. Policy and egress gate | core: gate | `ctx.egress`; `approvals` for actions that need a person | built | closed: deny, or queue for approval |
-| 4. Choose a resource | core: resource ledger, gate | `ctx.workers` admission and routing; account cooldowns ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)); `resources` for limits and scarcity | built | wait for the window, or another source |
+| 4. Choose a resource | core: resource ledger, gate | `ctx.workers` admission and routing; account cooldowns ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)); `resources` for limits and scarcity; a board task's budget lines reserved before each step ([a task's budget](../design/workflow-engine.md#a-tasks-budget)) | built | wait for the window, or another source; a spent budget starts no new step and blocks the task with a funding request |
 | 5. Worker runs | Worker, context | a Worker source (`ctx.turns`, `ctx.agentWorkers`, `ctx.models`); `context` plugins at agent launch | Workers built, `context` planned | context plugin bypassed; Worker reconciled by the runner |
 | 6. Record results | core: ledger of record | `ctx.artifacts`, `ctx.eventLog`, `ctx.turnReceipts`; usage to `resources` | built | the write fails closed |
 | 7. Verify | verification | acceptance contracts through `workers.contract`; team quote checks | built | no verifier: no automatic acceptance |
 | 8. Acceptance gate | core: gate | `workers.accept`, then the node's transition | built | retry or escalate, back to step 4 |
-| 9. Digest | digest | `digests` | planned | the lead receives artifact pointers |
+| 9. Digest | digest | `ctx.digests`, asked by the engine for a board task's result once it reached the board, or by the lead (`digests_request`) ([a digest of a task's result](../design/workflow-engine.md#a-digest-of-a-tasks-result)) | built | bypassed and recorded: the result keeps no digest, and the lead reads the artifact pointers |
 | 10. Update the board | core: work state machine | `ctx.workflow` run and node states; `board` tasks and projects | built | — |
 
 ## Turn
@@ -34,8 +34,9 @@ website Worker, as built today.
 Every entry point (CLI, MCP tool, gateway) starts a workflow run; even a single `ask` is a run
 on the engine. The website Worker source is shown; agent Workers take the same route through
 the `agents` source, which checks the prompt at egress (Worker class `agent`: the agent runs
-here, but its model is remote), runs `ctx.agentRuntimes` under an `agent-run:<id>` lease, and
-marks a run as started before the agent acts.
+here, but its model is remote), reads its account again and reserves on its pool when it has
+one, runs `ctx.agentRuntimes` in its account's home under an `agent-run:<id>` lease, asks the
+run's gate before each tool call, and marks a run as started before the agent acts.
 
 ```mermaid
 sequenceDiagram

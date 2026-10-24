@@ -74,10 +74,10 @@
   `account_set_credentials`, `account_relogin`, and `account_code`. None of them
   returns a secret. The `system account list|login|save|credentials|relogin|code`
   CLI commands call these tools; `credentials` reads its JSON from stdin.
-- **Live-verified on 2026-10-11:** `system account save chatgpt-main` against the
-  running profile stored a real account (`ready`, revision 1). The vault holds only
-  ciphertext.
+- **Verified live:** remote login and Save, in the
+  [release checklist](../../../docs/validation/release-checklist.md).
 - **Hidden from agents:** `profilesDir`, and each remote login's socket
   directory while it lives, are registered secret paths ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
-- **Config:** `profilesDir`, `vncPath`, `chromePath`, `remoteTtlMs`, `remotePort`.
+- **Config:** `profilesDir`, `vncPath`, `chromePath`, `remoteTtlMs`, `remotePort`,
+  `codeWaitMs` (default 5 min).
 - **Injects:** `accounts`, `browser`, `providers`; `mcp` is optional.

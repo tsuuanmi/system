@@ -5,8 +5,8 @@ The **`agents` Worker source**: agent runtimes as Workers
 
 - **On by default, with no Worker** (PROP-0010 B3): this row, `agent-runtimes`,
   and `runtime-claude-agent-sdk` are on in the default composition; Codex
-  ([runbook](../../../docs/operations/runbooks.md#codex-workers)), ACP,
-  and the software-development profile, whose `agent-review` template only
+  ([runbook](../../../docs/operations/runbooks.md#codex-workers)), ACP, the
+  Antigravity CLI, and the software-development profile, whose `agent-review` template only
   these Workers can run, stay off
   ([turn them on](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).
   The bundle names no workspace, so it configures no Worker: the operator adds
@@ -340,7 +340,7 @@ The **`agents` Worker source**: agent runtimes as Workers
     closes every window of the pool with a `limited`
     reading (source `limit-notice`) for `limitCooldownSeconds`; a later
     reading of a window says otherwise. A closed pool holds every Worker of
-    the runtime, not only the metered one (**One account, every role**);
+    its account, not only the metered one (**One account, every role**);
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 
@@ -532,4 +532,5 @@ The **`agents` Worker source**: agent runtimes as Workers
   - egress checks exactly what is sent, the replay included, at the strictest
     classification of the turns it holds (INV-12).
 - **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`;
-  reads `resources`, `approvals`, and `eventLog` when present.
+  reads `resources`, `approvals`, `eventLog`, and `credentials` (the account ids'
+  key) when present, and registers the `account_*` tools when `mcp` is.

@@ -15,7 +15,7 @@
   - `invalidate`: fences every holder at once.
   - `current`.
   - `hold(resource, ttlMs, body)`: the one lease loop every durable runner uses
-    (website turns, agent runs, workflow runs). It acquires, renews on a heartbeat
+    (website turns, agent runs, workflow runs, digest requests). It acquires, renews on a heartbeat
     every third of the TTL, and releases when the body ends. It aborts `lost` only
     on a positive loss: a renewal that throws `LeaseLost`, or the lease's own expiry
     passing with no renewal. A renewal that fails otherwise (the store busy or

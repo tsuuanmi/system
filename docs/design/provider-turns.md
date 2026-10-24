@@ -9,7 +9,9 @@
 > [`provider-chatgpt-web`](../../packages/plugins/provider-chatgpt-web/README.md) and
 > [`provider-gemini-web`](../../packages/plugins/provider-gemini-web/README.md); differs from
 > target: the driver steps (open, mode, submit, binding, extract) run inside `ask`; turns are not
-> bound by provider turn id; large inputs and attachments are planned.
+> bound by provider turn id (the receipt binds the conversation and the response boundary); there
+> is no measured composer budget or multipart transfer for [large inputs](#large-inputs), and no
+> attachments.
 
 ## Driver interface
 
@@ -178,8 +180,7 @@ to provider turns.
    continue on another model.
 4. Insert the prompt by a method that bypasses editor shortcuts, read it back, and
    compare hashes before sending.
-5. Bind the turn by provider turn id, not by display index (planned: today the
-   receipt binds the conversation and the response boundary).
+5. Bind the turn by provider turn id, not by display index.
 
 ## Two-clock completion
 
@@ -214,7 +215,7 @@ as typed error signals.
 
 Known limitation: typing into the composer while the site is generating turns the
 slot back to **Send**. The driver never types during a run, so this case is not
-handled yet. In persistent mode, completion and the canonical
+handled. In persistent mode, completion and the canonical
 conversation binding are awaited together, so a turn without a canonical binding
 fails. A hard timeout and a
 stall timeout are reported as distinct errors.
@@ -313,7 +314,8 @@ sequenceDiagram
 ```
 
 An agent Worker's run takes the same path through its own source,
-[`agent-workers`](../../packages/plugins/agent-workers/README.md), with a scheduler per Worker.
+[`agent-workers`](../../packages/plugins/agent-workers/README.md), with a scheduler per agent
+account ([scheduling](scheduling-and-leases.md#per-account-scheduler)).
 The Worker is local but its model is remote, so the source checks the prompt at egress too,
 for the Worker class `agent`, before the agent starts.
 

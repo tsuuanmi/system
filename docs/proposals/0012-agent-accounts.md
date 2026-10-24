@@ -671,7 +671,7 @@ supersedes ADR-0052 in part for it: "personal subscriptions never qualify" above
 
 ## Implementation
 
-The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:
+The state of each phase, and what remains, is in the [roadmap](roadmap.md#done-and-open-milestones). Built:
 
 - **Phase B** (specification): `agent-account@1.0`, `capability-descriptor@1.5` (`account`),
   `decision@1.8` (`enrollment`, the `recovery` outcome `wait`); the `agentRuntimes` additions
@@ -721,7 +721,8 @@ The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:
     account and organization ids from the home's state file (question 2); the masked hint is kept
     (question 9); an API-key sign-in names no person and is `ambiguous` (question 4, the account
     kind `credential` not built).
-  - Until phase F, the configured Workers run in their runtime's own home: they take work while no
+  - Until the operator applies phase F's move (its cutover), the hand-named Workers run in their
+    runtime's own home: they take work while no
     slot holds it, or while its account is `ready` or `unverified` (Antigravity's slot 1, as before
     enrollment); never beyond slot 1. Owed: phase A's supervised check of both readers on the
     operator's real accounts.

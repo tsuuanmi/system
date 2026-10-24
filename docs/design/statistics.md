@@ -211,7 +211,7 @@ reference is SciPy 1.18.1 (NumPy 2.5.4, Python 3.14.2), `scipy.stats.permutation
 
 - **Monte Carlo above 20 cases.** It needs the RNG algorithm and state, the sample order, the
   versions, and the serialization recorded with each analysis: an optional field of
-  `evaluation@1.x`, written by the engine (F4). Until both exist the library refuses.
+  `evaluation@1.x`, written by the engine (F4). Without both, the library refuses.
 - **Other methods.** A ratio metric (the review contract's primary) needs a paired bootstrap, and a
   floor needs a method that gives a level's interval. The research run advises against building a
   BCa bootstrap or a general engine and found no case for a Python sidecar, so the library has no

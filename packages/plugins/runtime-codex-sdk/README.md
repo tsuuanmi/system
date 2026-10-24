@@ -25,6 +25,13 @@ operator's installed `codex` through the official Codex TypeScript SDK.
     owner-only directory of this user, else the run is refused (`config_error`)
     before anything runs; it then stands for that home everywhere below. Its own
     home is `home` on the provider, which slot 1 of its accounts adopts.
+    Codex starts MCP servers outside its sandbox, so a Worker would reach their
+    tools (`approve`, the credential tools, …). The probe and every run call
+    `codex mcp list --json` on that home and fail closed (`config_error`) if any
+    enabled MCP server is configured. A `config` holding `mcp_servers` or
+    `hooks`, turning on a feature the runtime keeps off, or turning hooks off,
+    is refused. A `-c mcp_servers={}` override would not clear them, because
+    Codex merges its configuration, hence the separate home;
   - **Who is signed in** (`identity(home, key)`, reader `codex-auth-json`, on
     `VERIFIED_IDENTITY_VERSIONS`, Codex 0.164.0; any other version is
     `unverified`): `codex login status` in that home, confined and with none of
@@ -34,14 +41,7 @@ operator's installed `codex` through the official Codex TypeScript SDK.
     without following a link, bounded), hashed with the install's key. No hint.
     The fields were seen on this host; phase A's supervised check on real
     accounts (equal across restart, token refresh, re-login) is still owed.
-    `loginCommand(home)` is `CODEX_HOME=<home> codex login`.
-    Codex starts MCP servers outside its sandbox, so a Worker would reach their
-    tools (`approve`, the credential tools, …). The probe and every run call
-    `codex mcp list --json` on that home and fail closed (`config_error`) if any
-    enabled MCP server is configured. A `config` holding `mcp_servers` or
-    `hooks`, turning on a feature the runtime keeps off, or turning hooks off,
-    is refused. A `-c mcp_servers={}` override would not clear them, because
-    Codex merges its configuration, hence the separate home;
+    `loginCommand(home)` is `CODEX_HOME=<home> codex login`;
   - **signed in there:** unless `config` names a model provider (other than the
     built-in `openai`) or an API key is forwarded (`CODEX_API_KEY`,
     `OPENAI_API_KEY`), the probe runs `codex login status` under the
@@ -130,8 +130,9 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   more than 400 days away gives no observation; on another version, or when
   `codex --version` fails, the message is not read and the error says so (`its
   reset time is not read: …`). Either way the `agents` source then closes the
-  pool for the Worker's cooldown, never opens it. Nothing else of Codex's usage
-  is reported.
+  pool for the Worker's cooldown, never opens it. A completed run reports its
+  `turns` (one per `turn.completed`); nothing else of Codex's usage is
+  reported (no token counts).
 - **Configuration:**
   - `executable` (default: `codex` on PATH);
   - `config`: Codex `--config` overrides, such as its model provider, passed as
@@ -148,11 +149,15 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   the gateway. Such a Worker needs no login, and its token reaches only the model
   gateways. A Worker on an OpenAI or ChatGPT login must be signed in inside its
   own home (`CODEX_HOME=<home> codex login`); the operator's `~/.codex` login is
-  not used. The row stays off in the bundle (PROP-0004); the
+  not used. The row stays off in the bundle (PROP-0004) and is on in the
+  `api-first` preset; the
   [runbook](../../../docs/operations/runbooks.md#codex-workers) turns it on.
 - **Dependencies:** `@openai/codex-sdk`, whose per-platform Codex builds are
-  ignored optional dependencies, and `system-libs` (`dshHome`,
-  `ensurePrivateDir`). The gate relies on Codex's hook behaviour as of 0.164
+  ignored optional dependencies; `agent-runtime-core` (`childEnvironment`,
+  `confinedCommand`, `proveConfinement`, `withMetering`, `writeLauncher`, and
+  for a named home and its identity `homeProblem`, `identityHmac`,
+  `readHomeJson`); `system-libs` (`dshHome`, `ensurePrivateDir`); and
+  `provider-core`. The gate relies on Codex's hook behaviour as of 0.164
   (above); the probe proves it on each host. A limit's reset relies on Codex's
   usage-limit message as of 0.164.0 (`VERIFIED_LIMIT_VERSIONS`).
 - **Live checks:** the [release checklist](../../../docs/validation/release-checklist.md)
