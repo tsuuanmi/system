@@ -192,8 +192,9 @@ commits leaves nothing half-recorded: the next start records it.
   Refusing a row the check finds something in needs a veto point in the DSH loader and a further
   change to this contract, by its own ADR
   ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)).
-- Surfaces: MCP `status` lists the plugins and their findings to the operator (a client sees none)
-  and checks the manifests in its health; `system plugins` prints the list.
+- Surfaces: MCP `status` lists to the operator the plugins that need a look, each with its
+  findings, and every plugin with `plugins: true` (a client sees none), and checks the manifests in
+  its health; `system plugins` prints the whole list.
 
 ## Conformance
 

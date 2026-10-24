@@ -9,7 +9,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { BoardError, type BoardTask, type CharterInput, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
-import type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { StoreBoard } from './index.ts'
@@ -243,7 +243,7 @@ export function tool(name: BoardTool, handler: Handler): ToolHandler {
     } catch (error) {
       return refused(`board: ${name} made an output its schema refuses (a defect; the move itself is recorded): ${(error as Error).message}`)
     }
-    return { content: [{ type: 'text' as const, text: JSON.stringify(output) }], structuredContent: { ...output } }
+    return reply(output, outline(output))
   }
 }
 

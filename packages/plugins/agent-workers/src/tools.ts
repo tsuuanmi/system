@@ -8,7 +8,7 @@
  * @module
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { outline } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import zod from 'zod'
 import type { AgentAccounts, SlotRef } from './accounts.ts'
@@ -89,7 +89,7 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
   }, async (args) => call('account_agents', args, async () => ({
     accounts: accounts.list().map((account) => ({ account, workers: accounts.workersIn(account) })),
     providers: accounts.providers(),
-  }), (out) => JSON.stringify(out)))
+  }), outline))
   ctx.mcp.tool('account_migrate', {
     scope: 'operator',
     description: 'Operator tool: the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F). By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker\'s new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers\' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it. stop: runtimes whose Workers stop at the cutover because their account is not ready.',

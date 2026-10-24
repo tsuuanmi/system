@@ -8,7 +8,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { ApprovalsError, type AutonomyPolicy, type RequestState, type Verdict } from '@tsuuanmi/system-approvals-core'
-import type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { outline, reply, type ToolContext, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { StoreApprovals } from './index.ts'
@@ -111,7 +111,7 @@ export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
     } catch (error) {
       return refused(`approvals: ${name} made an output its schema refuses (a defect; anything it decided is recorded): ${(error as Error).message}`)
     }
-    return { content: [{ type: 'text' as const, text: JSON.stringify(output) }], structuredContent: { ...output } }
+    return reply(output, outline(output))
   }
 }
 

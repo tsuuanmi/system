@@ -536,8 +536,14 @@ second execution path (INV-1).
     token may call it too) breaks a team's tie;
   - `result` takes a `runId` and long-polls it, returning early when the run
     waits on a gate or a tie;
-  - `usage`;
+  - `usage { limit? }` reports the 10 most recent runs unless `limit` asks for up to 500, each
+    as `usageView` shows it: the run's id, template, status, session, and times, and per step its
+    state, tiers, attempt, execution, source, Worker, quota class, tokens, and `usageUnknown`;
+    its answer, result and brief ids, errors, wait, and task are `result`'s;
   - `explain` takes a run id, or any artifact id (its input tree).
+  - Each answers once ([replies](../mcp-server/README.md#token-budget)): the view is the
+    structured content; the text is a completed run's answer, any other run's `standing` (what
+    it waits for, why it failed, or how many steps are done), or an `outline` of the answer.
 - **Operator control (REQ-WF-7).** Each action is recorded as the operator's
   `recovery` decision:
   - `stop(runId, reason)` halts the run's advance and cancels running executions
@@ -666,7 +672,8 @@ second execution path (INV-1).
   The continuation of a deferred call runs end to end with a gating agent runtime
   in [`agent-workers`' gate tests](../agent-workers/tests/gate.spec.ts).
   [`tests/replies.spec.ts`](tests/replies.spec.ts) holds the `result` and `usage` replies of
-  completed fixture runs to their ceilings
+  completed fixture runs to their ceilings, checks that each says its answer once, and that
+  `usage` leaves out what `result` gives
   ([token budget](../mcp-server/README.md#token-budget)).
   [`tests/digests.spec.ts`](tests/digests.spec.ts) covers
   the digests of task results: asked after the report and set on the task, the next task's brief

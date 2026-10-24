@@ -34,7 +34,7 @@ import { explain, usage } from './views.ts'
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskOutcome, TaskStartInput, TaskView, WorkflowError } from './types.ts'
+export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskOutcome, TaskStartInput, TaskView, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

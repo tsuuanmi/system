@@ -379,13 +379,16 @@ describe('drain (REQ-HOST-1)', () => {
 describe('tool contracts reference', () => {
   it('renders each tool with its arguments, and escapes table cells', () => {
     const page = formatTools([
-      { name: 'ask', description: 'Ask a | Worker', _meta: { 'system/scope': 'client' }, inputSchema: { properties: { prompt: { type: 'string', description: 'the prompt' }, tier: { enum: ['economy', 'standard'] } }, required: ['prompt'] } },
+      { name: 'ask', description: 'Ask a | Worker', inputSchema: { properties: { prompt: { type: 'string', description: 'the prompt' }, tier: { enum: ['economy', 'standard'] } }, required: ['prompt'] } },
       { name: 'status', inputSchema: {} },
+      { name: 'stop', description: 'Stop a run', _meta: { 'system/scope': 'operator' }, inputSchema: {} },
     ])
+    // The listing marks a tool only the operator may call; one without the mark is a client tool too.
     expect(page).toContain('## `ask`\n\nAsk a \\| Worker\n\nScope: `client`')
     expect(page).toContain('| `prompt` | string | yes | the prompt |')
     expect(page).toContain('| `tier` | "economy" \\| "standard" |  |  |')
-    expect(page).toContain('## `status`\n\n\n\nNo arguments.')
+    expect(page).toContain('## `status`\n\n\n\nScope: `client`\n\nNo arguments.')
+    expect(page).toContain('## `stop`\n\nStop a run\n\nScope: `operator`\n\nNo arguments.')
     // A backslash is escaped too, so one before a pipe cannot leave the pipe a cell break.
     expect(formatTools([{ name: 'grep', inputSchema: { properties: { pattern: { type: 'string', description: 'say a\\|b' } } } }])).toContain('| `pattern` | string |  | say a\\\\\\|b |')
   })

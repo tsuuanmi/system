@@ -6,7 +6,7 @@ import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
 import { tieOf, type TeamRound } from './teams.ts'
-import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, WorkflowError } from './types.ts'
+import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, UsageRunView, WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
   const rows = e.nodeRows(run.run_id)
@@ -76,6 +76,15 @@ function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
 export function usage(e: Engine, limit: number): RunView[] {
   const rows = e.ctx.store.db.prepare('SELECT * FROM workflow_runs ORDER BY created_at DESC LIMIT ?').all(Math.min(Math.max(1, limit), 500)) as unknown as RunRow[]
   return rows.map((r) => withUnknownUsage(e, view(e, r)))
+}
+
+/** A run as the MCP `usage` report shows it (`UsageRunView`): its steps' Workers, tiers, quota classes, and usage. */
+export function usageView(run: RunView): UsageRunView {
+  const { runId, template, status, sessionId, createdAt, updatedAt } = run
+  return {
+    runId, template, status, ...(sessionId ? { sessionId } : {}), createdAt, updatedAt,
+    nodes: run.nodes.map(({ result: _result, brief: _brief, error: _error, ...node }) => node),
+  }
 }
 
 /**

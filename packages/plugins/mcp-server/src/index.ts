@@ -12,12 +12,13 @@ import { readFileSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { assertSafeBind, endpointUrl, formatRoster, guardRequest, LOOPBACK_HOSTS, McpTools, readJsonBody, readRoster, type RosterServices, scopeTokens, SCOPES, tokenFile, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, endpointUrl, formatRoster, guardRequest, LOOPBACK_HOSTS, McpTools, readJsonBody, readRoster, reply, type RosterServices, scopeTokens, SCOPES, tokenFile, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { dshHome, ensurePrivateDir, registerSecretPath, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
@@ -47,6 +48,22 @@ interface Tool {
   handler: ToolHandler
   /** Built-in placeholders may be replaced by a contributing plugin. */
   placeholder: boolean
+}
+
+/** A tool's `tools/list` entry. */
+interface ListedTool {
+  name: string
+  description: string
+  inputSchema: { type: 'object'; [key: string]: unknown }
+  _meta?: { 'system/scope': 'operator' }
+}
+
+/** A JSON Schema without the `pattern` zod adds beside `format: "date-time"`, at every depth. */
+function withoutFormatPatterns(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(withoutFormatPatterns)
+  if (schema === null || typeof schema !== 'object') return schema
+  const entries = Object.entries(schema).filter(([key]) => !(key === 'pattern' && (schema as { format?: unknown }).format === 'date-time'))
+  return Object.fromEntries(entries.map(([key, value]) => [key, withoutFormatPatterns(value)]))
 }
 
 /** Whether a caller holding `scope` may see and call a tool of `tool` scope. */
@@ -85,6 +102,8 @@ export class McpEndpoint extends McpTools {
   })
 
   private readonly tools = new Map<string, Tool>()
+  /** Each tool's `tools/list` entry, made once: a tool's spec never changes while it is registered. */
+  private readonly listings = new WeakMap<Tool, ListedTool>()
   /** The store integrity check, run at most once per `storeCheckMinutes`: it is synchronous on the shared connection. */
   private storeCheck: { at: number; result: string } | undefined
 
@@ -175,16 +194,45 @@ export class McpEndpoint extends McpTools {
     })
   }
 
-  /** Build the per-request MCP server from the tools a caller holding `scope` may use. */
+  /**
+   * Build the per-request MCP server from the tools a caller holding `scope` may use. The SDK
+   * validates each call's arguments with the tool's zod schema; `tools/list` is this endpoint's own
+   * (`listing`), so what every client pays for each session carries no boilerplate.
+   */
   createServer(scope: ToolScope): McpServer {
     const server = new McpServer({ name: 'system', version: '0.0.0' })
+    const listed: ListedTool[] = []
     for (const [name, tool] of this.tools) {
       const { scope: declared = 'operator', ...spec } = tool.spec
+      if (!visible(declared, scope)) continue
       // The SDK passes (args, extra) to a tool with an input schema and (extra) alone otherwise.
       const handler = (args: unknown, extra: unknown): ReturnType<ToolHandler> => tool.handler((extra === undefined ? {} : args) as Record<string, unknown>, { scope })
-      if (visible(declared, scope)) server.registerTool(name, { ...spec, _meta: { 'system/scope': declared } }, handler as never)
+      server.registerTool(name, spec, handler as never)
+      listed.push(this.listing(name, tool))
     }
+    // Replaces the SDK's own tools/list handler, which registerTool installed (status is always listed).
+    if (listed.length) server.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: listed }))
     return server
+  }
+
+  /**
+   * A tool as `tools/list` shows it (README "Token budget"): its name, description, and input
+   * schema as JSON Schema 2020-12, which MCP reads a schema without `$schema` as, so none is sent;
+   * no `execution` (absent, a tool takes no task, as the SDK's `taskSupport: "forbidden"` says);
+   * a `date-time` string without zod's 300-character spelling of the format as a `pattern` (the
+   * server checks it with zod all the same); and `_meta: {"system/scope": "operator"}` only on a
+   * tool the operator token alone may call, so a tool without it is a client tool too.
+   */
+  private listing(name: string, tool: Tool): ListedTool {
+    const cached = this.listings.get(tool)
+    if (cached) return cached
+    const { $schema: _draft, ...inputSchema } = zod.toJSONSchema(zod.object(tool.spec.inputSchema), { target: 'draft-2020-12', io: 'input' }) as Record<string, unknown>
+    const listed: ListedTool = {
+      name, description: tool.spec.description, inputSchema: withoutFormatPatterns(inputSchema) as ListedTool['inputSchema'],
+      ...((tool.spec.scope ?? 'operator') === 'operator' ? { _meta: { 'system/scope': 'operator' } } : {}),
+    }
+    this.listings.set(tool, listed)
+    return listed
   }
 
   /** The first registered tool a JSON-RPC message (or batch) calls that `scope` may not use. */
@@ -274,7 +322,7 @@ export class McpEndpoint extends McpTools {
         const filter = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined))
         const events = eventLog.query(filter) as Array<{ seq: number }>
         const page = { events, next: events.at(-1)?.seq ?? (args.afterSeq as number | undefined) ?? 0 }
-        return { content: [{ type: 'text', text: JSON.stringify(page) }], structuredContent: page }
+        return reply(page, `${events.length} event${events.length === 1 ? '' : 's'}; next: ${page.next}`)
       },
     })
     // Drift evidence for the operator: a local-private outline of a page region, which no client scope reads (INV-12).
@@ -289,7 +337,7 @@ export class McpEndpoint extends McpTools {
         const envelope = this.ctx.get('artifacts')?.get(String(args.id))
         if (!envelope || envelope.kind !== 'evidence') return { isError: true, content: [{ type: 'text', text: `no evidence artifact ${String(args.id)}` }] }
         const evidence = { id: envelope.id, bodySchema: envelope.bodySchema, createdAt: envelope.createdAt, body: envelope.body }
-        return { content: [{ type: 'text', text: JSON.stringify(evidence) }], structuredContent: evidence }
+        return reply(evidence, `evidence ${evidence.id} (${evidence.bodySchema}, ${evidence.createdAt})`)
       },
     })
     // Any artifact, for the operator: a rejected attempt's answer, a step's output. Its classification
@@ -310,7 +358,9 @@ export class McpEndpoint extends McpTools {
         if (!artifacts) return { isError: true, content: [{ type: 'text', text: 'the artifacts service is not mounted in this composition' }] }
         try {
           const read = artifacts.read(String(args.id), { ...(args.offset !== undefined ? { offset: args.offset as number } : {}), ...(args.max !== undefined ? { max: args.max as number } : {}) })
-          return { content: [{ type: 'text', text: JSON.stringify(read) }], structuredContent: read }
+          return reply(read, read.state === 'stored'
+            ? `${read.id}: ${read.kind} (${read.bodySchema}, ${read.classification}), characters ${read.offset} to ${read.offset + [...read.text].length} of ${read.chars}${read.truncated ? '; more follow' : ''}`
+            : `${read.id}: ${read.state}`)
         } catch (error) {
           return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }
         }
@@ -339,22 +389,31 @@ export class McpEndpoint extends McpTools {
     })
     this.tools.set('status', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.', inputSchema: {} },
-      handler: async (_args, { scope }) => {
+      spec: {
+        scope: 'client',
+        description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.',
+        inputSchema: { plugins: zod.boolean().optional().describe('Operator: list every plugin, not only those that need a look') },
+      },
+      handler: async (args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')
         const host = this.ctx.get('pluginHost')
+        const health = await this.health(scope)
+        // Which plugins run, at which versions, is the operator's to know, as the health details are.
+        const all = scope === 'operator' && host ? host.list() : undefined
+        const listed = args.plugins === true ? all : all?.filter(needsLook)
         const status = {
           harness: 'system',
           store: this.ctx.get('store') ? 'ok' : 'absent',
           artifacts: artifacts ? artifacts.list({ limit: 1000 }).length : null,
           kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),
           providers: providers ? providers.list() : [],
-          health: await this.health(scope),
-          // Which plugins run, at which versions, is the operator's to know, as the health details are.
-          ...(scope === 'operator' && host ? { plugins: host.list().map(pluginView) } : {}),
+          health,
+          ...(all && listed ? { plugins: listed.map(pluginView), ...(listed.length < all.length ? { pluginsOmitted: all.length - listed.length } : {}) } : {}),
         }
-        return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status }
+        const notOk = health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
+        const plugins = all && listed ? `; ${all.length} plugins, ${listed.length === all.length ? 'all listed' : `${listed.length} listed (those that need a look; plugins: true lists every one)`}` : ''
+        return reply(status, `health ${health.state}: ${health.checks.length} checks, ${notOk.length ? notOk.join(', ') : 'all ok'}${plugins}`)
       },
     })
     // The roster (docs/design/roster.md): every Worker in one read model, projected on read from the
@@ -388,6 +447,17 @@ export class McpEndpoint extends McpTools {
 }
 
 export default McpEndpoint
+
+/**
+ * Whether `status` lists a plugin without being asked for every one: the manifest check found
+ * something in it, its manifest was refused, or its recorded lifecycle is not the one the
+ * composition gives it (`default` when a row mounts it, `candidate` when its rows are off,
+ * `retired` when no row names it).
+ */
+export function needsLook(p: PluginRecord): boolean {
+  const given = p.mounted ? 'default' : p.rows.length ? 'candidate' : 'retired'
+  return !!p.findings?.length || p.manifestState === 'refused' || (p.lifecycle !== undefined && p.lifecycle.state !== given)
+}
 
 /**
  * A plugin as `status` lists it: its rows, whether one is on, its manifest's state, version, and

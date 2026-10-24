@@ -32,10 +32,14 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     session, or type, a page of at most 1000 after `afterSeq`; it returns the
     page and `next`, the cursor for the following one.
   - `status` reports the store, artifacts, kernel seams, registered providers,
-    for the operator only `plugins` (every plugin of the composition with its rows, whether one
+    for the operator only `plugins` (each listed plugin of the composition with its rows, whether one
     is on, its manifest's state, version, and class, its recorded lifecycle, and what the manifest
     check found in it with the decision that recorded it, from `ctx.pluginHost` when mounted;
-    REQ-HOST-7), and **health** (REQ-HOST-6, `src/health.ts`):
+    REQ-HOST-7), and **health**. Unasked, `plugins` holds only the plugins that need a look
+    (`needsLook`: the manifest check found something, the manifest was refused, or the recorded
+    lifecycle is not the one the composition gives it: `default` mounted, `candidate` with its rows
+    off, `retired` named by none), and `pluginsOmitted` counts the rest; `plugins: true` lists every
+    one (`system plugins` asks for it). Health is always complete (REQ-HOST-6, `src/health.ts`):
     each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
     disk, vault key custody, accounts to sign in again or signed in as one person
     (`duplicateIdentities`), Worker availability,
@@ -129,8 +133,10 @@ one scope another's rights).
   `approve`, `approvals_decide`, `approvals_policy_propose`, `board_pause`, `board_resume`, `board_close`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,
   `events`, `artifact`, `evidence`, `conversation_list`, `conversation_inspect`, `model_key`, and
   every `account_*` tool, `account_probe` included, are operator-only.
-- **Listing:** `tools/list` returns only the tools the caller's scope may use,
-  each with `_meta: { "system/scope": … }`. The operator sees every tool.
+- **Listing:** `tools/list` returns only the tools the caller's scope may use.
+  The operator sees every tool, and a tool only the operator may call carries
+  `_meta: { "system/scope": "operator" }`; a tool without it is a client tool
+  too, so a client's list carries no `_meta` ([token budget](#token-budget)).
 - **Handlers** are told the caller's scope (`ToolContext`), so what a tool
   records can name who acted.
 - **Calls:** a `tools/call` of a registered tool outside the caller's scope,
@@ -160,6 +166,26 @@ other payload (QA-12, INV-9).
   token, which `/mcp` refuses, so it pays for no list.
   [`workflow/tests/replies.spec.ts`](../workflow/tests/replies.spec.ts) measures `result` and
   `usage` on fixture runs that completed.
+- **Replies:** a tool answers once. The answer is the result's `structuredContent`; its text
+  block is a short summary (`reply` and `outline` in
+  [`gateway-core`](../../gateway-core/README.md#replies)), never the same JSON again. A completed
+  run's text is its answer, any other run's a line on where it stands (what it waits for, why it
+  failed, how many steps are done). An error has no structured content: its text is the error.
+  The MCP clients in use hand a model the structured content when a result carries it (Claude
+  Code and Codex do, whether or not the tool declares an `outputSchema`; none here does), so a
+  client loses nothing. The MCP specification asks, for clients without structured content, that
+  the text also carry the JSON (a SHOULD): such a client sees the summary only, and reads the
+  answer with `system` or a client that reads `structuredContent`.
+- **Listing:** `tools/list` is this endpoint's own (`listing`): each tool's name, description,
+  and input schema, converted from the same zod schema the SDK validates each call with. It
+  leaves out what tells a client nothing: `$schema` (the schema is JSON Schema 2020-12, which MCP
+  reads a schema without `$schema` as), the SDK's `execution: {taskSupport: "forbidden"}` (absent
+  means the same), the 300-character `pattern` zod adds beside `format: "date-time"` (the server
+  checks the date-time with zod, as strictly as before), and the scope `_meta` of a client tool
+  ([scopes](#scopes)).
+- **Bounded reads:** `status` lists only the plugins that need a look unless asked; `usage`
+  lists 10 runs unless asked for up to 500, each run with its steps' Workers, tiers, quota
+  classes, and tokens only (its answer, ids, and errors are in `result`).
 - **Ceilings:** in one place, [`tests/budget.ts`](tests/budget.ts), each beside the size it was
   set from, with about 10 % headroom. A test fails when a measure is over its ceiling, and the
   surface test then prints every tool's size. Raising a ceiling is a reviewed change that says

@@ -16,6 +16,7 @@ export {
   type RosterWebsiteAccount, type RosterWindow, type RosterWork,
 } from './roster.ts'
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
+export { outline, reply } from './reply.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

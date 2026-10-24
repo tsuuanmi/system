@@ -11,7 +11,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ContentId, SchemaRegistry } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { outline, reply } from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-store'
 import { z as zod } from 'zod'
 
@@ -146,7 +146,7 @@ export class WorkerSessions extends Service {
       sql: 'ALTER TABLE worker_sessions ADD COLUMN last_active TEXT;',
     }])
     ctx.inject(['mcp'], (c) => {
-      const json = (value: object) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: { ...value } })
+      const json = (value: object) => reply(value, outline(value))
       c.mcp.tool('session_send', {
         scope: 'client',
         description: 'Send a message to a Worker session, or to its group, as the caller: the operator, or the client for a client token (recorded as a message artifact; delivered at most once).',

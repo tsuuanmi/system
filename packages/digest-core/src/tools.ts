@@ -6,7 +6,7 @@
  * The tools belong to the seam, not to a provider, so replacing the provider keeps them.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { outline, reply, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import { type ArtifactRef, DigestError, type Digests, type DigestView } from './index.ts'
@@ -75,7 +75,7 @@ export function digestTool(name: DigestTool, handler: Handler): ToolHandler {
     } catch (error) {
       return refused(`digests: ${name} made an output its schema refuses (a defect; the request itself is recorded): ${(error as Error).message}`)
     }
-    return { content: [{ type: 'text' as const, text: JSON.stringify(output) }], structuredContent: { ...output } }
+    return reply(output, outline(output))
   }
 }
 

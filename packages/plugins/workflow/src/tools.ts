@@ -3,17 +3,35 @@
  * operator's actions, which declare no scope and so are the operator's alone (ADR-0023).
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { outline, reply } from '@tsuuanmi/system-gateway-core'
 import type { Classification, Tier } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import type { Workflow } from './index.ts'
 import { DEFAULT_TEMPLATES } from './spec.ts'
 import type { RunView, TaskClaim } from './types.ts'
+import { usageView } from './views.ts'
+
+/**
+ * The runs `usage` lists when no limit is asked (at most 500): the recent work a lead looks at, in a
+ * few kilobytes (a step's view is about 200 bytes); `limit` asks for more.
+ */
+export const USAGE_LIMIT = 10
+
+/** Where a run that has not completed stands, in one line: what it waits for, why it failed, or how far it is. */
+export function standing(view: RunView): string {
+  const head = `${view.runId} (${view.template}) ${view.status}`
+  if (view.status === 'failed') return `${head}${view.error ? `: ${view.error.kind}: ${view.error.message}` : ''}`
+  if (view.blocked?.kind === 'tie') return `${head}: waits for your vote on ${view.blocked.decision} (${view.blocked.options.map((o) => o.option).join(', ')}) until ${view.blocked.until}`
+  if (view.blocked?.kind === 'gate') return `${head}: waits for ${view.blocked.approvalRequest ? `the verdict on ${view.blocked.approvalRequest}` : `the operator's approval of ${view.blocked.plan}`}`
+  const done = view.nodes.filter((n) => n.state === 'COMPLETED').length
+  return `${head}: ${done} of ${view.nodes.length} step${view.nodes.length === 1 ? '' : 's'} completed; poll result with its runId`
+}
 
 /** Contribute the tools on `c` (the context holding `ctx.mcp`); `ctx` explains artifact ids. */
 export function registerTools(c: Context, w: Workflow, ctx: Context): void {
-  const shape = (view: RunView) => ({ content: [{ type: 'text' as const, text: view.status === 'completed' ? view.answer ?? '' : JSON.stringify(view) }], structuredContent: { ...view } })
-  const json = (value: object) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: { ...value } })
+  // The run is the structured content; its text is the answer of a completed run, else a line on where it stands.
+  const shape = (view: RunView) => reply(view, view.status === 'completed' ? view.answer ?? '' : standing(view))
+  const json = (value: object) => reply(value, outline(value))
   const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
   const waitSeconds = zod.number().int().min(0).max(55).optional().describe('How long to wait for the run to finish before returning (default 45 s)')
   const classification = zod.enum(['public', 'operator-shared', 'local-private']).optional()
@@ -208,9 +226,13 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('usage', {
     scope: 'client',
-    description: 'Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why).',
-    inputSchema: { limit: zod.number().int().min(1).max(500).optional() },
-  }, async (args) => json({ runs: w.usage((args.limit as number | undefined) ?? 50) }))
+    description: 'Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why). A run\'s answer, results, and errors are in `result`.',
+    inputSchema: { limit: zod.number().int().min(1).max(500).optional().describe(`Runs, the most recent first (default ${USAGE_LIMIT}, at most 500)`) },
+  }, async (args) => {
+    const runs = w.usage((args.limit as number | undefined) ?? USAGE_LIMIT).map(usageView)
+    const steps = runs.reduce((n, r) => n + r.nodes.length, 0)
+    return reply({ runs }, `${runs.length} recent run${runs.length === 1 ? '' : 's'}, ${steps} step${steps === 1 ? '' : 's'}`)
+  })
   c.mcp.tool('explain', {
     scope: 'client',
     description: 'The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.',

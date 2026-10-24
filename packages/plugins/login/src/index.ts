@@ -17,7 +17,7 @@ import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { AccountView } from '@tsuuanmi/system-accounts'
 import { contentId, dshHome, ensurePrivateDir, registerSecretPath } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { outline, reply } from '@tsuuanmi/system-gateway-core'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
 declare module '@deepseek-ai/cordis' {
@@ -76,7 +76,7 @@ export class Login extends Service {
       const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
       c.mcp.tool('account_list', { description: 'List provider accounts and their status (no secrets).', inputSchema: {} }, async () => {
         const accounts = await this.ctx.accounts.list()
-        return { content: [{ type: 'text', text: JSON.stringify(accounts) }], structuredContent: { accounts } }
+        return reply({ accounts }, accounts.length ? accounts.map((a) => `${a.id} ${a.status}`).join(', ') : 'no account')
       })
       c.mcp.tool('account_login', {
         description: 'Open a remote login desktop for an account (noVNC over an SSH tunnel). Returns the URL and the ssh -L command; the operator signs in and presses Save account.',
@@ -106,7 +106,7 @@ export class Login extends Service {
       }, async ({ account }) => {
         try {
           const view = await this.relogin(String(account))
-          return { content: [{ type: 'text', text: JSON.stringify(view) }], structuredContent: { ...view } }
+          return reply(view, outline(view))
         } catch (error) {
           return failure(error)
         }
@@ -128,7 +128,7 @@ export class Login extends Service {
       }, async ({ account }) => {
         try {
           const view = await this.save(String(account))
-          return { content: [{ type: 'text', text: JSON.stringify(view) }], structuredContent: { ...view } }
+          return reply(view, outline(view))
         } catch (error) {
           return failure(error)
         }
