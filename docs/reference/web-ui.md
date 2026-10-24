@@ -21,7 +21,9 @@ tables keep their first columns.
 
 **Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
 for review with when the first held for you expires, and the runs that need a look, each linking
-to its section), the Workers at a glance (the roster's counts), the approval cards, the reviews as
+to its section), the Workers at a glance (the roster's counts, then each account's capacity in one
+line, its 5 h bar beside it: *Claude Code · science: 5 h used 42 %, resets 03:08*, with *resting
+until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*), the approval cards, the reviews as
 cards, under a line saying how many are held for you and when the first expires, marked when
 within the hour, since an unanswered one expires and its task waits for input that nothing
 revives (what was asked, the checks not run, the run that made the result, the exact result
@@ -90,12 +92,12 @@ Served when `ctx.board` is present; without it, every route answers `503`
   while a task of the project runs or is in review.
 - The **Board** page is a Kanban: a project filter (all projects by default), each shown
   project's header (title, state, charter version, what of it waits for the operator, linked to
-  its card, and **Pause**, **Resume**, **Close**), how many Workers are idle and tasks ready and how
+  its card, and **Pause**, **Resume**, **Close**), how many Workers are free and tasks ready and how
   a ready task gets a Worker, then a column per state: *Proposed*, *Ready*, *Working* (claimed and
   running), *Review*, *Waiting for you* (input and approval), with *Done* and *Cancelled* folded.
   Each card gives the task's title, its project (when several are shown), its action class, when it
   last changed, what it waits on in words (a link to the approval card or the review), who works
-  on it (the Worker's roster `name` and for how long, from the roster's current work), and a link
+  on it (the account and role that took it, the Worker's roster `name`, and for how long: *Claude Code · science · develop, 4 min*, from the roster's current work), and a link
   to its run. A done task's card says where its accepted result is on its way into the repository:
   **Accepted — waiting to merge into <base>: approve**, linked to its `merge` request
   (`?request=<id>`), and also shown under *Waiting for you*; **Accepted and merged into <base> as
@@ -125,7 +127,7 @@ any step runs.
   `409` with its reason.
 - The card's **Start…** opens a confirmation that says what runs: the template, the attempt (*its
   attempt 1 of 3*), each step with the kind of Worker it runs on (*Do solo: a Worker of standard
-  tier or above that can reason*), how many Workers are idle, and that nothing runs until
+  tier or above that can reason*), how many Workers are free, and that nothing runs until
   **Confirm start**; **Cancel** closes it. A task that names no template shows why it cannot start
   here instead. The outcome (the run, linked, or why nothing started) is reported above the page,
   and the card moves to *Working*.
@@ -232,15 +234,21 @@ Served always; each service it reads that is not mounted reads as unknown with w
 | `GET roster` | — | the roster, an `mcp-roster@1.5` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
 
 - Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
-  (working, idle, at a limit with when the first is back, unavailable, and quarantined when any),
-  then one card per Worker, grouped by status (working, idle, at a limit, unavailable,
-  quarantined). Each card gives the Worker's id; what it is for (its `description`, else its
-  `derived` line, marked *derived*, with *no description is configured*); its status and why in
-  plain words (*Working: 1 of 2 slot(s) in use*, *At a limit: back in 2 h (11:40)*, *Unavailable:
-  its account is signed out*); what it does now (each step's `summary`, with a link to its run);
-  its account (the operator's label, id, kind, and state); what it serves (tier, quota class,
-  locality, provider, family, role); its limits (held-off capabilities, its account's return, each
-  pool and window with its used share and reset); and its load. Times read relative first, the
-  clock time beside. A fact that is unknown shows as `unknown (why)`; a Worker source that was
-  silent or failed in its last read is named above the cards, its Workers not listed. The tab
-  refreshes every 5 seconds like the rest of the page.
+  in the operator's words (working, free, resting with when the first is free again, unavailable,
+  and quarantined when any), then the Workers by account: each account once, under a small header
+  with its name and its Workers' roles (*Claude Code · science: develop [code], review, review-2*),
+  what stops it (*Its account is resting until 02:16 (in 2 h)*, signed out, quarantined, signed in
+  as the same person as another), and its quota, each window as `5 h: used 9 % — resets 23:30 (read
+  22:05)` beside a small bar ([roster](../design/roster.md#surfaces)); the Workers of no account
+  last, under their own header. Each Worker's card is calm: its work (its role or tier; its whole
+  name for a Worker of no account), what it is for (its `description`), its status and why in plain
+  words (*Free: it takes work now*, *Working: 1 of 2 slot(s) in use*, *Resting until 11:40 (in 2 h)*,
+  *Unavailable: its account is signed out*, a quarantine with what its reading found), what it does
+  now (each step's `summary` and each run whose liveness needs a look, with a link to its run), and
+  the capabilities held off until when. A reason that blocks work is never folded. Every other
+  fact, and every fact that is unknown (shown as `unknown (why)`), is folded under the card's
+  **details** (its id, its `derived` line marked *derived* when no description is configured, its
+  account's id, kind, and state, what it serves, and its load), and an account's own under the
+  account's. Times read relative first, the clock time beside. A Worker source that was silent or
+  failed in its last read is named above the cards, its Workers not listed. The tab refreshes
+  every 5 seconds like the rest of the page.

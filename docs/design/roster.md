@@ -99,8 +99,10 @@ Openai · fast · standard
 - **Work:** its role (account × role), else its tier, and the kinds of work it takes
   (`capability-descriptor@1.6`).
 
-The CLI heads each Worker's block with it, the id beside it, and the Workers tab heads each card
-with it, the id under it. It is at most 200 characters.
+The CLI heads each Worker's block with it, the id beside it. The Workers tab shows each account once
+under all but its work (`Claude Code · science`), and heads each of its Workers' cards with the
+work (`develop [code]`); a Worker of no account's card with the whole name. The id is under the
+card's details. It is at most 200 characters.
 
 ## Availability
 
@@ -147,10 +149,14 @@ The schema bounds every string and list as well
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
   record.
 - **The Workers page** (`/ui/?view=workers`, the **Workers** tab, [web UI API](../reference/web-ui.md#roster)):
-  the counts (working, idle, at a limit and when the first is back, unavailable), then one card per
-  Worker grouped by status, headed by its display name with its id under it, under the page's
-  security headers and the operator token, built with DOM methods and text only. **Doing now** lists its steps, then its runs whose liveness needs a
-  look (a held one marked as failed), each with a link to its run. Each window of a pool reads `5 h: used 9 % — resets 23:30
+  the counts (working, free, resting and until when the first is, unavailable), then the Workers by
+  account: each account once under a header with its roles, what stops it, and its quota; then its
+  Workers' cards, each calm (what it is for, its status and why, what it does now), every unknown,
+  derived, or technical fact folded under its details and a reason that blocks work never folded
+  ([web UI API](../reference/web-ui.md#roster)); under the page's security headers and the operator
+  token, built with DOM methods and text only. What it does now lists its steps, then its runs
+  whose liveness needs a look (a held one marked as failed), each with a link to its run. Home shows
+  each account's capacity in one line, its 5 h bar beside it. Each window of a pool reads `5 h: used 9 % — resets 23:30
   (read 22:05)` beside a small bar of its share: the window named by its length (its id when it
   has none, or beside one of the same length), `used`, `resets`, and `observedAt` on the clock (an
   account's own usage report keeps them fresh,

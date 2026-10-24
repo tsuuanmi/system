@@ -47,7 +47,7 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   the reviews routes answer `503`;
 - when `ctx.board` is present, the **board** page (`?view=board`), a Kanban: a project filter (all
   by default); each project's header with its state, charter version, what of it waits for the
-  operator (linked), and the moves; idle Workers and ready tasks; then a column per task state
+  operator (linked), and the moves; free Workers and ready tasks; then a column per task state
   (Proposed, Ready, Working, Review, Waiting for you; Done and Cancelled folded), one card per task
   with its title, who works on it (the Worker's name, since when), what it waits on, and its run;
   a done task's card says where its accepted result is on its way into the repository
@@ -65,24 +65,26 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   cancelled and released, which approval requests are withdrawn, or why a close is refused), and
   moves nothing until **Confirm**; **Cancel** closes it. The page does not refresh while a
   confirmation is open. Without the board the projects routes answer `503`;
-- the **Workers** tab (`?view=workers`, next to Board; REQ-HOST-8): the counts (working, idle, at a
-  limit and when the first is back, unavailable), then one card per Worker grouped by status, read
-  through `readRoster` in [`gateway-core`](../../gateway-core/README.md#the-roster) from the services
-  mounted (`workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`):
-  headed by its display name (`Claude Code · science · develop [code]`,
-  [display names](../../../docs/design/roster.md#display-names)), its id under it and in its
-  accessible name; what it is for (the operator's `description`, else its derived line, marked
-  *derived*); its status and why in plain words (a quarantine with what its reading found); what it does now, one sentence per step with for how long, each
-  a link to its run; its account, with the account's label and its enrolled, ready, signed-out, or
-  quarantined state; what it serves (tier, quota class, locality, provider, family, role); its
-  limits, with each reset relative and on the clock, and each window of its account's pools as
-  `5 h: used 42 % — resets 14:20 (read 14:05)` beside a small bar of its share (the window's
-  latest reading, an account's usage report among them, [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
+- the **Workers** tab (`?view=workers`, next to Board; REQ-HOST-8), read through `readRoster` in
+  [`gateway-core`](../../gateway-core/README.md#the-roster) from the services mounted (`workers`,
+  `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`): the counts (working,
+  free, resting and until when the first is, unavailable), then the Workers by account, each
+  account once under a small header with its name and roles (`Claude Code · science: develop
+  [code], review`, [display names](../../../docs/design/roster.md#display-names)), what stops it
+  (resting until when, signed out, quarantined, one person on two accounts), and its quota, each
+  window of its pools as `5 h: used 42 % — resets 14:20 (read 14:05)` beside a small bar
+  ([ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
   the window by its length, its share, its reset, and when it was read, each on the clock with the
-  day when not today; `at its limit` first, and listed first, while it is limited; `5 h: no reading
-  yet: <why>` before any reading); and its load
-  ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
-  `unknown (why)`, and a Worker source that did not answer is named above the cards.
+  day when not today; `at its limit` first, and listed first, while it is limited; `5 h: no
+  reading yet: <why>` before any reading, windows of one reason on one line); the Workers of no
+  account last. Each Worker's card is calm: its work (role or tier), what it is for, its status and
+  why in plain words (*Free*, *Working*, *Resting until 02:16*, *Unavailable*, a quarantine with what
+  its reading found), what it does now (one sentence per step, and each run whose liveness needs a
+  look, each a link to its run), and the capabilities held off; every unknown (`unknown (why)`),
+  derived, or technical fact (its id, its derived line, its account's id, kind, and state, what it
+  serves, its load) is folded under its **details**, and a reason that blocks work never is
+  ([roster](../../../docs/design/roster.md)). Home's Workers box shows each account's capacity in
+  one line, its 5 h bar beside it. A Worker source that did not answer is named above the cards.
 
 The routes are in the [web UI API](../../../docs/reference/web-ui.md).
 
@@ -150,10 +152,12 @@ refusal, `503` without a queue or a board), the roster route (operator only, val
 `mcp-roster@1.5`, labels shown, display names, a Worker's runs whose liveness needs a look, unknown without a
 Worker registry), and, with a browser, the runs, the queue (labels by effect, a batch verdict, a
 refused one as an alert), a press a refresh lands on that still counts, a verdict not recorded
-that stays as an alert through refreshes until dismissed, and the Workers tab (counts, cards by
-status headed by the display name with the id under it, a description or a derived line marked, the step in one sentence, each pool window's share of its length, reset, and read time, or
-`unknown (why)`, and under Doing now a
-run held for want of a verdict with what frees it and a link to its run).
+that stays as an alert through refreshes until dismissed, and the Workers tab (counts in the
+operator's words, the Workers by account under its header, each card calm with its unknown,
+derived, and technical facts folded under its details, a reason that blocks work shown, the step
+in one sentence, each pool window's share, reset, and read time or `unknown (why)`, Home's
+capacity line per account, and a run held for want of a verdict with what frees it and a link to
+its run).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
