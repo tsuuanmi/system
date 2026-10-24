@@ -280,7 +280,7 @@ export class TaskRuns {
     const files = project ? await this.tasksFile(board, project, classification) : undefined
     return {
       projectId: task.projectId, taskId: task.taskId, attempt, goal: clampText(task.goal, BRIEF_LIMITS.goal),
-      acceptance: task.acceptance.map(({ id, statement }) => ({ id, statement })), pointers, budget: await this.budgetOf(task),
+      acceptance: task.acceptance.map(({ id, statement, check }) => ({ id, statement, ...(check ? { check } : {}) })), pointers, budget: await this.budgetOf(task),
       ...(files ? { files } : {}),
     }
   }

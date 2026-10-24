@@ -841,6 +841,14 @@ guesses.
   the envelope too, under the same classification floor. A source with no such workspace writes
   none and never mentions them; `files` before 1.2 is refused
   ([TASKS.md in a run's workspace](../design/workflow-engine.md#tasksmd-in-a-runs-workspace)).
+- `brief@1.3` adds an acceptance criterion's optional `check` (`tests`, `typecheck`, `lint`,
+  `schema`, `quote-check`, `review`, `operator`): what checks it, as the board task names it
+  (`board-task` acceptance `check`). Rendered, the criterion says it (`- a1: pnpm test passes
+  (check: tests)`), so a step that measures the change, such as `algorithm-development`'s
+  `validate:1`, knows which criteria are its to run without the caller's input
+  ([workflow templates](workflow-templates.md#algorithm-development)). The workflow engine writes
+  `@1.3` for a board task's run when one of its criteria names a check, `@1.2` otherwise; a `check`
+  before 1.3 is refused. Example: [`brief.task-checks.json`](../../schemas/examples/brief.task-checks.json).
 - `sandbox` comes from trusted configuration (the Worker source's), never from model text, and
   `budget.remaining` is computed from the ledger when the brief is written. `resume` names the
   native session the brief continues, when the Worker keeps one. Examples:

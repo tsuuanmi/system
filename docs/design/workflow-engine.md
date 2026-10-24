@@ -117,7 +117,8 @@ provider family than the Workers that served those nodes
 ## Briefs
 
 Every Worker execution the engine starts is given a `brief@1.1` (`@1.2` for a board task's run,
-with its `ask` and `files`; [`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
+with its `ask` and `files`, `@1.3` when a criterion of its task names what checks it;
+[`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
 starts, in the transaction that starts it, and named by it (`workflow-node@1.2`
 `execution.brief`, the node's view, and the `workflow.node.started` event). The engine composes
 the record; the Worker source renders it into its own prompt
@@ -191,7 +192,8 @@ flowchart LR
 
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
-criteria; the task's budget lines less the usage spent on the task (the brief informs; the run's
+criteria, each with what checks it when the task names that (`brief@1.3` `check`); the task's
+budget lines less the usage spent on the task (the brief informs; the run's
 [reservation](#a-tasks-budget) enforces), counted for each step when it starts, after its
 reservation, so a step's brief states what is left after the steps before it, in this attempt and
 the earlier ones (the operator's decision of 2026-10-24, D31; a step still in flight beside it has

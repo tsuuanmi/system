@@ -327,6 +327,16 @@ describe('brief@1.0 and digest@1.0', () => {
     expect(valid('board-projection@1.0', example('board-projection.tasks-md'))).toBe(true)
   })
 
+  it('1.3 says what checks each criterion, as its board task names it, and refuses a check before 1.3 (INV-14)', () => {
+    const checked = example('brief.task-checks')
+    expect(valid('brief@1.3', checked)).toBe(true)
+    expect(valid('brief@1.3', { ...checked, schema: 'brief@1.2' })).toBe(false)
+    expect(valid('brief@1.3', { ...checked, acceptance: [{ id: 'a1', statement: 'it passes', check: 'benchmark' }] })).toBe(false)
+    // A brief none of whose criteria names a check stays at 1.2, its earlier fields at 1.3 too.
+    expect(valid('brief@1.3', { ...checked, acceptance: [{ id: 'a2', statement: 'bench/align records a speed-up' }], schema: 'brief@1.2' })).toBe(true)
+    expect(valid('brief@1.3', { ...example('brief.task-attempt'), schema: 'brief@1.3' })).toBe(true)
+  })
+
   it('cites one artifact with a verbatim quote for every claim (INV-13)', () => {
     const [claim] = digest.claims
     const { quote: _, ...unquoted } = claim.citation

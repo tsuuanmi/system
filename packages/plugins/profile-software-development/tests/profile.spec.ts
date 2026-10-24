@@ -44,3 +44,16 @@ describe('the profiles seam (REQ-WF-9)', () => {
     expect(ctx.workflow.templateNames()).not.toContain('agent-review')
   })
 })
+
+describe('the inputs each step of algorithm-development reads (docs/reference/workflow-templates.md#algorithm-development)', () => {
+  it('gives the caller\'s input to the writing step only: the review and the validation read the task and the change, never the develop step\'s orders (T99 D4)', () => {
+    const steps = new Map(SoftwareDevelopment.ALGORITHM_DEVELOPMENT.map((n) => [n.nodeId, n]))
+    expect(steps.get('develop:1')!.prompt).toContain('{{input}}')
+    for (const variant of Object.values(steps.get('develop:1')!.variants ?? {})) expect(variant.prompt).toContain('{{input}}')
+    for (const id of ['review:1', 'validate:1']) {
+      expect(steps.get(id)!.prompt, id).not.toContain('{{')
+      expect(steps.get(id)!.dependsOn, id).toHaveLength(1)
+    }
+    expect(steps.get('validate:1')!.prompt).toContain('acceptance criteria')
+  })
+})

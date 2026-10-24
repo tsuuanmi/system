@@ -1,0 +1,55 @@
+{
+  "schema": "brief@1.3",
+  "projectId": "proj-sparse-align",
+  "taskId": "task-0007",
+  "attempt": 2,
+  "goal": "Implement the banded alignment kernel behind the existing interface, with a benchmark run recorded.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "pnpm test passes",
+      "check": "tests"
+    },
+    {
+      "id": "a2",
+      "statement": "bench/align records a median speed-up"
+    },
+    {
+      "id": "a3",
+      "statement": "The operator reads the benchmark report",
+      "check": "operator"
+    }
+  ],
+  "artifacts": [],
+  "instructions": [
+    {
+      "text": "Validate the change in this worktree against the board task above. Run each test, benchmark, and check that its acceptance criteria name, exactly as they write it, from the worktree's top level; a criterion's check says what kind of check it is."
+    }
+  ],
+  "ask": {
+    "maxQuestions": 8
+  },
+  "files": [
+    {
+      "path": ".system/TASKS.md",
+      "ref": "sha256:9d3a5e0f6b1c4d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e",
+      "note": "the board of project proj-sparse-align when this run was admitted"
+    }
+  ],
+  "budget": {
+    "remaining": [
+      {
+        "pool": "claude-max-main.programmatic",
+        "unit": "runs",
+        "amount": 3
+      }
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "workspace": "/home/operator/.dsh/system/worktrees/proj-sparse-align/run_0007",
+    "network": "none",
+    "commands": true
+  },
+  "classification": "operator-shared"
+}

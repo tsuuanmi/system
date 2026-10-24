@@ -63,14 +63,18 @@ const TESTS_PROMPT = [
   'End with what the tests now check, the files you changed, and which acceptance criteria the change should now meet.',
 ].join('\n')
 
+/**
+ * The validator reads the board task's goal and acceptance criteria, each with what checks it, from
+ * its brief, and measures the change in the run's worktree: nothing else. It is given no caller's
+ * input and no step's answer, so another step's orders never become its own (T99 D4), and nothing
+ * it measures leans on what the developer said it did.
+ */
 const VALIDATE_PROMPT = [
-  'Validate the change in this worktree. Run each test, benchmark, and check that the task\'s acceptance criteria name, exactly as they write it, from the worktree\'s top level.',
-  'Change no file: you measure the change, you do not fix it.',
-  '',
-  'The request: {{input}}',
+  'Validate the change in this worktree against the board task above. Run each test, benchmark, and check that its acceptance criteria name, exactly as they write it, from the worktree\'s top level; a criterion\'s check says what kind of check it is.',
+  'Change no file: you measure the change, you do not fix it. With no acceptance criteria above, run nothing, and report that none was named to measure.',
   '',
   'Report, for each command: the command, its exit code, and the lines of its output that hold the result (tests passed and failed, measurements), verbatim.',
-  'Then list each acceptance criterion as met, not met, or not measured, with the command that shows it. A command that could not run is reported as not run, with why; nothing is estimated.',
+  'Then list each acceptance criterion as met, not met, or not measured, with the command that shows it. A command that could not run, or was denied, is reported as not run, with why, rather than asked about; nothing is estimated.',
 ].join('\n')
 
 /**
@@ -83,9 +87,13 @@ const VALIDATE_PROMPT = [
  * - `review:1` reviews that exact change on a read-only Worker; blocking findings grow a fix and a
  *   re-review, the fix waiting on the approval queue (engine remediation);
  * - `validate:1` runs the task's tests and benchmarks on the reviewed change, confined to the
- *   worktree, on a Worker that proves `validate` (its commands proven confined). It comes last, so
- *   its report measures the exact subject the task leaves, after any fix, and is the run's result:
- *   what the task keeps, its digest summarizes, and the next attempt reads.
+ *   worktree, on a Worker that proves `validate` (its commands proven confined). It reads the task's
+ *   criteria and their checks from its brief, never the caller's input (the develop step's orders)
+ *   nor any step's answer. It comes last, so its report measures the exact subject the task leaves,
+ *   after any fix, and is the run's result: what the task keeps, its digest summarizes, and the next
+ *   attempt reads.
+ *
+ * Which inputs reach which step is in docs/reference/workflow-templates.md#algorithm-development.
  *
  * Its measurements are evidence, not a check the engine reports: under a policy that requires tests,
  * the board holds the result for the operator.
