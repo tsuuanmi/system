@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -253,6 +253,41 @@ async function x11Handshake(display: string, cookie?: Buffer): Promise<number> {
   })
 }
 
+/**
+ * The process serving an X display, as its pid and start time (a reused pid is another
+ * process): the owner of the socket listening at the display's path, found through
+ * `/proc/net/unix` (listening: `__SO_ACCEPTCON` flag, unconnected state) and `/proc/<pid>/fd`.
+ */
+function xServerOf(display: string): { pid: number; start: string } {
+  const path = `/tmp/.X11-unix/X${display.slice(1)}`
+  const listening = new Set(readFileSync('/proc/net/unix', 'utf8').split('\n').slice(1).flatMap((line) => {
+    const [, , , flags, , state, inode, name] = line.trim().split(/\s+/)
+    return name === path && (Number.parseInt(flags ?? '0', 16) & 0x10000) !== 0 && state === '01' ? [`socket:[${inode}]`] : []
+  }))
+  const owners = readdirSync('/proc').filter((entry) => /^\d+$/.test(entry)).filter((pid) => {
+    try {
+      return readdirSync(`/proc/${pid}/fd`).some((fd) => listening.has(readlinkSync(`/proc/${pid}/fd/${fd}`)))
+    } catch {
+      return false
+    }
+  })
+  expect(owners).toHaveLength(1)
+  const pid = Number(owners[0])
+  const start = startTimeOf(pid)
+  expect(start).toBeDefined()
+  return { pid, start: start! }
+}
+
+/** Field 22 of `/proc/<pid>/stat`, or `undefined` once the process is gone. */
+function startTimeOf(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
+  } catch {
+    return undefined
+  }
+}
+
 /** The single cookie of an Xauthority file written by display-virtual (FamilyWild record). */
 function cookieOf(path: string): Buffer {
   const file = readFileSync(path)
@@ -283,13 +318,12 @@ describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
     const fiber = ctx.plugin(VirtualDisplay, {})
     await fiber
     const display = await ctx.display.prepare('invisible')
-    const socket = `/tmp/.X11-unix/X${display.env.DISPLAY!.slice(1)}`
-    expect(existsSync(socket)).toBe(true)
-    const own = statSync(socket).ino
+    const server = xServerOf(display.env.DISPLAY!)
+    expect(readFileSync(`/proc/${server.pid}/comm`, 'utf8').trim()).toBe('Xvfb')
     await fiber.dispose()
-    // Its socket is gone. Another X server on the host (a parallel test file's) may take the display
-    // number at once: the socket at that path is then that server's, never this one's.
-    await vi.waitFor(() => expect(existsSync(socket) && statSync(socket).ino === own).toBe(false), { timeout: 10_000 })
+    // This server's process is gone (dispose awaits its exit). Its display number and socket path
+    // are no evidence: a parallel test file's Xvfb may take them at once, on a recycled inode.
+    expect(startTimeOf(server.pid)).not.toBe(server.start)
     expect(display.lost.aborted).toBe(true)
   }, 15_000)
 })
