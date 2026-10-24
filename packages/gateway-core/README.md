@@ -84,7 +84,7 @@ Tests: `tests/guard.spec.ts`.
   `workflow.node.started`, `NODE_STARTED`), the workflow engine
   (`usage`), and the board (`task`). A service not given, or whose read
   throws, makes only its own fields `{ unknown: why }`. The record is checked
-  against `mcp-roster@1.1` before it is returned; one its schema refuses
+  against `mcp-roster@1.2` before it is returned; one its schema refuses
   throws (a defect).
 - **`projectRoster(input, { scope, now })`** is the pure projection of what was
   read: Workers in id order, each with its description (or `unknown`) and a

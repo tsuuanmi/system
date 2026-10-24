@@ -7,6 +7,7 @@
       "value": [
         {
           "worker": "agent:claude-agent-sdk:1f0c2b7e9a5d3c41/review",
+          "name": "Claude · t***@example.com · review",
           "provider": "claude-agent-sdk",
           "description": { "value": "Reviews the studio's diffs before they merge" },
           "derived": "claude-agent-sdk Worker, role review, standard tier, agent-plan, local",
@@ -78,6 +79,7 @@
         },
         {
           "worker": "agent:codex-sdk:04aa5c1e9b7d3f20/review",
+          "name": "Codex · slot 2 · review",
           "provider": "codex-sdk",
           "description": { "unknown": "no description is configured for it" },
           "derived": "codex-sdk Worker, role review, standard tier, agent-plan, local",
@@ -113,6 +115,7 @@
         },
         {
           "worker": "worker:chatgpt-plus/standard",
+          "name": "Chatgpt · Studio Plus · standard",
           "provider": "chatgpt-web",
           "description": { "value": "The studio's chat subscription for quick questions (standard tier)" },
           "derived": "chatgpt-web Worker, standard tier, subscription-chat, remote",

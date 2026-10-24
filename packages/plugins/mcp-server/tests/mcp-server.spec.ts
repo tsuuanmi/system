@@ -116,7 +116,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
   })
 
-  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.1 (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.2 (REQ-HOST-8)', async () => {
     const { url, tokens, ctx } = await boot()
     const at = '2026-10-24T09:29:58.000Z'
     const plus = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' as const }
@@ -157,7 +157,7 @@ describe('system MCP server on ctx.webServer', () => {
     const roster = async (token: string) => (await connect(url, token)).callTool({ name: 'roster', arguments: {} })
     const operator = await roster(tokens.operator)
     const schemas = new SchemaRegistry()
-    schemas.assertDef('mcp-roster@1.1', 'roster-output', operator.structuredContent)
+    schemas.assertDef('mcp-roster@1.2', 'roster-output', operator.structuredContent)
     expect(operator.structuredContent).toMatchObject({
       counts: { ready: 0, busy: 1, resting: 1, unavailable: 0, quarantined: 0 },
       workers: { value: [
@@ -169,7 +169,7 @@ describe('system MCP server on ctx.webServer', () => {
     })
     expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/^Roster as of .*: 2 Worker\(s\): 0 ready, 1 busy, 1 resting, 0 unavailable, 0 quarantined\n/)
     const client = await roster(tokens.client)
-    schemas.assertDef('mcp-roster@1.1', 'roster-output', client.structuredContent)
+    schemas.assertDef('mcp-roster@1.2', 'roster-output', client.structuredContent)
     expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
     expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 } })
     // The model token reaches no MCP tool.

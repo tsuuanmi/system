@@ -10,8 +10,8 @@
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.1`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.1'
+/** The schema of the roster (`mcp-roster@1.2`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.2'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -175,6 +175,8 @@ export interface RosterWindow { id: string; kind: string; seconds?: number; stat
 export interface RosterPoolView { pool: string; kind: string; available: boolean; until?: string; windows: RosterWindow[]; unknownUsage: Known<{ runs: number; kinds: Partial<Record<UsageUnknownKind, number>> }> }
 export interface RosterEntry {
   worker: string
+  /** A name for people: provider, account, and role or tier, `Claude · t***@example.com · review`; never an id to route by. */
+  name: string
   provider: string
   /** What it is for, in the operator's words; unknown when none is configured. */
   description: Known<string>
@@ -393,12 +395,18 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         ? known({ id: d.account.id, group: d.account.group, mode: d.account.mode, ...(d.account.limitUntil ? { limitUntil: d.account.limitUntil } : {}), record })
         : unknown('its Worker source names no account (a descriptor below capability-descriptor@1.5, or a Worker of none)')
       const pools = poolsOf(input, d)
-      const availability = availabilityOf(d, record, pools)
+      const work = workOf(input, d.worker, options.now)
+      // A Worker the engine sees running a step is busy, whatever load its source reports (none, or none running).
+      const running = isKnown(work) ? work.value.items.length : 0
+      const described = availabilityOf(d, record, pools)
+      const availability: Availability = described.state === 'ready' && running
+        ? { state: 'busy', summary: `busy: it runs ${running} step(s) now (its source reports ${d.load ? `${d.load.running} running` : 'no load'})` }
+        : described
       counts[availability.state] += 1
       const siblings = input.siblings.get(d.worker) ?? unknown<string[]>('its siblings were not read')
       const role = roleOf(input, d, record, agent)
       return {
-        worker: d.worker, provider: d.provider,
+        worker: d.worker, name: nameOf(d, record, role, options.scope), provider: d.provider,
         description: d.description !== undefined ? known(d.description) : unknown('no description is configured for it'),
         derived: derivedOf(d, role),
         family: d.family !== undefined ? known(d.family) : unknown('its Worker source declares no provider family'),
@@ -407,7 +415,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         load: d.load ? known({ running: d.load.running, queued: d.load.queued, pending: d.load.pending, slots: d.load.slots }) : unknown('its Worker source reports no load'),
         limits: [...(d.cooldowns ?? [])].map((c) => ({ capability: c.capability, until: c.until })).sort((a, b) => cmp(a.capability, b.capability)),
         siblings: siblingsOf(siblings, d.worker),
-        work: workOf(input, d.worker, options.now),
+        work,
         pools,
       }
     }))
@@ -419,6 +427,23 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
       : isKnown(input.sources) ? known([...input.sources.value].sort((a, b) => cmp(a.source, b.source)).map((s) => ({ source: s.source, state: s.state, at: s.at, workers: s.workers, ...(s.detail ? { detail: clip(s.detail) } : {}) }))) : input.sources,
     unknownUsage: isKnown(usage) ? known({ unreadable: usage.value.unreadable, unconfigured: usage.value.unconfigured }) : unknown(usage.unknown),
   }
+}
+
+/**
+ * A Worker's name for people, `<provider> · <account> · <role or tier>`: its provider's first word,
+ * capitalised (a model's, its family's); its account's label for the operator (a website account's
+ * catalog label, an agent account's masked hint), else its account's id, else the rest of its own
+ * id; and its role, else its tier. Never an id to route by: the Worker id stays beside it.
+ */
+function nameOf(d: RosterDescriptor, record: Known<RosterAccountRecord>, role: Known<string | null>, scope: RosterScope): string {
+  const word = (text: string): string => { const first = text.split(/[-_:.\s]/)[0] || text; return first.charAt(0).toUpperCase() + first.slice(1) }
+  const provider = d.account || d.family === undefined ? word(d.provider) : word(d.family)
+  const rec = isKnown(record) ? record.value : undefined
+  const label = scope === 'operator' && rec?.label && isKnown(rec.label) ? rec.label.value : undefined
+  const own = d.worker.slice(d.worker.indexOf(':') + 1)
+  const account = label ?? (rec?.kind === 'website' ? d.account!.id : rec?.kind === 'agent' ? `slot ${rec.slot ?? '?'}` : own.split('/')[0]!)
+  const part = isKnown(role) && role.value ? role.value : d.tier
+  return clip([provider, account, part].join(' · '), 200)
 }
 
 /** A Worker's line made from what its source says: provider, role, tier, quota class, and locality (shown, marked as derived, when it has no description). */
@@ -527,7 +552,7 @@ export function formatRoster(roster: Roster): string {
   else {
     lines.push(`Roster as of ${roster.asOf}: ${roster.workers.value.length} Worker(s): ${STATES.map((s) => `${c[s]} ${s}`).join(', ')}${roster.unlisted ? `; ${roster.unlisted} more not listed` : ''}`)
     for (const w of roster.workers.value) {
-      lines.push('', `${w.worker}  ${w.availability.summary}`)
+      lines.push('', `${w.name} (${w.worker})  ${w.availability.summary}`)
       lines.push(`  is         ${isKnown(w.description) ? w.description.value : `${w.derived} (derived: no description is configured)`}`)
       lines.push(`  serves     ${w.tier}, ${w.quotaClass}, ${w.locality}; provider ${w.provider}, family ${text(w.family)}; role ${text(w.role, (r) => r ?? 'none')}`)
       lines.push(`  account    ${text(w.account, (a) => `${a.id} (${a.group}, ${a.mode}): ${text(a.record, (r) => `${r.kind} ${r.status}${r.label ? `, ${text(r.label, (l) => JSON.stringify(l))}` : ''}${r.slot !== undefined ? `, slot ${r.slot}` : ''}${r.quarantine ? `, quarantined ${r.quarantine.reason} since ${r.quarantine.since} (${r.quarantine.decision})` : ''}${r.sameAs ? `, same person as ${r.sameAs.join(', ')}` : ''}`)}`)}`)
