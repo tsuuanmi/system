@@ -62,7 +62,7 @@ each field, which a schema cannot fully express, is documented in
 | [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period; 1.1 adds what a cap counts as 0 (records without a figure, runs whose usage the ledger could not count); 1.2 adds the agent runs whose liveness asked for the operator |
 | [mcp-roster.v1.json](mcp-roster.v1.json) | input and output of the `roster` MCP tool: every Worker in one read model, projected on read, each fact a source could not give `unknown` with why; 1.2 adds each Worker's runs whose liveness needs a look |
 | [mcp-agent-accounts.v1.json](mcp-agent-accounts.v1.json) | input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents`; 1.1 adds `account_migrate` |
-| [mcp-agent-runs.v1.json](mcp-agent-runs.v1.json) | input and output of the operator's agent run tool `agent_run_free`: free what a run that ended with its liveness unknown holds, on the operator's word that its agent is gone |
+| [mcp-agent-runs.v1.json](mcp-agent-runs.v1.json) | input and output of the operator's agent run tools: `agent_run_free`, free what a run that ended with its liveness unknown holds, on the operator's word that its agent is gone; 1.1 adds `agent_worktrees` and `agent_worktrees_remove`, list the run worktrees and remove the finished ones |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, …), the input and output of the MCP tools built before Base, and the

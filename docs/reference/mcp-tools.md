@@ -167,6 +167,28 @@ Scope: `operator`
 | `commitWorktree` | boolean |  | Commit a dirty worktree's changes on its branch, then remove it |
 | `note` | string |  | Why, kept on the decision |
 
+## `agent_worktrees`
+
+Operator tool: list the worktrees of workflow runs (a worktree per run) not removed yet, oldest first: each with its run, branch, state (in-use while an agent run of its workflow run runs; held while one ended with its liveness unknown; finished otherwise), what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `limit` | integer |  | At most this many (default and most 100) |
+
+## `agent_worktrees_remove`
+
+Operator tool: remove finished run worktrees now instead of waiting for the retention, every one or those of one workflow run (runId). One is removed only while no agent run of its workflow run is unfinished or held, and only when it holds nothing uncommitted, or with commitChanges after its changes are committed on its branch: nothing is discarded, and the branch stays. Recorded as your retention decision; a worktree it cannot remove stays, and why.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `runId` | string |  | Only this workflow run's worktrees |
+| `commitChanges` | boolean |  | Commit a finished worktree's uncommitted changes on its branch, then remove it |
+| `note` | string |  | Why, kept on the decision |
+
 ## `approvals_decide`
 
 Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.
