@@ -7,9 +7,10 @@ blocks the release.** A check marked *only with … on* applies only when the
 release's composition turns that row on
 ([off by default](../operations/runbooks.md#turn-an-off-row-back-on)). For Base, the
 pilot's composition turns `profile-software-development` on, so the checks marked
-*only with `profile-software-development` on* apply to it, whatever the default
-([rows the pilot turns on](../requirements/release-scope.md#rows-the-pilot-turns-on); whether
-the row ships on by default is the operator's decision, open). A check
+*only with `profile-software-development` on* apply to it, though the row ships off by default
+([rows the pilot turns on](../requirements/release-scope.md#rows-the-pilot-turns-on): the
+operator's decision of 2026-10-24; the live install turns it on for the pilot and these
+checks). A check
 marked *retired* names a template PROP-0004 removed; it stays as history and
 is not run.
 

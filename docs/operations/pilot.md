@@ -38,10 +38,10 @@ tools. The Workers are Claude Code Workers that `system` runs, each in a run's o
 Edit your profile patch, `~/.dsh/profiles/system/cordis.patch.yml`. A patch that targets a row
 replaces its whole configuration, so each row below is complete. One row the pilot needs is off by
 default: `profile-software-development`, which contributes the `algorithm-development` template;
-its first two lines below turn it on. Every other row the pilot uses is on by default. Whether Base
-ships that row on is your decision, still open
-([rows the pilot turns on](../requirements/release-scope.md#rows-the-pilot-turns-on)); until you
-make it, the switch is this patch. For a repository at `/home/me/src/align`:
+its first two lines below turn it on. Every other row the pilot uses is on by default. Base ships
+that row off, as you decided on 2026-10-24, so this patch stays the switch
+([rows the pilot turns on](../requirements/release-scope.md#rows-the-pilot-turns-on)). For a
+repository at `/home/me/src/align`:
 
 ```yaml
 # The template's profile, off by default.
@@ -105,6 +105,12 @@ the three Workers `ready`. The developer proves `develop` and `validate`, the re
 digester `review`. Keep `workspace-write`'s required checks: the engine never reports `tests`
 from a model's account of a command, so with them every result waits for your acceptance, which
 is where the checks bind ([accept or reject a review](runbooks.md#accept-or-reject-a-review)).
+
+On an install where other Workers are on too, such as the live install with its website and
+reviewer Workers, also put the pilot's Claude Code Workers first in the `workers` row's
+`priority`, keeping the row's other options (the patch replaces the whole row). Routing reads that
+list after tier, quota, and load, so it decides between Workers those leave equal
+([routing](../design/routing.md)).
 
 ## Charter the project
 

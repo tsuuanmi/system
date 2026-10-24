@@ -51,7 +51,9 @@
         model: gemini-3.8-flash-high
         tier: standard
 
-# Optional, not part of the update: the agent-review and algorithm-development templates, which
-# give these Workers their reviews (runbook: Turn an off row back on).
-# - id: profile-software-development
-#   disabled: false
+# The agent-review and algorithm-development templates, off in the bundle: the live install turns
+# them on for the pilot and the live checks (operator decision of 2026-10-24; runbook: Turn an off
+# row back on). Put the Claude Code Worker first in the live `workers` row's `priority` too, keeping
+# the row's other options (docs/operations/pilot.md#name-the-repository-and-the-workers).
+- id: profile-software-development
+  disabled: false

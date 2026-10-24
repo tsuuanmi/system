@@ -1150,9 +1150,12 @@ each step checked, rolled back when one fails. It is a dry run unless `--apply`.
 of it by row id: its `agent-workers` row replaces the live one and keeps the live Claude Code Worker
 as it is (`claude-review` at this update; the example names it `claude-research`, its id since its
 rename on 2026-10-24, [renaming an agent Worker](#agent-workers));
-`runtime-codex-sdk` and `runtime-antigravity-cli` are added. Keep every other row as it is:
+`runtime-codex-sdk` and `runtime-antigravity-cli` are added, and `profile-software-development` is
+turned on for the pilot and the live checks (off in the bundle, the operator's decision of
+2026-10-24). Keep every other row as it is:
 `accounts` (`chatgpt-main`; `gemini-main` with its `argon` frontier tier), `login` (`vncPath`),
-`workers` (`priority`), `provider-gemini-web` (`disabled: false`, the `modes` map with `argon` and
+`workers` (`priority`, where you only move the Claude Code Worker first:
+[pilot](pilot.md#name-the-repository-and-the-workers)), `provider-gemini-web` (`disabled: false`, the `modes` map with `argon` and
 `site`, `researchMode: flash`), `workflow` (`allowSameFamily`, `repositories.maxSourceChars: 24000`),
 `turns` (`maxConcurrentTurnsPerAccount: 2`), `llm-pi-ai` (`google`, `apiKeyEnv`), and `models`
 (`gemini-api`). The new rows need nothing. The live patch with the fragment passes Base's `system
