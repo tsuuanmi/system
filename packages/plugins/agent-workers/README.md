@@ -475,7 +475,12 @@ The **`agents` Worker source**: agent runtimes as Workers
   ([a deferred tool call](../../../docs/design/workflow-engine.md#a-deferred-tool-call));
   a board task's next attempt is the board's and the lead's.
 - **Cancel (REQ-WRK-4):** a running agent is stopped, and a queued run never
-  starts. Both fail as `aborted`.
+  starts. Both fail as `aborted`. A run that started and that no process holds
+  now (between two liveness looks after a restart) cannot be stopped from here:
+  it gets a verdict first, a `reconciliation` decision with `cause: cancel`;
+  `dead` ends it `aborted` as gone, anything else ends it `aborted` not known to
+  be gone, held as below (`agent-workers.run.unknown`), its reservation
+  released and its usage recorded as `interrupted`.
 - **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails
   as `timeout`. The run was submitted, so it is not retried automatically.
 - **Restart:** a queued run starts. A run that had started is never run again:
@@ -498,8 +503,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     another host): looked at again after a minute, doubling, at most 15 minutes;
     after `maxUnknownVerdicts` (default 3) in a row it fails as
     `reconciliation_failed` for the operator, the decision saying it is not
-    declared dead. Its session and its workflow run's worktree stay held: the
-    source runs nothing more in either (`config_error`, unsent), and the
+    declared dead, and `agent-workers.run.unknown` is appended. Its session and
+    its workflow run's worktree stay held until the operator frees them (below):
+    the source runs nothing more in either (`config_error`, unsent), and the
     retention sweep keeps the worktree.
 
   Its reservation is released,
@@ -527,6 +533,29 @@ The **`agents` Worker source**: agent runtimes as Workers
   `agent-workers.tool.deferred` event names it; the queue is asked, and a queue
   that is not loaded, cannot be read, or does not hold the request cannot show it
   free). The workflow engine gives a held session no automated input.
+- **Liveness told** (`liveness`, on the `workers` seam; PROP-0013): the runs
+  that are stalled (running, a stall reported), being looked at (verdicts being
+  taken), or unknown (ended not known to be gone, not freed), read from the
+  runs' records: the verdict and looks, the reasons (the reconciliation
+  decision's signals, or as this host shows them now), the session and
+  worktrees each holds, and what the operator can do; at most 64, the latest
+  first, with the counts of all. The surfaces (`status`, `explain`, the roster,
+  the report) read it through the seam ([what the operator sees](../../../docs/design/agent-runtimes.md#what-the-operator-sees)).
+- **Freeing a held run** (`free`, MCP `agent_run_free`, operator scope,
+  `mcp-agent-runs@1.0`, `src/tools.ts`; `system free <run> --agent-gone`): on the
+  operator's word that its agent is gone (`agentGone: true`), recorded first as
+  their `reconciliation` decision (decider `operator.free`), stored on the run
+  (`liveness_freed`, migration 14) and appended as `agent-workers.run.freed`;
+  `held`, a later run's check, and the retention sweep then no longer count it.
+  Refused, changing nothing: a run that holds nothing; one still being looked
+  at, or another started run of its session or worktree not finished; its lease
+  held; its holder or agent process present on this host. Its workflow run's
+  worktree is removed only while nothing else of that run is unfinished or
+  held, and only when clean, or with `commitWorktree` once its changes are
+  committed on its branch; the branch stays, and one that stays is the
+  retention's. A freed run may be freed again for its worktree only
+  ([freeing what a run holds](../../../docs/design/agent-runtimes.md#freeing-what-a-run-holds),
+  [runbook](../../../docs/operations/runbooks.md#a-runs-liveness-is-unknown)).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
   resume the agent's native session, on a runtime that reports `resume`; no
   other runtime is ever asked to resume one, and the session keeps no native

@@ -924,6 +924,26 @@ guesses.
 - Examples: [`mcp-agent-accounts.enroll.json`](../../schemas/examples/mcp-agent-accounts.enroll.json),
   [`mcp-agent-accounts.list.json`](../../schemas/examples/mcp-agent-accounts.list.json).
 
+### MCP tool: agent runs
+
+| Tool | Scope | Does |
+|---|---|---|
+| `agent_run_free` | operator | free the session and worktree an agent run holds because it ended without being known to be gone, on the operator's word that its agent is gone ([freeing what a run holds](../design/agent-runtimes.md#freeing-what-a-run-holds)) |
+
+- Input and output: [`mcp-agent-runs.v1.json`](../../schemas/mcp-agent-runs.v1.json)
+  `$defs/agent-run-free-input` and `agent-run-free-output` (`mcp-agent-runs@1.0`). `agentRun` is an
+  `arun_` id with 16 hex digits; `agentGone` must be `true` (anything else is refused by the schema,
+  nothing done); `commitWorktree` has a dirty worktree's changes committed on its branch, then the
+  worktree removed; `note` (at most 1,000 characters) is kept as the decision's rationale.
+- The output names the operator's `reconciliation` decision (decider `operator.free`), recorded before
+  anything was freed; `again` when the run was freed already (only its worktree was looked at again);
+  `freed`, what it held that is free now, in words (empty when `again`); and each worktree of its
+  workflow run, `removed` (with the `commit` that kept its changes, if any) or `kept`, and `why`.
+- A refused call (`invalid_input`) changes nothing and records nothing: no such run, a run that holds
+  nothing, its liveness still being looked at, another started run of its session or worktree not
+  finished, its lease held, or its holder or agent process present on this host. Example:
+  [`mcp-agent-runs.free.json`](../../schemas/examples/mcp-agent-runs.free.json).
+
 ### MCP tool: `report`
 
 | Tool | Scope | Does |
@@ -941,6 +961,11 @@ guesses.
   runs whose usage the ledger could not count by kind and how many were reconciled
   ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)). A 1.0
   report has none of them and stays valid.
+- `mcp-report` 1.2 adds `attention.liveness`, only when there is any: the agent runs whose liveness
+  asked for the operator in the period (`stalled`, `unknown`, `freed`) and `held`, those that ended
+  unknown in the period and were not freed in it (at most 64, `heldOmitted` counting the rest), each
+  by its agent run, Worker, when, and workflow run. They are never counted as interruptions. A 1.1
+  report stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:
@@ -970,6 +995,10 @@ guesses.
   derived, when there is no description); and, per step of `work`, `since` (known: when its
   current attempt started, from the event log) and `summary` (the step in one sentence: its task,
   run, step, and for how long, as of `asOf`). Readers accept 1.0 and 1.1.
+- `mcp-roster@1.2` adds, per Worker, `liveness`: present only when the router tells liveness and the
+  Worker has a run that is `stalled`, being looked at (`looking`), or ended without being known to
+  be gone (`unknown`), each with `execution`, `state`, `since`, `runId`, and `summary`; or
+  `unknown` when the read failed or a source could not tell. A 1.1 record stays valid.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

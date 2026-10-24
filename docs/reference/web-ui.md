@@ -139,7 +139,7 @@ Served always; each service it reads that is not mounted reads as unknown with w
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET roster` | — | the roster, an `mcp-roster@1.1` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+| `GET roster` | — | the roster, an `mcp-roster@1.2` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
 
 - Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
   (working, idle, at a limit with when the first is back, unavailable, and quarantined when any),

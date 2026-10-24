@@ -131,7 +131,11 @@
   positively gone and no activity was seen within a bound; a failed probe, a failed lease
   renewal, or a signal never reported is not death
   ([PROP-0013](../proposals/0013-feedback-from-work.md),
-  [liveness verdict](../design/scheduling-and-leases.md#liveness-verdict)).
+  [liveness verdict](../design/scheduling-and-leases.md#liveness-verdict)). An operator's cancel
+  of a started run no process holds takes the same verdict. A run that ended without being known
+  to be gone holds what it ran in until the operator, on their recorded word that its agent is
+  gone and never while a probe shows it present, frees it; the operator sees every such run, and
+  every stalled one ([freeing what a run holds](../design/agent-runtimes.md#freeing-what-a-run-holds)).
 
 ## Teams (`REQ-TEAM`)
 

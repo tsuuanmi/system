@@ -83,9 +83,12 @@ Tests: `tests/guard.spec.ts`.
   `countUnknownUsage` in [`libs`](../libs/README.md); each listed step's
   `workflow.node.started`, `NODE_STARTED`), the workflow engine
   (`usage`), and the board (`task`). A service not given, or whose read
-  throws, makes only its own fields `{ unknown: why }`. The record is checked
-  against `mcp-roster@1.1` before it is returned; one its schema refuses
-  throws (a defect).
+  throws, makes only its own fields `{ unknown: why }`. With a router that tells
+  liveness (`workers.liveness`, PROP-0013) it is read once, and each Worker with
+  a run stalled, looked at, or held for want of a verdict gets `liveness`, each
+  run in one sentence (`unknown` on every Worker without one listed when a
+  source could not tell). The record is checked against `mcp-roster@1.2`
+  before it is returned; one its schema refuses throws (a defect).
 - **`projectRoster(input, { scope, now })`** is the pure projection of what was
   read: Workers in id order, each with its description (or `unknown`) and a
   `derived` line, its account and the account's record, role, availability (`ready`, `busy` N of M, `resting` until its reset,

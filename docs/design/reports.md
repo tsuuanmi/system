@@ -4,7 +4,7 @@
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Proposals:
 > [PROP-0010](../proposals/0010-base-version.md) (B8: the baseline report, a weekly investor report),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#validation-plan) (the baseline).
-> Payload: [`mcp-report@1.1`](../reference/schemas.md#mcp-tool-report).
+> Payload: [`mcp-report@1.2`](../reference/schemas.md#mcp-tool-report).
 >
 > Implemented in [`report`](../../packages/plugins/report/README.md); differs from target: quota
 > lost at reset is not reported (the ledger's seam gives each window's latest reading only), and
@@ -29,7 +29,7 @@ and `since` to `days` (default 7) before it; at most 366 days. And a scope: one 
 | board | `ctx.board`: `projects`, `project`, `tasks` | projects and their tasks as they are now (`asOf`) |
 | approval queue | `ctx.approvals.list`, every state | each request: its class, requester, creation, batch, and resolution |
 | resource ledger | `ctx.resources.usage` over the period | the counted usage records observed in it (deduplicated by the ledger); and, for each run whose usage it could not count, whether it has counted a record of that run in its pool since |
-| event log | `ctx.eventLog.query` | `workflow.task.reported` (one per attempt that reached its task), `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened` and `closed`, `approvals.batched`, `usage.unknown` (a run whose usage the ledger could not count, [resources](resources.md#usage-the-ledger-cannot-count)); for a project, each of its runs' `workflow.node.started` |
+| event log | `ctx.eventLog.query` | `workflow.task.reported` (one per attempt that reached its task), `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened` and `closed`, `approvals.batched`, `usage.unknown` (a run whose usage the ledger could not count, [resources](resources.md#usage-the-ledger-cannot-count)), `agent-workers.run.stalled`, `run.unknown`, and `run.freed` (an agent run's liveness, [what the operator sees](agent-runtimes.md#what-the-operator-sees)); for a project, each of its runs' `workflow.node.started` |
 | decisions | `ctx.artifacts.get` | the acceptance decision of each done task and of each reported attempt |
 | digests | `ctx.digests.get`, when loaded | each attached digest's claims kept and dropped, escalation, and the runs that wrote it |
 
@@ -62,6 +62,7 @@ those requests.
 | interruptions | what asked for the operator: the requests made, and the reviews held for the operator, per UTC day |
 | batches | what the operator was shown: the batches the queue made (`approvals.batched`), and each request the operator answered outside a batch, per UTC day |
 | attention budget | for a project's report, its charter's `maxInterruptionsPerDay` and `maxBatchesPerDay`; each day over either is marked |
+| agent runs' liveness | only where there is any (`mcp-report` 1.2, `attention.liveness`): stalls reported in the period, runs that ended without being known to be gone (their session and worktree held), runs the operator freed (each once, a second free for its worktree not counted again), and `held`, those that ended unknown in the period and were not freed in it, at most 64. Shown beside the interruptions and never counted as one, so the baseline's figure keeps its meaning; an agent run belongs to a project by the workflow run it served |
 | usage | the records observed in the period, per pool and in all: input tokens (cached input included), cache reads and writes, output tokens, turns, the runtime's own cost estimate; and the records by outcome |
 | usage a cap counts as 0 | per pool and in all, only where there is any (`mcp-report` 1.1): the records without token counts, without a cost, without turns, and the runs recorded in the period whose usage the ledger could not count and has not counted since (`unknownRuns`); and those runs in all (`usage.unknown`): each once per pool by its first entry's kind (not reported, interrupted, refused, failed), and how many the ledger has counted a record of since (reconciled) |
 | digests | digests of task results that ended in the period: attached or bypassed; for those attached, the claims kept and dropped, and the escalations |

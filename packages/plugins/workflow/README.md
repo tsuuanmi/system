@@ -515,7 +515,12 @@ second execution path (INV-1).
     lists every attempt's decisions in the order they were made, so a rejected
     answer, and the escalation or retry it led to, stay visible after a later
     attempt. A node keeps its turn's decision ids, so the chain outlives the turn
-    runtime's retention. `system explain --json` prints it as it is.
+    runtime's retention. `system explain --json` prints it as it is. With a
+    router that tells liveness (`ctx.workers.liveness`, PROP-0013), it adds the
+    run's executions that are stalled, looked at, or ended not known to be gone
+    (`liveness`: verdict, looks, why, what each holds, what to do) and
+    `livenessUnread`, a source that could not tell; an execution such a source
+    tells of is explained by its own id (`src/tools.ts`).
   - Node requirements carry the node's objective and tier provenance:
     `profile` for template tiers, `caller` when the caller's tier replaced one.
 - **MCP tools** (they replace the built-in placeholders):
@@ -540,7 +545,7 @@ second execution path (INV-1).
     as `usageView` shows it: the run's id, template, status, session, and times, and per step its
     state, tiers, attempt, execution, source, Worker, quota class, tokens, and `usageUnknown`;
     its answer, result and brief ids, errors, wait, and task are `result`'s;
-  - `explain` takes a run id, or any artifact id (its input tree).
+  - `explain` takes a run id, any artifact id (its input tree), or an execution whose liveness needs a look.
   - Each answers once ([replies](../mcp-server/README.md#token-budget)): the view is the
     structured content; the text is a completed run's answer, any other run's `standing` (what
     it waits for, why it failed, or how many steps are done), or an `outline` of the answer.

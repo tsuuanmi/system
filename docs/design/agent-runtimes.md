@@ -866,10 +866,18 @@ PROP-0013 L1 and L2).
   - anything else (`unknown`, or `stalled` for an agent process still present): looked at again
     with a bounded backoff (a minute, doubling, at most 15 minutes). After `maxUnknownVerdicts`
     (default 3) verdicts in a row it goes to the operator: it fails as `reconciliation_failed`, the
-    decision saying it is not declared dead.
-- **A run that ended without being known to be gone** holds its session and its worktree (INV-15).
-  The source runs nothing more in either (`config_error`, unsent), the retention sweep keeps the
-  worktree, and [`held`](#held-sessions) says so.
+    decision saying it is not declared dead, and `agent-workers.run.unknown` is appended (`agentRun`,
+    `worker`, `verdict`, `looks`, `cause`, `rule`, the decision).
+- **The operator cancels a started run that no process holds** (between two looks, say): its agent
+  cannot be stopped from here, so it gets a verdict first, as above, recorded as a `reconciliation`
+  decision (`cause: cancel`). `dead` ends it `aborted` as gone; any other verdict ends it `aborted`
+  not known to be gone, held as below, and `agent-workers.run.unknown` is appended. Its reservation
+  is released and its usage recorded as unknown (`interrupted`). A run its holder runs here is
+  aborted in place, and a queued one never starts, as before.
+- **A run that ended without being known to be gone** holds its session and its worktree (INV-15)
+  until the operator [frees it](#freeing-what-a-run-holds). The source runs nothing more in either
+  (`config_error`, unsent), the retention sweep keeps the worktree, and [`held`](#held-sessions)
+  says so.
 - **A stall.** While a run is held, at each beat a run whose agent process is present and that
   has been quiet for `stallSeconds` (default 300) is `stalled`. It is reported once per stall: event
   `agent-workers.run.stalled` (`agentRun`, `worker`, `quietSeconds`, `stallSeconds`, `rule`) and a
@@ -890,4 +898,47 @@ now, derived when asked from its durable facts, never a stored flag. A session i
 
 An answered request (approved, rejected, expired, or withdrawn) frees it. On approval, the engine's
 one continuation of the deferred call is the session's input
-([a deferred tool call](workflow-engine.md#a-deferred-tool-call)).
+([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). A run the operator freed no
+longer holds it.
+
+### What the operator sees
+
+The `agents` source answers `liveness()` on the `workers` seam (optional, additive; PROP-0013): its
+runs whose liveness needs the operator's look, read from its durable facts when asked, at most 64,
+the latest first, with the counts of all:
+
+| State | Which runs | What it tells |
+|---|---|---|
+| `stalled` | running, a stall reported and not yet over | the agent process as this host shows it, the latest activity; nothing is sent to it, its own deadline ends it |
+| `looking` | started, its holder gone, verdicts being taken | the latest verdict, its looks of `maxUnknownVerdicts`, each signal as this host shows it now |
+| `unknown` | ended without being known to be gone, not freed | the verdict and looks, the signals its `reconciliation` decision recorded, what it holds, and `system free` |
+
+Each names its session and its workflow run's worktrees (what it holds) and what the operator can
+do. The surfaces read it through the seam, never the source: MCP `status` and `system health` (a
+`liveness` check, degraded while an `unknown` run holds what it ran in or a source cannot tell; the
+operator's `status` lists the runs), `explain` of a workflow run or of the execution itself, the
+roster's **Doing now** ([roster](roster.md)), and, from the events, the report's attention section
+([reports](reports.md#what-it-counts)).
+
+### Freeing what a run holds
+
+A run that ended `unknown` holds its session and worktree for good: whether its agent is gone is the
+operator's judgement (ADR-0056). The operator gives it with `agent_run_free` (operator scope,
+`mcp-agent-runs@1.0`; `system free <run> --agent-gone`):
+
+- **On the operator's word only.** `agentGone` must be true; it is the operator's statement that no
+  process of the agent runs, recorded first as their `reconciliation` decision (decider
+  `operator.free`, not deterministic, the note as its rationale) with the signals as this host shows
+  them then and what happens to each worktree (INV-13). The run keeps it (`liveness_freed`), and
+  `agent-workers.run.freed` is appended. From then on `held`, a later run's check, and the retention
+  sweep no longer count it.
+- **Refused, changing nothing** (INV-2): a run that holds nothing (completed, found `dead`, or
+  ended with its agent stopped by its holder); while its liveness is still being looked at, or
+  another started run of its session or worktree has not finished; while a process holds its lease;
+  while its holder or its agent process is present on this host, whatever the operator said.
+- **Its worktree** (a Worker with `worktreePerRun`): removed only while no other agent run of its
+  workflow run is unfinished or not known to be gone, and only when it holds nothing uncommitted,
+  or, with `commitWorktree`, once its changes are committed on its branch as the retention commits
+  them. The branch always stays, nothing is forced, and a worktree that stays is the retention's.
+  The decision is stored on the worktree's record. A freed run may be freed again for its worktree
+  only, each time its own decision.

@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.1`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.2`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -30,7 +30,7 @@ that change what runs).
 
 | Source | Read through | What it gives |
 |---|---|---|
-| Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)` | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.7`), account, tier, quota class, state, load, cooldowns; how each source answered its last read; the Workers of its account |
+| Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)`, `liveness()` (optional) | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.7`), account, tier, quota class, state, load, cooldowns; how each source answered its last read; the Workers of its account; the runs whose liveness needs a look ([what the operator sees](agent-runtimes.md#what-the-operator-sees)) |
 | agent accounts | `ctx.agentWorkers.agentAccounts`: `list()`, `workersIn(account)` | each enrollment slot (`agent-account@1.0`): its account id, status, quarantine, masked hint, and the Workers that run on it ([enrollment](agent-runtimes.md#enrollment-and-quarantine)) |
 | website accounts | `ctx.accounts`: `list()`, `duplicateIdentities()` | each catalog account's secret-free view: label and status; the accounts signed in as one person |
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
@@ -58,6 +58,7 @@ manifest names each one it consumes (optional): the roster works with any subset
 | `limits` | its descriptor's `cooldowns`: capabilities held off by a usage limit until a time (the rest of the Worker still takes work) | — |
 | `siblings` | `ctx.workers.siblings(worker)`, itself left out | the call throws, or there are more than 64 |
 | `work` | the steps of running runs (`status: running`) whose node is `RUNNING` on this Worker, by run and node id; for each, the board task its run serves, with its title, project, and state; `since`, when its current attempt started (the latest `workflow.node.started` of that attempt); and `summary`, the step in one sentence: *Working on "\<title\>" (task \<id\>, project \<id\>): \<template\> run \<id\>, step \<id\>, for 4 min*, or *Running \<template\> run …* for a run that serves no task | the engine is not mounted or its read fails; a task's detail when the board is not mounted, fails, or is past the bound; `since` when the event log is not mounted, no longer holds the start (its retention), or past the bound |
+| `liveness` | `@1.2`, present only when the router tells liveness and the Worker has such a run: its runs that are `stalled`, being looked at (`looking`), or ended without being known to be gone (`unknown`), of the latest 64 the router tells, each with `execution`, `state`, `since`, `runId`, and `summary` in one sentence: *Stalled: agent run … has shown no activity for 10 min or more; nothing is sent to it, and its own deadline ends it*, *Not known to be gone: agent run … lost its holder 2 min ago and is looked at again (1 of 3 verdicts)*, or *Held for 2 h: agent run … ended without being known to be gone, holding session … and worktree …; free it once its agent is gone (system free … --agent-gone)* | the router's read fails, or a source could not tell (then on every Worker without a run listed, never read as none) |
 | `pools` | the ledger's pools whose `account` is the Worker's account id, by pool id; each window with its state, `used` (the latest reading's used share), `resets` (the later of its `resetsAt` and `cooldownUntil`), `observedAt`, `source`; and `unknownUsage`, the runs in the pool's current window whose usage the ledger could not count and has not counted since, by kind | the ledger is not mounted or fails; the Worker names no account; per window, no reading yet, or a reading without the figure; `unknownUsage` when the event log is not mounted, or the entries passed their bound |
 
 A fact a source could not give is `{ "unknown": "<why>" }`, never a default
@@ -99,20 +100,21 @@ Every read and every list is bounded
 | Worker sources | 64 | `sources` is `unknown` |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.1`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.2`](../reference/schemas.md#mcp-tool-roster)).
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.1` before it is sent (a record its schema
+  content is the record, validated against `mcp-roster@1.2` before it is sent (a record its schema
   refuses is a defect, reported as an error); its text content is the rendering for a terminal.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
   record.
 - **The Workers page** (`/ui/?view=workers`, the **Workers** tab, [web UI API](../reference/web-ui.md#roster)):
   the counts (working, idle, at a limit and when the first is back, unavailable), then one card per
   Worker grouped by status, under the page's security headers and the operator token, built with
-  DOM methods and text only.
+  DOM methods and text only. **Doing now** lists its steps, then its runs whose liveness needs a
+  look (a held one marked as failed), each with a link to its run.
 
 ## Rejected alternatives
 

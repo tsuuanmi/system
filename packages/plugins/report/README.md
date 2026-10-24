@@ -14,9 +14,14 @@ decides nothing, and no model takes part.
 - **What it reads**, through the definitions only: `ctx.board` (projects and their tasks now),
   `ctx.approvals` (every request, `list`), `ctx.resources` (the counted usage records observed in
   the period, `usage`), `ctx.eventLog` (`workflow.task.reported`, `workflow.task.digest`,
-  `workflow.graph.grown`, `workflow.gate.opened|closed`, `approvals.batched`, `usage.unknown`, and,
-  for a project, `workflow.node.started`), `ctx.artifacts` (the decisions those name), and
-  `ctx.digests` when loaded (the claims of the digests attached, and which runs wrote them).
+  `workflow.graph.grown`, `workflow.gate.opened|closed`, `approvals.batched`, `usage.unknown`,
+  `agent-workers.run.stalled|unknown|freed`, and, for a project, `workflow.node.started`),
+  `ctx.artifacts` (the decisions those name), and `ctx.digests` when loaded (the claims of the
+  digests attached, and which runs wrote them).
+- **Agent runs whose liveness asked for the operator** (PROP-0013, `mcp-report` 1.2,
+  `attention.liveness`): the stalls, the runs that ended without being known to be gone, those the
+  operator freed, and those still held at the period's end, in the attention section, only when
+  there is any, and never counted as interruptions.
 - **What a cap counts as 0** (D25, `mcp-report` 1.1,
   [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)): per pool and in all,
   the records without token counts, a cost, or turns, and the runs recorded in the period whose
@@ -42,7 +47,8 @@ decides nothing, and no model takes part.
 - **Bundle:** its row, `report`, is on. Off, nothing else changes.
 - **Tests:** [`tests/report.spec.ts`](tests/report.spec.ts) checks the computation on a week of
   records (period bounds, scope, waits, attention against the charter, usage per pool, the
-  baseline, determinism, the bounds, the rendering, what a cap counts as 0);
+  baseline, determinism, the bounds, the rendering, what a cap counts as 0, the agent runs whose
+  liveness asked for the operator);
   [`tests/pilot.spec.ts`](tests/pilot.spec.ts) runs the `algorithm-development` template on the
   software-development profile's [pilot in miniature](../profile-software-development/tests/pilot.ts)
   and reads what it recorded through the tool: a project's report, the studio's, the same period
