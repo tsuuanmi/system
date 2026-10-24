@@ -10,4 +10,8 @@ export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runt
 export { registerSecretPath, secretPaths } from './secrets.ts'
 export { GIT_FLOOR, GLOB_BUDGET, type GlobBudget, globMatches, isPrivateAddress, pinnedTo, type RepositorySnapshot, selectFiles, type SnapshotBounds, SnapshotError, type SnapshotFile, type SnapshotRequest, snapshotRepository, type UnreadReason } from './repositories.ts'
 export { captureGitSubject, type CapturedSubject, type CaptureOptions, type GitSubject, subjectId } from './subjects.ts'
+export {
+  currentProcess, hostOf, type LeaseProbe, type Liveness, type LivenessBounds, LIVENESS_RULE, LIVENESS_VERDICTS, livenessOf, type LivenessSignals, type LivenessVerdict,
+  type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, probeProcess, type ReadText,
+} from './liveness.ts'
 export { MAX_UNKNOWN_REASON, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf } from './usage.ts'
