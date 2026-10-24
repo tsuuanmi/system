@@ -8,7 +8,7 @@
  * ```
  * { "session": {…}, "subscription_type": string | null, "rate_limits_available": boolean,
  *   "rate_limits": null | { "five_hour"?: W | null, "seven_day"?: W | null, "seven_day_oauth_apps"?: W | null,
- *     "seven_day_opus"?: W | null, "seven_day_sonnet"?: W | null, "model_scoped"?: […], "extra_usage"?: {…} | null },
+ *     <a weekly window per model family>?: W | null, "model_scoped"?: […], "extra_usage"?: {…} | null },
  *   "behaviors": null }                         W = { "utilization": number (0 to 100) | null, "resets_at": ISO 8601 | null }
  * ```
  *

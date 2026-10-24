@@ -1068,7 +1068,7 @@ each window as `five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)`.
 
    | Runtime | Its windows |
    |---|---|
-   | Claude Code | `five_hour`, `seven_day`, `seven_day_oauth_apps`, `seven_day_opus`, `seven_day_sonnet` (the names its `rate_limit_event` uses too) |
+   | Claude Code | `five_hour`, `seven_day`, `seven_day_oauth_apps`, and a weekly window per model family, `seven_day_<family>` (the names its `rate_limit_event` uses too; the daemon's log names each window a report gives that `windows` does not map) |
    | Codex | each window by its length in minutes: `300m` (five hours), `10080m` (a week), as the account reports them |
    | Antigravity CLI | each bucket's `id`, as `HOME=<home> agy --print=/usage --output-format json` lists them under `command.data.groups[].buckets[]` |
 

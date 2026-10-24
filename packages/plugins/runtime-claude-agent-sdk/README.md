@@ -169,7 +169,7 @@ installed.
   session closed. Read: `rate_limits_available: true` with `rate_limits` an
   object; each window of it that is `{ utilization, resets_at }` with a numeric
   `utilization` (0 to 100) is an observation of its name (`five_hour`,
-  `seven_day`, `seven_day_oauth_apps`, `seven_day_opus`, `seven_day_sonnet`: the
+  `seven_day`, `seven_day_oauth_apps`, and the per-model weekly windows: the
   names a `rate_limit_event` uses), `usedPercentage` its utilization (above 100
   read as 100), `rejected` at 100 or more, else `allowed`, with `resetsAt` when
   `resets_at` is an ISO time within 400 days (and ahead, for a rejection). A
