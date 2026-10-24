@@ -205,6 +205,61 @@ describe('system MCP server on ctx.webServer', () => {
     expect((await health(tokens.client)).checks.find((c) => c.name === 'workers')).toEqual({ name: 'workers', state: 'degraded' })
   })
 
+  it('counts and lists the runs whose liveness needs a look, for the operator, and is degraded while one holds what it ran in (PROP-0013, ADR-0023)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const run = (execution: string, state: string, since: string) => ({ source: 'agents', execution, worker: 'agent:dev', state, since, runId: 'run_1', sessionId: 'ses_1', reasons: ['r'], holds: ['session ses_1'], action: 'a' })
+    let told = { runs: [run('arun_2', 'stalled', '2026-10-24T02:00:00.000Z'), run('arun_1', 'unknown', '2026-10-24T01:00:00.000Z')], counts: { unknown: 1, looking: 0, stalled: 1 }, unread: [] as Array<{ source: string; detail: string }> }
+    let reads = 0
+    class Router extends Service {
+      constructor(c: Context) {
+        super(c, 'workers')
+      }
+      async list() {
+        return [{ worker: 'agent:dev', state: 'ready' }]
+      }
+      async liveness() {
+        reads += 1
+        return told
+      }
+    }
+    const fiber = ctx.plugin(Router)
+    await fiber
+    onTestFinished(() => fiber.dispose())
+    type Status = { liveness?: Record<string, unknown>; health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }
+    const call = async (token: string) => (await connect(url, token)).callTool({ name: 'status', arguments: {} })
+    const operator = await call(tokens.operator)
+    const status = operator.structuredContent as Status
+    // Read once for the check and the list.
+    expect(reads).toBe(1)
+    expect(status.health.checks.find((c) => c.name === 'liveness')).toEqual({
+      name: 'liveness', state: 'degraded',
+      detail: '1 ended without being known to be gone, their session and worktree held: arun_1 (agent:dev); 1 stalled (nothing is sent to them; their deadline ends them): arun_2 (agent:dev). system explain <run> says why and what to do; free a run once its agent is gone: system free <run> --agent-gone (docs/operations/runbooks.md#a-runs-liveness-is-unknown)',
+    })
+    expect(status.liveness).toEqual({
+      counts: { unknown: 1, looking: 0, stalled: 1 },
+      runs: [
+        { source: 'agents', execution: 'arun_2', worker: 'agent:dev', state: 'stalled', since: '2026-10-24T02:00:00.000Z', runId: 'run_1' },
+        { source: 'agents', execution: 'arun_1', worker: 'agent:dev', state: 'unknown', since: '2026-10-24T01:00:00.000Z', runId: 'run_1' },
+      ],
+    })
+    expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/; runs: 1 unknown, 1 stalled$/)
+    // A client learns the check's state, never the runs.
+    const client = (await call(tokens.client)).structuredContent as Status
+    expect(client.liveness).toBeUndefined()
+    expect(client.health.checks.find((c) => c.name === 'liveness')).toEqual({ name: 'liveness', state: 'degraded' })
+    // A stall alone needs nothing yet; a source that cannot tell is never read as having none (INV-2).
+    told = { runs: [run('arun_2', 'stalled', '2026-10-24T02:00:00.000Z')], counts: { unknown: 0, looking: 0, stalled: 1 }, unread: [] }
+    expect(((await call(tokens.operator)).structuredContent as Status).health.checks.find((c) => c.name === 'liveness')).toMatchObject({ state: 'ok', detail: '1 stalled (nothing is sent to them; their deadline ends them): arun_2 (agent:dev)' })
+    told = { runs: [], counts: { unknown: 0, looking: 0, stalled: 0 }, unread: [{ source: 'agents', detail: 'the store failed' }] }
+    const unread = (await call(tokens.operator)).structuredContent as Status
+    expect(unread.health.checks.find((c) => c.name === 'liveness')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^source agents cannot tell \(the store failed\)\./) })
+    expect(unread.liveness).toEqual({ counts: { unknown: 0, looking: 0, stalled: 0 }, runs: [], unread: [{ source: 'agents', detail: 'the store failed' }] })
+    told = { runs: [], counts: { unknown: 0, looking: 0, stalled: 0 }, unread: [] }
+    const quiet = (await call(tokens.operator)).structuredContent as Status
+    expect(quiet.liveness).toBeUndefined()
+    expect(quiet.health.checks.find((c) => c.name === 'liveness')).toMatchObject({ state: 'ok', detail: 'no run is stalled, being looked at, or held for want of a verdict' })
+  })
+
   it('lists every plugin of the composition with its manifest, recorded lifecycle, and what the manifest check found, for the operator only, and fails health on a finding (REQ-HOST-7, ADR-0023, ADR-0048)', async () => {
     const { url, tokens, ctx } = await boot()
     const composition = {
