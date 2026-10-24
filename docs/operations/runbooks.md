@@ -2519,7 +2519,8 @@ before failed only after its writing step completed, for a reason that says noth
 (T110a: the review reached its turn limit; a Worker or a session failed, a limit, the budget, a
 timeout), no review judged the change, and the task writes a commit the change is on
 ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work),
-[ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
+[ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md),
+proposed: the carry is on by default, pending the operator's acceptance (D59)).
 Nothing is asked of you: the board decides and counts the attempt as always.
 
 1. **Read why.** `system explain <runId>` lists, among the run's own decisions, the

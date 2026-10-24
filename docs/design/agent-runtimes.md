@@ -386,7 +386,7 @@ registry names its source as unread, never as no change (INV-2).
 ### Carrying an earlier run's work
 
 > Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-> (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (proposed: the carry is on by default, pending the operator's acceptance (D59)). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/worktrees.ts`); the engine decides and asks
 > ([starting from the previous attempt's work](workflow-engine.md#starting-from-the-previous-attempts-work)).
 

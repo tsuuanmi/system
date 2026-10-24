@@ -396,7 +396,7 @@ second execution path (INV-1).
     `maxSessionRuns` runs (default 5); else it starts fresh. Either is an `admission` decision
     (`workflow.task-session`), made before the task is taken;
   - **Starting from the previous attempt's work** ([design](../../../docs/design/workflow-engine.md#starting-from-the-previous-attempts-work),
-    ADR-0061 proposed): when the immediately previous attempt's writing step (a `develop` step)
+    ADR-0061 proposed: the carry is on by default, pending the operator's acceptance (D59)): when the immediately previous attempt's writing step (a `develop` step)
     completed with an agent's result on a git tree, an `admission` decision
     (`workflow.task-worktree`) made before the task is taken chooses `carry` only when that run
     failed, and only as a later step fails (`session_broken`, `provider_stalled`, `timeout`,

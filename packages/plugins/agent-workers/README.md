@@ -402,7 +402,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   through the worktree's own administrative directory with `--no-optional-locks`, after the
   landing's check that the worktree is intact; one that is not throws.
 - **Carrying** (`carry` on the `workers` seam, [ADR-0061](../../../docs/decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-  proposed, [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
+  proposed: the carry is on by default, pending the operator's acceptance (D59), [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
   workflow engine asks it before the first step of a board task's next attempt, for the earlier
   attempt's worktree (by workflow run and path; any other is undefined), one change at a time per
   repository:

@@ -1,6 +1,7 @@
 # ADR-0061: A board task's next attempt starts from the work its previous attempt left
 
-- **Status:** Proposed
+- **Status:** Proposed. The carry is on by default in the code, pending the operator's acceptance
+  (D59); until then its decisions are recorded as for any other.
 - **Date:** 2026-10-25
 - **Related:** T112 (from T110a), [PROP-0010](../../proposals/0010-base-version.md) (B4, B8),
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
