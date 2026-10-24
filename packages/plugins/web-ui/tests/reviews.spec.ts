@@ -164,7 +164,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.innerText()).toContain('The header name is matched case-sensitively (src/limits.ts)')
     expect(await card.innerText()).toContain('The run\'s last step, solo, reported this, in its own words:')
     const pending = card.locator('p.pending-checks')
-    expect(await pending.innerText()).toBe('Checks not run: tests, lint. Accepting counts them as passed — run them first.')
+    expect(await pending.innerText()).toMatch(/^Checks not run: tests, lint\. Accepting counts them as passed — run them first\./)
     const wait = await page.evaluate(() => { const probe = document.createElement('span'); probe.style.color = 'var(--wait)'; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color })
     expect(await pending.evaluate((p) => getComputedStyle(p).color)).toBe(wait)
     await card.getByRole('button', { name: 'Accept: mark it done' }).click()

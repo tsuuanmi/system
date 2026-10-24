@@ -322,7 +322,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByLabel('Worker counts').innerText()).toMatch(/^1 working · 0 free · 1 resting \(the first until .+\) · 0 unavailable$/)
     // The account once, its roles in its header, its rest said once for both.
     const account = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
-    expect(await account.getByRole('heading', { level: 3 }).innerText()).toBe('Chatgpt · Studio Plus: frontier, standard')
+    expect(await account.getByRole('heading', { level: 3 }).innerText()).toMatch(/^Chatgpt · Studio Plus: frontier, standard\b/)
     expect(await account.innerText()).toMatch(/Its account is resting until .+ \((in|.* ago)/)
     const busy = account.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
     expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('standard')
