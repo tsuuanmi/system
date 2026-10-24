@@ -1,7 +1,7 @@
 /**
  * What the re-planning specs share (replan.spec.ts, replan-edits.spec.ts, replan-approved.spec.ts):
- * a gated planner with an input upstream of it, the answers its steps give, and how a test waits out
- * the engine's moment of being busy. The specs are split by theme so they run side by side.
+ * a gated planner with an input upstream of it and the answers its steps give. The specs are split
+ * by theme so they run side by side.
  */
 import { TEST_TEMPLATES } from './templates.ts'
 
@@ -28,18 +28,6 @@ export const replanAnswer = (prompt: string): string => {
   if (prompt.includes('Plan how to answer')) return planOf(prompt.includes('Corrected context') ? 'new-step' : 'old-step')
   if (prompt.includes('<findings>')) return `final from ${['old finding', 'new finding'].filter((f) => prompt.includes(f)).join(' and ')}`
   return prompt.includes('the new-step') ? 'new finding' : 'old finding'
-}
-
-/** An operator move, tried again while the engine says it is busy with the run. */
-export const settledOp = async <T,>(fn: () => T): Promise<T> => {
-  for (let i = 0; ; i++) {
-    try {
-      return fn()
-    } catch (error) {
-      if (!/busy/.test((error as Error).message) || i > 100) throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
 }
 
 export const states = (view: { nodes: Array<{ nodeId: string; state: string }> }) => Object.fromEntries(view.nodes.map((n) => [n.nodeId, n.state]))

@@ -2,7 +2,9 @@
  * The real stack the turn runtime's browser tests run on: the kernel, accounts and login, the
  * browser, and a website driver against its fake site. A test file calls {@link turnsStack} once,
  * at its top: that registers the file's one Xvfb and returns the boots, whose stacks are stopped
- * when their test finishes.
+ * when their test finishes. The files are split by theme so they run side by side, and page opens
+ * are not paced (the driver's `pageGapMs` and the runtime's `providerPageGapMs` are 0): the pool's
+ * own tests show the spacing.
  */
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -99,7 +101,7 @@ export function turnsStack() {
       ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
-      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
+      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
     ]
     await Promise.all(fibers)
     const stop = async (): Promise<void> => {
@@ -144,7 +146,7 @@ export function turnsStack() {
       ctx.plugin(GeminiWeb, { origin: fake.origin, pageGapMs: 0 }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
-      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
+      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, ...options.turns }),
     ]
     await Promise.all(fibers)
     onTestFinished(async () => {
@@ -185,7 +187,7 @@ export function turnsStack() {
       ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
-      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
+      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, ...options.turns }),
     ]
     await Promise.all(fibers)
     onTestFinished(async () => {

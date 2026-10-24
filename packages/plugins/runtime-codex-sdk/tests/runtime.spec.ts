@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { type Confinement, meteringOf, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
 import { childTimeZone, CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
@@ -282,6 +282,15 @@ describe('codex-sdk: a usage limit\'s reset time, from Codex\'s own message (doc
   }
   const observedAt = Date.parse(fixture.observedAt)
   const dated = fixture.cases[1]!.message
+  // A run reads its message at the host's now: each test starts at the fixture's, so the dated reset
+  // stays ahead of the read whenever the suite runs (only Date is faked; it advances with real time).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+    vi.setSystemTime(observedAt)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   it('reads each 0.164.0 message shape in the child\'s zone, and no reading from one it cannot read (fail closed)', () => {
     expect(VERIFIED_LIMIT_VERSIONS).toEqual(['0.164.0'])

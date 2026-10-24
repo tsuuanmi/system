@@ -2,7 +2,9 @@
  * The real stack the engine's browser tests run on: the kernel, both website drivers against their
  * fake sites, the engine, and the MCP endpoint, with the team members' answers those tests script.
  * A test file calls {@link browserStack} once, at its top: that registers the file's one Xvfb and
- * returns `boot`, whose stack is stopped when its test finishes.
+ * returns `boot`, whose stack is stopped when its test finishes. The files are split by theme so they
+ * run side by side, and page opens are not paced (the drivers' `pageGapMs` and the turn runtime's
+ * `providerPageGapMs` are 0).
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -60,6 +62,18 @@ export const until = (check: () => boolean, ms = 30_000, what = ''): Promise<voi
   if (!check()) throw new Error(what ? `timed out waiting for ${what}` : 'timed out')
 }, { timeout: ms, interval: 100 })
 
+/** An operator move, tried again while the engine says it is busy with the run. */
+export const settledOp = async <T,>(fn: () => T): Promise<T> => {
+  for (let i = 0; ; i++) {
+    try {
+      return fn()
+    } catch (error) {
+      if (!/busy/.test((error as Error).message) || i > 100) throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+}
+
 export interface BootOptions { fake?: FakeOptions; gemini?: FakeGeminiOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; sessions?: Record<string, unknown>; ready?: boolean; accounts?: string[] }
 
 /**
@@ -107,7 +121,7 @@ export function browserStack() {
       ...(gemini ? [ctx.plugin(GeminiWeb, { origin: gemini.origin, pageGapMs: 0 })] : []),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
-      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
+      ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, ...options.turns }),
       ctx.plugin(WorkerSessions, options.sessions ?? {}),
       ctx.plugin(Workflow, { retryDelayMs: 300, ...options.workflow, templates: { ...TEST_TEMPLATES, ...(options.workflow?.templates as object | undefined) } }),
       ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
