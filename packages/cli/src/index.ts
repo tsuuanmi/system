@@ -535,6 +535,20 @@ export function formatHealth(health: HealthView): string[] {
   return [`health: ${health.state}`, ...health.checks.map((c) => `  ${c.state.padEnd(8)} ${c.name.padEnd(10)} ${c.detail ?? ''}`.trimEnd())]
 }
 
+/**
+ * The running profile's roster (REQ-HOST-8, MCP `roster`): its rendering for a terminal, or with
+ * `json` the record itself (`mcp-roster@1.0`). A refused call, or a host that does not answer, throws.
+ */
+export async function hostRoster(json: boolean, call: typeof callTool = callTool): Promise<string> {
+  const outcome = await call('roster', {})
+  if (outcome.isError) throw new Error(outcome.text || 'the roster could not be read')
+  if (json) {
+    if (!outcome.structured) throw new Error('the running profile gave no roster record')
+    return JSON.stringify(outcome.structured, null, 2)
+  }
+  return outcome.text
+}
+
 /** A plugin of the composition as the running profile's `status` lists it to the operator (REQ-HOST-7). */
 export interface PluginView {
   name: string

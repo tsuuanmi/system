@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -87,6 +87,20 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect([healthExit('ok'), healthExit('degraded'), healthExit('down'), healthExit('unknown')]).toEqual([0, 1, 2, 2])
     const down = await hostHealth(async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:47317') })
     expect(down).toMatchObject({ state: 'down', checks: [{ name: 'host', detail: expect.stringContaining('ECONNREFUSED') }] })
+  })
+
+  it('prints the roster from the running profile: its rendering, or with --json the record, and refuses a failed call (REQ-HOST-8)', async () => {
+    const record = { asOf: '2026-10-24T09:30:00.000Z', workers: { value: [] }, unlisted: 0, counts: { ready: 0, busy: 0, resting: 0, unavailable: 0, quarantined: 0 }, sources: { value: [] }, unknownUsage: { value: { unreadable: 0, unconfigured: [] } } }
+    const calls: string[] = []
+    const call = async (name: string) => {
+      calls.push(name)
+      return { isError: false, text: 'Roster as of 2026-10-24T09:30:00.000Z: 0 Worker(s): 0 ready, 0 busy, 0 resting, 0 unavailable, 0 quarantined', structured: record }
+    }
+    expect(await hostRoster(false, call)).toBe('Roster as of 2026-10-24T09:30:00.000Z: 0 Worker(s): 0 ready, 0 busy, 0 resting, 0 unavailable, 0 quarantined')
+    expect(JSON.parse(await hostRoster(true, call))).toEqual(record)
+    expect(calls).toEqual(['roster', 'roster'])
+    await expect(hostRoster(false, async () => ({ isError: true, text: 'the roster could not be made: mcp-roster@1.0#/$defs/roster-output: …', structured: undefined }))).rejects.toThrow(/could not be made/)
+    await expect(hostRoster(true, async () => ({ isError: false, text: 'x', structured: undefined }))).rejects.toThrow(/no roster record/)
   })
 
   it('lists the plugins with their recorded lifecycle and manifest, and refuses a host whose plugin host lists none (REQ-HOST-7)', async () => {

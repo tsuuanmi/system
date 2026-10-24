@@ -35,7 +35,16 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   Each opens a confirmation that says what the move does to this project (what goes on, what is
   cancelled and released, which approval requests are withdrawn, or why a close is refused), and
   moves nothing until **Confirm**; **Cancel** closes it. The page does not refresh while a
-  confirmation is open. Without the board the projects routes answer `503`.
+  confirmation is open. Without the board the projects routes answer `503`;
+- the **Roster** page (`?view=roster`, REQ-HOST-8): every Worker in one row, read through
+  `readRoster` in [`gateway-core`](../../gateway-core/README.md#the-roster) from the services
+  mounted (`workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`): its
+  provider, family, and role; its account, with the account's label and its enrolled, ready,
+  signed-out, or quarantined state; tier and quota class; its availability (ready, busy N of M,
+  resting until its reset, unavailable with why, quarantined); the steps it runs now, each a link
+  to its run, with their board tasks; its load; and its account's pools, each window's used share
+  and reset ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
+  `unknown (why)`, and a Worker source that did not answer is named above the table.
 
 The routes are in the [web UI API](../../../docs/reference/web-ui.md).
 
@@ -93,12 +102,15 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
   ([scopes](../mcp-server/README.md#scopes)).
 
 **Injects:** `webServer`, `workflow`; `approvals`, `board`, and `artifacts` are optional
-(`ctx.get`), so the UI works without the queue or the board.
+(`ctx.get`), so the UI works without the queue or the board; for the roster it reads `workers`,
+`accounts`, `agentWorkers`, `resources`, and `eventLog` when present.
 
 **Tests:** [`tests/web-ui.spec.ts`](tests/web-ui.spec.ts): the shell and its
 headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
-refusal, `503` without a queue or a board), and, with a browser, both pages.
+refusal, `503` without a queue or a board), the roster route (operator only, valid against
+`mcp-roster@1.0`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
+the queue, and the Roster page.
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its

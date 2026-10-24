@@ -619,6 +619,14 @@ Scope: `client`
 | `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
 | `clientRequestId` | string |  | Retry-safe request key |
 
+## `roster`
+
+The roster of every Worker, projected on read: its provider and family, account (id, label for the operator, enrolled or quarantined state), role, tier, quota class, availability (ready, busy N of M, resting at a limit until its reset, unavailable with why, quarantined), the steps and board tasks it serves now, its load, and its account's pools with each window's used share, reset, and the runs whose usage the ledger could not count. A fact a source could not give reads unknown, with why.
+
+Scope: `client`
+
+No arguments.
+
 ## `run`
 
 Start a workflow template by name (built in: ask, brainstorm, review; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. With `task`, the run serves one attempt of that board task: it claims the ready task (or takes the claim you hand it from board_claim), the board records the run before any step runs, the run renews the lease while it lives, and it submits its own result and acceptance to the board, or reports its failure; a task not ready, or a stale claim, refuses the run with nothing started. Waits up to waitSeconds; otherwise returns a runId for `result`.

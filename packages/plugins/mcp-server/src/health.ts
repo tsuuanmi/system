@@ -4,7 +4,7 @@
  * something needs the operator), or `down` (work cannot run); the report is the worst of them.
  */
 import { statfsSync } from 'node:fs'
-import { nodeVersionProblem, usageUnknownOf } from '@tsuuanmi/system-libs'
+import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources } from '@tsuuanmi/system-libs'
 
 export type HealthState = 'ok' | 'degraded' | 'down'
 
@@ -55,11 +55,12 @@ export interface HealthSources {
    * time (in `seq` order, after `afterSeq`, at most `limit`), and whether the ledger counted a record
    * of a run in a pool.
    */
-  unknownUsage?: {
-    pools: () => Promise<Array<{ pool: string; windows: Array<{ seconds?: number }> }>>
-    entries: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; at: string; data?: Record<string, unknown> | undefined }>
-    counted: (runId: string, pool: string) => Promise<boolean>
-  }
+  /**
+   * Usage the resource ledger could not count (docs/design/resources.md#usage-the-ledger-cannot-count),
+   * counted by `countUnknownUsage` (`@tsuuanmi/system-libs`): the ledger's pools and windows, the
+   * `usage.unknown` entries, and whether the ledger counted a record of a run in a pool.
+   */
+  unknownUsage?: UnknownUsageSources
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
   undeleted?: () => Array<{ account: string; binding: string; reason?: string }>
   /** Login profiles the browser holds, reserves for a login, or cannot free (ADR-0030). */
@@ -73,11 +74,6 @@ export interface HealthSources {
 }
 
 const RANK: Record<HealthState, number> = { ok: 0, degraded: 1, down: 2 }
-
-/** `usage.unknown` entries the `usage` check reads at most (INV-9): past it, it is degraded, never ok. */
-export const MAX_UNKNOWN_ENTRIES = 10_000
-/** `usage.unknown` entries the `usage` check asks for at once: the event log's most per query. */
-const UNKNOWN_PAGE = 1000
 
 /** Seconds as one unit, the largest that divides them: `7d`, `5h`, `90m`, `45s`. */
 const span = (seconds: number): string => {
@@ -232,64 +228,16 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   const unknownUsage = sources.unknownUsage
   if (unknownUsage) {
     checks.push(await guarded('usage', async () => {
-      const now = (sources.now ?? Date.now)()
-      // A pool's current window is its longest, back from now; one of no length (a credit balance) never resets.
-      const windows = new Map((await unknownUsage.pools()).map((p) => {
-        const bounded = p.windows.length > 0 && p.windows.every((w) => w.seconds !== undefined)
-        return [p.pool, bounded ? Math.max(...p.windows.map((w) => w.seconds!)) : undefined] as const
-      }))
-      if (!windows.size) return ok('usage', 'no resource pool is configured')
-      const starts = [...windows.values()].map((seconds) => (seconds === undefined ? 0 : now - seconds * 1000))
-      // Every entry back to the earliest window's start, a page at a time in `seq` order, at most
-      // MAX_UNKNOWN_ENTRIES (INV-9): one entry more says the rest went unread.
-      const since = new Date(Math.min(...starts)).toISOString()
-      const entries: ReturnType<typeof unknownUsage.entries> = []
-      let unread = false
-      for (let afterSeq = 0; ;) {
-        const limit = Math.min(UNKNOWN_PAGE, MAX_UNKNOWN_ENTRIES + 1 - entries.length)
-        const page = unknownUsage.entries({ since, afterSeq, limit })
-        entries.push(...page)
-        if (entries.length > MAX_UNKNOWN_ENTRIES) {
-          unread = true
-          entries.length = MAX_UNKNOWN_ENTRIES
-          break
-        }
-        if (page.length < limit) break
-        afterSeq = page.at(-1)!.seq
-      }
-      // Each run once per pool, by its first fact. An entry that is not a valid record, or that names
-      // a pool the ledger does not configure, has no window to count it in, so it is said, never
-      // skipped silently (INV-14).
-      const runs = new Map<string, Map<string, string>>()
-      const unconfigured = new Map<string, Set<string>>()
-      let unreadable = 0
-      for (const entry of entries) {
-        const fact = usageUnknownOf(entry.data)
-        if (!fact) unreadable += 1
-        if (fact && !windows.has(fact.pool)) (unconfigured.get(fact.pool) ?? unconfigured.set(fact.pool, new Set()).get(fact.pool)!).add(fact.runId)
-        if (!fact || !windows.has(fact.pool)) continue
-        const seconds = windows.get(fact.pool)
-        if (seconds !== undefined && Date.parse(entry.at) < now - seconds * 1000) continue
-        const ofPool = runs.get(fact.pool) ?? runs.set(fact.pool, new Map()).get(fact.pool)!
-        if (!ofPool.has(fact.runId)) ofPool.set(fact.runId, fact.kind)
-      }
+      const count = await countUnknownUsage(unknownUsage, (sources.now ?? Date.now)())
+      if (!count.pools.length) return ok('usage', 'no resource pool is configured')
       const open: string[] = []
-      for (const pool of [...runs.keys()].sort()) {
-        const kinds = new Map<string, number>()
-        for (const [runId, kind] of runs.get(pool)!) if (!(await unknownUsage.counted(runId, pool))) kinds.set(kind, (kinds.get(kind) ?? 0) + 1)
-        const count = [...kinds.values()].reduce((n, k) => n + k, 0)
-        const seconds = windows.get(pool)
-        if (count) open.push(`${pool}: ${count} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${[...kinds].sort().map(([k, n]) => `${n} ${k}`).join(', ')})`)
+      for (const { pool, seconds, runs, kinds } of count.pools) {
+        if (runs) open.push(`${pool}: ${runs} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${Object.entries(kinds).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(', ')})`)
       }
-      const gone: string[] = []
-      for (const pool of [...unconfigured.keys()].sort()) {
-        let count = 0
-        for (const runId of unconfigured.get(pool)!) if (!(await unknownUsage.counted(runId, pool))) count += 1
-        if (count) gone.push(`${pool} ${count}`)
-      }
-      if (gone.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${gone.join(', ')}), so no window counts them`)
+      if (count.unconfigured.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${count.unconfigured.map((u) => `${u.pool} ${u.runs}`).join(', ')}), so no window counts them`)
+      const { unreadable } = count
       if (unreadable) open.push(`${unreadable} usage.unknown entr${unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record, so no pool counts ${unreadable === 1 ? 'it' : 'them'}`)
-      if (unread) open.push(`more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here`)
+      if (count.unread) open.push(`more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here`)
       return open.length
         ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
         : ok('usage', 'the ledger counted the usage of every run in each pool\'s current window')

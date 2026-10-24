@@ -1,0 +1,1109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-roster:v1",
+  "title": "MCP roster tool",
+  "description": "Input and output of the `roster` MCP tool (design/roster.md): every Worker in one read model, projected on read from the Worker registry, the account and enrollment records, the resource ledger, the workflow runs, and the board, never stored. A fact a source could not give is `{unknown: why}`, never a default. The root describes one call (tool, input, structured output); a provider validates the output against `#/$defs/roster-output`.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "const": "roster"
+    },
+    "input": {
+      "$ref": "#/$defs/roster-input"
+    },
+    "output": {
+      "$ref": "#/$defs/roster-output"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "unknown": {
+      "description": "A fact the roster could not read, and why.",
+      "type": "object",
+      "required": [
+        "unknown"
+      ],
+      "properties": {
+        "unknown": {
+          "description": "Why the fact is not known: its source is not mounted, could not be read, or does not say; never a default (INV-2).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      },
+      "additionalProperties": false
+    },
+    "load": {
+      "description": "The Worker's runtime's load as its source reports it (capability-descriptor@1.3): runs in its slots, queued, and routed to it and not started (pending); Workers of one account report the same numbers.",
+      "type": "object",
+      "required": [
+        "running",
+        "queued",
+        "pending",
+        "slots"
+      ],
+      "properties": {
+        "running": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "queued": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "pending": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "slots": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      },
+      "additionalProperties": false
+    },
+    "quarantineReason": {
+      "enum": [
+        "changed",
+        "ambiguous",
+        "duplicate",
+        "unverified"
+      ]
+    },
+    "availability": {
+      "description": "What the roster makes of the Worker's state and its account: ready; busy N of M (running of slots; any run in its slots makes it busy, and it still takes work until they are full); resting at a limit until its reset; unavailable with why; or quarantined (its enrolled agent account is, and the Worker takes no work). `summary` is the one-line form the CLI and the page show.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "state",
+            "summary"
+          ],
+          "properties": {
+            "state": {
+              "const": "ready"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "state",
+            "summary"
+          ],
+          "properties": {
+            "state": {
+              "const": "busy"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "running": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "slots": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "state",
+            "summary",
+            "until"
+          ],
+          "properties": {
+            "state": {
+              "const": "resting"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "until": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": {
+                      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/unknown"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "state",
+            "summary",
+            "reason"
+          ],
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "reason": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/unknown"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "state",
+            "summary",
+            "reason",
+            "since",
+            "decision"
+          ],
+          "properties": {
+            "state": {
+              "const": "quarantined"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "reason": {
+              "$ref": "#/$defs/quarantineReason"
+            },
+            "since": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+            },
+            "decision": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "accountRecord": {
+      "type": "object",
+      "required": [
+        "kind",
+        "status"
+      ],
+      "properties": {
+        "kind": {
+          "description": "`agent`: an enrolled agent account (agent-account@1.0); `website`: a website account of the catalog.",
+          "enum": [
+            "agent",
+            "website"
+          ]
+        },
+        "label": {
+          "description": "The operator's label: a website account's catalog label, an agent account's masked hint. Only an operator-scope caller gets it.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "status": {
+          "description": "The record's own status: for an agent account `enrolled`, `ready`, `signed-out`, `quarantined`; for a website account `new`, `ready`, `reauth-required`, `challenge`, `disabled`.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "quarantine": {
+          "type": "object",
+          "required": [
+            "reason",
+            "since",
+            "decision"
+          ],
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/quarantineReason"
+            },
+            "since": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+            },
+            "decision": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            }
+          },
+          "additionalProperties": false
+        },
+        "sameAs": {
+          "description": "Website accounts signed in as the same person (none of them takes work).",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "account": {
+      "description": "The account the Worker runs on, as its descriptor names it (capability-descriptor@1.5), with its record.",
+      "type": "object",
+      "required": [
+        "id",
+        "group",
+        "mode",
+        "record"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "mode": {
+          "enum": [
+            "assigned",
+            "pooled"
+          ]
+        },
+        "limitUntil": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "record": {
+          "description": "The account's record: the enrolled agent account with this id (or that lists the Worker), else the website account with this id.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "$ref": "#/$defs/accountRecord"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "title",
+        "state"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "additionalProperties": false
+    },
+    "work": {
+      "description": "A step of a running workflow run that the Worker runs now, and the board task the run serves.",
+      "type": "object",
+      "required": [
+        "runId",
+        "template",
+        "nodeId",
+        "attempt"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "nodeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "task": {
+          "type": "object",
+          "required": [
+            "taskId",
+            "board"
+          ],
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "board": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": {
+                      "$ref": "#/$defs/task"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/unknown"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "window": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "state",
+        "used",
+        "resets"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "enum": [
+            "ok",
+            "limited",
+            "unknown"
+          ]
+        },
+        "used": {
+          "description": "The used share of the window, in percent, from its latest reading.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "resets": {
+          "description": "When the window resets: the later of its latest reading's resetsAt and cooldownUntil.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "observedAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "additionalProperties": false
+    },
+    "pool": {
+      "description": "A pool of the Worker's account on the resource ledger.",
+      "type": "object",
+      "required": [
+        "pool",
+        "kind",
+        "available",
+        "windows",
+        "unknownUsage"
+      ],
+      "properties": {
+        "pool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "until": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "windows": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/window"
+          }
+        },
+        "unknownUsage": {
+          "description": "Runs in its current window whose usage the ledger could not count and has not counted since (D25), by kind.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "required": [
+                    "runs",
+                    "kinds"
+                  ],
+                  "properties": {
+                    "runs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000
+                    },
+                    "kinds": {
+                      "type": "object",
+                      "properties": {
+                        "not-reported": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        },
+                        "interrupted": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        },
+                        "refused": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        },
+                        "failed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "sourceRead": {
+      "type": "object",
+      "required": [
+        "source",
+        "state",
+        "at",
+        "workers"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "enum": [
+            "described",
+            "silent",
+            "failed"
+          ]
+        },
+        "at": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 300
+        }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "worker",
+        "provider",
+        "family",
+        "account",
+        "role",
+        "tier",
+        "quotaClass",
+        "locality",
+        "state",
+        "observedAt",
+        "availability",
+        "load",
+        "limits",
+        "siblings",
+        "work",
+        "pools"
+      ],
+      "properties": {
+        "worker": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "family": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "account": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "$ref": "#/$defs/account"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "role": {
+          "description": "The role it serves on its agent account (account \u00d7 role); null for a Worker that is no role's.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "tier": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier"
+        },
+        "quotaClass": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/quotaClass"
+        },
+        "locality": {
+          "enum": [
+            "local",
+            "remote"
+          ]
+        },
+        "state": {
+          "description": "The state its source describes.",
+          "enum": [
+            "ready",
+            "busy",
+            "quota-exhausted",
+            "reauth-required",
+            "unavailable"
+          ]
+        },
+        "observedAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "availability": {
+          "$ref": "#/$defs/availability"
+        },
+        "load": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "$ref": "#/$defs/load"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "limits": {
+          "description": "Capabilities a usage limit holds off until a time.",
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": [
+              "capability",
+              "until"
+            ],
+            "properties": {
+              "capability": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/capability"
+              },
+              "until": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "siblings": {
+          "description": "The other Workers of its account.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "work": {
+          "description": "The steps it runs now: at most 32, `more` counting the rest; `unread` when the runs read were cut by their bound.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "required": [
+                    "items",
+                    "more"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "maxItems": 32,
+                      "items": {
+                        "$ref": "#/$defs/work"
+                      }
+                    },
+                    "more": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000
+                    },
+                    "unread": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "pools": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "$ref": "#/$defs/pool"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "roster-input": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "roster-output": {
+      "type": "object",
+      "required": [
+        "asOf",
+        "workers",
+        "unlisted",
+        "counts",
+        "sources",
+        "unknownUsage"
+      ],
+      "properties": {
+        "asOf": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "workers": {
+          "description": "Every Worker routing lists now, in id order, at most 256.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "array",
+                  "maxItems": 256,
+                  "items": {
+                    "$ref": "#/$defs/entry"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "unlisted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "counts": {
+          "type": "object",
+          "required": [
+            "ready",
+            "busy",
+            "resting",
+            "unavailable",
+            "quarantined"
+          ],
+          "properties": {
+            "ready": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "busy": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "resting": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "unavailable": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "quarantined": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "additionalProperties": false
+        },
+        "sources": {
+          "description": "How each Worker source answered its last read: a silent or failed one's Workers are not listed.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "$ref": "#/$defs/sourceRead"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "unknownUsage": {
+          "description": "usage.unknown entries no pool counts: not valid records, or naming a pool the ledger does not configure.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "required": [
+                    "unreadable",
+                    "unconfigured"
+                  ],
+                  "properties": {
+                    "unreadable": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000
+                    },
+                    "unconfigured": {
+                      "type": "array",
+                      "maxItems": 64,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "pool",
+                          "runs"
+                        ],
+                        "properties": {
+                          "pool": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "runs": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000000
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

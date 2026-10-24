@@ -273,3 +273,12 @@
   manifest its configuration allows, or that consumes a seam its providers'
   manifests do not satisfy, is recorded once as a decision, listed with what
   was found, and makes health down.
+- **REQ-HOST-8** The host lists every Worker in one roster, computed on read
+  from the state the host already keeps and never stored: its provider, account
+  (with the account's enrolled, ready, signed-out, or quarantined state), role,
+  tier, quota class, availability (ready, busy N of M, resting at a limit until
+  its reset, unavailable with why, or quarantined), the work it serves now, its
+  load, and its account's resource pools with each window's use, reset, and the
+  runs whose usage could not be counted. A fact the host cannot read is shown as
+  unknown with why, never as a default, and every read is bounded. The operator
+  and the lead read it; only the operator sees account labels.

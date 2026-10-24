@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 
 const bin = fileURLToPath(new URL('../lib/bin.js', import.meta.url))
 const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
@@ -157,7 +158,7 @@ describe('system profile (e2e through dsh)', () => {
     expect(clientTools).toEqual([
       'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
       'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
-      'brainstorm', 'digests_get', 'digests_request', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
+      'brainstorm', 'digests_get', 'digests_request', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'roster', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
     ])
     // Digests are on (B6): a request names stored artifacts only, and one that names none is refused with nothing done.
     const digester = await client2(url, tokenOf('client'))
@@ -168,6 +169,12 @@ describe('system profile (e2e through dsh)', () => {
     const pools = await ledger.callTool({ name: 'resources_pools', arguments: {} })
     const usage = await ledger.callTool({ name: 'resources_usage', arguments: {} }).finally(() => ledger.close())
     expect([pools.structuredContent, usage.structuredContent]).toEqual([{ pools: [] }, { records: [], totals: [] }])
+    // The roster reads the shipped composition's services: no Worker is configured, every source answered (REQ-HOST-8).
+    const lead = await client2(url, tokenOf('client'))
+    const roster = await lead.callTool({ name: 'roster', arguments: {} }).finally(() => lead.close())
+    expect(roster.isError).toBeFalsy()
+    new SchemaRegistry().assertDef('mcp-roster@1.0', 'roster-output', roster.structuredContent)
+    expect(roster.structuredContent).toMatchObject({ unlisted: 0, counts: { ready: 0, busy: 0, resting: 0, unavailable: 0, quarantined: 0 }, unknownUsage: { value: { unreadable: 0, unconfigured: [] } } })
     // The approval queue is core and on, with the bundle's default studio policy; the board asks through it (B5).
     const queue = await client2(url, tokenOf('client'))
     const policy = await queue.callTool({ name: 'approvals_policy', arguments: {} })

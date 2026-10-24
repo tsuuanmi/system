@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -87,6 +87,9 @@ const USAGE = `Usage: system <command>
   health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
                             Workers, UI drift, uncounted usage) and what to do; exit 0 healthy, 1 degraded,
                             2 down or not running
+  roster [--json]           every Worker: its account (and its enrolled or quarantined state), role, tier, quota class,
+                            availability (ready, busy N of M, resting until its reset, unavailable with why, quarantined),
+                            the steps and board tasks it serves now, its load, and its account's pools and windows
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
                             class, rows, why a manifest is absent or refused, and what the manifest check found
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
@@ -99,8 +102,8 @@ const USAGE = `Usage: system <command>
   tools [--markdown]        list the MCP tools the running profile serves (--markdown: the reference page)
   ui                        print the web UI link: the approval queue (approve or deny one request or a batch),
                             reviews of board tasks (accept or reject), runs (approve, vote, stop, continue),
-                            the Board page's projects (pause, resume, close), and the Autonomy policy page
-                            (propose a change, which the queue asks for)
+                            the Board page's projects (pause, resume, close), the Roster page (every Worker),
+                            and the Autonomy policy page (propose a change, which the queue asks for)
   mcp-token --scope model   print the model gateways' token (for a model client's environment variable;
                             needs a gateway row)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
@@ -598,6 +601,11 @@ async function main(argv: string[]): Promise<number> {
       const health = await hostHealth()
       console.log(rest.includes('--json') ? JSON.stringify(health, null, 2) : formatHealth(health).join('\n'))
       return healthExit(health.state)
+    }
+    case 'roster': {
+      if (rest.some((arg) => arg !== '--json')) break
+      console.log(await hostRoster(rest.includes('--json')))
+      return 0
     }
     case 'plugins': {
       const plugins = await hostPlugins()

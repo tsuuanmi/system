@@ -905,6 +905,33 @@ guesses.
   reads nothing more and reports nothing. Example:
   [`mcp-report.week.json`](../../schemas/examples/mcp-report.week.json).
 
+### MCP tool: `roster`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `roster` | client | every Worker in one read model, projected on read: its account and the account's record, role, tier, quota class, availability, the work it serves now, its load, and its account's pools and windows ([roster](../design/roster.md)) |
+
+- Input and output: [`mcp-roster.v1.json`](../../schemas/mcp-roster.v1.json) `$defs/roster-input`
+  (no arguments) and `roster-output`. The record is computed on each call and never stored, so it
+  carries no `schema` tag; `asOf` is when it was read, and two calls on the same state differ in
+  `asOf` only.
+- Every fact a source might not give is a *known* value: `{value}`, or `{unknown}` with why (its
+  service is not mounted, its read failed, or it does not say). A reader never takes an `unknown`
+  for an empty list or a default. `role` is `{value: null}` for a Worker that serves no role.
+- `availability.state` is one of `ready`, `busy` (`running` of `slots`, when the load is known),
+  `resting` (`until`, a known time or unknown), `unavailable` (`reason`, known or unknown), and
+  `quarantined` (the account's quarantine `reason`, `since`, and the `enrollment` `decision`); each
+  has a `summary`, its one-line form. What makes each is in [availability](../design/roster.md#availability).
+- `account.record.label` is given to an operator-scope caller only; a client's record has no label.
+- Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
+  rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources;
+  past a bound with no count, the field is `unknown` with why, never cut silently. `work.unread`
+  says the runs read were cut by their bound (500).
+- The call's text content is the record rendered for a terminal (what `system roster` prints); the
+  structured content is the record, validated before it is sent: a record its schema refuses is a
+  defect, and the call is an error. Example:
+  [`mcp-roster.call.json`](../../schemas/examples/mcp-roster.call.json).
+
 ### `plugin-manifest`
 
 - `name` never changes; a renamed plugin lists its old names in `renames`, so the host matches

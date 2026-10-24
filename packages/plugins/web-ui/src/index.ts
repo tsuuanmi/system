@@ -5,7 +5,8 @@
  * (docs/design/approvals.md), and the autonomy policy in force, its history, and the operator's
  * proposed changes, each asked in that queue (docs/design/approvals.md#a-policy-change); and, when
  * `ctx.board` is present, the board's tasks in review with the operator's acceptance, and its
- * projects with the operator's pause, resume, and close (docs/design/board.md). It is served on the
+ * projects with the operator's pause, resume, and close (docs/design/board.md); and the roster of every
+ * Worker (docs/design/roster.md). It is served on the
  * DSH webserver under `/ui`, which is loopback-only:
  * - the page and script carry no data, under a strict content security policy;
  * - the token arrives in the URL fragment (never sent to a server), and the script sends it as
@@ -18,7 +19,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
 import { type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
@@ -331,9 +332,33 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
+  /**
+   * The roster (docs/design/roster.md): `GET roster` gives every Worker in one read model, projected
+   * on read from the services mounted, each one absent read as unknown with why. The page is the
+   * operator's, so it shows account labels.
+   */
+  const roster = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+    const services: RosterServices = {
+      workers: ctx.get('workers' as never) as RosterServices['workers'],
+      accounts: ctx.get('accounts' as never) as RosterServices['accounts'],
+      agentWorkers: ctx.get('agentWorkers' as never) as RosterServices['agentWorkers'],
+      resources: ctx.get('resources' as never) as RosterServices['resources'],
+      eventLog: ctx.get('eventLog' as never) as RosterServices['eventLog'],
+      workflow: ctx.workflow as unknown as RosterServices['workflow'],
+      board: ctx.get('board') as RosterServices['board'],
+    }
+    try {
+      return json(res, 200, await readRoster(services, { scope: 'operator' }))
+    } catch (error) {
+      return json(res, 500, { error: `the roster could not be made: ${(error as Error).message.slice(0, 500)}` })
+    }
+  }
+
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const refused = refuse(req)
     if (refused) return json(res, refused[0], { error: refused[1] })
+    if (path === 'roster') return roster(req, res)
     if (path === 'approvals' || path.startsWith('approvals/')) return queue(req, res, path)
     if (path === 'policy' || path.startsWith('policy/')) return policy(req, res, path)
     if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path)

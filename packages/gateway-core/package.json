@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-gateway-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Gateway definitions: ctx.mcp (the MCP tool registry plugins contribute tools to) and the request guard every client endpoint shares",
+  "description": "Gateway definitions: ctx.mcp (the MCP tool registry plugins contribute tools to), the request guard every client endpoint shares, and the roster every surface serves",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

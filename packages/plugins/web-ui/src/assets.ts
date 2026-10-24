@@ -5,11 +5,11 @@ export const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>system: runs, approvals, reviews, board, and policy</title>
+<title>system: runs, approvals, reviews, board, roster, and policy</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=roster" id="roster-link">Roster</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
 <main id="main"></main>
 <script src="/ui/app.js"></script>
 </body>
@@ -30,6 +30,7 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 th { color: var(--muted); font-weight: 500; }
 a { color: var(--accent); }
 .state { font-weight: 600; } .COMPLETED, .completed { color: var(--ok); } .FAILED, .failed { color: var(--bad); } .BLOCKED, .RUNNING, .running { color: var(--wait); }
+.ready { color: var(--ok); } .busy, .resting { color: var(--wait); } .unavailable, .quarantined { color: var(--bad); } .unknown { color: var(--muted); font-style: italic; }
 .panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
 button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; margin-right: 8px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -305,6 +306,47 @@ export const APP_JS = `'use strict'
       shown)
   }
 
+  // The roster: every Worker with its account, role, availability, current work, load, and its
+  // account's pools. A fact its source could not give shows as unknown with why, never a default.
+  async function rosterView() {
+    const roster = await api('roster')
+    const known = (k, render) => 'value' in k ? render(k.value) : el('span', { class: 'unknown' }, 'unknown (' + k.unknown + ')')
+    const text = (k, render) => 'value' in k ? (render ? render(k.value) : String(k.value)) : 'unknown (' + k.unknown + ')'
+    const accountCell = (w) => known(w.account, (a) => el('div', {},
+      el('div', {}, a.id + ' ', el('span', { class: 'muted' }, a.group + ', ' + a.mode)),
+      known(a.record, (r) => el('div', {}, r.kind + ' ' + r.status + (r.slot !== undefined ? ', slot ' + r.slot : ''),
+        r.label ? el('div', { class: 'muted' }, text(r.label)) : null,
+        r.quarantine ? el('div', { class: 'quarantined' }, 'quarantined ' + r.quarantine.reason + ' since ' + r.quarantine.since) : null,
+        r.sameAs ? el('div', {}, 'same person as ' + r.sameAs.join(', ')) : null))))
+    const workCell = (w) => known(w.work, (work) => el('div', {},
+      work.items.length ? work.items.map((i) => el('div', {}, el('a', { href: '?run=' + encodeURIComponent(i.runId), onclick: (e) => { e.preventDefault(); go(i.runId) } }, i.runId),
+        ' ' + i.template + ' · ' + i.nodeId + ' (attempt ' + i.attempt + ')',
+        i.task ? el('div', { class: 'muted' }, 'task ' + i.task.taskId + ': ' + text(i.task.board, (t) => t.title + ' (' + t.projectId + ', ' + t.state + ')')) : null)) : el('span', { class: 'muted' }, 'none now'),
+      work.more ? el('div', { class: 'muted' }, work.more + ' more') : null,
+      work.unread ? el('div', { class: 'unknown' }, work.unread) : null))
+    const poolsCell = (w) => known(w.pools, (pools) => pools.length ? el('div', {}, pools.map((p) => el('div', {},
+      el('div', {}, el('strong', {}, p.pool), ' ' + (p.available ? 'available' : 'closed' + (p.until ? ' until ' + p.until : ''))),
+      p.windows.map((win) => el('div', { class: 'muted' }, win.id + ': ' + win.state + ', used ' + text(win.used, (n) => n + '%') + ', resets ' + text(win.resets))),
+      el('div', { class: 'muted' }, 'unknown usage: ' + text(p.unknownUsage, (u) => u.runs + ' run(s)'))))) : el('span', { class: 'muted' }, 'none on its account'))
+    const counts = ['ready', 'busy', 'resting', 'unavailable', 'quarantined'].map((s) => roster.counts[s] + ' ' + s).join(', ')
+    const unheard = 'value' in roster.sources ? roster.sources.value.filter((s) => s.state !== 'described') : []
+    show(
+      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
+      el('h2', {}, 'Roster'),
+      el('p', { class: 'muted' }, 'As of ' + new Date(roster.asOf).toLocaleString() + ': ' + counts + (roster.unlisted ? '; ' + roster.unlisted + ' more not listed' : '')),
+      'value' in roster.sources ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
+      unheard.length ? el('div', {}, unheard.map((s) => el('p', { class: 'state failed' }, 'Source ' + s.source + ' ' + s.state + ' at ' + s.at + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
+      known(roster.workers, (workers) => workers.length ? el('section', { 'aria-label': 'Roster' }, table(['Worker', 'Account', 'Serves', 'Availability', 'Work now', 'Load', 'Pools'], workers.map((w) => el('tr', {},
+        el('td', {}, el('strong', {}, w.worker), el('div', { class: 'muted' }, w.provider + ' · family ' + text(w.family) + ' · role ' + text(w.role, (r) => r === null ? 'none' : r))),
+        el('td', {}, accountCell(w)),
+        el('td', {}, w.tier + ', ' + w.quotaClass + ', ' + w.locality),
+        el('td', { class: 'state ' + w.availability.state }, w.availability.summary, w.limits.length ? el('div', { class: 'muted' }, 'limited: ' + w.limits.map((l) => l.capability + ' until ' + l.until).join(', ')) : null),
+        el('td', {}, workCell(w)),
+        el('td', {}, text(w.load, (l) => l.running + ' of ' + l.slots + ' running, ' + l.queued + ' queued, ' + l.pending + ' pending')),
+        el('td', {}, poolsCell(w)),
+      )))) : el('p', { class: 'muted' }, 'No Worker is configured.')))
+  }
+
   // The autonomy policy in force, its history, and a proposed change with its diff. A proposal is
   // asked in the approval queue as a policy-change request; only the operator's approval there applies it.
   async function policyView() {
@@ -396,11 +438,12 @@ export const APP_JS = `'use strict'
     refresh()
   })
   nav('board-link', 'board')
+  nav('roster-link', 'roster')
   nav('policy-link', 'policy')
   window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); confirming = false; refresh() })
   async function refresh() {
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
-    try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
+    try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'roster' ? rosterView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
   }
   refresh()
   // The policy page holds an edit in progress, and an open confirmation a move not yet made: neither is refreshed away.
