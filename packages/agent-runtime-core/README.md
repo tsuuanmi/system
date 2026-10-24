@@ -109,14 +109,20 @@ Capability **seam definition** for agent runtimes
     (`--die-with-parent --unshare-pid --new-session --dev-bind / / --proc /proc`,
     then, shallowest first, a tmpfs over each hidden directory, the null device
     over each hidden file, and the binds back; missing paths skipped, symlinks
-    resolved). A bind that is, or holds, a hidden path is refused. Optional
+    resolved). Its temporary directory is always its own (T113): a fresh tmpfs
+    at `/tmp` (`PRIVATE_TMP`; the confinement's, when it hides `/tmp`, else one
+    mounted first), writable even with `readOnly`, and `TMPDIR`, `TMP`, and `TEMP`
+    set to it (`--setenv`, over the environment's), so temporary files and unix
+    sockets land there and never in the host's `/tmp`. A bind that is, or holds,
+    a hidden path or the host's `/tmp` is refused. Optional
     `options` (`ConfinedCommandOptions`), for a command a Worker source runs
     itself rather than an agent ([a worktree's setup](../../docs/design/agent-runtimes.md#a-worktrees-setup)):
     `readOnly` (`--ro-bind / / --dev /dev` instead of `--dev-bind / /`: only the
     binds back and the tmpfs can be written), `network: false`
     (`--unshare-net`: loopback only), `chdir`, and `views` (a host directory
     seen at another path, writable or read-only, mounted last, in order; one
-    whose source is, or holds, a hidden path, or does not exist, is refused).
+    whose source is, or holds, a hidden path or the host's `/tmp`, or does not
+    exist, is refused).
     With none, the command line is an agent child's;
   - `proveConfinement(confinement)`: on this host, positively: the command runs;
     each masked directory is not the host's (device and inode) and lists only the

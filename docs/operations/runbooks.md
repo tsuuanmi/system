@@ -137,7 +137,15 @@ default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
   `/var/tmp`, `/dev/shm`, `$CREDENTIALS_DIRECTORY`, the credential stores in your
   home and every coding agent's login there (the list is in the
   [agent-runtimes README](../../packages/plugins/agent-runtimes/README.md)), and wherever you keep the vault, its key, the store,
-  or login profiles. The agent gets an empty private `/tmp`. Only
+  or login profiles. The agent, and every command a run's worktree setup runs,
+  gets an empty private `/tmp` as its `TMPDIR` (`TMP`, `TEMP`), whatever the
+  daemon's own is; nothing it writes there reaches your `/tmp`. A check that
+  listens on a unix socket (a script started by the `tsx` CLI, whose IPC pipe
+  fails with `listen EPERM … /tmp/tsx-<uid>/<pid>.pipe`) still fails inside a
+  Worker's commands: Claude Code's and Codex's command sandboxes refuse unix
+  sockets, and nothing loosens them; run it outside the Worker, or start the
+  repository's scripts without a unix socket
+  ([confined commands](../design/agent-runtimes.md#confined-commands)). Only
   `~/.dsh/system/tools` (read-only), the Worker's own home, and its workspace come
   back; a workspace that holds one of those paths (your home directory, say) is
   refused. Install a root-owned bubblewrap (`sudo apt-get install bubblewrap`):

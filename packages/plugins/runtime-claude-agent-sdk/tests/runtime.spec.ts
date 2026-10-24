@@ -366,6 +366,9 @@ describe('claude-agent-sdk: the run\'s tool gate is a PreToolUse hook on every t
 
 /** The options every confined command line starts with (agent-runtime-core's `confinedCommand`). */
 const OPTIONS = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc']
+/** Every confined command's own /tmp (a confinement that does not hide it gets one), first, and the variables that name it, last (T113). */
+const PRIVATE_TMP = ['--tmpfs', '/tmp']
+const TEMP_ENV = ['--setenv', 'TMPDIR', '/tmp', '--setenv', 'TMP', '/tmp', '--setenv', 'TEMP', '/tmp']
 /** The sandbox the probe starts inside the confinement: bubblewrap on Claude Code's PATH, a namespaced `true` with no network. */
 const NESTED = ['bwrap', '--die-with-parent', '--new-session', '--unshare-net', '--unshare-pid', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--', 'true']
 
@@ -384,8 +387,8 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
     expect(evidence).toMatchObject({ available: true, readsConfined: true, executes: true, sandboxes: ['read-only', 'workspace-write'] })
     // Its own home is the one path bound back writable; the confinement hides the operator's ~/.claude.
     expect(binds.at(-1)).toEqual({ writable: [HOME] })
-    expect(nested).toEqual([{ command: '/usr/bin/bwrap', args: [...OPTIONS, '--bind', HOME, HOME, '--', ...NESTED], env: expect.objectContaining({ CLAUDE_CONFIG_DIR: HOME }) }])
-    expect(status).toEqual([[...OPTIONS, '--bind', HOME, HOME, '--', '/usr/bin/claude', 'auth', 'status']])
+    expect(nested).toEqual([{ command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--bind', HOME, HOME, ...TEMP_ENV, '--', ...NESTED], env: expect.objectContaining({ CLAUDE_CONFIG_DIR: HOME }) }])
+    expect(status).toEqual([[...OPTIONS, ...PRIVATE_TMP, '--bind', HOME, HOME, ...TEMP_ENV, '--', '/usr/bin/claude', 'auth', 'status']])
   })
 
   it('reports executes false, with the reason, when either layer is not proven: no workspace-write, so nothing writes or runs a command (INV-2)', async () => {
@@ -492,8 +495,8 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
       start({ command: '/usr/bin/claude', args: ['--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME }, signal: new AbortController().signal })
     }
     expect(spawned).toEqual([
-      { command: '/usr/bin/bwrap', args: [...OPTIONS, '--ro-bind', workspace, workspace, '--bind', HOME, HOME, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
-      { command: '/usr/bin/bwrap', args: [...OPTIONS, '--bind', HOME, HOME, '--bind', workspace, workspace, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
+      { command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--ro-bind', workspace, workspace, '--bind', HOME, HOME, ...TEMP_ENV, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
+      { command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--bind', HOME, HOME, '--bind', workspace, workspace, ...TEMP_ENV, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
     ])
   })
 
@@ -560,7 +563,8 @@ describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap
   const outside = join(root, 'outside')
   /** A stand-in `claude`: its version, and a signed-in `auth status`; it never runs a task. */
   const claude = join(root, 'bin', 'claude')
-  const confine = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [dsh], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] })
+  // The stand-in lies in the test's /tmp, which a confined command does not see (its /tmp is its own): bound back, as an operator's tools are.
+  const confine = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [dsh], readOnly: [...(bind.readOnly ?? []), join(root, 'bin')], writable: [...(bind.writable ?? [])] })
   const server = createServer((socket) => socket.end())
   let port = 0
   beforeAll(async () => {

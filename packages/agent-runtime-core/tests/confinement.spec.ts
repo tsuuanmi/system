@@ -20,6 +20,8 @@ const BWRAP = findBwrap()
 // CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
 const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
 const OPTIONS = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc']
+/** Every confined command's temporary directory: its own tmpfs at /tmp, named by TMPDIR, TMP, and TEMP (T113). */
+const TEMP_ENV = ['--setenv', 'TMPDIR', '/tmp', '--setenv', 'TMP', '/tmp', '--setenv', 'TEMP', '/tmp']
 
 /** A fake DSH home: host state to hide, operator tools to keep readable, a Worker home to keep writable. */
 function host(): { root: string; home: string; tools: string; workerHome: string; vaultKey: string; keyFile: string } {
@@ -52,11 +54,16 @@ describe('confinedCommand: the bubblewrap command line (ADR-0024)', () => {
       command: 'bwrap',
       args: [
         ...OPTIONS,
+        // A confinement that does not hide /tmp still gets a private one, first (the shallowest).
+        '--tmpfs', '/tmp',
         '--ro-bind', '/dev/null', h.keyFile, '--tmpfs', h.home,
         '--ro-bind', h.tools, h.tools, '--bind', h.workerHome, h.workerHome,
+        ...TEMP_ENV,
         '--', 'codex', 'exec', '--json',
       ],
     })
+    // One that hides /tmp has it hidden once, as its own.
+    expect(confinedCommand('true', [], { bwrap: 'bwrap', hide: ['/tmp'], readOnly: [], writable: [] }).args).toEqual([...OPTIONS, '--tmpfs', '/tmp', ...TEMP_ENV, '--', 'true'])
   })
 
   it('with options: a read-only host with its own /dev, no network, a start directory, and views mounted last, in order', () => {
@@ -72,8 +79,9 @@ describe('confinedCommand: the bubblewrap command line (ADR-0024)', () => {
       command: 'bwrap',
       args: [
         '--die-with-parent', '--unshare-pid', '--unshare-net', '--new-session', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
-        '--tmpfs', h.home, '--bind', h.workerHome, h.workerHome,
+        '--tmpfs', '/tmp', '--tmpfs', h.home, '--bind', h.workerHome, h.workerHome,
         '--bind', view, store, '--ro-bind', join(store, 'files'), join(store, 'files'), '--chdir', h.workerHome,
+        ...TEMP_ENV,
         '--', 'sh', '-c', 'true',
       ],
     })
@@ -96,6 +104,9 @@ describe('confinedCommand: the bubblewrap command line (ADR-0024)', () => {
     expect(run({ readOnly: [join(h.home, 'system')] })).toThrow(`binding back ${join(h.home, 'system')} would expose ${h.vaultKey}`)
     expect(run({ writable: [join(h.workerHome, '..')] })).toThrow(/would expose/)
     expect(run({ readOnly: [h.home] })).toThrow(/would expose/)
+    // Nor the host's /tmp, which the confinement does not name: as a bind, or as a view's source.
+    expect(run({ writable: ['/tmp'] })).toThrow('binding back /tmp would expose /tmp')
+    expect(() => confinedCommand('true', [], { bwrap: 'bwrap', hide: [], readOnly: [], writable: [] }, { views: [{ source: '/tmp', path: join(h.root, 'tmp-view'), writable: true }] })).toThrow('the view of /tmp would expose /tmp')
   })
 })
 
@@ -124,7 +135,8 @@ describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap c
 
   it('sees only its own processes, and nothing it starts outlives it', async () => {
     expect((await run('ls', ['/proc'])).stdout.split('\n').filter((e) => /^\d+$/.test(e)).length).toBeLessThan(5)
-    const marker = join(h.root, 'orphan-alive')
+    // In a directory bound back: the rest of /tmp, where the fixture lies, is the child's own.
+    const marker = join(h.workerHome, 'orphan-alive')
     // A background child keeps writing; killing bubblewrap must end the whole namespace.
     const c = confinedCommand('sh', ['-c', `(while true; do date > ${marker}; sleep 0.1; done) & sleep 60`], confinement({ hide: [h.home] }))
     const child = spawn(c.command, c.args, { stdio: 'ignore' })
@@ -167,7 +179,15 @@ describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap c
       // Its start directory is the bound one, which it writes; the rest of the host it cannot.
       expect((await run('pwd && touch made && echo ok')).stdout).toBe(`${h.workerHome}\nok\n`)
       expect(statSync(join(h.workerHome, 'made')).isFile()).toBe(true)
-      await expect(run(`touch ${join(elsewhere, '..', 'planted')}`)).rejects.toThrow()
+      // A host directory outside /tmp (this test's own) is read-only; one inside /tmp is its private tmpfs, not the host's.
+      const planted = join(fileURLToPath(new URL('.', import.meta.url)), `planted-${process.pid}`)
+      try {
+        await expect(run(`touch ${planted}`)).rejects.toThrow()
+      } finally {
+        rmSync(planted, { force: true })
+      }
+      await run(`touch ${join(elsewhere, '..', 'planted')}`)
+      expect(existsSync(join(elsewhere, '..', 'planted'))).toBe(false)
       // Only its own loopback.
       const devices = (await run('cat /proc/net/dev')).stdout.split('\n').slice(2).filter(Boolean).map((line) => line.trim().split(':')[0])
       expect(devices).toEqual(['lo'])
@@ -179,6 +199,38 @@ describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap c
       await expect(run(`touch ${join(elsewhere, 'files', 'planted')}`)).rejects.toThrow()
     } finally {
       rmSync(elsewhere, { recursive: true, force: true })
+    }
+  })
+
+  it('gives every confined command a private, writable /tmp as TMPDIR, TMP, and TEMP: a unix socket listens there as tsx\'s IPC pipe does, and the host\'s /tmp is neither seen nor written (T113)', async () => {
+    const marker = `system-t113-${process.pid}-${Date.now()}`
+    const hostOnly = mkdtempSync(join(tmpdir(), 'system-t113-host-'))
+    writeFileSync(join(hostOnly, 'secret'), 'the host\'s')
+    // In the child: its temporary directory, a pipe made as tsx makes its own (`<tmpdir>/tsx-<uid>/<pid>.pipe`), one message through it, then a file in /tmp.
+    const script = [
+      "const { mkdirSync, writeFileSync } = require('node:fs'); const net = require('node:net'); const os = require('node:os'); const path = require('node:path')",
+      "const dir = path.join(os.tmpdir(), 'tsx-' + os.userInfo().uid); mkdirSync(dir, { recursive: true }); const pipe = path.join(dir, process.pid + '.pipe')",
+      "const server = net.createServer((s) => s.on('data', (d) => { s.end(); server.close(); writeFileSync(path.join('/tmp', process.argv[1]), 'x'); console.log([process.env.TMPDIR, process.env.TMP, process.env.TEMP, os.tmpdir(), pipe.startsWith('/tmp/tsx-'), String(d)].join(' ')) }))",
+      "server.on('error', (e) => { console.log('error ' + e.code); process.exit(1) }); server.listen(pipe, () => net.connect(pipe, function () { this.end('through the pipe') }))",
+    ].join('\n')
+    try {
+      const options: Array<Parameters<typeof confinedCommand>[3]> = [{}, { readOnly: true, network: false, chdir: h.workerHome }]
+      for (const c of [confinement(), confinement({ hide: [h.home, h.keyFile, h.vaultKey, '/tmp'] })]) {
+        for (const extra of options) {
+          const command = confinedCommand(process.execPath, ['-e', script, marker], c, extra)
+          // The daemon's own TMPDIR (a host path) is not the child's.
+          const { stdout } = await promisify(execFile)(command.command, command.args, { encoding: 'utf8', env: { ...process.env, TMPDIR: hostOnly, TMP: hostOnly, TEMP: hostOnly } })
+          expect(stdout, JSON.stringify(extra)).toBe('/tmp /tmp /tmp /tmp true through the pipe\n')
+          expect(existsSync(join('/tmp', marker)), 'the host /tmp was written').toBe(false)
+        }
+        // What the host keeps in /tmp is not there; what is bound back still is.
+        const seen = confinedCommand('sh', ['-c', `ls -A ${hostOnly} 2>&1; cat ${join(h.workerHome, '..', 'tools', 'bin', 'tool')}`], c)
+        const { stdout } = await promisify(execFile)(seen.command, seen.args, { encoding: 'utf8' })
+        expect(stdout).not.toContain('secret')
+        expect(stdout).toContain('a tool')
+      }
+    } finally {
+      rmSync(hostOnly, { recursive: true, force: true })
     }
   })
 

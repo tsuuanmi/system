@@ -684,7 +684,8 @@ describe.skipIf(!BWRAP && !REQUIRED)('antigravity-cli under the real bubblewrap:
   writeFileSync(join(dsh, 'system', 'vault.key'), 'vault key')
   writeFileSync(outside, 'b\n')
   afterAll(() => rmSync(host, { recursive: true, force: true }))
-  const real = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [dsh], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] })
+  // The scripted agy, its scenarios, and its logs lie in the test's /tmp, which a confined command does not see (its /tmp is its own): bound back, as an operator's tools are.
+  const real = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [dsh], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? []), root] })
   const hosted = (env: Record<string, string>) => new AntigravityRuntime({ executable: AGY, home, runRoot, confine: real, hooks: bridgeOnly, findExecutable: () => undefined, env, timing: { killMs: 500 } })
 
   it('proves the confinement and the bridge on this host: the run\'s gate directory, under the hidden DSH home, is reached read-only from inside', async () => {

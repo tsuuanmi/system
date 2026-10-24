@@ -267,7 +267,7 @@ worktreeSetup:
   hash, used once. With no queue loaded, nothing runs.
 - **Confined.** Each command runs under the read confinement with more: the host's file system
   read-only except the worktree (`confinedCommand`'s `readOnly`), no network but its own loopback
-  (`network: false`), the worktree as its directory, a private `/tmp`, its own PID namespace and
+  (`network: false`), the worktree as its directory, a private `/tmp` as its `TMPDIR`, its own PID namespace and
   session, the daemon's scrubbed environment (`childEnvironment`), and the setup's deadline
   (SIGKILL; bubblewrap takes the namespace with it). The confinement is proven on the host
   (`proveConfinement`) before each setup.
@@ -389,6 +389,10 @@ removes it; it is clean then, and its branch always stays.
   `--die-with-parent`): Codex through an owner-only launcher (`writeLauncher`), ACP agents
   and the Antigravity CLI directly, Claude Code through the SDK's `spawnClaudeCodeProcess`, which wraps the SDK's own
   command line ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
+  Every confined command (an agent and everything it starts, a probe, a worktree's setup) has a
+  temporary directory of its own: a fresh tmpfs at `/tmp`, never the host's, which `TMPDIR`,
+  `TMP`, and `TEMP` name whatever the daemon's own are (`confinedCommand`, T113), so a tool's
+  temporary files and unix sockets (a test runner's IPC pipe) land there and go with it.
   Each agent runs in a home of its own (Codex's `CODEX_HOME`, Claude Code's
   `CLAUDE_CONFIG_DIR`, the Antigravity CLI's `HOME`, each under `<DSH_HOME>/system`), never the
   operator's login, which is hidden; the operator signs in there once, and a probe that finds no
@@ -729,7 +733,20 @@ The Antigravity CLI offers no command tool (`run_command` is denied), so its Wor
 
 Commands that need the network (installing packages) fail inside a Worker: dependencies are
 prepared before the run, in a worktree by its repository's [setup](#a-worktrees-setup), offline
-from what the host holds. The sandbox runtime does not claim to stop a kernel escape
+from what the host holds.
+
+Commands that listen on a unix socket fail inside a Worker too, whatever the directory: both
+command sandboxes refuse unix sockets on Linux by a seccomp filter (`EPERM`), the SDK's unless
+`network.allowAllUnixSockets` (which the SDK's settings describe as disabling that blocking) and
+Codex's as part of its no-network sandbox (from its documented design; not re-checked live). The
+`tsx` CLI is one: it opens an IPC pipe in its temporary directory (`/tmp/tsx-<uid>/<pid>.pipe`)
+for every script, so a repository check started through it fails as
+`listen EPERM: operation not permitted` (T113). The private `/tmp` above is not the cause and
+does not lift it. Allowing unix sockets would let a command reach any socket the confinement
+leaves visible (a container engine's, a system bus), a loosening of ADR-0038 that needs its own
+decision, so none is made: such a check runs outside the Worker, or the repository starts its
+scripts without a unix socket. (A worktree's setup runs under the read confinement alone, so its
+commands can listen on one.) The sandbox runtime does not claim to stop a kernel escape
 ([threat model](../security/threat-model.md#threats-and-controls)).
 
 ## Metering
