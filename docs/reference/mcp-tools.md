@@ -572,7 +572,7 @@ Scope: `operator`
 
 ## `report`
 
-The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board's progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter's attention budget, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.
+The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board's progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter's attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.
 
 Scope: `client`
 
@@ -709,7 +709,7 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check's detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).
+Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check's detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).
 
 Scope: `client`
 
