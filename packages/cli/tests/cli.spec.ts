@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -270,6 +270,41 @@ describe('system usage and explain output', () => {
       '    egress  allow  public content is permitted  (sha256:01)',
       '    route  worker:a/standard  proves reason; quota class subscription-chat  (sha256:02)',
       '    acceptance  reject  no JSON  (sha256:03)  result sha256:a1',
+    ])
+  })
+
+  it('prints a run\'s executions whose liveness needs a look after its decision chain: the verdict, its looks, why, what it holds, and what to do (PROP-0013)', () => {
+    const held = {
+      source: 'agents', execution: 'arun_00000000000000aa', worker: 'agent:dev', state: 'unknown' as const, since: '2026-10-24T01:00:00.000Z', verdict: 'unknown (liveness@1)', looks: { taken: 3, max: 3 },
+      reasons: ['the holder\'s process: gone (no process 41 exists)', 'the agent process: unknown (never reported)'], decision: 'sha256:0d', holds: ['session ses_1'], action: 'confirm that no process of its agent runs, then free it: system free arun_00000000000000aa --agent-gone',
+    }
+    const lines = formatExplanation({ runId: 'run_1', template: 'develop', status: 'running', specHash: 'sha256:ab', nodes: [], liveness: [held], livenessUnread: [{ source: 'other', detail: 'the store failed' }] })
+    expect(lines).toEqual([
+      'run_1  develop  running  spec sha256:ab',
+      'liveness',
+      '  arun_00000000000000aa  agent:dev  ended without being known to be gone since 2026-10-24T01:00:00.000Z  verdict unknown (liveness@1)  looks 3 of 3  (sha256:0d)',
+      '    why   the holder\'s process: gone (no process 41 exists)',
+      '    why   the agent process: unknown (never reported)',
+      '    holds session ses_1',
+      '    do    confirm that no process of its agent runs, then free it: system free arun_00000000000000aa --agent-gone',
+      '  source other cannot tell: the store failed',
+    ])
+    const { verdict: _v, looks: _l, decision: _d, ...stalled } = held
+    expect(formatLiveness([{ ...stalled, state: 'stalled', holds: [] }])[0]).toBe('  arun_00000000000000aa  agent:dev  stalled since 2026-10-24T01:00:00.000Z')
+  })
+
+  it('asks to free a run only on the operator\'s word that its agent is gone, and prints what was freed and each worktree (PROP-0013)', () => {
+    expect(() => parseFree(['arun_00000000000000aa'])).toThrow(/your word that its agent is gone.*add --agent-gone/)
+    expect(() => parseFree(['--agent-gone'])).toThrow(/name the agent run/)
+    expect(() => parseFree(['arun_00000000000000aa', '--agent-gone', '--force'])).toThrow(/unknown option --force/)
+    expect(parseFree(['arun_00000000000000aa', '--agent-gone'])).toEqual({ agentRun: 'arun_00000000000000aa', agentGone: true })
+    expect(parseFree(['arun_00000000000000aa', '--commit-worktree', '--agent-gone', 'host', 'rebooted'])).toEqual({ agentRun: 'arun_00000000000000aa', agentGone: true, commitWorktree: true, note: 'host rebooted' })
+    expect(formatFreed({
+      agentRun: 'arun_00000000000000aa', decision: 'sha256:0f', again: false, freed: ['session ses_1', 'worktree /w/run_1 (branch system/run/run_1)'],
+      worktrees: [{ path: '/w/run_1', branch: 'system/run/run_1', outcome: 'removed', why: 'its uncommitted changes are committed on system/run/run_1, which stays, then it is removed', commit: 'c0ffee' }],
+    })).toEqual([
+      'freed arun_00000000000000aa (decision sha256:0f): session ses_1; worktree /w/run_1 (branch system/run/run_1)',
+      '  worktree /w/run_1: removed, its changes committed on system/run/run_1 as c0ffee (its uncommitted changes are committed on system/run/run_1, which stays, then it is removed)',
     ])
   })
 

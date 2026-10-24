@@ -677,7 +677,7 @@ export function formatHealth(health: HealthView): string[] {
 
 /**
  * The running profile's roster (REQ-HOST-8, MCP `roster`): its rendering for a terminal, or with
- * `json` the record itself (`mcp-roster@1.1`). A refused call, or a host that does not answer, throws.
+ * `json` the record itself (`mcp-roster@1.2`). A refused call, or a host that does not answer, throws.
  */
 export async function hostRoster(json: boolean, call: typeof callTool = callTool): Promise<string> {
   const outcome = await call('roster', {})
@@ -1022,22 +1022,89 @@ export function formatUsage(usage: { runs: UsageRun[] }): string[] {
   ])
 }
 
+/** An execution whose liveness needs a look, as `explain` gives it (`ctx.workers.liveness`, PROP-0013). */
+export interface ExplainedLiveness {
+  source: string
+  execution: string
+  worker: string
+  state: 'stalled' | 'looking' | 'unknown'
+  since: string
+  verdict?: string
+  looks?: { taken: number; max: number }
+  reasons: string[]
+  decision?: string
+  holds: string[]
+  action: string
+}
+
 interface Explained {
   runId: string
   template: string
   status: string
   specHash: string
   nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: Array<{ id: string; type: string; outcome: string; reasons: string[]; result?: string }> }>
+  liveness?: ExplainedLiveness[]
+  livenessUnread?: Array<{ source: string; detail: string }>
 }
 
-/** `system explain <runId>`: each step's decisions (egress, tier, route, acceptance) with their reasons. */
+/** The words of each liveness state, as an operator reads them. */
+const LIVENESS_WORDS = { stalled: 'stalled', looking: 'not known to be gone, being looked at', unknown: 'ended without being known to be gone' } as const
+
+/** One execution's liveness: its state and verdict, its looks, why, what it holds, and what to do. */
+export function formatLiveness(runs: readonly ExplainedLiveness[], unread: ReadonlyArray<{ source: string; detail: string }> = []): string[] {
+  return [
+    ...runs.flatMap((r) => [
+      `  ${r.execution}  ${r.worker}  ${LIVENESS_WORDS[r.state]} since ${r.since}${r.verdict ? `  verdict ${r.verdict}` : ''}${r.looks ? `  looks ${r.looks.taken} of ${r.looks.max}` : ''}${r.decision ? `  (${r.decision})` : ''}`,
+      ...r.reasons.map((reason) => `    why   ${reason}`),
+      ...(r.holds.length ? [`    holds ${r.holds.join('; ')}`] : []),
+      `    do    ${r.action}`,
+    ]),
+    ...unread.map((u) => `  source ${u.source} cannot tell: ${u.detail}`),
+  ]
+}
+
+/** `system explain <runId>`: each step's decisions (egress, tier, route, acceptance) with their reasons, then its executions whose liveness needs a look. */
 export function formatExplanation(explained: Explained): string[] {
+  const liveness = explained.liveness?.length || explained.livenessUnread?.length ? ['liveness', ...formatLiveness(explained.liveness ?? [], explained.livenessUnread)] : []
   return [
     `${explained.runId}  ${explained.template}  ${explained.status}  spec ${explained.specHash}`,
     ...explained.nodes.flatMap((n) => [
       `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}`,
       ...n.decisions.map((d) => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})${d.result ? `  result ${d.result}` : ''}`),
     ]),
+    ...liveness,
+  ]
+}
+
+/** What `agent_run_free` answers (`mcp-agent-runs@1.0`). */
+export interface Freed {
+  agentRun: string
+  decision: string
+  again: boolean
+  freed: string[]
+  worktrees: Array<{ path: string; branch: string; outcome: 'removed' | 'kept'; why: string; commit?: string }>
+}
+
+/**
+ * `system free <agentRun> --agent-gone [--commit-worktree] [note...]`: the operator's word that a run's
+ * agent is gone, so what it held is freed (PROP-0013). Without `--agent-gone` nothing is asked.
+ */
+export function parseFree(args: readonly string[]): { agentRun: string; agentGone: true; commitWorktree?: true; note?: string } {
+  const known = new Set(['--agent-gone', '--commit-worktree'])
+  const flags = args.filter((a) => a.startsWith('--'))
+  const unknownFlag = flags.find((f) => !known.has(f))
+  if (unknownFlag) throw new Error(`system free: unknown option ${unknownFlag}`)
+  const [agentRun, ...note] = args.filter((a) => !a.startsWith('--'))
+  if (!agentRun) throw new Error('system free: name the agent run (arun_…) that system health or explain lists as unknown')
+  if (!flags.includes('--agent-gone')) throw new Error(`system free: freeing ${agentRun} is your word that its agent is gone: check that no process of it runs (docs/operations/runbooks.md#a-runs-liveness-is-unknown), then add --agent-gone`)
+  return { agentRun, agentGone: true, ...(flags.includes('--commit-worktree') ? { commitWorktree: true as const } : {}), ...(note.length ? { note: note.join(' ') } : {}) }
+}
+
+/** What `system free` prints: the decision, what is free now, and each worktree removed or kept, and why. */
+export function formatFreed(freed: Freed): string[] {
+  return [
+    `${freed.again ? 'freed again' : 'freed'} ${freed.agentRun} (decision ${freed.decision})${freed.freed.length ? `: ${freed.freed.join('; ')}` : ''}`,
+    ...freed.worktrees.map((w) => `  worktree ${w.path}: ${w.outcome}${w.commit ? `, its changes committed on ${w.branch} as ${w.commit}` : ''} (${w.why})`),
   ]
 }
 
