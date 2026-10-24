@@ -13,8 +13,8 @@
 >
 > Defined in [`experiments-core`](../../packages/experiments-core/README.md), contract 1.0, its
 > suite passed by the fake `FakeExperiments`. Differs from target: no store-backed provider, no
-> bundle row, and no MCP `experiments_*` tools; nothing registers an experiment (there is no
-> `improve` template).
+> bundle row, and no MCP `experiments_*` tools yet (F3); nothing registers an experiment yet (the
+> `improve` template is F6).
 
 The experiment registry remembers what was tried. Every experiment is registered with the
 hypothesis it tests; the registry identifies it exactly and fingerprints it semantically, answers
@@ -227,5 +227,5 @@ makes it history, shown as possibly stale:
 ## Conformance
 
 [`experiments-core/conformance/experiments.ts`](../../packages/experiments-core/conformance/experiments.ts),
-11 scenarios at contract 1.0, run against the fake provider; a store-backed provider runs the same
+11 scenarios at contract 1.0, run against the fake provider; a store-backed provider (F3) will run the same
 suite.

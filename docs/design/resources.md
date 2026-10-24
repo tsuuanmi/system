@@ -164,11 +164,11 @@ and its contract do not change, and to make each one visible and durable instead
   no length (a credit balance) never resets, so every such run counts until it is reconciled or
   the event log's retention removes it ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
 
-**Not in this design: failing closed for metered pools** (D25's third option). A cap could refuse its
+**Deferred: failing closed for metered pools** (D25's third option). A cap could refuse its
 scope's next reservation while a run of a pool whose kind requires counted usage (a metered pool)
 is unreconciled, keeping 0 for subscription pools with windows. That changes this guarantee seam's
-cap semantics, so it needs its own ADR (ADR-0036), and it rests on transcript reconciliation:
-without it, nothing could reconcile such a run, and its scope would stay refused for good.
+cap semantics, so it needs its own ADR (ADR-0036), and it waits until transcript reconciliation
+exists: before then, nothing could reconcile such a run, and its scope would stay refused for good.
 
 ## Fail-closed rules
 

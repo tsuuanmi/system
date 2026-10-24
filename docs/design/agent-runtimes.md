@@ -267,7 +267,16 @@ has the configuration and every rule.
 ## Agent accounts
 
 > Decision: [ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)
-> (proposed), from [PROP-0012](../proposals/0012-agent-accounts.md).
+> (proposed), from [PROP-0012](../proposals/0012-agent-accounts.md). Built: the seam's additions,
+> their suite, and a fake that passes it (phase B); identity readers for Codex and Claude Code,
+> runs and probes in a named home, enrollment slots, quarantine, and `enrollment` decisions
+> (phase E); Workers derived as account × role, per-account concurrency, load, and pools, and the
+> move from hand-named rows (phase F). Differs from target: the readers rest on the fields seen on
+> this host and on fixtures, not yet on phase A's supervised check on the operator's accounts
+> ([below](#identity-readers)); and until the operator applies the move
+> ([below](#migration-from-hand-named-rows)), hand-named Workers keep running in their runtime's
+> own home, also while its account is `unverified` (REQ-ACC-11 holds for derived Workers: the
+> hand-named ones keep their behaviour until the cutover, PROP-0012's migration step 5).
 
 Several sign-ins per runtime are told apart by who is signed in, never by a name:
 

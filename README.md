@@ -46,42 +46,14 @@ closed core, with Claude Code as the first Worker
 - what was verified on live accounts, and when: the
   [release checklist](docs/validation/release-checklist.md).
 
-Built today, in outline:
+Built today:
 
-- website Workers on ChatGPT Web and Gemini Web, in an invisible headed Chrome,
-  with saved accounts, receipts, and restart reconciliation;
-- [agent Workers](docs/design/agent-runtimes.md) on Claude Code, Codex, ACP agents, and the
-  Antigravity CLI, admitted only where the runtime holds its sandbox, its reads are confined,
-  and it asks the run's tool gate before every tool call; a git worktree per workflow run
-  when configured; several sign-ins per runtime as enrolled accounts, identified by their
-  login, with Workers derived as account × role;
-- the workflow engine: capability routing with decision artifacts, acceptance
-  contracts, graph growth with plan approval, teams that decide by sealed vote
-  (`brainstorm`, `review`), Worker sessions with peer messages, a brief recorded
-  before each Worker execution, and exact-subject review;
-- profiles for scientific research (`research`, with a `deep` variant) and
-  software development (`agent-review`, for agent Workers, and `algorithm-development`: one
-  attempt of a board task, developed, reviewed, and validated in its own worktree);
-- the [resource ledger](docs/design/resources.md): configured pools and their limit
-  windows, reservations before an agent run and before each step of a board task's run,
-  usage from the runtime's own numbers, and the runs whose usage it could not count;
-- the [board](docs/design/board.md): projects with charters and tasks that outlive a run,
-  whose attempts the workflow engine serves, with expiring waits;
-- the [approval queue](docs/design/approvals.md): an autonomy policy, one batched queue whose
-  expiry denies, the gate that judges every tool call of an agent Worker, and policy changes
-  that apply only on the operator's approval;
-- [digests](docs/design/digests.md): cited digests of raw artifacts, every quote checked, from
-  one of two providers the operator swaps by configuration;
-- the [plugin host](docs/design/plugin-host.md): a manifest per plugin, checked against the
-  code in CI and against the composition at start, and each plugin's lifecycle state recorded;
-- the [baseline report](docs/design/reports.md): what a period recorded, for one project or every
-  one, counted by code (MCP `report`, `system report`; by default the weekly investor report);
-- the first parts of the [feedback loop](docs/proposals/0011-feedback-loop.md): its records,
-  the seam definitions of the experiment registry and the evaluation engine, and the
-  [statistics](docs/design/statistics.md) library;
-- the MCP server, the Anthropic Messages and Responses gateways, the `system`
-  CLI, and an operator web page at `/ui` (runs, the approval queue and the autonomy policy,
-  the reviews of board tasks, and the board's projects).
+- website, agent, and model Workers under platform sandboxes and read confinement;
+- the workflow engine with capability routing, decision artifacts, acceptance contracts, and teams;
+- the resource ledger, board, approval queue, briefs and digests, and plugin host;
+- the MCP server, client protocol gateways, `system` CLI, and `/ui`.
+
+Status and what remains for each milestone are in the [roadmap](docs/proposals/roadmap.md).
 
 ## Quick start (Linux)
 

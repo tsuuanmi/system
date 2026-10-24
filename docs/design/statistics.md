@@ -9,7 +9,7 @@
 > finds a method by kind, library, and version ([evaluations](evaluations.md#an-evaluation)).
 >
 > Implemented in [`statistics`](../../packages/statistics/README.md); differs from target: no
-> evaluation engine calls it, since `evaluations` has no store-backed provider.
+> evaluation engine calls it until the store-backed `evaluations` provider (F4).
 
 The statistics library turns one metric's paired values per case into the interval the verdict rule
 reads. It is inference only. It holds no threshold and decides nothing: the

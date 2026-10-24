@@ -9,26 +9,12 @@ and the **request guard** every client endpoint shares.
 | `ctx.mcp` | abstract `McpTools` with `tool(name, spec, handler)`, plus `ToolSpec` (with its `scope`), `ToolScope`, `ToolHandler`, and `ToolContext` (the caller's scope) | `@tsuuanmi/system-mcp-server` |
 
 Plugins that contribute tools depend on this package only, so the
-provider-runtime layer never imports the gateway's implementation:
-
-| Contributor | Tools |
-|---|---|
-| `login` | `account_list`, `account_login`, `account_set_credentials`, `account_relogin`, `account_code`, `account_save` |
-| `turns` | `account_probe`, `account_verify`, `account_cooldowns`, `account_clear_cooldown`, `conversation_list`, `conversation_inspect` |
-| `agent-workers` | `account_enroll`, `account_remove`, `account_agents`, `account_migrate` |
-| `models` | `model_key` |
-| `workflow` | `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `approve`, `stop`, `drain`, `resume`, `continue`, `delete`, `supersede`, `result`, `usage`, `explain` |
-| `worker-sessions` | `session_send`, `session_inbox` |
-| `resources` | `resources_pools`, `resources_usage` |
-| `approvals` | `approvals_list`, `approvals_get`, `approvals_policy`, `approvals_decide`, `approvals_policy_propose` |
-| `board` | `board_projects`, `board_charter`, `board_brief`, `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`, `board_cancel`, `board_pause`, `board_resume`, `board_close` |
-| the `ctx.digests` provider (`digest` or `digest-extractive`) | `digests_request`, `digests_get`, defined by [`digest-core`](../digest-core/README.md) |
-| `report` | `report` |
-| `mcp-server` itself | `status`, `events`, `artifact`, `evidence` |
+provider-runtime layer never imports the gateway's implementation.
+The tools each plugin contributes and their contracts are in
+[MCP tools](../../docs/reference/mcp-tools.md).
 
 Each tool declares the scope that may call it; one that declares none is
-operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The exact
-contracts are in [MCP tools](../../docs/reference/mcp-tools.md). The client-protocol
+operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The client-protocol
 gateways are plain plugins and use no seam; they share the
 [`gateway-turns`](../gateway-turns/README.md) library. The
 conformance suite is [`conformance/mcp-tools.ts`](conformance/mcp-tools.ts): a

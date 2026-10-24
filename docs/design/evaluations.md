@@ -11,9 +11,9 @@
 >
 > Defined in [`evaluations-core`](../../packages/evaluations-core/README.md), contract 1.0, its
 > suite passed by the fake `FakeEvaluations` over the experiments fake. Differs from target: no
-> store-backed provider and no bundle row; the statistics library
+> store-backed provider and no bundle row yet (F4); the statistics library
 > ([statistics](statistics.md)) has one method, `sign-flip`, so a protocol naming `bootstrap` or
-> `bayesian` cannot start; no collector; how a trial's run is fixed to its arm's Workers is
+> `bayesian` cannot start; no collector (F5); how a trial's run is fixed to its arm's Workers is
 > open ([where the tables leave room](#where-the-tables-leave-room)).
 
 The evaluation engine is the loop's judge. It runs a pre-registered experiment offline, under the
@@ -173,5 +173,5 @@ recorded plus the next reservation must stay within the funded lines.
 
 [`evaluations-core/conformance/evaluations.ts`](../../packages/evaluations-core/conformance/evaluations.ts),
 8 scenarios at contract 1.0, run against the fake engine over the experiments fake; a
-store-backed provider runs the same suite, its `World` backed by board tasks served by
+store-backed provider (F4) will run the same suite, its `World` backed by board tasks served by
 workflow runs on scripted Workers.

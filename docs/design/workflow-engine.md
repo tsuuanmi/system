@@ -647,8 +647,9 @@ stateDiagram-v2
   are refused. An overdraw is bounded by the steps in flight (one long agent step can still draw up
   to its own `maxTurns`), and the brief tells each Worker what was left when the run was admitted.
   Stopping an agent run at its next turn or tool boundary is step 2 of
-  [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md):
-  it needs usage recorded while a run is in flight, and a seam that stops a run at a boundary.
+  [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md),
+  deferred until the live install shows real overdraws: the ledger records no usage while a run is
+  in flight, and no seam stops one at a boundary yet.
 - **Which outcome wins.** A step in flight that fails for good, or asks questions, decides the
   run as it would without the refusal (a failed run, or the question wait); the next attempt's
   first step is then refused on the spent line. A run whose holder was lost winds down as such.

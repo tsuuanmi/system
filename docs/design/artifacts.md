@@ -180,8 +180,10 @@ attempt's answer is read: `system explain <runId>` names, on each acceptance dec
 ## Storage
 
 Envelopes and their bodies are stored in `ctx.store`, indexed by id, kind,
-`runId`, `nodeId`, subject, and decision type. A large body is kept in a store of
-its own, addressed by the envelope's `blob` ref. Retention follows the workflow retention
+`runId`, `nodeId`, subject, and decision type. A large-body store is a target only:
+per the [ADR-0003 amendment](../decisions/adr/0003-sqlite-durable-store.md#amendment-2026-10-12-no-blob-store-until-a-consumer-exists),
+the blob store was removed and the envelope's `blob` ref is reserved until a
+consumer exists (none is read today). Retention follows the workflow retention
 rules. A decision artifact is kept for as long as any artifact or state that
 references it.
 

@@ -458,7 +458,7 @@
   website and agent, are assigned by default: a limit on one makes its work wait instead of
   moving it to another account of that provider, and pooling them needs the operator's
   recorded `pooledTerms`
-  ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)).
+  ([ADR-0052 (proposed)](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)).
 
 ## Out of scope (until a requirement exists)
 

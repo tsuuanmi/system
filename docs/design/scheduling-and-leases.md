@@ -73,4 +73,6 @@ SQLite store serializes writers
 ([ADR-0003](../decisions/adr/0003-sqlite-durable-store.md)), this check also holds
 across processes.
 
-The store offers this as `updateRevision()`, which throws `RevisionConflict`.
+The store offers this as `updateRevision()`, which throws `RevisionConflict`. The
+plugins that keep revisioned records (such as `accounts`) check and bump the
+revision in their own write instead.
