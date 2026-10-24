@@ -239,7 +239,8 @@ export class StoreResources extends Resources {
         if (error instanceof ResourcesError) return { isError: true, content: [{ type: 'text' as const, text: `${error.failure}: ${error.message}` }] }
         throw error
       }
-      const id = zod.string().regex(ID).max(200)
+      // The id pattern bounds the length (1 to 200), so no maxLength is listed beside it.
+      const id = zod.string().regex(ID)
       const timestamp = zod.iso.datetime({ offset: true })
       c.mcp.tool('resources_pools', {
         scope: 'client',

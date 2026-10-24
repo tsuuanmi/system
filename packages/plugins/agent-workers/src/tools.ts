@@ -91,7 +91,7 @@ export interface Freer {
 export function registerRunTools(ctx: Context, freer: Freer): void {
   ctx.mcp.tool('agent_run_free', {
     scope: 'operator',
-    description: 'Operator tool: free the session and worktree an agent run holds because it ended with its liveness unknown, on your word that its agent is gone (agentGone). Recorded as your decision. Refused while its liveness is still looked at, a process holds it, or its holder or agent process is present. A worktree is removed only when clean, or with commitWorktree after its changes are committed on its branch; the branch stays.',
+    description: 'Free the session and worktree an agent run holds because it ended with its liveness unknown, on your word that its agent is gone (agentGone). Recorded as your decision. Refused while its liveness is still looked at, a process holds it, or its holder or agent process is present. A worktree is removed only when clean, or with commitWorktree after its changes are committed on its branch; the branch stays.',
     inputSchema: {
       agentRun: zod.string().max(64).describe('The agent run (arun_…) status or explain lists as unknown'),
       agentGone: zod.boolean().describe('Your word that no process of its agent runs; required true'),
@@ -109,7 +109,7 @@ export function registerRunTools(ctx: Context, freer: Freer): void {
   }))
   ctx.mcp.tool('agent_worktrees', {
     scope: 'operator',
-    description: 'Operator tool: list the worktrees of workflow runs (a worktree per run) not removed yet, oldest first: each with its run, branch, state (in-use while an agent run of its workflow run runs; held while one ended with its liveness unknown; finished otherwise), what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it.',
+    description: 'List the workflow runs\' worktrees not removed yet, oldest first: each with its run, branch, state (in-use while an agent run of its workflow run runs; held while one ended with its liveness unknown; else finished), what it holds (clean, uncommitted, gone, not-intact), and when the retention removes it.',
     inputSchema: { limit: zod.number().int().min(1).max(100).optional().describe('At most this many (default and most 100)') },
   }, async (args) => checked(RUNS_TAG, 'agent_worktrees', args, async () => ({ ...await freer.runWorktrees(typeof args.limit === 'number' ? { limit: args.limit } : {}) }), (out) => {
     const listing = out as { retentionHours: number; total: number; worktrees: Array<{ runId: string; path: string; branch: string; state: string; changes: string; retiresAt?: string }> }
@@ -120,7 +120,7 @@ export function registerRunTools(ctx: Context, freer: Freer): void {
   }))
   ctx.mcp.tool('agent_worktrees_remove', {
     scope: 'operator',
-    description: 'Operator tool: remove finished run worktrees now instead of waiting for the retention, every one or those of one workflow run (runId). One is removed only while no agent run of its workflow run is unfinished or held, and only when it holds nothing uncommitted, or with commitChanges after its changes are committed on its branch: nothing is discarded, and the branch stays. Recorded as your retention decision; a worktree it cannot remove stays, and why.',
+    description: 'Remove finished run worktrees now, before the retention does: every one, or one workflow run\'s (runId). One is removed only while no agent run of its workflow run is unfinished or held, and only when clean, or with commitChanges after its changes are committed on its branch: nothing is discarded, and the branch stays. Recorded as your retention decision; one it cannot remove stays, with why.',
     inputSchema: {
       runId: zod.string().max(128).optional().describe('Only this workflow run\'s worktrees'),
       commitChanges: zod.boolean().optional().describe('Commit a finished worktree\'s uncommitted changes on its branch, then remove it'),
@@ -151,7 +151,7 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
   }
   ctx.mcp.tool('account_enroll', {
     scope: 'operator',
-    description: 'Operator tool: enroll an agent account (ADR-0051). step begin takes the lowest free slot of a provider (or the slot named; a taken slot or an accountId is signed in again in its own home) and returns the runtime\'s own sign-in command for the slot\'s home, which you run in your own terminal without D-Bus; step verify then reads who signed in and records the account: ready, signed-out, or quarantined (changed, ambiguous, duplicate, unverified) with why. accept takes a changed slot\'s new principal as a new account.',
+    description: 'Enroll an agent account. step begin takes a provider\'s lowest free slot (or the slot named; a taken slot or an accountId signs in again in its own home) and returns the runtime\'s sign-in command for the slot\'s home, to run in your own terminal without D-Bus; step verify then reads who signed in and records the account: ready, signed-out, or quarantined (changed, ambiguous, duplicate, unverified) with why.',
     inputSchema: { step: zod.enum(['begin', 'verify']).describe('begin, then verify after the sign-in'), ...slotShape, accept: zod.boolean().optional().describe('verify only: accept a changed slot\'s new principal as a new account') },
   }, async (args) => call('account_enroll', args, async (check) => {
     const ref = refOf(args)
@@ -167,7 +167,7 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
   }))
   ctx.mcp.tool('account_remove', {
     scope: 'operator',
-    description: 'Operator tool: free an agent account\'s slot (ADR-0051), by its account id or by provider and slot. Recorded as an enrollment decision; its home and the sign-in in it are kept as they are, and a later sign-in in that slot replaces it.',
+    description: 'Free an agent account\'s slot, by its account id or by provider and slot. Recorded as an enrollment decision; its home and the sign-in in it are kept as they are, and a later sign-in in that slot replaces it.',
     inputSchema: slotShape,
   }, async (args) => call('account_remove', args, async (check) => ({ removed: await accounts.remove(refOf(args), (removed) => check({ removed })) }), (out) => {
     const removed = out.removed as { provider: string; slot: number; accountId?: string }
@@ -175,7 +175,7 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
   }))
   ctx.mcp.tool('account_agents', {
     scope: 'operator',
-    description: 'Operator tool: list agent accounts (ADR-0051): each enrollment slot with its account id, masked hint, status and why, home, and the Workers that run there; and each runtime with its slots, how many are taken, and whether it can read identity.',
+    description: 'List agent accounts: each enrollment slot with its account id, masked hint, status and why, home, and the Workers that run there; and each runtime with its slots, how many are taken, and whether it can read identity.',
     inputSchema: {},
   }, async (args) => call('account_agents', args, async () => ({
     accounts: accounts.list().map((account) => {
@@ -186,7 +186,7 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
   }), outline))
   ctx.mcp.tool('account_migrate', {
     scope: 'operator',
-    description: 'Operator tool: the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F). By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker\'s new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers\' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it. stop: runtimes whose Workers stop at the cutover because their account is not ready.',
+    description: 'The move from hand-named agent Workers to Workers derived as account × role. By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker\'s new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers\' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it.',
     inputSchema: {
       apply: zod.boolean().optional().describe('Apply the move (recorded; the hand-named rows are refused from then on)'),
       rollback: zod.boolean().optional().describe('Undo an applied move: sessions and runs moved back, the hand-named rows load again'),

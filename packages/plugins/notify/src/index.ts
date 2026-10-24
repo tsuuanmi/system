@@ -316,7 +316,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // The operator stores the webhook URL in the vault; it is never echoed or logged.
   ctx.inject(['mcp', 'credentials'], (c) => {
     c.mcp.tool('notify_webhook', {
-      description: `Operator tool: store the notification webhook's URL, encrypted, under the credential reference the notify row names (${ref}). https only (or http to this machine). Nothing is returned or logged.`,
+      description: `Store the notification webhook's URL, encrypted, under the credential reference the notify row names (${ref}). https only (or http to this machine). Nothing is returned or logged.`,
       inputSchema: { value: zod.string().min(1).max(2048).describe('The webhook URL') },
     }, async ({ value }) => {
       const problem = webhookProblem(String(value))

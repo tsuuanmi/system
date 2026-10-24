@@ -88,7 +88,7 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.inject(['mcp', 'credentials'], (c) => {
     c.mcp.tool('model_key', {
-      description: 'Operator tool: store a model route\'s API key, encrypted, under the credential reference its apiKeyEnv names. Nothing is returned or logged.',
+      description: 'Store a model route\'s API key, encrypted, under the credential reference its apiKeyEnv names. Nothing is returned or logged.',
       inputSchema: {
         name: zod.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).describe('The credential reference (an UPPER_SNAKE name), as the route\'s apiKeyEnv names it'),
         value: zod.string().min(1).max(4096),

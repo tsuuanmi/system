@@ -193,9 +193,14 @@ other payload (QA-12, INV-9).
   and input schema, converted from the same zod schema the SDK validates each call with. It
   leaves out what tells a client nothing: `$schema` (the schema is JSON Schema 2020-12, which MCP
   reads a schema without `$schema` as), the SDK's `execution: {taskSupport: "forbidden"}` (absent
-  means the same), the 300-character `pattern` zod adds beside `format: "date-time"` (the server
-  checks the date-time with zod, as strictly as before), and the scope `_meta` of a client tool
+  means the same), the 300-character `pattern` zod adds beside `format: "date-time"`, the
+  safe-integer bounds (±(2^53 − 1)) zod gives an integer that sets no bound of its own (the server
+  checks both with zod, as strictly as before), and the scope `_meta` of a client tool
   ([scopes](#scopes)).
+- **Descriptions:** a tool's description says what it does and what a caller must know to call
+  it, once: what a parameter's own description says is not repeated in the tool's, and the
+  scope is the listing's `_meta`, never a word in the text. Every fact a client needs stays; the
+  canonical docs keep the rationale and the references.
 - **Bounded reads:** `status` lists only the plugins that need a look unless asked; `usage`
   lists 10 runs unless asked for up to 500, each run with its steps' Workers, tiers, quota
   classes, and tokens only (its answer, ids, and errors are in `result`).
@@ -203,4 +208,4 @@ other payload (QA-12, INV-9).
   set from, with about 10 % headroom. A test fails when a measure is over its ceiling, and the
   surface test then prints every tool's size. Raising a ceiling is a reviewed change that says
   what grew and why it is worth every session's tokens. A change that shrinks the surface lowers
-  the ceiling with it.
+  the ceiling with it, to the new size plus 10 % where that is lower; a trim never raises one.

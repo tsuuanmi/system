@@ -22,13 +22,13 @@ const defOf = (tool: DigestTool, part: 'input' | 'output'): string => `${tool.re
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
 const artifactRef = () => zod.string().regex(/^sha256:[0-9a-f]{64}$/)
-const waitSeconds = () => zod.number().int().min(0).max(55).optional().describe('How long to wait for the request to settle before returning it (default 0, at most 55 s)')
+const waitSeconds = () => zod.number().int().min(0).max(55).optional().describe('Seconds to wait for the request to settle (default 0)')
 
 /** Input shapes, matching `$defs/<tool>-input`. */
 export const DIGEST_TOOL_INPUTS: Record<DigestTool, ToolSpec['inputSchema']> = {
   digests_request: {
     sources: zod.array(artifactRef()).min(1).max(64).describe('The raw artifacts to digest, by content id (1 to 64, each once)'),
-    clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key: the same key returns the same request'),
+    clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
     waitSeconds: waitSeconds(),
   },
   digests_get: {
@@ -38,7 +38,7 @@ export const DIGEST_TOOL_INPUTS: Record<DigestTool, ToolSpec['inputSchema']> = {
 }
 
 const DESCRIPTIONS: Record<DigestTool, string> = {
-  digests_request: 'Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them (once more on the standard tier when every claim fails the check), and every claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.',
+  digests_request: 'Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them (once more on the standard tier when every claim fails the check); a claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.',
   digests_get: 'Read a digest request as it stands: pending, written (with its digest), not-written, or bypassed, with why.',
 }
 

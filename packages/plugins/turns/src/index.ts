@@ -369,14 +369,14 @@ export class Turns extends Service {
         }
       })
       c.mcp.tool('account_cooldowns', {
-        description: 'The site usage limits in force per account (ADR-0034): a feature, or * for the whole account, kept off until a time. Work that needs it routes to another account meanwhile.',
+        description: 'The site usage limits in force per account: a feature, or * for the whole account, kept off until a time. Work that needs it routes to another account meanwhile.',
         inputSchema: { account: zod.string().max(100).optional() },
       }, async (args) => {
         const cooldowns = this.cooldowns(args.account === undefined ? undefined : String(args.account))
         return reply({ cooldowns }, `${cooldowns.length} usage limit${cooldowns.length === 1 ? '' : 's'} in force`)
       })
       c.mcp.tool('account_clear_cooldown', {
-        description: 'End an account\'s usage limit early (ADR-0034): one feature, or every one when none is named. A feature probe never ends one.',
+        description: 'End an account\'s usage limit early: one feature, or every one when none is named. A feature probe never ends one.',
         inputSchema: { account: zod.string().max(100), feature: zod.string().max(100).optional() },
       }, async (args) => {
         try {

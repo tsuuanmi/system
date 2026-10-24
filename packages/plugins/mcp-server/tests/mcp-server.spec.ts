@@ -351,7 +351,7 @@ describe('system MCP server on ctx.webServer', () => {
     // The host's own checks (disk) depend on where the test runs, so the expected text names what this health reports.
     const notOk = operator.health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
     expect(notOk).toContain('manifests down')
-    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: `health down: 5 checks, ${notOk.join(', ')}; 5 plugins, 3 listed (those that need a look; plugins: true lists every one)` }])
+    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: `health down: 5 checks, ${notOk.join(', ')}; 5 plugins, 3 need a look (plugins: true lists every one)` }])
     for (const args of [{}, { plugins: true }]) {
       const client = await status(tokens.client, args)
       expect(client.plugins).toBeUndefined()
@@ -508,9 +508,13 @@ describe('scoped tokens', () => {
     const sdk = toJsonSchemaCompat(zod.object(inputSchema), { strictUnions: true, pipeStrategy: 'input' }) as Record<string, unknown>
     expect(sdk).toHaveProperty('$schema')
     expect(JSON.stringify(sdk)).toMatch(/"format":"date-time","pattern":"\^\(\?:/)
-    // Draft-07 and 2020-12 read these keywords alike, so no $schema; the date-time format stands for zod's pattern.
+    expect(JSON.stringify(sdk)).toContain(`"maximum":${Number.MAX_SAFE_INTEGER}`)
+    // Draft-07 and 2020-12 read these keywords alike, so no $schema; the date-time format stands for zod's pattern,
+    // and an integer that sets no upper bound has none listed (zod's is the safe-integer limit).
+    const implied = (node: object, key: string, value: unknown): boolean => key === '$schema' || (key === 'pattern' && (node as { format?: unknown }).format === 'date-time')
+      || ((node as { type?: unknown }).type === 'integer' && key === 'maximum' && value === Number.MAX_SAFE_INTEGER)
     const strip = (node: unknown): unknown => Array.isArray(node) ? node.map(strip) : node !== null && typeof node === 'object'
-      ? Object.fromEntries(Object.entries(node).filter(([key]) => key !== '$schema' && !(key === 'pattern' && (node as { format?: unknown }).format === 'date-time')).map(([key, value]) => [key, strip(value)]))
+      ? Object.fromEntries(Object.entries(node).filter(([key, value]) => !implied(node, key, value)).map(([key, value]) => [key, strip(value)]))
       : node
     const expected = strip(sdk)
     for (const [scope, token] of [['client', tokens.client], ['operator', tokens.operator]] as const) {
@@ -525,13 +529,15 @@ describe('scoped tokens', () => {
       expect(tools.find((t) => t.name === 'when')).toEqual({ name: 'when', description: 'dated', inputSchema: expected })
       expect(JSON.stringify(expected)).toContain('"pattern":"^[a-z]+$"')
       expect(JSON.stringify(expected)).not.toMatch(/date-time","pattern"/)
+      expect(JSON.stringify(expected)).toContain('"type":"integer","minimum":1}')
+      expect(text).not.toContain(String(Number.MAX_SAFE_INTEGER))
       // Only the operator token sees a tool the client token may not call, and only it is marked.
       expect(tools.filter((t) => t._meta !== undefined).map((t) => t.name).sort()).toEqual(scope === 'operator' ? ['artifact', 'events', 'evidence', 'op_when'] : [])
     }
-    // The server still checks every date-time and pattern with zod, as before.
+    // The server still checks every date-time, pattern, and safe integer with zod, as before.
     const client = await connect(url, tokens.client)
     expect(await client.callTool({ name: 'when', arguments: { since: '2026-10-24T08:00:00+07:00', window: { until: '2026-10-24T09:00:00Z', size: 1 } } })).not.toHaveProperty('isError', true)
-    for (const bad of [{ since: '2026-10-24' }, { since: '2026-02-30T08:00:00Z' }, { window: { until: 'tomorrow', size: 1 } }, { tag: 'A' }]) {
+    for (const bad of [{ since: '2026-10-24' }, { since: '2026-02-30T08:00:00Z' }, { window: { until: 'tomorrow', size: 1 } }, { tag: 'A' }, { window: { until: '2026-10-24T09:00:00Z', size: 2 ** 53 } }]) {
       expect(await client.callTool({ name: 'when', arguments: bad }), JSON.stringify(bad)).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/Input validation error/) }] })
     }
   })

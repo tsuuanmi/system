@@ -34,13 +34,13 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   const shape = (view: RunView) => reply(view, view.status === 'completed' ? view.answer ?? '' : standing(view))
   const json = (value: object) => reply(value, outline(value))
   const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
-  const waitSeconds = zod.number().int().min(0).max(55).optional().describe('How long to wait for the run to finish before returning (default 45 s)')
+  const waitSeconds = zod.number().int().min(0).max(55).optional().describe('Seconds to wait for the run to finish (default 45)')
   const classification = zod.enum(['public', 'operator-shared', 'local-private']).optional()
-    .describe('Data classification of the input; local-private content never leaves the machine (INV-12)')
+    .describe('The input\'s classification; local-private never leaves the machine')
   const clientRequestId = zod.string().max(200).optional().describe('Retry-safe request key')
   c.mcp.tool('ask', {
     scope: 'client',
-    description: 'Ask one Worker, chosen by the router for the work (capability, tier, quota order). Waits up to waitSeconds; otherwise returns a runId for `result`.',
+    description: 'Ask one Worker, routed by capability, tier, and quota order. Waits up to waitSeconds; otherwise returns a runId for `result`.',
     inputSchema: {
       prompt: zod.string().min(1).max(32_000),
       sessionId: zod.string().max(200).optional().describe('Continue an existing persistent session'),
@@ -61,10 +61,10 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('research', {
     scope: 'client',
-    description: 'Research a question with the research profile: testable hypotheses, two cited literature reviews on two provider families (web search, or the providers\' Deep research with `deep`), one evidence table from both, a critique on another family, and conclusions per hypothesis that say where the reviews agree and differ. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).',
+    description: 'Research a question: testable hypotheses, two cited literature reviews on two provider families (web search, or Deep research with `deep`), one evidence table from both, a critique on another family, and conclusions per hypothesis, where the reviews agree and differ. Returns a runId at once; poll `result` (minutes; with `deep`, up to an hour).',
     inputSchema: {
       question: zod.string().min(1).max(32_000),
-      deep: zod.boolean().optional().describe('Review the literature with the provider\'s Deep research'),
+      deep: zod.boolean().optional().describe('Use the providers\' Deep research'),
       classification, clientRequestId,
     },
   }, async (args) => {
@@ -95,16 +95,18 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       }
     })
   }
-  team('brainstorm', 'Ask a team to recommend an answer to a question, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you, the caller: it approves and authorizes nothing.', 'question', 'The question and its context: options, constraints, what has been decided')
-  team('review', 'Review as a team, one member per provider family: text you give (an approach, a design, a diff), or a public repository read at one pinned commit. Each member lists findings that quote `path:line` and the line\'s text; system checks every quote against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you, the caller: it approves and authorizes nothing.', 'material',
+  // A team's answer and outcome, as both team tools say them.
+  const outcome = 'Returns a runId at once; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you: it approves and authorizes nothing.'
+  team('brainstorm', `Ask a team to recommend an answer, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split gets one debate and a re-vote, a tie comes back to you (\`vote\`). ${outcome}`, 'question', 'The question and its context: options, constraints, what has been decided')
+  team('review', `Review as a team, one member per provider family: text you give (an approach, a design, a diff) or a public repository at one pinned commit. Each finding quotes \`path:line\` and the line's text, every quote checked against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, a tie comes back to you (\`vote\`). ${outcome}`, 'material',
     'What to review and the criteria it must meet; with `repository`, what to look for in it', {
       repository: zod.object({ url: zod.string().max(2000).describe('https URL of a public repository on an allowed host (default github.com)'), ref: zod.string().max(200).optional().describe('Branch, tag, or commit SHA (default: its HEAD)') })
-        .optional().describe('Review this public repository, read by system at one pinned commit'),
+        .optional().describe('A public repository to review, read at one pinned commit'),
       focus: zod.array(zod.string().max(500)).max(20).optional().describe('Paths or globs of the repository to read first'),
     })
   c.mcp.tool('vote', {
     scope: 'client',
-    description: 'Break a team\'s tie: the deciding vote, bound to the exact tie decision the run shows in `blocked` (an option, or inconclusive), with your rationale.',
+    description: 'Break a team\'s tie: the deciding vote, bound to the exact tie decision the run shows in `blocked`, with your rationale.',
     inputSchema: {
       runId: zod.string().max(200),
       decision: zod.string().max(200).describe('The tie decision from the run\'s blocked view'),
@@ -123,7 +125,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('run', {
     scope: 'client',
-    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. With \`task\`, the run serves one attempt of that board task: it claims the ready task (or takes the claim you hand it from board_claim), the board records the run before any step runs, the run renews the lease while it lives, and it submits its own result and acceptance to the board, or reports its failure; a task not ready, or a stale claim, refuses the run with nothing started. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
+    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as research), its steps routed by capability. With \`task\`, the run serves one attempt of that board task: it is recorded on the board before any step runs, renews the lease while it lives, and submits its own result and acceptance, or its failure; a task not ready or a stale claim refuses the run, nothing started. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
     inputSchema: {
       template: zod.string().max(100),
       input: zod.string().min(1).max(32_000),
@@ -205,7 +207,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     }
   })
   c.mcp.tool('supersede', {
-    description: 'Replace a completed step\'s result with a corrected one; everything downstream runs again, and a planner downstream plans again, retiring its old plan (a planner\'s replacement must be a valid plan). Lineage invalidation, an operator action.',
+    description: 'Replace a completed step\'s result with a corrected one; everything downstream runs again, and a planner downstream plans again, retiring its old plan (a planner\'s replacement must be a valid plan). Lineage invalidation.',
     inputSchema: { runId: zod.string().max(200), nodeId: zod.string().max(200), text: zod.string().min(1).max(4_000_000), note: zod.string().max(2000).optional() },
   }, async (args) => {
     try {
@@ -227,8 +229,8 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('usage', {
     scope: 'client',
-    description: 'Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why). A run\'s answer, results, and errors are in `result`.',
-    inputSchema: { limit: zod.number().int().min(1).max(500).optional().describe(`Runs, the most recent first (default ${USAGE_LIMIT}, at most 500)`) },
+    description: 'Recent runs and, per step, the Worker, tier, and quota class that served it, the tokens a model Worker reports, and usage the ledger could not count (usageUnknown, with why). A run\'s answer, results, and errors are in `result`.',
+    inputSchema: { limit: zod.number().int().min(1).max(500).optional().describe(`Runs, the most recent first (default ${USAGE_LIMIT})`) },
   }, async (args) => {
     const runs = w.usage((args.limit as number | undefined) ?? USAGE_LIMIT).map(usageView)
     const steps = runs.reduce((n, r) => n + r.nodes.length, 0)
@@ -236,7 +238,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('explain', {
     scope: 'client',
-    description: 'The decision chain behind a run (the decisions no step holds, such as a board task\'s admission, result subject, acceptance, and report; then egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.',
+    description: 'The decision chain behind a run (its own decisions, such as a board task\'s admission, result subject, acceptance, and report; then egress, tier, route, and acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do); or any artifact id\'s inputs; or such an execution by its id.',
     inputSchema: { id: zod.string().max(200) },
   }, async (args) => {
     const id = String(args.id)

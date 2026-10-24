@@ -206,9 +206,9 @@ const INPUT: ToolSpec['inputSchema'] = {
   projectId: zod.string().regex(ID).optional().describe('One project; absent: every project on the board'),
   since: zod.string().max(64).optional().describe('The period\'s start, ISO 8601 (inclusive); not with days'),
   until: zod.string().max(64).optional().describe('The period\'s end, ISO 8601 (exclusive); default now'),
-  days: zod.number().int().min(1).max(MAX_DAYS).optional().describe('The period as the days before until (default 7: the weekly investor report)'),
+  days: zod.number().int().min(1).max(MAX_DAYS).optional().describe('The period as the days before until (default 7, the weekly investor report)'),
 }
-const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it): for a period (default the 7 days before now: the weekly investor report) and one project or every one, the board\'s progress and tasks, the attempts and the reviews of their results, remediation, the approval requests asked and answered and how long your verdicts took, what asked for the operator per day against the charter\'s attention budget, the resource ledger\'s usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.'
+const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.'
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
