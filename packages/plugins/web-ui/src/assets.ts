@@ -556,11 +556,14 @@ export const APP_JS = `'use strict'
       isKnown(a.record) && a.record.value.label ? text(a.record.value.label) + ' ' : '',
       el('span', { class: 'muted' }, a.id + (isKnown(a.record) ? ' · ' + a.record.value.kind + ' account, ' + a.record.value.status + (a.record.value.slot !== undefined ? ', slot ' + a.record.value.slot : '') : ' · its record is unknown (' + a.record.unknown + ')')),
       isKnown(a.record) && a.record.value.sameAs ? el('div', { class: 'state failed' }, 'signed in as the same person as ' + a.record.value.sameAs.join(', ')) : null))
-    const doing = (w) => known(w.work, (work) => el('div', {},
+    // Its runs whose liveness needs a look (PROP-0013): a held one is the operator's to free, a stalled or looked-at one is only said.
+    const livenessOf = (w) => !w.liveness ? null : known(w.liveness, (runs) => el('ul', { 'aria-label': 'Runs whose liveness needs a look' }, runs.map((r) => el('li', { class: r.state === 'unknown' ? 'state failed' : 'unknown' }, r.summary,
+      r.runId ? el('span', {}, ' ', el('a', { href: '?run=' + encodeURIComponent(r.runId), onclick: (e) => { e.preventDefault(); go(r.runId) }, 'aria-label': 'Open run ' + r.runId }, 'open run')) : null))))
+    const doing = (w) => el('div', {}, known(w.work, (work) => el('div', {},
       work.items.length ? el('ul', {}, work.items.map((i) => el('li', {}, i.summary, ' ',
         el('a', { href: '?run=' + encodeURIComponent(i.runId), onclick: (e) => { e.preventDefault(); go(i.runId) }, 'aria-label': 'Open run ' + i.runId }, 'open run')))) : el('span', { class: 'muted' }, 'Nothing now.'),
       work.more ? el('div', { class: 'muted' }, work.more + ' more step(s) not listed') : null,
-      work.unread ? el('div', { class: 'unknown' }, work.unread) : null))
+      work.unread ? el('div', { class: 'unknown' }, work.unread) : null)), livenessOf(w))
     const limitsOf = (w) => {
       const lines = w.limits.map((l) => l.capability + ' held off until ' + when(l.until))
       if (isKnown(w.account) && w.account.value.limitUntil) lines.unshift('its account is back ' + when(w.account.value.limitUntil))

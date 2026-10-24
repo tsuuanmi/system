@@ -86,6 +86,13 @@ class StubRouter extends Service {
   }
   sources() { return [{ source: 'website', state: 'described', at: AT, workers: 2 }] }
   siblings() { return ['worker:plus/frontier', 'worker:plus/standard'] }
+  /** An earlier run of the busy Worker that ended without being known to be gone, still holding its session (PROP-0013). */
+  async liveness() {
+    return {
+      runs: [{ source: 'stub', execution: 'arun_00000000000000a2', worker: 'worker:plus/standard', state: 'unknown', since: AT, holds: ['session ses_9'], runId: 'run_old', reasons: ['the agent process: unknown (never reported)'], action: 'free it' }],
+      counts: { unknown: 1, looking: 0, stalled: 0 }, unread: [],
+    }
+  }
 }
 class StubAccounts extends Service {
   constructor(ctx: Context) {
@@ -254,9 +261,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
         { worker: 'worker:plus/frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
         // The stand-in engine's run is not running this Worker now; no ledger, so its pools are unknown.
         { worker: 'worker:plus/standard', description: { value: 'The studio\'s chat subscription for quick questions (standard tier)' }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } },
-          work: { value: { items: [{ runId: 'run_xyz', nodeId: 'review:m1:propose', since: { unknown: 'the event log (ctx.eventLog) is not mounted' }, summary: 'Running review run run_xyz, step review:m1:propose, since an unknown time' }], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' } },
+          work: { value: { items: [{ runId: 'run_xyz', nodeId: 'review:m1:propose', since: { unknown: 'the event log (ctx.eventLog) is not mounted' }, summary: 'Running review run run_xyz, step review:m1:propose, since an unknown time' }], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' },
+          liveness: { value: [{ execution: 'arun_00000000000000a2', state: 'unknown', since: AT, runId: 'run_old', summary: expect.stringContaining('ended without being known to be gone, holding session ses_9') }] } },
       ] },
     })
+    new SchemaRegistry().assertDef('mcp-roster@1.2', 'roster-output', roster)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { ...auth, origin: 'https://evil.example' } })).status).toBe(403)
     expect((await fetch(`${origin}/ui/api/roster`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{}' })).status).toBe(405)
@@ -280,7 +289,10 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const busy = working.getByRole('article', { name: 'worker:plus/standard' })
     const card = await busy.innerText()
     for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
-      'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote']) expect(card, said).toContain(said)
+      'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote',
+      // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013).
+      'agent run arun_00000000000000a2 of run run_old ended without being known to be gone, holding session ses_9; free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)']) expect(card, said).toContain(said)
+    await busy.getByRole('link', { name: 'Open run run_old' }).focus()
     const resting = page.getByRole('region', { name: 'At a limit' }).getByRole('article', { name: 'worker:plus/frontier' })
     const rest = await resting.innerText()
     expect(rest).toContain('derived')

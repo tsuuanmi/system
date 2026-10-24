@@ -10,8 +10,8 @@
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.1`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.1'
+/** The schema of the roster (`mcp-roster@1.2`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.2'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -39,6 +39,8 @@ export const ROSTER_BOUNDS = {
   startsPerStep: 100,
   /** `usage.unknown` entries read for the pools' unknown usage. */
   unknownEntries: MAX_UNKNOWN_ENTRIES,
+  /** Runs whose liveness needs a look listed for one Worker (of the latest the router tells). */
+  livenessPerWorker: 64,
 } as const
 
 /** A fact a source gave, or why it is not known. */
@@ -105,8 +107,21 @@ export interface RosterTask { taskId: string; projectId: string; title: string; 
  * The services a roster reads, each absent when it is not mounted. A surface passes what it has
  * (`ctx.get(...)` of each), so its manifest names what it consumes.
  */
+/** A run whose liveness needs a look, as `ctx.workers.liveness()` tells it (PROP-0013). */
+export interface RosterLivenessRun {
+  execution: string
+  worker: string
+  state: 'stalled' | 'looking' | 'unknown'
+  since: string
+  looks?: { taken: number; max: number } | undefined
+  holds: string[]
+  runId?: string | undefined
+}
+/** What `ctx.workers.liveness()` tells: the runs, the latest first, and each source that could not tell. */
+export interface RosterLivenessRead { runs: RosterLivenessRun[]; counts: Record<RosterLivenessRun['state'], number>; unread: Array<{ source: string; detail: string }> }
+
 export interface RosterServices {
-  workers?: { list(): Promise<RosterDescriptor[]>; sources?(): RosterSourceRead[]; siblings(worker: string): string[] } | undefined
+  workers?: { list(): Promise<RosterDescriptor[]>; sources?(): RosterSourceRead[]; siblings(worker: string): string[]; liveness?(): Promise<RosterLivenessRead> } | undefined
   accounts?: { list(): Promise<RosterWebsiteAccount[]>; duplicateIdentities(): Promise<string[][]> } | undefined
   agentWorkers?: { agentAccounts?: { list(): RosterAgentAccount[]; workersIn(account: never): string[] } } | undefined
   resources?: { pools(): Promise<RosterPool[]>; usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }> } | undefined
@@ -134,6 +149,8 @@ export interface RosterInput {
   tasks: ReadonlyMap<string, Known<RosterTask>>
   /** When each listed step's current attempt started, by {@link stepKey}; a step not in it has its start unknown (not read). */
   starts?: ReadonlyMap<string, Known<string>>
+  /** The runs whose liveness needs a look; absent when the router tells none (no `liveness`). */
+  liveness?: Known<RosterLivenessRead>
 }
 
 /** The key of one step's start in {@link RosterInput}.starts. */
@@ -197,8 +214,12 @@ export interface RosterEntry {
   /** The other Workers of its account. */
   siblings: Known<string[]>
   work: Known<{ items: RosterWork[]; more: number; unread?: string }>
+  /** Its runs whose liveness needs a look, each in one sentence; only when it has any, or they could not be told. */
+  liveness?: Known<RosterLiveness[]>
   pools: Known<RosterPoolView[]>
 }
+/** A run of a Worker whose liveness needs a look, as the roster shows it (PROP-0013). */
+export interface RosterLiveness { execution: string; state: RosterLivenessRun['state']; since: string; runId?: string; summary: string }
 export interface Roster {
   asOf: string
   workers: Known<RosterEntry[]>
@@ -367,6 +388,26 @@ function workOf(input: RosterInput, worker: string, now: Date): Known<{ items: R
   })
 }
 
+/** A run whose liveness needs a look, in one sentence, as every surface shows it beside what its Worker does now. */
+function livenessSummary(run: RosterLivenessRun, now: Date): string {
+  const of = run.runId ? ` of run ${run.runId}` : ''
+  if (run.state === 'stalled') return clip(`Stalled: agent run ${run.execution}${of} has shown no activity for ${spanText(run.since, now)} or more; nothing is sent to it, and its own deadline ends it`, 800)
+  if (run.state === 'looking') return clip(`Not known to be gone: agent run ${run.execution}${of} lost its holder ${spanText(run.since, now)} ago and is looked at again${run.looks ? ` (${run.looks.taken} of ${run.looks.max} verdicts)` : ''}`, 800)
+  return clip(`Held for ${spanText(run.since, now)}: agent run ${run.execution}${of} ended without being known to be gone${run.holds.length ? `, holding ${run.holds.join(' and ')}` : ''}; free it once its agent is gone (system free ${run.execution} --agent-gone)`, 800)
+}
+
+/** A Worker's runs whose liveness needs a look, as its entry gives them: absent when it has none and they could be told. */
+function livenessFor(input: RosterInput, worker: string, now: Date): Pick<RosterEntry, 'liveness'> {
+  const told = input.liveness
+  if (!told) return {}
+  if (!isKnown(told)) return { liveness: unknown(told.unknown) }
+  const runs = told.value.runs.filter((r) => r.worker === worker).slice(0, ROSTER_BOUNDS.livenessPerWorker)
+  if (runs.length) return { liveness: known(runs.map((r) => ({ execution: r.execution, state: r.state, since: r.since, ...(r.runId ? { runId: r.runId } : {}), summary: livenessSummary(r, now) }))) }
+  // A source that could not tell is never read as having none of its Workers' runs (INV-2).
+  const unread = told.value.unread
+  return unread.length ? { liveness: unknown(`${unread.map((u) => `source ${u.source} could not tell (${u.detail})`).join('; ')}`) } : {}
+}
+
 /** A Worker's siblings without itself, in id order, at most {@link ROSTER_BOUNDS}.siblings. */
 function siblingsOf(siblings: Known<string[]>, worker: string): Known<string[]> {
   if (!isKnown(siblings)) return siblings
@@ -408,6 +449,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         limits: [...(d.cooldowns ?? [])].map((c) => ({ capability: c.capability, until: c.until })).sort((a, b) => cmp(a.capability, b.capability)),
         siblings: siblingsOf(siblings, d.worker),
         work: workOf(input, d.worker, options.now),
+        ...livenessFor(input, d.worker, options.now),
         pools,
       }
     }))
@@ -512,7 +554,9 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
             .then((at): Known<string> => !isKnown(at) ? at : at.value !== undefined ? known(at.value) : unknown(`the event log holds no ${NODE_STARTED} of attempt ${node.attempt} (its retention may have dropped it)`)))
     }
   }
-  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, pools, unknownUsage, runs, tasks, starts }, { scope: options.scope, now })
+  // The runs whose liveness needs a look, once, when the router tells them (PROP-0013).
+  const liveness = workers?.liveness ? await read(undefined, () => workers.liveness!()) : undefined
+  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, pools, unknownUsage, runs, tasks, starts, ...(liveness ? { liveness } : {}) }, { scope: options.scope, now })
   schemas().assertDef(ROSTER_SCHEMA, 'roster-output', roster)
   return roster
 }
@@ -536,6 +580,7 @@ export function formatRoster(roster: Roster): string {
         ...(work.items.length ? work.items.map((i) => i.summary) : ['none now']),
         ...(work.more ? [`${work.more} more`] : []), ...(work.unread ? [work.unread] : []),
       ].join('; '))}`)
+      if (w.liveness) lines.push(`  liveness   ${text(w.liveness, (runs) => runs.map((r) => r.summary).join('; '))}`)
       if (!isKnown(w.pools)) lines.push(`  pools      unknown (${w.pools.unknown})`)
       else if (!w.pools.value.length) lines.push('  pools      none on its account')
       for (const p of isKnown(w.pools) ? w.pools.value : []) {
