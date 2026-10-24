@@ -664,6 +664,11 @@ an open question below had a proposed answer that phase B or D needed, it was ta
 parallel use under `assigned` (question 5), `maxLimitWaitHours` 24 (question 6), and `pooledTerms`
 as configuration with a `gate` decision at start (question 7).
 
+On 2026-10-24 the operator decided (D33) to pool `chatgpt-web`, `gemini-web`, and
+`claude-agent-sdk` although they are personal subscriptions, accepting the risk under their terms;
+[ADR-0055](../decisions/adr/0055-personal-accounts-may-be-pooled-on-the-operators-recorded-acceptance.md)
+supersedes ADR-0052 in part for it: "personal subscriptions never qualify" above no longer holds.
+
 ## Implementation
 
 The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:

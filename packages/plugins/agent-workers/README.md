@@ -117,8 +117,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   runtime's one home, so every hand-named Worker of a runtime names the account
   `{ id: <runtime>, group: <runtime> }` (`capability-descriptor@1.5`); a derived
   Worker names `{ id: <accountId>, group: <runtime> }`. Each with its runtime's mode:
-  `assigned` by default, or `pooled` only with `pooledTerms` (who confirmed the
-  plan's terms allow it, when, which terms; refused at load otherwise, and
+  `assigned` by default, or `pooled` only with `pooledTerms` (the operator's
+  decision: who, when, which terms on what basis, ADR-0055; refused at load otherwise, and
   recorded at start as a `gate` decision, rule `agent-workers.pooled-terms`).
   A metered Worker whose pool is out says when it is back (`limitUntil`, the
   ledger's `until`), so a node that only it could take waits for the reset

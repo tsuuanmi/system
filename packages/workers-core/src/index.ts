@@ -56,10 +56,9 @@ export const provesFor = (offer: CapabilityOffer, requirement: Pick<WorkRequirem
   offer.scope === undefined || offer.scope === requirement.scope
 
 /**
- * How a provider's accounts are used (ADR-0052): `assigned` (the default, and the only one for
- * personal subscriptions), each account serving its own work, a limit never moving that work to
- * another account of the provider; or `pooled`, only on the operator's recorded confirmation of
- * that provider's terms.
+ * How a provider's accounts are used (ADR-0052): `assigned` (the default), each account serving its
+ * own work, a limit never moving that work to another account of the provider; or `pooled`, only on
+ * the operator's recorded decision to pool that provider (ADR-0055).
  */
 export type AccountMode = 'assigned' | 'pooled'
 

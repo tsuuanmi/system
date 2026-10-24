@@ -18,8 +18,8 @@
 | `accounts[].tiers` | Record<string, string> | `{}` | Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served |
 | `providers` | object[] | `[]` | How each website provider's accounts are used; a provider not listed is assigned (ADR-0052) |
 | `providers[].provider` (required) | string |  | The website provider: the provider of its catalog accounts (its driver kind) |
-| `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms |
-| `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this provider's terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
+| `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms |
+| `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: the operator's decision to pool this provider's accounts: who decided, when (ISO time), and which terms on what basis (that they allow it, or, for a personal subscription, that the operator accepts the risk); required for pooled (ADR-0055) |
 
 ## `agent-runtimes`
 
@@ -68,8 +68,8 @@
 | `assignments[].roles` (required) | string[] | `[]` | The roles it serves: one Worker agent:<account>/<role> each |
 | `providers` | object[] | `[]` | How each agent runtime's accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052) |
 | `providers[].provider` (required) | string |  | The agent runtime kind, as its provider registers it (the runtime of its Workers) |
-| `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
-| `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this runtime's plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
+| `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
+| `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: the operator's decision to pool this runtime's accounts: who decided, when (ISO time), and which terms on what basis (that they allow it, or, for a personal subscription, that the operator accepts the risk); required for pooled (ADR-0055) |
 | `providers[].slots` | number (1…64) |  | How many accounts of this runtime may be enrolled (default 1: its own home, adopted as slot 1); each slot is an owner-only home (ADR-0051) |
 | `providers[].maxConcurrentRunsPerAccount` | number (1…16) |  | How many runs one of its accounts runs at once, across all its roles (default 1; one per Worker as well); with roles and assignments only |
 | `providers[].pool` | string |  | The pool template (resources templates) each of its accounts draws on: pool <pool>/<accountId>; unset: not metered. With roles and assignments only |
