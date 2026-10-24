@@ -27,7 +27,11 @@ class StubWorkflow extends Service {
   }
   /** Runs listed after RUN: the roster suites' running step. */
   extra: unknown[] = []
-  usage() { return [RUN, ...this.extra] }
+  /** As the engine lists them (contract 1.7): by state, and by when their state changed. */
+  usage(limit = 50, filter: { status?: readonly string[]; changedSince?: string } = {}) {
+    return ([RUN, ...this.extra] as Array<{ status: string; updatedAt: string }>)
+      .filter((r) => (filter.status === undefined || filter.status.includes(r.status)) && (filter.changedSince === undefined || r.updatedAt > filter.changedSince)).slice(0, limit)
+  }
   get(id: string) { return id === RUN.runId ? RUN : undefined }
   explain(id: string) { return id === RUN.runId ? { runId: id, nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', decisions: [{ id: 'sha256:22', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason'] }] }] } : undefined }
   approve(id: string, input: unknown) { this.calls.push(['approve', id, input]); return RUN }

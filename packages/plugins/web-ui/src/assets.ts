@@ -810,8 +810,8 @@ export const APP_JS = `'use strict'
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
     const waiting = [
       asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
-      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' review is' : ' reviews are') + ' held for you'
-        + (part('reviews').firstExpires ? '; the first expires ' + relative(part('reviews').firstExpires) : ''))) : null,
+      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review'
+        + (part('reviews').firstExpires ? '; the first held for you expires ' + relative(part('reviews').firstExpires) : ''))) : null,
       look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look' + (part('runs').more ? ', and more' : ''))) : null,
       unread.length ? el('li', { class: 'unknown' }, 'What else waits is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
     ].filter(Boolean)

@@ -639,7 +639,8 @@ export function apply(ctx: Context, config: Config = {}): void {
    *   the operator last marked Home as seen, which they may continue (a board task's run is not: the
    *   board decides its next attempt).
    * Each part is read by state, bounded; one that cannot be read is \`{unknown}\` with why, and \`count\`
-   * then says \`partial\`, never a smaller count read as all (INV-2).
+   * then says \`partial\`, never a smaller count read as all (INV-2). A queue or board the composition
+   * does not mount holds nothing that waits: 0, as the page shows it not running.
    */
   const waiting = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
@@ -650,13 +651,15 @@ export function apply(ctx: Context, config: Config = {}): void {
     const approvals = ctx.get('approvals')
     let requests: { value: number } | { unknown: string }
     try {
-      requests = approvals ? { value: (await approvals.list()).length } : { unknown: 'the approval queue is not running' }
+      // A queue the composition does not mount holds no request (the page shows it as not running).
+      requests = { value: approvals ? (await approvals.list()).length : 0 }
     } catch (error) {
       requests = why('the approval queue', error)
     }
     const board = ctx.get('board')
     let reviews: { value: number; firstExpires?: string } | { unknown: string }
-    if (!board) reviews = { unknown: 'the board is not running' }
+    // A board the composition does not mount holds no review.
+    if (!board) reviews = { value: 0 }
     else {
       try {
         const held: string[] = []

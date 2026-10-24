@@ -24,8 +24,8 @@ page is wider than the screen: the navigation wraps whole links with the refresh
 the Board's columns stack, each card the screen's width with its **Start…** across it, and the
 tables keep their first columns.
 
-**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the reviews held for
-you with when the first expires, and the runs that need a look, each linking to its section, and
+**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting for
+your review, those held for you, with when the first expires, and the runs that need a look, each linking to its section, and
 what of it could not be read), the Workers at a glance (the roster's counts, then each account's capacity in one
 line, its 5 h bar beside it: *Claude Code · science: 5 h used 42 %, resets 03:08*, with *resting
 until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*), the approval cards, the reviews as
@@ -69,7 +69,8 @@ the window's title and by Home for *Waiting for you*:
   most 50 listed, each state read by state (at most 100, as the list of runs reads), `more` past them.
 
 A run that failed before the operator last marked Home as seen is seen: it stays in the recent runs,
-and no longer counts.
+and no longer counts. A queue or board the composition does not mount holds nothing that waits (0,
+as the page shows it not running); a read that fails is `{unknown}`.
 
 ## Help
 
