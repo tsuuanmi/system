@@ -1,7 +1,7 @@
 # ADR-0056: A failed lease renewal is not a lost lease, and death needs a verdict
 
-- **Status:** Proposed
-- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator, D43)
 - **Related:** [PROP-0013](../../proposals/0013-feedback-from-work.md) (phases L1 and L2, accepted by
   the operator in D32), [ADR-0015](0015-worker-sessions-and-peer-messaging.md),
   [ADR-0024](0024-agent-workers-confined-for-reads.md),

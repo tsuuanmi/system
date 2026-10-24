@@ -666,7 +666,7 @@ research notes under [research](../research/README.md), is not done yet.
 The state of each phase is in the [roadmap](roadmap.md#feedback-from-work-prop-0013). Built:
 
 - **L1** (2026-10-24), [ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
-  proposed:
+  accepted 2026-10-24 (D43):
   - `ctx.leases.hold` aborts `lost` only on `LeaseLost` or the lease's own expiry passing
     unrenewed. Any other renewal error is tried again, never later than the expiry (leases
     contract 1.1; the race test: every renewal failing loses the lease at expiry, a new holder
