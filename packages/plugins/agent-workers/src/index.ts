@@ -1103,11 +1103,13 @@ export class AgentWorkers extends Service {
     const db = this.ctx.store.db
     if (!db.prepare('SELECT 1 FROM agent_sessions WHERE session_id = ?').get(sessionId)) return undefined
     const latest = db.prepare('SELECT * FROM agent_runs WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(sessionId) as RunRow | undefined
-    if (!latest || latest.status === 'completed') return undefined
-    if (latest.status !== 'failed') return `its latest run ${latest.run_id} has not finished (${latest.status}), and one native session is driven by one run at a time`
-    if (latest.liveness_decision && latest.liveness_verdict !== 'dead') {
-      return `its latest run ${latest.run_id} ended without being known to be gone (liveness ${latest.liveness_verdict ?? 'unknown'}, decision ${latest.liveness_decision}), so its agent may still be running`
-    }
+    if (!latest) return undefined
+    if (latest.status !== 'failed' && latest.status !== 'completed') return `its latest run ${latest.run_id} has not finished (${latest.status}), and one native session is driven by one run at a time`
+    // Any run of it that ended without being known to be gone, the latest or one a later run was refused after.
+    const alive = db.prepare("SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND liveness_decision IS NOT NULL AND COALESCE(liveness_verdict, '') != 'dead' LIMIT 1")
+      .get(sessionId) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
+    if (alive) return `its run ${alive.run_id} ended without being known to be gone (liveness ${alive.liveness_verdict ?? 'unknown'}, decision ${alive.liveness_decision}), so its agent may still be running`
+    if (latest.status === 'completed') return undefined
     const request = this.deferredOn(latest)
     if (!request) return undefined
     const waits = `its latest run ${latest.run_id} stopped on a tool call that waits for approval request ${request}`

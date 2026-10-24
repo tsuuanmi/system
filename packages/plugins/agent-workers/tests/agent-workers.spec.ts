@@ -1046,7 +1046,7 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
   const decisionOf = (ctx: Context, done: WorkerExecution) => done.decisions.map((d) => ctx.artifacts.get(d)!.body as { decisionType: string; decider: { id: string; version: string }; outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; reasons: string[] }> })
     .find((d) => d.decisionType === 'reconciliation')
 
-  it('records the holder and the agent process of a run, and reconciles it as dead only when both are gone and it has been quiet long enough', async () => {
+  it('records the holder and the agent process of a run, and reconciles it as dead only when both are gone and it has been quiet long enough (REQ-WRK-16, INV-4)', async () => {
     const agent = new ScriptedAgent({ holdMs: 30_000, process: true })
     const { dir, id, session } = await started(agent)
     const db = new DatabaseSync(join(dir, 'system.db'))
@@ -1066,18 +1066,18 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
       `the agent process: gone (no process ${agent.processes[0]} exists)`, expect.stringMatching(/^activity: the latest \d+ s ago$/),
     ])
     // Dead, so its session is free for the next run.
-    expect(await ctx.workers.held(session)).toBeUndefined()
+    expect(await ctx.workers.held!(session)).toBeUndefined()
     await stop()
   }, 30_000)
 
   // The failure mode PROP-0013 found: a run whose liveness could not be shown was failed at restart as if it were gone.
-  it('never takes a failed probe for death: a run whose agent process was never reported is looked at again, not failed, then goes to the operator with its session held', async () => {
+  it('never takes a failed probe for death: a run whose agent process was never reported is looked at again, not failed, then goes to the operator with its session held (REQ-WRK-16, INV-15)', async () => {
     const { dir, id, session } = await started(new ScriptedAgent({ holdMs: 30_000 }))
     const second = await restart(dir)
     await new Promise((resolve) => setTimeout(resolve, 2500))
     const look = second.ctx.store.db.prepare('SELECT status, liveness_looks, liveness_verdict, liveness_decision FROM agent_runs WHERE run_id = ?').get(id)
     expect(look).toEqual({ status: 'running', liveness_looks: 1, liveness_verdict: 'unknown', liveness_decision: null })
-    expect(await second.ctx.workers.held(session)).toContain('has not finished (running)')
+    expect(await second.ctx.workers.held!(session)).toContain('has not finished (running)')
     await second.stop()
     // The bound reached: to the operator, never declared dead.
     const third = await restart(dir, { maxUnknownVerdicts: 2 })
@@ -1086,18 +1086,20 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
     const decision = decisionOf(third.ctx, done)!
     expect(decision).toMatchObject({ outcome: { option: 'operator', detail: { verdict: 'unknown', looks: 2 } } })
     expect(decision.candidates[0]!.reasons).toContain('the agent process: unknown (never reported)')
-    expect(await third.ctx.workers.held(session)).toMatch(new RegExp(`^its latest run ${id} ended without being known to be gone \\(liveness unknown, decision sha256:`))
-    // The source itself never drives that session again, whoever asks (INV-15).
+    const heldWhy = new RegExp(`^its run ${id} ended without being known to be gone \\(liveness unknown, decision sha256:`)
+    expect(await third.ctx.workers.held!(session)).toMatch(heldWhy)
+    // The source itself never drives that session again, whoever asks (INV-15), and a refused later run frees nothing.
     const admitted = await third.ctx.workers.route(requirement())
     const later = third.ctx.workers.source('agents')!.start({ key: 'k-later', worker: 'agent:reviewer', prompt: 'next', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
     expect(await third.ctx.workers.source('agents')!.wait(later.id, 10_000)).toMatchObject({
       status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining(`run ${id} of session ${session} ended without being known to be gone`) },
     })
+    expect(await third.ctx.workers.held!(session)).toMatch(heldWhy)
     expect([second.again.runs, third.again.runs]).toEqual([[], []])
     await third.stop()
   }, 30_000)
 
-  it('takes a holder recorded on another host as unknown, never gone, though its agent process is gone', async () => {
+  it('takes a holder recorded on another host as unknown, never gone, though its agent process is gone (REQ-WRK-16)', async () => {
     const { dir, id } = await started(new ScriptedAgent({ holdMs: 30_000, process: true }))
     const db = new DatabaseSync(join(dir, 'system.db'))
     const holder = JSON.parse((db.prepare('SELECT holder FROM agent_runs WHERE run_id = ?').get(id) as { holder: string }).holder) as Record<string, unknown>
