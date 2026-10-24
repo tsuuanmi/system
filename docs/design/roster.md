@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.3`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.4`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -48,7 +48,7 @@ manifest names each one it consumes (optional): the roster works with any subset
 | `worker`, `provider`, `tier`, `quotaClass`, `locality`, `state`, `observedAt` | its descriptor | never: a listed Worker has them |
 | `description` | its descriptor's `description` (`@1.7`): the operator's words from the configuration row that defines it (agent-workers `workers[]` or `roles[]`, models `models[]`; a website Worker's is its accounts `accounts[]` entry's, with its tier), plain text on one line, at most 200 characters | no description is configured for it |
 | `derived` | its provider, role, tier, quota class, and locality, as one line; a surface shows it, marked as derived, when `description` is unknown | never |
-| `name` | its display name, `<runtime> · <account> · <role or tier> [<kinds>]` ([below](#display-names)) | never |
+| `name` | `@1.3`, its display name, `<runtime> · <account> · <role or tier> [<kinds>]` ([below](#display-names)) | never |
 | `family` | its descriptor | its source declares none |
 | `account` | its descriptor's `account` (`@1.5`): `id`, `group`, `mode`, `limitUntil` | its source names no account |
 | `account.record` | the enrolled agent account with that id, or the one that lists the Worker among its Workers (a hand-named Worker in slot 1); else the website account with that id. `kind` (`agent`, `website`), `status`, `slot`, `quarantine`, `sameAs` (website accounts signed in as the same person), `label` | no record has that id, or the list that would hold it could not be read (named) |
@@ -71,7 +71,8 @@ fields unknown; the others are still read.
 
 A Worker id is a key that records keep for good, so it stays stable and opaque
 (`agent:<accountId>/<role>`); the meaning goes in a display name, `name`, which the roster makes on
-each read and nothing routes on (`mcp-roster@1.2`):
+each read and nothing routes on (`mcp-roster@1.3`; its runtime title, the operator's label or the
+masked hint and slot, and its kinds, `@1.4`):
 
 ```text
 <runtime> · <account> · <role or tier> [<kinds>]
@@ -101,7 +102,7 @@ One of five states, each with a one-line `summary` the CLI and the page show:
 
 | State | When | Carries |
 |---|---|---|
-| `quarantined` | its account is an enrolled agent account in quarantine (`changed`, `ambiguous`, `duplicate`, `unverified`), and the Worker takes no work | the reason, since when, the `enrollment` decision that quarantined it, and what its reading found (`detail`, when its record says it: for `unverified`, the version found and the ones admitted), also in the summary |
+| `quarantined` | its account is an enrolled agent account in quarantine (`changed`, `ambiguous`, `duplicate`, `unverified`), and the Worker takes no work | the reason, since when, the `enrollment` decision that quarantined it, and what its reading found (`detail`, `@1.4`, when its record says it: for `unverified`, the version found and the ones admitted), also in the summary |
 | `resting` | its source describes it `quota-exhausted` | `until`: the account's `limitUntil`, else the latest `until` of its account's closed pools when every one of them names one (the account is back only once each is), else `unknown` (no reset is known) |
 | `unavailable` | `unavailable` or `reauth-required` | `reason`: from its account (signed out, enrolled and not verified, must sign in again, a site challenge, disabled, never signed in, signed in as the same person as another account), else `unknown`: its source gives no reason (`system explain` on a run it was refused for shows the route's) |
 | `busy` | `busy`, or any run in its slots (`load.running > 0`), or a step the engine runs on it (its `work`), whatever load its source reports (`mcp-roster@1.3`) | `running` of `slots`: "busy N of M". A Worker below its slots still takes work; routing orders it after a less busy one ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). With no load, how many is unknown |
@@ -129,13 +130,13 @@ Every read and every list is bounded
 | Worker sources | 64 | `sources` is `unknown` |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.3`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.4`](../reference/schemas.md#mcp-tool-roster)).
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.3` before it is sent (a record its schema
+  content is the record, validated against `mcp-roster@1.4` before it is sent (a record its schema
   refuses is a defect, reported as an error); its text content is the rendering for a terminal.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
   record.

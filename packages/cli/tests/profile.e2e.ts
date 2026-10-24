@@ -190,7 +190,7 @@ describe('system profile (e2e through dsh)', () => {
     const lead = await client2(url, tokenOf('client'))
     const roster = await lead.callTool({ name: 'roster', arguments: {} }).finally(() => lead.close())
     expect(roster.isError).toBeFalsy()
-    new SchemaRegistry().assertDef('mcp-roster@1.3', 'roster-output', roster.structuredContent)
+    new SchemaRegistry().assertDef('mcp-roster@1.4', 'roster-output', roster.structuredContent)
     expect(roster.structuredContent).toMatchObject({ unlisted: 0, counts: { ready: 0, busy: 0, resting: 0, unavailable: 0, quarantined: 0 }, unknownUsage: { value: { unreadable: 0, unconfigured: [] } } })
     // The approval queue is core and on, with the bundle's default studio policy; the board asks through it (B5).
     const queue = await client2(url, tokenOf('client'))

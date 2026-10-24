@@ -1027,14 +1027,15 @@ guesses.
   id, and its role, else its tier. It is never an id to route by. A Worker its source describes
   ready, on which the engine runs a step, is `busy` whatever load its source reports, and its
   `summary` says so. Readers accept 1.0 to 1.3.
-- `mcp-roster@1.2` adds, per Worker, `name`: its display name, `<runtime> · <account> · <role or
-  tier> [<kinds>]`, made on each read from the runtime's title, the account's label for an
-  operator (an agent account's `assignments[].label`, else its masked hint and slot; a website
-  account's catalog label, else its id; for a client the slot or the id, never a label), its role
-  or tier, and its kinds ([display names](../design/roster.md#display-names)); never a routing
-  input, never a key. It also adds an agent account quarantine's `detail` (`agent-account@1.1`),
-  on the account record and the `quarantined` availability, and in its summary. Readers accept 1.0
-  to 1.2.
+- `mcp-roster@1.4` makes `name` the display name, `<runtime> · <account> · <role or tier>
+  [<kinds>]`, made on each read from the runtime's title (else its provider's first word, as in
+  1.3), the account's label for an operator (an agent account's `assignments[].label`, else its
+  masked hint and slot; a website account's catalog label, else its id; for a client the slot or
+  the id, never a label; with no account, the rest of its own id), its role or tier, and its kinds
+  ([display names](../design/roster.md#display-names)); never a routing input, never a key, and
+  still at most 200 characters. It also adds an agent account quarantine's `detail`
+  (`agent-account@1.1`), on the account record and the `quarantined` availability, and in its
+  summary. Readers accept 1.0 to 1.4.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

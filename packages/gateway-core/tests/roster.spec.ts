@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.3', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.4', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -357,7 +357,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(text).toContain('unknown usage 1 run(s)')
   })
 
-  it('names each Worker for people, <runtime> · <account> · <role or tier> [<kinds>]: the runtime\'s title, the account\'s label for the operator only, its role and kinds; the id stays the key (mcp-roster@1.2, T103)', async () => {
+  it('names each Worker for people, <runtime> · <account> · <role or tier> [<kinds>]: the runtime\'s title, the account\'s label for the operator only, its role and kinds; the id stays the key (mcp-roster@1.4, T103)', async () => {
     const workers = [
       descriptor(`agent:${CLAUDE}/develop`, { account: agentAccount(CLAUDE), kinds: ['code'] }),
       descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE) }),
@@ -408,7 +408,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, `agent:${CLAUDE}/review`).account).toMatchObject({ value: { record: { value: { quarantine: { reason: 'unverified', detail } } } } })
   })
 
-  it('the example validates against mcp-roster@1.3, and a record that is not one is refused', async () => {
+  it('the example validates against mcp-roster@1.4, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)
