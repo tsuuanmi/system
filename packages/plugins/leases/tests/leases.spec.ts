@@ -130,7 +130,7 @@ describe('ctx.leases.hold', () => {
   })
 
   // The failure mode PROP-0013 found: a transient store error during one heartbeat aborted `lost`, which stops a live agent run.
-  it('does not abort `lost` when a renewal throws something other than LeaseLost, and renews at the next beat (ADR-0054)', async () => {
+  it('does not abort `lost` when a renewal throws something other than LeaseLost, and renews at the next beat (ADR-0054, REQ-WRK-16)', async () => {
     const ctx = await boot()
     const renew = ctx.leases.renew.bind(ctx.leases)
     let failures = 0

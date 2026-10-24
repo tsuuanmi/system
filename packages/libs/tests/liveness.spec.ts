@@ -35,7 +35,7 @@ describe('livenessOf (PROP-0013, ADR-0054)', () => {
     expect(livenessOf(signals({ quietSeconds: 3000, holder: { lease: LEASE_UNKNOWN, process: NOT_READ } }), BOUNDS).verdict).toBe('stalled')
   })
 
-  it('dead: the holder positively gone (lease lapsed, process gone), the agent process gone, and no activity within deadAfterSeconds', () => {
+  it('dead: the holder positively gone (lease lapsed, process gone), the agent process gone, and no activity within deadAfterSeconds (REQ-WRK-16)', () => {
     const dead = livenessOf(signals({ holder: { lease: LAPSED, process: GONE }, runtime: GONE, quietSeconds: 120 }), BOUNDS)
     expect(dead).toEqual({
       verdict: 'dead', rule: LIVENESS_RULE,
@@ -48,7 +48,7 @@ describe('livenessOf (PROP-0013, ADR-0054)', () => {
     expect(recent).toMatchObject({ verdict: 'unknown', recheckAt: AT + 1000 })
   })
 
-  it('unknown on every failed probe or signal never reported: a failed probe is never death', () => {
+  it('unknown on every failed probe or signal never reported: a failed probe is never death (REQ-WRK-16)', () => {
     const gone = { holder: { lease: LAPSED, process: GONE }, runtime: GONE, quietSeconds: 10_000 } as const
     const cases: Array<[string, Partial<LivenessSignals> & { quietSeconds?: number | undefined }]> = [
       ['the lease cannot be read (a store error)', { ...gone, holder: { lease: LEASE_UNKNOWN, process: GONE } }],

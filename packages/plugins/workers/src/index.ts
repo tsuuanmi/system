@@ -131,7 +131,7 @@ export class WorkerRouter extends Workers {
   }
 
   async held(sessionId: string): Promise<string | undefined> {
-    for (const source of [...this.registry.values()]) {
+    for (const source of this.registry.values()) {
       let why: string | undefined
       try {
         why = await source.held?.(sessionId)
