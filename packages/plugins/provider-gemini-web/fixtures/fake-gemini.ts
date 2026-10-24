@@ -537,19 +537,13 @@ export class FakeGemini {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       if (id) res.write(`data: ${JSON.stringify({ conversationId: id })}\n\n`)
       if (this.options.holdAnswer) return
-      // A page that went away (its test ended at a stall) stops the think, which may outlast the turn's deadline.
-      let gone = false
-      res.once('close', () => {
-        gone = true
-      })
       await new Promise((resolve) => setTimeout(resolve, 300))
       // Thinking before any text: a summary whose words change, or nothing new at all; a timer may count up either way.
-      for (let step = 1, started = Date.now(), until = started + this.options.thinkMs; Date.now() < until && !gone; step++) {
+      for (let step = 1, started = Date.now(), until = started + this.options.thinkMs; Date.now() < until; step++) {
         if (this.options.thoughts) res.write(`data: ${JSON.stringify({ thought: THOUGHTS[(step - 1) % THOUGHTS.length] })}\n\n`)
         if (this.options.thinkTimer) res.write(`data: ${JSON.stringify({ timer: `Thinking for ${Math.floor((Date.now() - started) / 1000)}s` })}\n\n`)
         await new Promise((resolve) => setTimeout(resolve, 400))
       }
-      if (gone) return
       if (sent.deepResearch && !this.options.clarify) {
         const plan = { role: 'plan' as const, title: 'HTTP/2 and HTTP/3 Comparison', started: false }
         turns.push(plan)
