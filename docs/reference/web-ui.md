@@ -111,3 +111,19 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
   queue entry's **Show change** says it was proposed by the queue, not the operator, with the
   command, the approvals counted, the window, and its decision, and the history marks it
   *(proposed by the queue)*. It is decided like any other request.
+
+## Roster
+
+Served always; each service it reads that is not mounted reads as unknown with why
+([roster](../design/roster.md)).
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET roster` | — | the roster, an `mcp-roster@1.0` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+
+- Any other method is `405`. The page (`?view=roster`) shows one row per Worker: its id, provider,
+  family, and role; its account and the account's record; tier, quota class, and locality; its
+  availability; the steps it runs now (each run a link to its page) with their board tasks; its
+  load; and its account's pools, each window's used share and reset. A fact that is unknown shows
+  as `unknown (why)`; a Worker source that was silent or failed in its last read is named above
+  the table, its Workers not listed.

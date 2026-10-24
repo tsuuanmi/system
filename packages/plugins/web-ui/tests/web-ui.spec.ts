@@ -8,6 +8,7 @@ import type { ApprovalRequest, Verdict, VerdictResult } from '@tsuuanmi/system-a
 import { chromium } from 'patchright-core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -60,14 +61,38 @@ class StubApprovals extends Service {
   }
 }
 
-async function boot(options: { approvals?: boolean } = {}) {
+const AT = '2026-10-24T09:29:58.000Z'
+/** A stand-in router for the roster: a website account's two tiers, one busy, one resting at its limit. */
+class StubRouter extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'workers')
+  }
+  async list() {
+    const account = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' }
+    return [
+      { worker: 'worker:plus/standard', provider: 'chatgpt-web', family: 'chatgpt-web', account, load: { running: 1, queued: 0, pending: 0, slots: 2 }, tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote', state: 'ready', observedAt: AT },
+      { worker: 'worker:plus/frontier', provider: 'chatgpt-web', family: 'chatgpt-web', account: { ...account, limitUntil: '2026-10-24T11:00:00.000Z' }, tier: 'frontier', quotaClass: 'subscription-chat', locality: 'remote', state: 'quota-exhausted', observedAt: AT },
+    ]
+  }
+  sources() { return [{ source: 'website', state: 'described', at: AT, workers: 2 }] }
+  siblings() { return ['worker:plus/frontier', 'worker:plus/standard'] }
+}
+class StubAccounts extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'accounts')
+  }
+  async list() { return [{ id: 'plus', provider: 'chatgpt-web', label: 'Studio Plus', status: 'ready' }] }
+  async duplicateIdentities() { return [] }
+}
+
+async function boot(options: { approvals?: boolean; roster?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-ui-'))
   // The UI takes the operator scope's token only (ADR-0023).
   writeFileSync(join(dir, 'operator.token'), Buffer.alloc(32, 7), { mode: 0o600 })
   writeFileSync(join(dir, 'client.token'), Buffer.alloc(32, 8), { mode: 0o600 })
   const token = Buffer.alloc(32, 7).toString('base64url')
   const ctx = new Context()
-  const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
+  const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
   cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
@@ -208,6 +233,50 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await fetch(`${origin}/ui/api/approvals/decide`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{"verdicts":[]}' })).status).toBe(503)
     expect((await fetch(`${origin}/ui/api/runs`, { headers: auth })).status).toBe(200)
   })
+
+  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.0, and what it could not read as unknown (REQ-HOST-8)', async () => {
+    const { origin, token } = await boot({ roster: true })
+    const auth = { authorization: `Bearer ${token}` }
+    const response = await fetch(`${origin}/ui/api/roster`, { headers: auth })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
+    const roster = await response.json() as Record<string, unknown>
+    new SchemaRegistry().assertDef('mcp-roster@1.0', 'roster-output', roster)
+    expect(roster).toMatchObject({
+      counts: { busy: 1, resting: 1 },
+      workers: { value: [
+        { worker: 'worker:plus/frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
+        // The stand-in engine's run is not running this Worker now; no ledger, so its pools are unknown.
+        { worker: 'worker:plus/standard', availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } }, work: { value: { items: [], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' } },
+      ] },
+    })
+    expect((await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
+    expect((await fetch(`${origin}/ui/api/roster`, { headers: { ...auth, origin: 'https://evil.example' } })).status).toBe(403)
+    expect((await fetch(`${origin}/ui/api/roster`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{}' })).status).toBe(405)
+    // With no Worker registry at all, the Workers are unknown, not an empty list.
+    const bare = await boot()
+    const none = await (await fetch(`${bare.origin}/ui/api/roster`, { headers: { authorization: `Bearer ${bare.token}` } })).json()
+    expect(none).toMatchObject({ workers: { unknown: 'the Worker registry (ctx.workers) is not mounted' } })
+  })
+
+  it.runIf(canRunBrowser)('renders the roster page in a real browser: each Worker\'s availability, account, work, and what is unknown', async () => {
+    const { origin, token } = await boot({ roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    cleanups.push(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    await page.getByRole('link', { name: 'Roster' }).click()
+    const roster = page.getByRole('region', { name: 'Roster' })
+    await expect.poll(() => roster.getByText('worker:plus/standard', { exact: true }).count()).toBe(1)
+    for (const text of ['busy 1 of 2', 'resting at a limit until 2026-10-24T11:00:00.000Z', 'Studio Plus']) {
+      expect(await roster.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
+    }
+    expect(await roster.locator('td', { hasText: 'website ready' }).count()).toBe(2)
+    expect(await roster.getByText('unknown (the resource ledger (ctx.resources) is not mounted)', { exact: true }).count()).toBe(2)
+    expect(new URL(page.url()).search).toBe('?view=roster')
+    expect(await page.locator('main').innerText()).not.toContain('null')
+  }, 60_000)
 
   it.runIf(canRunBrowser)('shows the approval queue in a real browser and approves a batch on the subjects it shows', async () => {
     const { origin, token, approvals } = await boot({ approvals: true })
