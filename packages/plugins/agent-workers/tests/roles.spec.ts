@@ -1,9 +1,10 @@
 // Workers = account × role (PROP-0012 phase F, ADR-0051): Workers derived from role templates and
 // assignments, per-account concurrency, load and pending admissions, pools per account, and the
 // move from hand-named rows (`system account migrate`), over fake runtimes with scripted homes.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import type { RunResult, RunSpec } from '@tsuuanmi/system-agent-runtime-core'
 import AgentRuntimeRegistry from '@tsuuanmi/system-agent-runtimes'
@@ -19,11 +20,12 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { CapabilityDescriptor, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 import { FakeAgentRuntime } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { planMigration } from '../src/migrate.ts'
 import { deriveWorkers } from '../src/roles.ts'
-import AgentWorkers, { type AgentWorkerConfig, type Config } from '../src/index.ts'
+import AgentWorkers, { type AgentWorkerConfig, checkConfig, type Config } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -188,6 +190,26 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(() => deriveWorkers([ROLE('code', { kinds: ['Code'] })], [], [])).toThrow(/"Code" is not a kind of work/)
     expect(() => deriveWorkers([ROLE('code', { kinds: ['code', 'code'] })], [], [])).toThrow(/name a kind twice/)
     expect(() => deriveWorkers([ROLE('member', { reviewMember: true, kinds: ['code'] })], [], [])).toThrow(/not for a review member/)
+  })
+
+  it('checks a row as its load does, before a host starts on it (system check): the operations examples pass, a disagreement on worktreePerRun or a bad kind does not (D36, ADR-0056)', () => {
+    const rowOf = (file: string): Record<string, unknown> => {
+      const rows = parseYaml(readFileSync(fileURLToPath(new URL(`../../../../docs/operations/examples/${file}`, import.meta.url)), 'utf8')) as Array<{ id: string; config: Record<string, unknown> }>
+      return rows.find((r) => r.id === 'agent-workers')!.config
+    }
+    for (const file of ['live-base.patch.yml', 'work-kinds.patch.yml']) {
+      expect(checkConfig(rowOf(file)), file).toEqual([])
+      expect(() => AgentWorkers.Config(rowOf(file) as never), file).not.toThrow()
+    }
+    // D36: one writing Claude Code Worker on the system repository, given source-code work, and every
+    // Worker on that workspace in a worktree per run.
+    const workers = rowOf('work-kinds.patch.yml').workers as AgentWorkerConfig[]
+    expect(workers.filter((w) => w.sandbox === 'workspace-write').map((w) => [w.id, w.runtime, w.kinds])).toEqual([['claude-code', 'claude-agent-sdk', ['code']], ['codex-writer', 'codex-sdk', ['docs', 'tests']]])
+    const system = workers.filter((w) => w.workspace === '/home/tan/workspaces/system')
+    expect(system.every((w) => w.worktreePerRun === true)).toBe(true)
+    expect(checkConfig({ workers: system.map((w) => (w.id === 'codex-review' ? { ...w, worktreePerRun: false } : w)) })).toEqual([expect.stringMatching(/share the workspace \/home\/tan\/workspaces\/system, and only one of them works in a worktree per run/)])
+    expect(checkConfig({ workers: [{ ...system[0]!, kinds: ['Code'] }] })).toEqual([expect.stringMatching(/kinds "Code" is not a kind of work/)])
+    expect(checkConfig({ roles: [ROLE('code', { kinds: [] })], assignments: [{ account: ACC1, roles: ['code'] }] })).toEqual([expect.stringMatching(/kinds must list 1 to 16/)])
   })
 
   it('refuses both shapes in one row, and per-account settings beside hand-named Workers, at load', async () => {

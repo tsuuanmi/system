@@ -157,7 +157,8 @@ export function parseComposedRows(dump: string): ComposedRow[] {
 /**
  * Check the operator's profile against this code before a host starts on it (the update's
  * preflight): every mounted row's config must pass its plugin's `Config` schema, and a plugin that
- * exports `checkConfig` (workflow: its configured templates) must find nothing to refuse. The rows
+ * exports `checkConfig` (workflow: its configured templates; approvals: its policies; agent-workers:
+ * its Workers and roles) must find nothing to refuse. The rows
  * and their config come from the profile as composed now; the plugins from this install's bundle.
  */
 export async function checkProfile(home: string = dshHome()): Promise<{ rows: number; problems: string[] }> {

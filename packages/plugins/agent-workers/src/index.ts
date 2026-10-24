@@ -235,6 +235,67 @@ interface AccountGate { state: 'ready' | 'quota-exhausted' | 'unavailable'; unti
 /** The board task and project a run serves, as its reservation and usage record name them. */
 const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
+/**
+ * The row's Workers as its configuration names them (hand-named, or derived as account × role), and
+ * its runtimes' account settings, checked as the load checks them: a malformed Worker or role, a
+ * review member that is not read-only or names no family, malformed `kinds` (ADR-0056), Workers of
+ * one workspace that disagree on `worktreePerRun`. Throws `config_error`, naming the first problem.
+ */
+function configuredWorkers(config: Partial<Config>): { derived: boolean; workers: Map<string, WorkerSpec>; accounts: Map<string, AccountSetting> } {
+  const providers = config.providers ?? []
+  checkProviders(providers)
+  const derived = !!(config.roles?.length || config.assignments?.length)
+  if (derived && config.workers?.length) {
+    throw new ProviderError('config_error', 'agent-workers: workers (hand-named) and roles with assignments are two shapes of one row; load one of them (system account migrate prints the roles and assignments the hand-named Workers become)')
+  }
+  const derivedOnly = providers.find(setsDerivedOnly)
+  if (!derived && derivedOnly) {
+    throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, and limitCooldownSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
+  }
+  const workers = new Map<string, WorkerSpec>()
+  for (const worker of [...config.workers ?? [], ...derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []] as WorkerSpec[]) {
+    if (!worker.derived && !ID.test(worker.id)) throw new ProviderError('config_error', `agent Worker id ${worker.id} must match ${ID}`)
+    if (typeof worker.workspace !== 'string' || !isAbsolute(worker.workspace)) throw new ProviderError('config_error', `agent Worker ${worker.id}: workspace must be an absolute path`)
+    if (workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
+    if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
+    if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
+    if (worker.family !== undefined && (typeof worker.family !== 'string' || !worker.family.length || worker.family.length > 128)) throw new ProviderError('config_error', `agent Worker ${worker.id}: family must be 1 to 128 characters`)
+    if (worker.reviewMember) {
+      // A writer never reviews: a review is independent of the change (INV-15).
+      if (worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
+      // Members are kept apart by provider family, which a runtime's name does not tell (ADR-0027).
+      if (worker.family === undefined) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member names its provider family (family), the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart`)
+      // Its workspace is an empty directory outside any repository: a worktree per run is neither.
+      if (worker.worktreePerRun) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member works in an empty directory outside any repository, never a worktree per run (worktreePerRun)`)
+    }
+    const kinds = kindsProblem(worker.kinds, worker.reviewMember)
+    if (kinds) throw new ProviderError('config_error', `agent Worker ${worker.id}: kinds ${kinds}`)
+    // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
+    const other = [...workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
+    if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
+    workers.set(PREFIX + worker.id, worker)
+  }
+  try {
+    return { derived, workers, accounts: accountSettings(config.providers, 'agent-workers.providers') }
+  } catch (error) {
+    throw new ProviderError('config_error', (error as Error).message)
+  }
+}
+
+/**
+ * What the load would refuse in this row's Workers, before a host starts on it (`system check`):
+ * the first problem {@link configuredWorkers} finds, or none. What only the host can tell (a runtime,
+ * a sign-in, a repository) is checked when the Workers are probed.
+ */
+export function checkConfig(config: Partial<Config> = {}): string[] {
+  try {
+    configuredWorkers(config)
+    return []
+  } catch (error) {
+    return [(error as Error).message]
+  }
+}
+
 export class AgentWorkers extends Service {
   static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
 
@@ -333,44 +394,11 @@ export class AgentWorkers extends Service {
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
     const providers = config.providers ?? []
-    checkProviders(providers)
+    const configured = configuredWorkers(config)
     this.providerOf = new Map(providers.map((p) => [p.provider, p]))
-    this.derived = !!(config.roles?.length || config.assignments?.length)
-    if (this.derived && config.workers?.length) {
-      throw new ProviderError('config_error', 'agent-workers: workers (hand-named) and roles with assignments are two shapes of one row; load one of them (system account migrate prints the roles and assignments the hand-named Workers become)')
-    }
-    const derivedOnly = providers.find(setsDerivedOnly)
-    if (!this.derived && derivedOnly) {
-      throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, and limitCooldownSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
-    }
-    const derived: WorkerSpec[] = this.derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []
-    for (const worker of [...config.workers ?? [], ...derived]) {
-      if (!(worker as WorkerSpec).derived && !ID.test(worker.id)) throw new ProviderError('config_error', `agent Worker id ${worker.id} must match ${ID}`)
-      if (!isAbsolute(worker.workspace)) throw new ProviderError('config_error', `agent Worker ${worker.id}: workspace must be an absolute path`)
-      if (this.workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
-      if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
-      if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
-      if (worker.family !== undefined && (typeof worker.family !== 'string' || !worker.family.length || worker.family.length > 128)) throw new ProviderError('config_error', `agent Worker ${worker.id}: family must be 1 to 128 characters`)
-      if (worker.reviewMember) {
-        // A writer never reviews: a review is independent of the change (INV-15).
-        if (worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
-        // Members are kept apart by provider family, which a runtime's name does not tell (ADR-0027).
-        if (worker.family === undefined) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member names its provider family (family), the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart`)
-        // Its workspace is an empty directory outside any repository: a worktree per run is neither.
-        if (worker.worktreePerRun) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member works in an empty directory outside any repository, never a worktree per run (worktreePerRun)`)
-      }
-      const kinds = kindsProblem(worker.kinds, worker.reviewMember)
-      if (kinds) throw new ProviderError('config_error', `agent Worker ${worker.id}: kinds ${kinds}`)
-      // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
-      const other = [...this.workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
-      if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
-      this.workers.set(PREFIX + worker.id, worker)
-    }
-    try {
-      this.accounts = accountSettings(config.providers, 'agent-workers.providers')
-    } catch (error) {
-      throw new ProviderError('config_error', (error as Error).message)
-    }
+    this.derived = configured.derived
+    for (const [id, worker] of configured.workers) this.workers.set(id, worker)
+    this.accounts = configured.accounts
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     this.worktrees = new Worktrees(ctx, config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees'))
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
