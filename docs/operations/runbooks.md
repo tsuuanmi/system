@@ -1910,9 +1910,14 @@ about is denied, nothing is queued, and the agent goes on without it
 
 Where it shows:
 
-- The run fails `config_error`: `<worker> stopped at its <tool> call, which waits for the operator's
-  approval (approval request apr-…); nothing of that call ran`. `system result <runId>`,
-  `system explain <runId>`, and the run's page on `/ui` show it.
+- A run for a board task waits: its step is `BLOCKED` on the request, the run's view says
+  `blocked: tool-call` with the request and until when, and the task stays `running`, its
+  attempt not spent (`system result <runId>` returns at once and says so; the run's page on `/ui`
+  links the request; `system explain <runId>` shows the step's `recovery` decision `wait`, rule
+  `workflow.deferred-call`). It counts against `maxWaitingRuns`, not `maxActiveRuns`.
+- A run outside a board task fails `config_error`: `<worker> stopped at its <tool> call, which
+  waits for the operator's approval (approval request apr-…); nothing of that call ran`.
+  `system result <runId>`, `system explain <runId>`, and the run's page on `/ui` show it.
 - Event `agent-workers.tool.deferred` (`system events --type agent-workers.tool.deferred`) names the
   agent run, the Worker, the tool, the request, and the session; never the call's input.
 - The request is in the queue on `/ui`: its class, its subject `content
@@ -1927,8 +1932,18 @@ To approve:
 2. Press **Approve** (or **Deny**), for the request or its batch. One approval is one call: it runs
    once, and the same call later asks again. Deny, or no answer before the request expires: the
    call is denied in that session from then on.
-3. **What runs the call.** The workers seam has no waiting status, so the run is over; what
-   continues its session once you approve depends on who owns the run:
+3. **What runs the call.** The workers seam has no waiting status, so the agent run is over; the
+   workflow engine continues its session once you approve:
+   - a run for a board task goes on by itself: within `approvalPollSeconds` (15 s) of your
+     approval the waiting step runs again as a new attempt in its session, with a line saying the
+     call was approved, and the call runs once (a `recovery` decision `continue`, rule
+     `workflow.approved-call`, and a `workflow.run.continued` event naming the request). The task's
+     attempt goes on to its result. A deny, or no verdict by the request's expiry, ends the step as
+     `call_rejected` or `call_expired` (`USER_ACTION`, which notify tells as `run.user-action`): the
+     run fails, its report is an attempt the board counts, and the task goes through the gate for
+     its next attempt (or waits for input, `retries-spent`, with none left). Stopping the run, or
+     any other end of the attempt, withdraws every request its Workers left open, so an approval
+     given later runs nothing;
    - a run outside a board task continues by itself: within `approvalPollSeconds` (15 s) of your
      approval the engine reopens the failed step as a new attempt in its session, with a line
      saying the call was approved, and the call runs once. It is a `recovery` decision (rule
@@ -1936,10 +1951,7 @@ To approve:
      the request; one approval continues the run once. A deny or an expiry continues nothing, and
      nor does an approval for a run you already continued, stopped, or deleted. To go on without
      the call, `system continue <runId>` reopens the step yourself (before a verdict it defers again
-     on the same request, queuing nothing new);
-   - a run for a board task is not continued: its failure is reported to the board as an attempt,
-     the task goes through the gate again, and the Lead starts the next attempt with `run` and
-     `task`, naming the earlier `sessionId` (the event shows it) to continue that session.
+     on the same request, queuing nothing new).
 
 A call the policy forbids is not deferred: the agent is told the reason and goes on, and the denial
 is recorded (`agent-workers.tool.denied`, `system explain <decision id>`). With no approval queue

@@ -463,7 +463,7 @@ export const APP_JS = `'use strict'
   const failureText = (error) => error.message + (DISPOSITION[error.disposition] ? ' (' + DISPOSITION[error.disposition] + ')' : '')
   const runLink = (run, text) => el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, text || run.runId)
   // Why a run needs the operator's look, or nothing when it does not.
-  const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
+  const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.kind === 'tool-call' ? 'a Worker\\'s tool call waits for your verdict' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
     : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
   const RECENT = 15
 
@@ -555,7 +555,11 @@ export const APP_JS = `'use strict'
         el('div', { class: 'actions' }, el('label', { for: 'vote-rationale' }, 'Why (required)', rationale),
           tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
           el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive'))) : null,
-      run.blocked && !tie && run.blocked.approvalRequest ? el('div', { class: 'panel' },
+      run.blocked && run.blocked.kind === 'tool-call' ? el('div', { class: 'panel' },
+        el('p', {}, 'Step ', run.blocked.nodeId, '\\'s Worker stopped at a tool call that waits for your verdict on approval request ', el('code', {}, run.blocked.approvalRequest),
+          ', until ' + relative(run.blocked.until) + ' (' + absolute(run.blocked.until) + '). Approved, the step goes on in the same session and makes that call once; rejected or unanswered, this attempt ends.'),
+        el('p', {}, decideLink(run.blocked.approvalRequest, 'Decide it'))) : null,
+      run.blocked && !tie && run.blocked.kind !== 'tool-call' && run.blocked.approvalRequest ? el('div', { class: 'panel' },
         el('p', {}, 'The fix at ', run.blocked.nodeId, ' waits for your verdict on approval request ', el('code', {}, run.blocked.approvalRequest),
           run.blocked.until ? ', until ' + relative(run.blocked.until) + ' (' + absolute(run.blocked.until) + ')' : '', '. '),
         el('p', {}, decideLink(run.blocked.approvalRequest, 'Decide it'))) : null,

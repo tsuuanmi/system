@@ -2,6 +2,7 @@
 import type { Decision } from '@tsuuanmi/system-artifacts'
 import { type ContentId, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknownOf } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
+import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
@@ -58,12 +59,16 @@ function usageOf(e: Engine, result: ArtifactRef): Pick<NodeView, 'usage'> {
 
 /**
  * What the run waits for: a plan's gate (the operator's `approve`, or, for a remediation fix put to
- * the approval queue, the verdict on its request there) or a team's tie (a deciding `vote`).
+ * the approval queue, the verdict on its request there), a team's tie (a deciding `vote`), or a
+ * board task's step whose Worker's tool call waits on the operator's verdict in the queue.
  */
 function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
   const node = e.nodeRows(runId).find((n) => n.state === 'BLOCKED')
   if (!node) return {}
   const spec = JSON.parse(node.spec) as ResolvedNode
+  if (waitsOnCall(node)) {
+    return { blocked: { kind: 'tool-call', nodeId: node.node_id, approvalRequest: node.approval_request!, until: node.not_before!, ...(node.execution_id ? { executionId: node.execution_id } : {}) } }
+  }
   return {
     blocked: spec.executor === 'decide' ? tieOf(e, node) : {
       kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef, ...(node.not_before ? { until: node.not_before } : {}),

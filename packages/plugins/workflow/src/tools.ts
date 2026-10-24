@@ -23,6 +23,7 @@ export function standing(view: RunView): string {
   if (view.status === 'failed') return `${head}${view.error ? `: ${view.error.kind}: ${view.error.message}` : ''}`
   if (view.blocked?.kind === 'tie') return `${head}: waits for your vote on ${view.blocked.decision} (${view.blocked.options.map((o) => o.option).join(', ')}) until ${view.blocked.until}`
   if (view.blocked?.kind === 'gate') return `${head}: waits for ${view.blocked.approvalRequest ? `the verdict on ${view.blocked.approvalRequest}` : `the operator's approval of ${view.blocked.plan}`}`
+  if (view.blocked?.kind === 'tool-call') return `${head}: step ${view.blocked.nodeId}'s Worker stopped at a tool call that waits for the operator's verdict on ${view.blocked.approvalRequest} until ${view.blocked.until}; approved, the step goes on in the same session`
   const done = view.nodes.filter((n) => n.state === 'COMPLETED').length
   return `${head}: ${done} of ${view.nodes.length} step${view.nodes.length === 1 ? '' : 's'} completed; poll result with its runId`
 }
