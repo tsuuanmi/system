@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
@@ -488,11 +488,16 @@ describe('tool contracts reference', () => {
 })
 
 describe('the command surface (REQ-GW-4)', () => {
-  it('offers turn, workflow, account, and maintenance commands', async () => {
+  // The usage, printed once for the tests that read it: the CLI started from its source compiles its
+  // whole import graph first, 1.5 to 4.6 s, which is setup, not what a test checks.
+  let help: { stdout: string; stderr: string }
+  beforeAll(async () => {
     const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
-    const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
-    const help = spawnSync(process.execPath, ['--import', 'tsx', bin, '--help'], { encoding: 'utf8' })
+    help = spawnSync(process.execPath, ['--import', 'tsx', fileURLToPath(new URL('../src/bin.ts', import.meta.url)), '--help'], { encoding: 'utf8' })
+  })
+
+  it('offers turn, workflow, account, and maintenance commands', () => {
     const usage = `${help.stdout}${help.stderr}`
     const commands = [...usage.matchAll(/^ {2}([a-z][a-z-]*(?: [a-z][a-z-]*)?)/gm)].map((m) => m[1]!.split(' ')[0])
     for (const family of [['ask', 'research', 'brainstorm', 'review'], ['run', 'approve', 'vote', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'report', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
@@ -500,13 +505,11 @@ describe('the command surface (REQ-GW-4)', () => {
     }
   })
   it('says what the web UI holds, in the usage and the CLI reference: every part of the web UI reference', async () => {
-    const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
-    const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
     const doc = (name: string): string => readFileSync(fileURLToPath(new URL(`../../../docs/reference/${name}`, import.meta.url)), 'utf8')
     const flat = (text: string): string => text.replace(/\s+/g, ' ').toLowerCase()
     // The `ui` entry runs until the next command; the reference's row is one line.
-    const usage = flat(/^ {2}ui {2,}([\s\S]*?)(?=^ {2}[a-z])/m.exec(spawnSync(process.execPath, ['--import', 'tsx', bin, '--help'], { encoding: 'utf8' }).stdout)![1]!)
+    const usage = flat(/^ {2}ui {2,}([\s\S]*?)(?=^ {2}[a-z])/m.exec(help.stdout)![1]!)
     const reference = flat(/^\| `system ui` \|(.*)$/m.exec(doc('cli.md'))![1]!)
     const parts = [...doc('web-ui.md').matchAll(/^## (.+)$/gm)].map((m) => m[1]!.toLowerCase())
     expect(parts).toEqual(expect.arrayContaining(['runs', 'reviews', 'projects', 'approval queue', 'autonomy policy']))
