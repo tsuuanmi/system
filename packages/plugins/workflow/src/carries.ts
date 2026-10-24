@@ -62,19 +62,27 @@ export class TaskCarries {
   }
 
   /**
-   * At admission, before the task is taken: whether run `runId`, the task's next attempt, starts from
-   * the work its previous attempt left. Undefined when that attempt left no writing step's result in a
-   * worktree: there is nothing to carry, and nothing is decided. Otherwise an `admission` decision,
-   * `carry` when every bound holds (the carry is then `due` for the run's first turn), else `fresh`
-   * with why.
+   * At admission, once the run took the task and before it is admitted: whether run `runId`, the
+   * task's next attempt, starts from the work its previous attempt left. Undefined when that attempt
+   * left no writing step's result in a worktree: there is nothing to carry, and nothing is decided.
+   * Otherwise an `admission` decision, `carry` when every bound holds (the carry is then `due` for the
+   * run's first turn), else `fresh` with why. Never throws on the engine's own records: one it cannot
+   * read is a reason to start from HEAD, recorded, never a reason to refuse the start (INV-2).
    */
   plan(task: BoardTask, runId: string): TaskCarry | undefined {
     const attempt = task.attempts.count
     if (attempt < 1) return undefined
-    const previous = this.previous(task.taskId)
-    const writer = previous ? this.writerOf(previous.run_id) : undefined
-    if (!previous || !writer) return undefined
-    const why = this.refusal(task, previous, writer)
+    let previous: TaskRow | undefined
+    let writer: Writer | undefined
+    let why: string | undefined
+    try {
+      previous = this.previous(task.taskId)
+      writer = previous ? this.writerOf(previous.run_id) : undefined
+      if (!previous || !writer) return undefined
+      why = this.refusal(task, previous, writer)
+    } catch (error) {
+      return this.unread(task, runId, `the engine's record of attempt ${attempt}${previous ? ` (run ${previous.run_id})` : ''} could not be read (${(error as Error).message.slice(0, 300)})`)
+    }
     const tree = subjectId({ type: 'git-head', ...writer.subject })
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'admission',
@@ -98,6 +106,25 @@ export class TaskCarries {
     }
   }
 
+  /** {@link plan} when the previous attempt's record cannot be read: `fresh`, decided and recorded with why, with no tree named. */
+  private unread(task: BoardTask, runId: string, what: string): TaskCarry {
+    const why = `${what}, so its work is not carried`
+    const decision = this.e.ctx.artifacts.recordDecision({
+      decisionType: 'admission',
+      question: `Does run ${runId}, attempt ${task.attempts.count + 1} of board task ${task.taskId}, start from the work attempt ${task.attempts.count} left in its worktree?`,
+      inputs: [],
+      candidates: [
+        { option: 'carry', selected: false, reasons: [`not carry: ${why}`] },
+        { option: 'fresh', selected: true, reasons: [why, 'the run\'s worktree is cut from the repository\'s HEAD, as for any attempt'] },
+      ],
+      decider: RULE,
+      outcome: { option: 'fresh', detail: { taskId: task.taskId, attempt: task.attempts.count + 1, fromAttempt: task.attempts.count } },
+      deterministic: true,
+    }, { ...PRODUCER, runId }).id as ArtifactRef
+    this.e.ctx.logger.warn(`workflow: run ${runId} of board task ${task.taskId} starts from HEAD: ${why}`)
+    return { state: 'fresh', decisions: [decision], reason: why, at: now() }
+  }
+
   /**
    * At the run's first turn, before any step: a carry that is `due` is asked of the Worker source that
    * holds the earlier tree, and what it did is a `gate` decision naming the earlier run and the commit
@@ -107,24 +134,25 @@ export class TaskCarries {
   async settle(runId: string): Promise<void> {
     const row = this.e.tasks.row(runId)
     const carry = row ? this.view(row) : undefined
-    if (!row || carry?.state !== 'due') return
+    if (!row || carry?.state !== 'due' || !carry.from) return
+    const from = carry.from
     const carryOf = this.e.ctx.workers.carry
-    const step: CarryStep = { runId, from: { runId: carry.from.runId, workspace: carry.from.workspace, subject: carry.from.subject }, message: this.message(row, carry) }
+    const step: CarryStep = { runId, from: { runId: from.runId, workspace: from.workspace, subject: from.subject }, message: this.message(row, from, carry.decisions[0]!) }
     const answer: (Carried & { source: string }) | undefined = !row.lost && carryOf ? await carryOf.call(this.e.ctx.workers, step) : undefined
-    const tree = subjectId({ type: 'git-head', ...carry.from.subject })
+    const tree = subjectId({ type: 'git-head', ...from.subject })
     const carried = answer?.outcome === 'carried' ? answer : undefined
     const fresh = carried ? undefined
       : row.lost ? 'the run lost its holder before its first step, and starts nothing'
         : !carryOf ? 'the workers seam cannot carry a worktree (no carry)'
-          : !answer ? `no Worker source holds ${carry.from.workspace} as the worktree of run ${carry.from.runId}`
+          : !answer ? `no Worker source holds ${from.workspace} as the worktree of run ${from.runId}`
             : answer.outcome === 'refused' ? `source ${answer.source} did not carry it: ${answer.reason}` : `source ${answer.source} answered ${String((answer as { outcome?: unknown }).outcome)}`
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'gate',
-      question: `Does run ${runId}'s worktree start from the work run ${carry.from.runId} left (attempt ${carry.from.attempt} of board task ${row.task_id})?`,
-      inputs: [...carry.decisions.slice(0, 1), carry.from.result],
+      question: `Does run ${runId}'s worktree start from the work run ${from.runId} left (attempt ${from.attempt} of board task ${row.task_id})?`,
+      inputs: [...carry.decisions.slice(0, 1), from.result],
       candidates: [
         { option: 'carry', selected: !!carried, reasons: carried ? [
-          `source ${carried.source} ${carried.carried ? 'committed' : 'had committed'} the tree step ${carry.from.nodeId} of run ${carry.from.runId} left, ${tree}, on ${carried.from.branch} as ${carried.from.commit}`,
+          `source ${carried.source} ${carried.carried ? 'committed' : 'had committed'} the tree step ${from.nodeId} of run ${from.runId} left, ${tree}, on ${carried.from.branch} as ${carried.from.commit}`,
           `run ${runId}'s worktree on ${carried.branch} starts at ${carried.base}, holding that change: ${carried.worktree}`,
           'every brief of the run says so: its writing step continues from that work, and its review reviews the whole change',
         ] : [`not carry: ${fresh}`] },
@@ -134,7 +162,7 @@ export class TaskCarries {
       outcome: {
         option: carried ? 'carry' : 'fresh',
         detail: {
-          taskId: row.task_id, from: carry.from.runId, subject: carry.from.subject,
+          taskId: row.task_id, from: from.runId, subject: from.subject,
           ...(carried ? { source: carried.source, repository: carried.repository, commit: carried.from.commit, fromBranch: carried.from.branch, base: carried.base, branch: carried.branch, worktree: carried.worktree, carried: carried.carried } : {}),
           ...(answer?.outcome === 'refused' ? { source: answer.source, cause: answer.cause } : {}),
         },
@@ -148,11 +176,11 @@ export class TaskCarries {
       db.prepare('UPDATE workflow_tasks SET carry = ? WHERE run_id = ?').run(JSON.stringify(next), runId)
       this.e.ctx.eventLog.append({
         type: 'workflow.task.carry', runId, decision,
-        data: { taskId: row.task_id, state: next.state, from: carry.from.runId, ...(next.commit ? { commit: next.commit } : {}), ...(next.reason ? { reason: next.reason.slice(0, 500) } : {}) },
+        data: { taskId: row.task_id, state: next.state, from: from.runId, ...(next.commit ? { commit: next.commit } : {}), ...(next.reason ? { reason: next.reason.slice(0, 500) } : {}) },
       })
     })
-    if (carried) this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} starts from the work of run ${carry.from.runId} (${carried.from.commit} on ${carried.from.branch})`)
-    else this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} starts from HEAD, not from the work of run ${carry.from.runId}: ${fresh}`)
+    if (carried) this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} starts from the work of run ${from.runId} (${carried.from.commit} on ${carried.from.branch})`)
+    else this.e.ctx.logger.info(`workflow: run ${runId} of board task ${row.task_id} starts from HEAD, not from the work of run ${from.runId}: ${fresh}`)
   }
 
   /**
@@ -162,12 +190,13 @@ export class TaskCarries {
   pointer(runId: string): BriefPointer | undefined {
     const row = this.e.tasks.row(runId)
     const carry = row ? this.view(row) : undefined
-    if (carry?.state !== 'carried') return undefined
+    if (carry?.state !== 'carried' || !carry.from) return undefined
+    const from = carry.from
     const ref = carry.decisions.at(-1)!
     if (!this.e.ctx.artifacts.get(ref)) return undefined
     return {
       ref, role: 'prior',
-      note: clampText(`This run's worktree already holds the change step ${carry.from.nodeId} of attempt ${carry.from.attempt} made (committed as ${carry.commit} on ${carry.branch}, on top of ${carry.from.subject.ref}): build on it, do not make it again`, BRIEF_LIMITS.note),
+      note: clampText(`This run's worktree already holds the change step ${from.nodeId} of attempt ${from.attempt} made (committed as ${carry.commit} on ${carry.branch}, on top of ${from.subject.ref}): build on it, do not make it again`, BRIEF_LIMITS.note),
     }
   }
 
@@ -234,11 +263,11 @@ export class TaskCarries {
   }
 
   /** The message of the earlier tree's commit on its branch, naming the task, both runs, and the step that made the change. */
-  private message(row: TaskRow, carry: TaskCarry): string {
+  private message(row: TaskRow, from: NonNullable<TaskCarry['from']>, admission: ArtifactRef): string {
     return [
-      `system: carry the work of attempt ${carry.from.attempt} of task ${row.task_id} into run ${row.run_id}`, '',
-      `Step ${carry.from.nodeId} of run ${carry.from.runId} made this change, and the attempt failed only after it; attempt ${carry.from.attempt + 1}, run ${row.run_id}, starts from it (decision ${carry.decisions[0]}).`, '',
-      `System-Task: ${row.task_id}`, `System-Run: ${carry.from.runId}`,
+      `system: carry the work of attempt ${from.attempt} of task ${row.task_id} into run ${row.run_id}`, '',
+      `Step ${from.nodeId} of run ${from.runId} made this change, and the attempt failed only after it; attempt ${from.attempt + 1}, run ${row.run_id}, starts from it (decision ${admission}).`, '',
+      `System-Task: ${row.task_id}`, `System-Run: ${from.runId}`,
     ].join('\n')
   }
 }

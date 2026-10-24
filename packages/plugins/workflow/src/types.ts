@@ -179,8 +179,12 @@ export interface TaskView {
  */
 export interface TaskCarry {
   state: 'due' | 'carried' | 'fresh'
-  /** The previous attempt: its run, its number, its writing step and that step's result, and the tree it left. */
-  from: { runId: string; attempt: number; nodeId: string; result: ArtifactRef; workspace: string; subject: { ref: string; version: string } }
+  /**
+   * The previous attempt: its run, its number, its writing step and that step's result, and the tree it
+   * left. Absent only from a `fresh` carry decided because the engine's record of that attempt could not
+   * be read (`reason` says so).
+   */
+  from?: { runId: string; attempt: number; nodeId: string; result: ArtifactRef; workspace: string; subject: { ref: string; version: string } }
   /** The admission decision, then the `gate` decision that records what the source did (rule `workflow.task-worktree`). */
   decisions: ArtifactRef[]
   /** Once carried: where, and the commit on the earlier run's branch the run's worktree holds. */

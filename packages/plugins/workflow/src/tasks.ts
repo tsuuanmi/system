@@ -207,11 +207,13 @@ export class TaskRuns {
     // before it; both settled before the task is taken, so a failure here claims nothing.
     const frame = await this.frameOf(board, task, project, classification)
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
-    // Whether its worktree starts from the work the previous attempt left, carried at its first turn (ADR-0061).
-    const carry = this.carries.plan(task, runId)
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
+    // Whether its worktree starts from the work the previous attempt left, carried at its first turn
+    // (ADR-0061): decided once the run holds the task, so a refused claim decides nothing for a run
+    // that never exists; a record of the earlier attempt it cannot read starts the run from HEAD, recorded.
+    const carry = this.carries.plan(task, runId)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
       ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}),
