@@ -1,0 +1,22 @@
+{
+  "tool": "agent_run_free",
+  "input": { "agentRun": "arun_3f9c2a1b7d4e5f60", "agentGone": true, "note": "the host was rebooted; no codex process runs" },
+  "output": {
+    "agentRun": "arun_3f9c2a1b7d4e5f60",
+    "worker": "agent:codex-sdk:9a0b1c2d3e4f5061/developer",
+    "decision": "sha256:7c1e0d2f4b6a8c9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70",
+    "again": false,
+    "freed": [
+      "session ses_01JBQ6Z3K9V8W7X6Y5Z4A3B2C1",
+      "worktree /home/operator/.dsh/system/worktrees/project-1a2b3c4d5e6f/run_42 (branch system/run/run_42)"
+    ],
+    "worktrees": [
+      {
+        "path": "/home/operator/.dsh/system/worktrees/project-1a2b3c4d5e6f/run_42",
+        "branch": "system/run/run_42",
+        "outcome": "kept",
+        "why": "it holds uncommitted changes, so it stays (the retention commits them on system/run/run_42 and removes it; or free again with the commit flag)"
+      }
+    ]
+  }
+}

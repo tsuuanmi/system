@@ -154,6 +154,19 @@ Scope: `operator`
 |---|---|---|---|
 | `account` | string | yes |  |
 
+## `agent_run_free`
+
+Operator tool: free the session and worktree an agent run holds because it ended with its liveness unknown, on your word that its agent is gone (agentGone). Recorded as your decision. Refused while its liveness is still looked at, a process holds it, or its holder or agent process is present. A worktree is removed only when clean, or with commitWorktree after its changes are committed on its branch; the branch stays.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `agentRun` | string | yes | The agent run (arun_…) status or explain lists as unknown |
+| `agentGone` | boolean | yes | Your word that no process of its agent runs; required true |
+| `commitWorktree` | boolean |  | Commit a dirty worktree's changes on its branch, then remove it |
+| `note` | string |  | Why, kept on the decision |
+
 ## `approvals_decide`
 
 Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.
@@ -515,7 +528,7 @@ Scope: `operator`
 
 ## `explain`
 
-The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.
+The decision chain behind a run (egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.
 
 Scope: `client`
 
@@ -673,7 +686,7 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.
+Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, run liveness, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the runs whose liveness needs a look (stalled, looked at, unknown) and the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.
 
 Scope: `client`
 

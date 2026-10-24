@@ -18,7 +18,7 @@ import { SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/s
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
 import { renderReport } from './render.ts'
-import { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
+import { buildReport, type DecisionRead, type DigestRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
 export { duration, renderReport, whole } from './render.ts'
 export { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, type UnknownRead, within } from './report.ts'
@@ -30,7 +30,7 @@ export const inject = ['artifacts', 'eventLog']
 export const MAX_EVENTS = 100_000
 const PAGE = 1000
 /** The entries a report counts in its period, beside the task reports and digests it reads whole. */
-const PERIOD_EVENTS = ['workflow.graph.grown', 'workflow.gate.opened', 'workflow.gate.closed', 'approvals.batched'] as const
+const PERIOD_EVENTS = ['workflow.graph.grown', 'workflow.gate.opened', 'workflow.gate.closed', 'approvals.batched', ...LIVENESS_EVENTS] as const
 const STATES: ApprovalRequest['state'][] = ['open', 'batched', 'approved', 'rejected']
 
 const schemas = new SchemaRegistry()
@@ -212,11 +212,11 @@ const DESCRIPTION = 'The baseline report, from recorded data only (no model writ
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** The `report` tool: input and output checked against `mcp-report@1`; the text is the rendering. */
+/** The `report` tool: input and output checked against `mcp-report@1.2`; the text is the rendering. */
 export function registerTool(ctx: Context): void {
   ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
     try {
-      schemas.assertDef('mcp-report@1.1', 'report-input', args)
+      schemas.assertDef('mcp-report@1.2', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
@@ -227,7 +227,7 @@ export function registerTool(ctx: Context): void {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-report@1.1', 'report-output', made)
+      schemas.assertDef('mcp-report@1.2', 'report-output', made)
     } catch (error) {
       return refused(`report: the report made an output its schema refuses (a defect): ${(error as Error).message}`)
     }

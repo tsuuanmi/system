@@ -22,7 +22,7 @@ import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { dshHome, ensurePrivateDir, registerSecretPath, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
-import { type HealthReport, healthReport } from './health.ts'
+import { type HealthReport, healthReport, type LivenessRead } from './health.ts'
 import { z as zod } from 'zod'
 
 
@@ -246,8 +246,11 @@ export class McpEndpoint extends McpTools {
     return undefined
   }
 
-  /** The health report; a client caller sees each check's state, the operator also what to do. */
-  private async health(scope: ToolScope): Promise<HealthReport | { state: HealthReport['state']; checks: Array<{ name: string; state: string }> }> {
+  /**
+   * The health report; a client caller sees each check's state, the operator also what to do.
+   * `liveness`: the runs whose liveness needs a look, read once by the caller (`status` lists them too).
+   */
+  private async health(scope: ToolScope, liveness?: Promise<LivenessRead>): Promise<HealthReport | { state: HealthReport['state']; checks: Array<{ name: string; state: string }> }> {
     const store = this.ctx.get('store')
     const credentials = this.ctx.get('credentials') as { custody?: () => { keyApart: boolean } } | undefined
     const accounts = this.ctx.get('accounts')
@@ -282,6 +285,7 @@ export class McpEndpoint extends McpTools {
       ...(agents?.agentAccounts ? { agentAccounts: () => agents.agentAccounts!.list().map((a) => ({ provider: a.provider, slot: a.slot, accountId: a.accountId, status: a.status, reason: a.quarantine?.reason })) } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(workers?.sources ? { workerSources: () => workers.sources!() } : {}),
+      ...(liveness ? { liveness: () => liveness } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       // The notifier's outcomes, recorded as events: the surface reads them, never the plugin (docs/design/notifications.md#health).
       ...(eventLog ? { deliveries: ({ since, afterSeq, limit }: { since: string; afterSeq: number; limit: number }) => eventLog.query({ type: 'notify.delivery', since, afterSeq, limit }) } : {}),
@@ -391,14 +395,19 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'client',
-        description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.',
+        description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, run liveness, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, the runs whose liveness needs a look (stalled, looked at, unknown) and the plugins that need a look (a manifest check finding, a refused manifest, a lifecycle the composition does not give it), or with `plugins` every plugin of the composition with its manifest and recorded lifecycle.',
         inputSchema: { plugins: zod.boolean().optional().describe('Operator: list every plugin, not only those that need a look') },
       },
       handler: async (args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')
         const host = this.ctx.get('pluginHost')
-        const health = await this.health(scope)
+        // Read once for the check and, for the operator, the runs listed; a failed read is the check's to say.
+        const workers = this.ctx.get('workers')
+        const liveness = workers?.liveness ? workers.liveness() : undefined
+        liveness?.catch(() => undefined)
+        const health = await this.health(scope, liveness)
+        const told = scope === 'operator' && liveness ? await liveness.catch(() => undefined) : undefined
         // Which plugins run, at which versions, is the operator's to know, as the health details are.
         const all = scope === 'operator' && host ? host.list() : undefined
         const listed = args.plugins === true ? all : all?.filter(needsLook)
@@ -410,10 +419,12 @@ export class McpEndpoint extends McpTools {
           providers: providers ? providers.list() : [],
           health,
           ...(all && listed ? { plugins: listed.map(pluginView), ...(listed.length < all.length ? { pluginsOmitted: all.length - listed.length } : {}) } : {}),
+          ...(told && (livenessTotal(told) || told.unread.length) ? { liveness: livenessView(told) } : {}),
         }
         const notOk = health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
         const plugins = all && listed ? `; ${all.length} plugins, ${listed.length === all.length ? 'all listed' : `${listed.length} listed (those that need a look; plugins: true lists every one)`}` : ''
-        return reply(status, `health ${health.state}: ${health.checks.length} checks, ${notOk.length ? notOk.join(', ') : 'all ok'}${plugins}`)
+        const runs = told && livenessTotal(told) ? `; runs: ${(['unknown', 'looking', 'stalled'] as const).filter((s) => told.counts[s]).map((s) => `${told.counts[s]} ${s}`).join(', ')}` : ''
+        return reply(status, `health ${health.state}: ${health.checks.length} checks, ${notOk.length ? notOk.join(', ') : 'all ok'}${plugins}${runs}`)
       },
     })
     // The roster (docs/design/roster.md): every Worker in one read model, projected on read from the
@@ -447,6 +458,27 @@ export class McpEndpoint extends McpTools {
 }
 
 export default McpEndpoint
+
+/** Runs `status` lists by name at most; the rest are counted (`runsOmitted`), and `system explain` reads any one. */
+export const STATUS_LIVENESS_RUNS = 16
+
+const livenessTotal = (told: LivenessRead): number => told.counts.unknown + told.counts.looking + told.counts.stalled
+
+/**
+ * The runs whose liveness needs a look, as `status` gives them to the operator (PROP-0013): how many
+ * in each state, and the latest of them, each by its source and execution, Worker, state, and since
+ * when (with its workflow run); `system explain` gives the verdict, the reasons, and what to do.
+ */
+export function livenessView(told: LivenessRead): Record<string, unknown> {
+  const runs = told.runs.slice(0, STATUS_LIVENESS_RUNS)
+  const omitted = livenessTotal(told) - runs.length
+  return {
+    counts: told.counts,
+    runs: runs.map((r) => ({ source: r.source, execution: r.execution, worker: r.worker, state: r.state, since: r.since, ...(r.runId ? { runId: r.runId } : {}) })),
+    ...(omitted > 0 ? { runsOmitted: omitted } : {}),
+    ...(told.unread.length ? { unread: told.unread } : {}),
+  }
+}
 
 /**
  * Whether `status` lists a plugin without being asked for every one: the manifest check found

@@ -105,7 +105,10 @@ Only `dead` is death. A process is gone only on positive evidence: no process ha
 its pid, the one that has it started at another time, it has exited, or the host
 booted again. A process recorded on another host is `unknown`. What each verdict
 does to an agent run is the `agents` source's
-([restart and liveness](agent-runtimes.md#restart-and-liveness)). Website turns keep
+([restart and liveness](agent-runtimes.md#restart-and-liveness)), as are what the operator
+sees of a run whose liveness needs a look and how they free one held for want of a verdict
+([what the operator sees](agent-runtimes.md#what-the-operator-sees),
+[freeing what a run holds](agent-runtimes.md#freeing-what-a-run-holds)). Website turns keep
 their receipts; the verdict does not apply to them.
 
 ## Optimistic revisions

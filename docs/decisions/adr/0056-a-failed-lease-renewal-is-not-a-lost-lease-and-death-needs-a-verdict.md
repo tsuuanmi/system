@@ -127,3 +127,26 @@ appends to the mailbox, and only the engine's wake decides when a turn is taken.
   process and activity are consistent, or absent.
 - Revisit if a runtime other than Claude Code can report its agent process, or if the operator
   needs a way to free a session held by an `unknown` run.
+
+## Amendment (2026-10-24): the operator frees a held run, and a cancel gets a verdict
+
+The second revisit condition came (T74's "not finished"). Nothing above changes: only `dead` is
+death, and nothing automated frees what an `unknown` run holds. Three additions, each additive and
+optional on the `workers` seam (ADR-0036):
+
+- **Freeing is the operator's word, recorded.** `agent_run_free` (operator scope,
+  `mcp-agent-runs@1.0`; `system free <run> --agent-gone`) frees the session and worktree of a run
+  that ended without being known to be gone, only with the operator's statement that its agent is
+  gone, recorded first as their `reconciliation` decision (decider `operator.free`) with the signals
+  as the host shows them then (INV-13). It is refused while the run's liveness is still being looked
+  at, while a process holds its lease, and while its holder or agent process is present on this
+  host, whatever the operator said (INV-2). A worktree is removed only when it holds nothing
+  uncommitted, or with an explicit flag once its changes are committed on its branch; the branch
+  always stays.
+- **An operator cancel takes the verdict path.** A cancel of a started run that no process holds
+  used to fail it `aborted` with no verdict, freeing its session though its agent might still act.
+  It now gets a verdict first, as a reconciliation does: `dead` ends it as gone, anything else ends
+  it `aborted` not known to be gone and held as above.
+- **The operator sees it.** `WorkerSource.liveness` and `Workers.liveness` tell the runs that are
+  stalled, being looked at, or held for want of a verdict; `status`, `explain`, the roster, and the
+  report show them ([what the operator sees](../../design/agent-runtimes.md#what-the-operator-sees)).

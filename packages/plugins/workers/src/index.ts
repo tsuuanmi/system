@@ -11,8 +11,9 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, provesFor, type QuotaClass,
-  type Rejection, type RouteOptions, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource, type WorkerSourceRead, Workers,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, LIVENESS_STATES, type LivenessQuery,
+  type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
+  type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
 
 export * from '@tsuuanmi/system-workers-core'
@@ -142,6 +143,25 @@ export class WorkerRouter extends Workers {
       if (why) return why
     }
     return undefined
+  }
+
+  async liveness(query: LivenessQuery = {}): Promise<{ runs: Array<RunLiveness & { source: string }>; counts: Record<LivenessState, number>; unread: Array<{ source: string; detail: string }> }> {
+    const runs: Array<RunLiveness & { source: string }> = []
+    const counts = Object.fromEntries(LIVENESS_STATES.map((s) => [s, 0])) as Record<LivenessState, number>
+    const unread: Array<{ source: string; detail: string }> = []
+    for (const source of this.registry.values()) {
+      if (!source.liveness) continue
+      try {
+        const told = await source.liveness(query)
+        for (const state of LIVENESS_STATES) counts[state] += told.counts[state] ?? 0
+        runs.push(...told.runs.slice(0, MAX_LIVENESS_RUNS).map((run) => ({ ...run, source: source.name })))
+      } catch (error) {
+        // A source that cannot tell is never read as having none (INV-2).
+        unread.push({ source: source.name, detail: (error as Error).message.slice(0, 200) })
+      }
+    }
+    runs.sort((a, b) => compare(b.since, a.since) || compare(a.source, b.source) || compare(a.execution, b.execution))
+    return { runs: runs.slice(0, MAX_LIVENESS_RUNS), counts, unread }
   }
 
   release(sessionIds: readonly string[], reason: string): { due: number } {

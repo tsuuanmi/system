@@ -5,7 +5,7 @@
 import { randomBytes } from 'node:crypto'
 import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
 import type { ContentId } from '@tsuuanmi/system-libs'
-import type { ArtifactRef, Classification, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, Classification, RunLiveness, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
 
 export type RunStatus = 'running' | 'completed' | 'failed'
@@ -271,6 +271,14 @@ export interface Explanation {
   status: RunStatus
   specHash: ContentId
   nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; decisions: ExplainedDecision[] }>
+  /**
+   * The run's executions whose liveness needs a look, as their Worker sources tell it
+   * (`ctx.workers.liveness`, PROP-0013): stalled, looked at, or ended not known to be gone, with the
+   * verdict, its looks, why, what each holds, and what the operator can do. Only when there are any.
+   */
+  liveness?: Array<RunLiveness & { source: string }>
+  /** Each source that could not tell, with why: such a source is never read as having none (INV-2). */
+  livenessUnread?: Array<{ source: string; detail: string }>
 }
 
 export interface Config {

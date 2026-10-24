@@ -119,6 +119,40 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     })
   })
 
+  it('says beside what a Worker does now which of its runs are stalled, looked at, or held for want of a verdict, in one sentence each, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
+    const review = `agent:${CLAUDE}/review`
+    const develop = `agent:${CLAUDE}/develop`
+    const told = {
+      runs: [
+        { execution: 'arun_00000000000000a1', worker: review, state: 'stalled' as const, since: '2026-10-24T09:20:00.000Z', holds: ['session ses_1'], runId: 'run_2' },
+        { execution: 'arun_00000000000000a2', worker: develop, state: 'unknown' as const, since: '2026-10-24T07:30:00.000Z', holds: ['session ses_2', 'worktree /w/run_9 (branch system/run/run_9)'], runId: 'run_9' },
+        { execution: 'arun_00000000000000a3', worker: develop, state: 'looking' as const, since: '2026-10-24T09:28:00.000Z', looks: { taken: 1, max: 3 }, holds: [] },
+      ],
+      counts: { unknown: 1, looking: 1, stalled: 1 }, unread: [] as Array<{ source: string; detail: string }>,
+    }
+    const base = services()
+    const roster = await readRoster(services({ workers: { ...base.workers!, liveness: async () => told } }), { scope: 'operator', now: NOW })
+    valid(roster)
+    expect(entry(roster, review).liveness).toEqual({ value: [{
+      execution: 'arun_00000000000000a1', state: 'stalled', since: '2026-10-24T09:20:00.000Z', runId: 'run_2',
+      summary: 'Stalled: agent run arun_00000000000000a1 of run run_2 has shown no activity for 10 min or more; nothing is sent to it, and its own deadline ends it',
+    }] })
+    expect(value(entry(roster, develop).liveness!).map((l) => l.summary)).toEqual([
+      'Held for 2 h: agent run arun_00000000000000a2 of run run_9 ended without being known to be gone, holding session ses_2 and worktree /w/run_9 (branch system/run/run_9); free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)',
+      'Not known to be gone: agent run arun_00000000000000a3 lost its holder 2 min ago and is looked at again (1 of 3 verdicts)',
+    ])
+    // A Worker with none has no such field; one whose source could not tell has it unknown.
+    expect(entry(roster, 'worker:plus/standard')).not.toHaveProperty('liveness')
+    expect(formatRoster(roster)).toContain(`  liveness   Stalled: agent run arun_00000000000000a1 of run run_2`)
+    const unread = await readRoster(services({ workers: { ...base.workers!, liveness: async () => ({ runs: [], counts: { unknown: 0, looking: 0, stalled: 0 }, unread: [{ source: 'agents', detail: 'the store failed' }] }) } }), { scope: 'operator', now: NOW })
+    valid(unread)
+    expect(entry(unread, review).liveness).toEqual({ unknown: 'source agents could not tell (the store failed)' })
+    const failed = await readRoster(services({ workers: { ...base.workers!, liveness: async () => { throw new Error('no router') } } }), { scope: 'operator', now: NOW })
+    expect(entry(failed, review).liveness).toEqual({ unknown: 'it could not be read: no router' })
+    // A router that tells no liveness: no field at all.
+    expect(entry(await readRoster(services(), { scope: 'operator', now: NOW }), review)).not.toHaveProperty('liveness')
+  })
+
   it('tells each availability apart: ready, busy N of M, resting until its reset, unavailable with why, quarantined', async () => {
     const plain = (worker: string, extra: Partial<RosterDescriptor>) => descriptor(worker, { account: agentAccount(CLAUDE), ...extra })
     const workers = [

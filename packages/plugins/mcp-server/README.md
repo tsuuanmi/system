@@ -59,6 +59,15 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
     check is reused for `storeCheckMinutes`.
+  - `liveness` (with a router that tells `ctx.workers.liveness()`, PROP-0013) is degraded while a
+    run that ended without being known to be gone holds its session and worktree, or while a
+    Worker source cannot tell (INV-2), naming the first five runs of each state and counting the
+    rest; a stalled run, or one still being looked at, is named under `ok` and needs nothing yet.
+    The router is read once per `status`: for the operator, `status` also carries `liveness`, the
+    counts in each state and the latest 16 runs (`livenessView`: source, execution, Worker, state,
+    since, workflow run), `runsOmitted` counting the rest and `unread` the sources that could not
+    tell, only when there is any, and its text line ends with the counts; a client sees the check's
+    state alone ([what the operator sees](../../../docs/design/agent-runtimes.md#what-the-operator-sees)).
   - `plugins` is down when a plugin failed to activate (with its error) or is
     still pending on a required service no plugin supplies, read from the
     Cordis registry's own fiber states. Only named plugins count: an anonymous

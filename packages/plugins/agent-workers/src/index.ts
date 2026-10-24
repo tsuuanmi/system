@@ -40,13 +40,16 @@ import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
-import type { ArtifactRef, CapabilityDescriptor, CapabilityOffer, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart, WorkScope } from '@tsuuanmi/system-workers-core'
+import {
+  type ArtifactRef, type CapabilityDescriptor, type CapabilityOffer, type ExecutionStatus, type LivenessQuery, type LivenessReport, type LivenessState, MAX_LIVENESS_RUNS, type QuotaClass, type RunLiveness, type Tier,
+  type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
+} from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration } from './migrate.ts'
@@ -55,8 +58,8 @@ import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT, setsDerivedOnly,
 } from './roles.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
-import { registerAccountTools } from './tools.ts'
-import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
+import { registerAccountTools, registerRunTools } from './tools.ts'
+import { notKnownGone, RUN_ID, type RepositoryCheck, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -244,8 +247,10 @@ interface RunRow {
   /** The liveness verdicts it got after its holder stopped holding it, in a row, and the last of them. */
   liveness_looks?: number | null
   liveness_verdict?: string | null
-  /** The `reconciliation` decision that ended it after a restart or a lost lease (INV-4, INV-13). */
+  /** The `reconciliation` decision that ended it after a restart, a lost lease, or the operator's cancel (INV-4, INV-13). */
   liveness_decision?: string | null
+  /** The operator's `reconciliation` decision that freed what it held, once it ended not known to be gone. */
+  liveness_freed?: string | null
   /** The `gate` decision of its worktree's setup (ADR-0058), when its repository has one. */
   setup_decision?: string | null
   created_at: string
@@ -276,6 +281,14 @@ const BEAT_MS = LEASE_TTL_MS / 3
 const MAX_LOOK_MS = 15 * 60_000
 /** The rule a started run's reconciliation applies (PROP-0013, ADR-0056). */
 const RECONCILE_RULE = { type: 'rule', id: 'agent-workers.reconcile', version: '2' } as const
+/** The operator's word that a run's agent is gone, freeing what the run held (INV-13). */
+const FREE_DECIDER = { type: 'operator', id: 'operator.free', version: '1' } as const
+/** A run ended without being known to be gone, and what it held stays held. */
+const UNKNOWN_EVENT = 'agent-workers.run.unknown'
+/** The operator freed what such a run held. */
+const FREED_EVENT = 'agent-workers.run.freed'
+/** Where the operator's steps for a run whose liveness is unknown are written. */
+const RUNBOOK = 'docs/operations/runbooks.md#a-runs-liveness-is-unknown'
 /**
  * The agent runs whose agent this process is running now, across every instance of this source in
  * it: a run recorded as held by this very process is gone from it only when it is not among them.
@@ -575,7 +588,11 @@ export class AgentWorkers extends Service {
       ALTER TABLE agent_runs ADD COLUMN liveness_verdict TEXT;
       ALTER TABLE agent_runs ADD COLUMN liveness_decision TEXT;
       CREATE INDEX agent_runs_session ON agent_runs (session_id, created_at);`,
-    }, SETUP_MIGRATION])
+    }, SETUP_MIGRATION, {
+      // The operator frees what a run that ended not known to be gone held, on their word that its agent is gone.
+      version: 14,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN liveness_freed TEXT;',
+    }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -613,9 +630,13 @@ export class AgentWorkers extends Service {
       // and in a new generation a replayed conversation starts empty (ADR-0049).
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL, generation = generation + 1 WHERE session_id = ?').run(sessionId).changes) > 0,
       held: (sessionId) => this.held(sessionId),
+      liveness: (query) => this.liveness(query),
     })
-    // The operator's enrollment tools, when the MCP endpoint is mounted (operator scope).
-    ctx.inject(['mcp'], (c) => registerAccountTools(c, this.agentAccounts, this))
+    // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
+    ctx.inject(['mcp'], (c) => {
+      registerAccountTools(c, this.agentAccounts, this)
+      registerRunTools(c, this)
+    })
     ctx.effect(() => {
       queueMicrotask(() => {
         this.recover()
@@ -1095,11 +1116,195 @@ export class AgentWorkers extends Service {
     const lease = this.ctx.leases.acquire(`agent-run:${runId}`, LEASE_TTL_MS)
     if (!lease) return false
     try {
-      this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), () => lease)
+      if (row.submitted_at) this.cancelStarted(row, () => lease)
+      else this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), () => lease)
     } finally {
       this.ctx.leases.release(lease)
     }
     return true
+  }
+
+  /**
+   * The operator cancels a run that started and that no process holds now (between two liveness looks
+   * after a restart, say): its agent cannot be stopped from here, and may still act (INV-4). It gets a
+   * verdict first, as a reconciliation does (PROP-0013, ADR-0056): `dead` ends it as gone; any other
+   * verdict ends it not known to be gone, so its session and worktree stay held until the operator
+   * frees them (INV-15). Either way it fails `aborted`, its decision on it, and is never run again.
+   */
+  private cancelStarted(row: RunRow, lease: () => Lease): void {
+    const liveness = this.livenessOf(row)
+    const looks = row.liveness_looks ?? 0
+    const decision = this.reconciled(row, liveness, looks, 'cancel')
+    const dead = liveness.verdict === 'dead'
+    this.fail(row, new ProviderError('aborted', dead
+      ? `cancelled by the operator; it had started, and it is gone (liveness dead, decision ${decision})`
+      : `cancelled by the operator; it had started, no process holds it, and it is not known to be gone (liveness ${liveness.verdict}: ${liveness.reasons.join('; ')}; decision ${decision}), so its session and worktree stay held: system free ${row.run_id} --agent-gone, once its agent is gone`),
+    lease, { liveness_looks: looks, liveness_verdict: liveness.verdict, liveness_decision: decision })
+    if (!dead) this.toldUnknown(row, liveness.verdict, looks, decision, 'cancel')
+    // Its usage is not invented, as for a run reconciled after a restart; its reservation is released.
+    if (row.reservation_id) {
+      this.interruptedUsage(row)
+      const released = this.release(row.worker, row.reservation_id)
+      this.inflight.add(released)
+      void released.finally(() => this.inflight.delete(released))
+    }
+  }
+
+  /**
+   * The runs of this source whose liveness needs the operator's look (PROP-0013, ADR-0056), from its
+   * durable facts: `unknown`, ended without being known to be gone and not freed (what they ran in
+   * stays held); `looking`, started, their holder gone, verdicts being taken; `stalled`, running with
+   * a stall reported. At most {@link MAX_LIVENESS_RUNS}, the latest first, with the counts of all.
+   */
+  private async liveness(query: LivenessQuery = {}): Promise<LivenessReport> {
+    const state = `CASE WHEN status = 'failed' THEN 'unknown' WHEN COALESCE(liveness_looks, 0) > 0 THEN 'looking' ELSE 'stalled' END`
+    const where = [
+      `((status = 'failed' AND ${notKnownGone('')}) OR (status = 'running' AND submitted_at IS NOT NULL AND (COALESCE(liveness_looks, 0) > 0 OR stalled_at IS NOT NULL)))`,
+      ...(query.runId !== undefined ? ['workflow_run_id = ?'] : []), ...(query.execution !== undefined ? ['run_id = ?'] : []),
+    ].join(' AND ')
+    const params = [...(query.runId !== undefined ? [query.runId] : []), ...(query.execution !== undefined ? [query.execution] : [])]
+    const db = this.ctx.store.db
+    const counts: Record<LivenessState, number> = { unknown: 0, looking: 0, stalled: 0 }
+    for (const c of db.prepare(`SELECT ${state} AS state, COUNT(*) AS n FROM agent_runs WHERE ${where} GROUP BY 1`).all(...params) as Array<{ state: LivenessState; n: number }>) counts[c.state] = c.n
+    const rows = db.prepare(`SELECT *, ${state} AS state FROM agent_runs WHERE ${where} ORDER BY updated_at DESC, run_id LIMIT ?`).all(...params, MAX_LIVENESS_RUNS) as unknown as Array<RunRow & { state: LivenessState }>
+    return { runs: rows.map((row) => this.livenessView(row, row.state)), counts }
+  }
+
+  /** One run as {@link liveness} tells it: since when, the verdict and the looks, why, what it holds, and what the operator can do. */
+  private livenessView(row: RunRow, state: LivenessState): RunLiveness {
+    const max = this.config.maxUnknownVerdicts ?? 3
+    const holds = this.holdsOf(row)
+    const base = { execution: row.run_id, worker: row.worker, state, holds, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}) }
+    const verdict = row.liveness_verdict ? { verdict: `${row.liveness_verdict} (${LIVENESS_RULE.id}@${LIVENESS_RULE.version})` } : {}
+    if (state === 'unknown') {
+      const decided = row.liveness_decision ? this.ctx.artifacts.get(row.liveness_decision)?.body as { candidates?: Array<{ option: string; reasons: string[] }> } | undefined : undefined
+      const reasons = decided?.candidates?.find((c) => c.option === 'dead')?.reasons.filter((r) => !r.startsWith('not dead:'))
+      return {
+        ...base, since: row.updated_at, ...verdict, looks: { taken: row.liveness_looks ?? 0, max },
+        reasons: reasons?.length ? reasons : [`its decision ${row.liveness_decision} is not stored here`],
+        decision: row.liveness_decision as ArtifactRef,
+        action: `${holds.length ? `it holds ${holds.join(' and ')}: ` : ''}confirm that no process of its agent runs (its holder and agent process, among the reasons), then free it: system free ${row.run_id} --agent-gone (${RUNBOOK})`,
+      }
+    }
+    if (state === 'looking') {
+      const now = this.livenessOf(row, { state: 'unknown', why: 'not read for this listing' })
+      const taken = row.liveness_looks ?? 0
+      return {
+        ...base, since: row.updated_at, ...verdict, looks: { taken, max }, reasons: now.reasons,
+        action: `nothing yet: its holder stopped, and it is looked at again (${taken} of ${max} verdicts); found gone, it fails, else it reaches you as unknown`,
+      }
+    }
+    const quiet = row.activity_at ?? row.submitted_at ?? row.updated_at
+    return {
+      ...base, since: row.stalled_at ?? row.updated_at,
+      reasons: [`the agent process: ${describeProbe(probeProcess(processIdentityOf(parsed(row.agent_process))))}`, `activity: none recorded since ${quiet}`, `stalled: quiet for ${this.bounds().stallSeconds} s or more`],
+      action: `nothing is sent to it and nothing stops it: its own deadline (${Math.round((this.config.runTimeoutMs ?? 15 * 60_000) / 1000)} s) or turn limit ends it${row.workflow_run_id ? `; to stop it now: system stop ${row.workflow_run_id}` : ''}`,
+    }
+  }
+
+  /** What a run holds while it is not known to be gone: its session, and its workflow run's worktrees, in words. */
+  private holdsOf(row: RunRow): string[] {
+    const worker = this.workers.get(row.worker)
+    return [
+      ...(row.session_id ? [`session ${row.session_id}`] : []),
+      ...(worker?.worktreePerRun && row.workflow_run_id ? this.worktrees.of(row.workflow_run_id).map((w) => `worktree ${w.path} (branch ${w.branch})`) : []),
+    ]
+  }
+
+  /**
+   * The operator frees what an agent run that ended without being known to be gone holds: its
+   * session, and, for a Worker with a worktree per run, its workflow run's worktree (PROP-0013,
+   * ADR-0056; INV-15). Only on the operator's word that its agent is gone (`agentGone`), recorded
+   * first as their `reconciliation` decision (INV-13), with the signals as this host shows them now.
+   * Refused, changing nothing (INV-2): a run that holds nothing; while it, or another started run of
+   * its session or worktree, has not finished (its liveness is still being looked at); while a
+   * process holds its lease; and while its holder or its agent process is present on this host. A
+   * worktree is removed only while nothing else of its workflow run is unfinished or held, and only
+   * when it holds nothing uncommitted, or, with `commitWorktree`, once its changes are committed on
+   * its branch; the branch always stays. A run already freed may be freed again for its worktree.
+   */
+  async free(input: { agentRun: string; agentGone: boolean; commitWorktree?: boolean; note?: string }): Promise<FreeOutcome> {
+    if (input.agentGone !== true) throw new ProviderError('invalid_input', 'freeing a run is your word that its agent is gone: confirm it (agentGone; system free --agent-gone) once no process of it runs; nothing was freed')
+    const row = this.row(input.agentRun)
+    if (!row) throw new ProviderError('invalid_input', `no agent run ${input.agentRun}; nothing was freed`)
+    const max = this.config.maxUnknownVerdicts ?? 3
+    if (row.status === 'queued' || row.status === 'running') {
+      throw new ProviderError('invalid_input', row.submitted_at && (row.liveness_looks ?? 0) > 0
+        ? `${row.run_id}'s liveness is still being looked at (${row.liveness_looks} of ${max} verdicts): wait for it to fail as gone or reach you as unknown; nothing was freed`
+        : `${row.run_id} has not finished (${row.status}); nothing was freed`)
+    }
+    if (!row.liveness_decision || row.liveness_verdict === 'dead') throw new ProviderError('invalid_input', `${row.run_id} ${row.status === 'completed' ? 'completed' : row.liveness_decision ? 'was found gone (liveness dead)' : 'ended with its agent stopped by its holder'}, so it holds nothing to free; nothing was freed`)
+    const worker = this.workers.get(row.worker)
+    const worktrees = !!worker?.worktreePerRun && !!row.workflow_run_id
+    // Another run started in what it held, and not finished: its liveness is looked at, or it runs.
+    const other = this.ctx.store.db.prepare(`SELECT run_id, status, liveness_looks FROM agent_runs WHERE run_id != ? AND status IN ('queued', 'running') AND submitted_at IS NOT NULL
+      AND (session_id = ? OR (? AND workflow_run_id = ?)) LIMIT 1`).get(row.run_id, row.session_id, worktrees ? 1 : 0, row.workflow_run_id ?? null) as { run_id: string; status: string; liveness_looks: number | null } | undefined
+    if (other) {
+      throw new ProviderError('invalid_input', `run ${other.run_id}, in the same ${row.session_id ? 'session or ' : ''}worktree, ${(other.liveness_looks ?? 0) > 0 ? 'is still being looked at' : 'is running'}: wait for it to end; nothing was freed`)
+    }
+    const commit = input.commitWorktree === true
+    // What freeing does to its worktrees, read before anything is decided (git; bounded).
+    const plans = worktrees ? await this.worktrees.plan(row.workflow_run_id!, commit, row.run_id) : []
+    // Freed already, it is asked again for its worktree only: with none left, nothing is decided.
+    if (row.liveness_freed && !plans.length) throw new ProviderError('invalid_input', `${row.run_id} was freed already (decision ${row.liveness_freed}), and no worktree of it is left; nothing was freed`)
+    const lease = this.ctx.leases.acquire(`agent-run:${row.run_id}`, LEASE_TTL_MS)
+    if (!lease) throw new ProviderError('invalid_input', `a process holds ${row.run_id} now; nothing was freed`)
+    let decision: ContentId
+    const again = !!row.liveness_freed
+    const holds = this.holdsOf(row)
+    try {
+      const current = this.row(row.run_id)!
+      if (current.liveness_freed !== row.liveness_freed || current.status !== row.status) throw new ProviderError('invalid_input', `${row.run_id} changed while it was being freed; nothing was freed, try again`)
+      // The holder or the agent process present on this host: it is not gone, whatever the operator saw.
+      const holder = this.holderProbe(row)
+      const agent = probeProcess(processIdentityOf(parsed(row.agent_process)))
+      if (holder.state === 'present' || agent.state === 'present') {
+        throw new ProviderError('invalid_input', `${row.run_id}'s ${holder.state === 'present' ? 'holder' : 'agent process'} is present on this host, so its agent is not gone; nothing was freed`)
+      }
+      const note = input.note?.trim().slice(0, 1000)
+      decision = this.ctx.artifacts.recordDecision({
+        decisionType: 'reconciliation',
+        question: `Is what agent run ${row.run_id} on ${row.worker} holds${holds.length ? ` (${holds.join(', ')})` : ''} freed, on the operator's word that its agent is gone?`,
+        inputs: [],
+        candidates: [
+          {
+            option: 'free', selected: true,
+            reasons: [
+              `the operator confirms its agent is gone${note ? `: ${note}` : ''}`,
+              again ? `it was freed already (decision ${row.liveness_freed}): only its worktree is looked at again` : `it ended without being known to be gone (liveness ${row.liveness_verdict ?? 'unknown'}, decision ${row.liveness_decision})`,
+              `as this host shows them now: the holder's process ${describeProbe(holder)}; the agent process ${describeProbe(agent)}`,
+              ...plans.map((p) => `worktree ${p.path}: ${p.why}`),
+            ],
+          },
+          { option: 'keep', selected: false, reasons: ['not kept: no process holds the run, neither its holder nor its agent process is present on this host, and the operator confirms its agent is gone'] },
+        ],
+        decider: FREE_DECIDER,
+        outcome: {
+          option: 'free',
+          detail: {
+            agentRun: row.run_id, worker: row.worker, ...(row.session_id ? { sessionId: row.session_id } : {}), verdict: row.liveness_verdict ?? 'unknown', reconciliation: row.liveness_decision, again, commitWorktree: commit,
+            worktrees: plans.map((p) => ({ path: p.path, branch: p.branch, outcome: p.outcome })),
+          },
+        },
+        ...(note ? { rationale: note } : {}),
+        deterministic: false,
+      }, { producer: { type: 'operator', ref: 'operator' }, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), classification: row.classification as Classification }).id as ContentId
+      // Fenced like every write of a run: freed once, by the decision first recorded; a later one is about its worktree only.
+      if (!again) this.update(row.run_id, { liveness_freed: decision }, () => lease)
+    } finally {
+      this.ctx.leases.release(lease)
+    }
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: FREED_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), decision,
+        data: { agentRun: row.run_id, worker: row.worker, again, worktrees: plans.length },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: that the operator freed ${row.run_id} was not appended: ${(error as Error).message}`)
+    }
+    const released = plans.length ? await this.worktrees.release(row.workflow_run_id!, decision, commit, plans, row.run_id) : []
+    this.ctx.logger.info(`agent Workers: the operator freed ${row.run_id} on ${row.worker}${again ? ' again' : ''} (decision ${decision})${released.length ? `; ${released.map((w) => `${w.path} ${w.outcome}`).join(', ')}` : ''}`)
+    return { agentRun: row.run_id, worker: row.worker, decision, again, freed: again ? [] : holds, worktrees: released }
   }
 
   private recover(): void {
@@ -1130,11 +1335,11 @@ export class AgentWorkers extends Service {
    * agent process as this host shows them now, and the latest activity recorded (its submission at
    * least). A signal never recorded, as on a run from before this was kept, is unknown.
    */
-  private livenessOf(row: RunRow): Liveness {
+  private livenessOf(row: RunRow, lease: LeaseProbe = { state: 'lapsed', why: 'this process took it, so it had expired or was released' }): Liveness {
     const activity = [row.submitted_at, row.activity_at].map((t) => (t ? Date.parse(t) : Number.NaN)).filter(Number.isFinite)
     return livenessOf({
       at: Date.now(),
-      holder: { lease: { state: 'lapsed', why: 'this process took it, so it had expired or was released' }, process: this.holderProbe(row) },
+      holder: { lease, process: this.holderProbe(row) },
       runtime: probeProcess(processIdentityOf(parsed(row.agent_process))),
       lastActivityAt: activity.length ? Math.max(...activity) : undefined,
     }, this.bounds())
@@ -1150,25 +1355,53 @@ export class AgentWorkers extends Service {
     return probeProcess(recorded)
   }
 
-  /** The `reconciliation` decision that ends a started run its holder no longer holds (INV-4, INV-13): the verdict and every signal behind it. */
-  private reconciled(row: RunRow, liveness: Liveness, looks: number): ContentId {
+  /**
+   * The `reconciliation` decision that ends a started run its holder no longer holds (INV-4, INV-13):
+   * the verdict and every signal behind it. `cancel`: the operator cancelled it while no process held
+   * it, so it ends now whatever the verdict, and only `dead` frees what it held.
+   */
+  private reconciled(row: RunRow, liveness: Liveness, looks: number, cause: 'holder' | 'cancel' = 'holder'): ContentId {
     const dead = liveness.verdict === 'dead'
     const max = this.config.maxUnknownVerdicts ?? 3
+    const operator = cause === 'cancel'
+      ? 'the operator cancelled it, and no process holds it, so it ends now; it is not known to be gone, so its session and worktree stay held until the operator frees them'
+      : `${looks} verdicts in a row, none dead (at most ${max}): a failed probe is never death, so it goes to the operator, and its session stays held`
     return this.ctx.artifacts.recordDecision({
       decisionType: 'reconciliation',
-      question: `Is agent run ${row.run_id} on ${row.worker}, which started and which its holder no longer holds, gone?`,
+      question: cause === 'cancel'
+        ? `Is agent run ${row.run_id} on ${row.worker}, which started and which the operator cancelled while no process held it, gone?`
+        : `Is agent run ${row.run_id} on ${row.worker}, which started and which its holder no longer holds, gone?`,
       inputs: [],
       candidates: [
         { option: 'dead', selected: dead, reasons: dead ? liveness.reasons : [`not dead: the verdict is ${liveness.verdict}, and only dead is death`, ...liveness.reasons] },
         {
           option: 'operator', selected: !dead,
-          reasons: dead ? ['not the operator\'s: it is positively gone, so it fails as reconciliation_failed and is never run again'] : [`${looks} verdicts in a row, none dead (at most ${max}): a failed probe is never death, so it goes to the operator, and its session stays held`],
+          reasons: dead ? ['not the operator\'s: it is positively gone, so it fails and is never run again'] : [operator],
         },
       ],
       decider: RECONCILE_RULE,
-      outcome: { option: dead ? 'dead' : 'operator', detail: { agentRun: row.run_id, worker: row.worker, verdict: liveness.verdict, rule: `${LIVENESS_RULE.id}@${LIVENESS_RULE.version}`, looks, ...this.bounds() } },
+      outcome: {
+        option: dead ? 'dead' : 'operator',
+        detail: { agentRun: row.run_id, worker: row.worker, verdict: liveness.verdict, rule: `${LIVENESS_RULE.id}@${LIVENESS_RULE.version}`, looks, ...this.bounds(), ...(cause === 'cancel' ? { cause } : {}) },
+      },
       deterministic: true,
     }, { producer: { type: 'system', ref: 'agent-workers' }, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), classification: row.classification as Classification }).id as ContentId
+  }
+
+  /**
+   * Tell the event log that a run ended without being known to be gone (`agent-workers.run.unknown`):
+   * what it holds stays held until the operator frees it. Appended after the run's state is committed;
+   * one that cannot be appended is logged, and the run's state is the fact.
+   */
+  private toldUnknown(row: RunRow, verdict: string, looks: number, decision: ContentId, cause: 'holder' | 'cancel'): void {
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: UNKNOWN_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), decision,
+        data: { agentRun: row.run_id, worker: row.worker, verdict, looks, cause, rule: `${LIVENESS_RULE.id}@${LIVENESS_RULE.version}` },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: that ${row.run_id} ended not known to be gone was not appended: ${(error as Error).message}`)
+    }
   }
 
   /**
@@ -1185,9 +1418,9 @@ export class AgentWorkers extends Service {
     if (!latest) return undefined
     if (latest.status !== 'failed' && latest.status !== 'completed') return `its latest run ${latest.run_id} has not finished (${latest.status}), and one native session is driven by one run at a time`
     // Any run of it that ended without being known to be gone, the latest or one a later run was refused after.
-    const alive = db.prepare("SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND liveness_decision IS NOT NULL AND COALESCE(liveness_verdict, '') != 'dead' LIMIT 1")
+    const alive = db.prepare(`SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND ${notKnownGone('')} LIMIT 1`)
       .get(sessionId) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
-    if (alive) return `its run ${alive.run_id} ended without being known to be gone (liveness ${alive.liveness_verdict ?? 'unknown'}, decision ${alive.liveness_decision}), so its agent may still be running`
+    if (alive) return `its run ${alive.run_id} ended without being known to be gone (liveness ${alive.liveness_verdict ?? 'unknown'}, decision ${alive.liveness_decision}), so its agent may still be running; the operator frees it once its agent is gone (system free ${alive.run_id} --agent-gone)`
     if (latest.status === 'completed') return undefined
     const request = this.deferredOn(latest)
     if (!request) return undefined
@@ -1326,8 +1559,9 @@ export class AgentWorkers extends Service {
           const decision = this.reconciled(row, liveness, looks)
           this.fail(row, new ProviderError('reconciliation_failed', liveness.verdict === 'dead'
             ? `${row.worker} was running this task when its holder stopped, and it is gone (liveness ${liveness.verdict}, decision ${decision})${row.native_handle ? `; native session ${row.native_handle}` : ''}; it is not run again automatically`
-            : `${row.worker} was running this task when its holder stopped, and after ${looks} looks it is not known to be gone (liveness ${liveness.verdict}: ${liveness.reasons.join('; ')}; decision ${decision}); it is not declared dead, so its session stays held, and the operator decides${row.native_handle ? ` (native session ${row.native_handle})` : ''}`),
+            : `${row.worker} was running this task when its holder stopped, and after ${looks} looks it is not known to be gone (liveness ${liveness.verdict}: ${liveness.reasons.join('; ')}; decision ${decision}); it is not declared dead, so its session stays held, and the operator decides${row.native_handle ? ` (native session ${row.native_handle})` : ''}: system free ${row.run_id} --agent-gone, once its agent is gone`),
           current, { liveness_looks: looks, liveness_verdict: liveness.verdict, liveness_decision: decision })
+          if (liveness.verdict !== 'dead') this.toldUnknown(row, liveness.verdict, looks, decision, 'holder')
           // Its usage is not invented: it comes from the agent's transcript, reconciled later. Until
           // then the ledger counts none of it, which is recorded (docs/design/resources.md).
           if (row.reservation_id) {
@@ -1601,7 +1835,7 @@ export class AgentWorkers extends Service {
    * would drive: its session, or, for a Worker with a worktree per run, its workflow run's worktree.
    */
   private notKnownGone(row: RunRow, worker: AgentWorkerConfig): { run_id: string; liveness_verdict: string | null; liveness_decision: string; why: string } | undefined {
-    const unknown = "run_id != ? AND liveness_decision IS NOT NULL AND COALESCE(liveness_verdict, '') != 'dead'"
+    const unknown = `run_id != ? AND ${notKnownGone('')}`
     const db = this.ctx.store.db
     const session = row.session_id
       ? db.prepare(`SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND ${unknown} LIMIT 1`).get(row.session_id, row.run_id) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
@@ -1961,8 +2195,26 @@ function execution(row: RunRow): WorkerExecution {
     id: row.run_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: [row.egress_decision, row.setup_decision, row.budget_decision, row.liveness_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
+    decisions: [row.egress_decision, row.setup_decision, row.budget_decision, row.liveness_decision, row.liveness_freed].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
   }
+}
+
+/** A probe as a reason reads it: `present`, or its state and why. */
+function describeProbe(probe: ProcessProbe): string {
+  return 'why' in probe ? `${probe.state} (${probe.why})` : probe.state
+}
+
+/**
+ * What freeing a run did: the operator's decision, what it held that is free now (none when it was
+ * freed already), and each worktree of its workflow run, removed or kept, and why.
+ */
+export interface FreeOutcome {
+  agentRun: string
+  worker: string
+  decision: ContentId
+  again: boolean
+  freed: string[]
+  worktrees: WorktreeRelease[]
 }
 
 /** A stored JSON column's value, or undefined when it holds nothing readable. */

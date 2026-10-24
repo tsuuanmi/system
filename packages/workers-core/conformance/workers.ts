@@ -256,6 +256,52 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('lists the runs whose liveness needs a look from every source that tells it, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.liveness !== 'function') return
+        const run = (execution: string, state: 'stalled' | 'looking' | 'unknown', since: string) => ({
+          execution, worker: `w:${execution}`, state, since, reasons: ['the agent process: unknown (never reported)'], holds: [`session ses_${execution}`], action: 'confirm its agent is gone, then free it',
+          ...(execution === 'a1' ? { runId: 'run_1' } : {}),
+        })
+        ctx.workers.register(source('quiet', [worker('w:q')]))
+        ctx.workers.register(source('one', [worker('w:a')], {
+          liveness: async (query) => {
+            const runs = [run('a1', 'unknown', '2026-10-24T01:00:00Z'), run('a2', 'stalled', '2026-10-24T03:00:00Z')].filter((r) => (!query?.runId || r.runId === query.runId) && (!query?.execution || r.execution === query.execution))
+            return { runs, counts: { unknown: runs.filter((r) => r.state === 'unknown').length, looking: 0, stalled: runs.filter((r) => r.state === 'stalled').length } }
+          },
+        }))
+        const asked: unknown[] = []
+        ctx.workers.register(source('two', [worker('w:b')], {
+          liveness: async (query) => {
+            asked.push(query)
+            return query?.runId ? { runs: [], counts: { unknown: 0, looking: 0, stalled: 0 } } : { runs: [run('b1', 'looking', '2026-10-24T02:00:00Z')], counts: { unknown: 0, looking: 1, stalled: 0 } }
+          },
+        }))
+        const all = await ctx.workers.liveness()
+        // Each run with its source, the latest first; the counts across every source.
+        expect(all.runs.map((r) => [r.source, r.execution, r.state])).toEqual([['one', 'a2', 'stalled'], ['two', 'b1', 'looking'], ['one', 'a1', 'unknown']])
+        expect(all.counts).toEqual({ unknown: 1, looking: 1, stalled: 1 })
+        expect(all.unread).toEqual([])
+        // The query reaches every source.
+        const ofRun = await ctx.workers.liveness({ runId: 'run_1' })
+        expect(ofRun.runs.map((r) => r.execution)).toEqual(['a1'])
+        expect(ofRun.counts).toEqual({ unknown: 1, looking: 0, stalled: 0 })
+        expect(asked.at(-1)).toEqual({ runId: 'run_1' })
+        ctx.workers.register(source('broken', [worker('w:c')], {
+          liveness: async () => {
+            throw new Error('the store failed')
+          },
+        }))
+        const told = await ctx.workers.liveness()
+        expect(told.unread).toEqual([{ source: 'broken', detail: 'the store failed' }])
+        expect(told.counts).toEqual({ unknown: 1, looking: 1, stalled: 1 })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('releases sessions at every source that owns some of them, and counts what became due', async () => {
       const { ctx, dispose } = await boot()
       try {

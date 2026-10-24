@@ -73,6 +73,12 @@ export function renderReport(report: Report): string {
     const allowed = [at.threshold.maxInterruptionsPerDay !== undefined ? plural(at.threshold.maxInterruptionsPerDay, 'interruption') : '', at.threshold.maxBatchesPerDay !== undefined ? plural(at.threshold.maxBatchesPerDay, 'batch', 'batches') : ''].filter(Boolean).join(' and ')
     lines.push(`- Charter allows ${allowed} a day: ${at.daysOver ? `over it on ${plural(at.daysOver, 'day')} (${at.days.filter((d) => d.over).map((d) => d.date).join(', ')})` : 'never over it'}.`)
   }
+  if (at.liveness) {
+    const l = at.liveness
+    lines.push(`- Agent runs: ${whole(l.stalled)} stalled, ${whole(l.unknown)} ended without being known to be gone (their session and worktree held until you free them), ${whole(l.freed)} freed by you.`)
+    const held = l.held.map((h) => `${h.agentRun} on ${h.worker}${h.runId ? ` (run ${h.runId})` : ''}`)
+    if (held.length) lines.push(`- Still held: ${held.join(', ')}${l.heldOmitted ? ` and ${whole(l.heldOmitted)} more` : ''}; system explain <run> says why, and system free <run> --agent-gone frees one once its agent is gone.`)
+  }
 
   const u = report.usage
   lines.push('', '## Resources', '')

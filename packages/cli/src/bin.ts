@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -31,6 +31,11 @@ const USAGE = `Usage: system <command>
                             break a team's tie: the deciding vote, bound to that exact tie decision
   result <runId>            wait for a run and print its answer (also: watch <runId>)
   stop <runId> [reason]     stop a run: running work is cancelled, nothing is resent
+  free <agentRun> --agent-gone [--commit-worktree] [note...]
+                            free the session and worktree an agent run holds because it ended with its liveness
+                            unknown, on your word that its agent is gone (recorded as your decision; refused while
+                            its liveness is looked at or its agent is present); a dirty worktree stays unless
+                            --commit-worktree commits its changes on its branch; the branch stays
   continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
   delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
   supersede <runId> <nodeId> (<text...> | -)
@@ -40,8 +45,10 @@ const USAGE = `Usage: system <command>
   report [--project <id>] [--since <time> | --days <n>] [--until <time>] [--json]
                             the baseline report, from recorded data only: progress, results, what asked for you,
                             usage, cost per accepted result; by default the last 7 days (the weekly investor report)
-  explain [--json] <runId|artifact>
+  explain [--json] <runId|artifact|agentRun>
                             the decision chain behind a run (egress, tier, route, acceptance), every attempt's
+                            decisions, and its executions whose liveness needs a look (the verdict, its looks,
+                            why, what each holds, what to do); an agent run that status lists, by its id
   artifact [--json] [--offset <n>] [--max <n>] <id>
                             an artifact's header (kind, classification, run, node, inputs) and a window of its
                             body, e.g. a rejected attempt's answer from explain (operator; may be local-private)
@@ -86,7 +93,7 @@ const USAGE = `Usage: system <command>
   events [--run <id>] [--node <id>] [--session <id>] [--turn <id>] [--type <t>] [--since <time>]
          [--after <seq>] [--limit <n>] [--json]
                             the event log in order (operator); --after the printed next for more
-  health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
+  health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts, run liveness,
                             Workers, UI drift, uncounted usage, notifications) and what to do; exit 0 healthy, 1 degraded,
                             2 down or not running
   roster [--json]           every Worker: its account (and its enrolled or quarantined state), role, tier, quota class,
@@ -358,9 +365,18 @@ async function main(argv: string[]): Promise<number> {
       if (!id) break
       const outcome = await callTool('explain', { id })
       if (outcome.isError) throw new Error(outcome.text)
-      const explained = outcome.structured as unknown as Parameters<typeof formatExplanation>[0]
-      // A run prints as its decision chain; any other artifact as its input tree; --json as it is.
-      console.log(!rest.includes('--json') && Array.isArray(explained.nodes) ? formatExplanation(explained).join('\n') : JSON.stringify(outcome.structured, null, 2))
+      const explained = outcome.structured as unknown as Parameters<typeof formatExplanation>[0] & { execution?: string }
+      // A run prints as its decision chain; an execution as its liveness; any other artifact as its input tree; --json as it is.
+      const text = rest.includes('--json') ? undefined
+        : Array.isArray(explained.nodes) ? formatExplanation(explained)
+          : explained.execution && Array.isArray(explained.liveness) ? formatLiveness(explained.liveness, explained.livenessUnread) : undefined
+      console.log(text ? text.join('\n') : JSON.stringify(outcome.structured, null, 2))
+      return 0
+    }
+    case 'free': {
+      const outcome = await callTool('agent_run_free', parseFree(rest))
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(formatFreed(outcome.structured as unknown as Freed).join('\n'))
       return 0
     }
     case 'model': {

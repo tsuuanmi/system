@@ -38,6 +38,11 @@ export interface HealthSources {
    * a source that was silent or failed is not counted there, and a route then saw none of its Workers.
    */
   workerSources?: () => Array<{ source: string; state: 'described' | 'silent' | 'failed'; at: string; detail?: string }>
+  /**
+   * The runs whose liveness needs the operator's look (`ctx.workers.liveness()`, PROP-0013): stalled,
+   * being looked at, or ended without being known to be gone; and each source that could not tell.
+   */
+  liveness?: () => Promise<LivenessRead>
   /** Events of `type` committed since `sinceIso`. */
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
   /** Plugins of the composition that failed to activate or wait for a service no one supplies. */
@@ -77,6 +82,16 @@ export interface HealthSources {
   driftWindowMs: number
   now?: () => number
 }
+
+/** What `ctx.workers.liveness()` tells, as health and `status` read it. */
+export interface LivenessRead {
+  runs: Array<{ source: string; execution: string; worker: string; state: 'stalled' | 'looking' | 'unknown'; since: string; runId?: string | undefined; sessionId?: string | undefined }>
+  counts: Record<'stalled' | 'looking' | 'unknown', number>
+  unread: Array<{ source: string; detail: string }>
+}
+
+/** Runs one state's line of the `liveness` check names; the rest are counted. */
+const LIVENESS_NAMED = 5
 
 const RANK: Record<HealthState, number> = { ok: 0, degraded: 1, down: 2 }
 
@@ -230,6 +245,30 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         return { name: 'workers', state: 'degraded', detail: [...(waiting.length ? [`cannot take work: ${cannot} (system explain shows why)`] : [`${workers.length} available`]), ...(unheard.length ? [unheardNote] : [])].join('; ') }
       }
       return ok('workers', `${workers.length} available`)
+    }))
+  }
+
+  // A run that ended without being known to be gone holds its session and worktree until the operator
+  // frees it (PROP-0013): degraded while one does, or while a source cannot tell (INV-2). A stalled run
+  // and one still being looked at are named, and need nothing yet.
+  const liveness = sources.liveness
+  if (liveness) {
+    checks.push(await guarded('liveness', async () => {
+      const told = await liveness()
+      const line = (state: 'stalled' | 'looking' | 'unknown', words: string): string | undefined => {
+        if (!told.counts[state]) return undefined
+        const named = told.runs.filter((r) => r.state === state).slice(0, LIVENESS_NAMED).map((r) => `${r.execution} (${r.worker})`)
+        const more = told.counts[state] - named.length
+        return `${told.counts[state]} ${words}: ${named.join(', ')}${more > 0 ? ` and ${more} more` : ''}`
+      }
+      const held = line('unknown', 'ended without being known to be gone, their session and worktree held')
+      const others = [line('looking', 'being looked at after their holder stopped'), line('stalled', 'stalled (nothing is sent to them; their deadline ends them)')].filter(Boolean)
+      const unread = told.unread.map((u) => `source ${u.source} cannot tell (${u.detail})`)
+      const runbook = '(docs/operations/runbooks.md#a-runs-liveness-is-unknown)'
+      if (held || unread.length) {
+        return { name: 'liveness', state: 'degraded', detail: `${[held, ...unread, ...others].filter(Boolean).join('; ')}. system explain <run> says why and what to do; free a run once its agent is gone: system free <run> --agent-gone ${runbook}` }
+      }
+      return ok('liveness', others.length ? others.join('; ') : 'no run is stalled, being looked at, or held for want of a verdict')
     }))
   }
 

@@ -2254,6 +2254,55 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
 - **Disk:** each worktree is a full checkout, kept a week by default. Lower
   `worktreeRetentionHours` when disk is short.
 
+## A run's liveness is unknown
+
+Seen as `system health` showing `liveness  degraded  1 ended without being known to be gone, their
+session and worktree held: arun_… (agent:…)`, as `liveness` in MCP `status` (the operator's), as a
+step failed `reconciliation_failed` whose message ends `the operator decides … system free <run>
+--agent-gone`, under **Doing now** on the Workers tab and in `system roster` (`Held for …`), and
+in the report's attention section (`Still held: …`).
+
+An agent run was running when its holder stopped (a restart, a crash, a lost lease), or you stopped
+it while no process held it, and `system` could not show that its agent is gone: its process was
+never reported (Codex, ACP, and the Antigravity CLI report none), ran on another host, or could not
+be read ([restart and liveness](../design/agent-runtimes.md#restart-and-liveness)). A failed check
+is never death, so the run ended for you to judge, and what it ran in stays held: its session takes
+no input, no run starts in its workflow run's worktree, and the retention sweep keeps that worktree
+(INV-15). Later work starts fresh sessions. Nothing is lost; the agent may still be writing.
+
+1. **Read it.** `system explain <arun_…>` (or `system explain <workflow run>`) prints its verdict, how
+   many looks it got, each signal (the holder's process and the agent process, with their pids, and
+   the latest activity), what it holds, and what to do; `system explain <decision>` gives the
+   `reconciliation` decision whole.
+2. **Make sure its agent is gone.** On the host the holder names: `ps -o pid,lstart,args -p <pid>`
+   for each pid among the signals; for a runtime that reports no process, look for that runtime's
+   process working in the run's worktree or workspace (`ps -eo pid,lstart,args`, and
+   `ls -l /proc/<pid>/cwd`). A process that is still there is the agent, and no deadline of
+   `system` holds it once its holder is gone: let it finish or stop it yourself, then come back. A
+   host rebooted since the run started holds none of it.
+3. **Free it:** `system free <arun_…> --agent-gone [why…]`. Your word that the agent is gone is
+   recorded first, as your `reconciliation` decision (`operator.free`) with the signals as the host
+   shows them then and what happens to each worktree; the run's session is free again, and its
+   workflow run may run in its worktree again. It is refused, changing nothing, while:
+   - its liveness is still being looked at, or another started run of the same session or worktree
+     has not finished: wait for it (a few minutes) and try again;
+   - its holder or its agent process is present on this host: it is not gone (step 2);
+   - it holds nothing (it completed, was found gone, or ended with its agent stopped by its holder).
+4. **Its worktree** (a Worker with `worktreePerRun`): removed at once when it holds nothing
+   uncommitted and nothing else of its workflow run is unfinished or held; the branch
+   `system/run/<id>` always stays. One with uncommitted changes stays, and the output says so: read
+   them first (`git -C <worktree> status`, `diff HEAD`); they may be the agent's half-done work. To
+   keep them on the branch and remove the worktree now, run `system free <arun_…> --agent-gone
+   --commit-worktree` (it may be run again on a freed run, for its worktree only); otherwise the
+   retention sweep commits them and removes it after `worktreeRetentionHours`.
+
+A run **stalled** (`liveness  ok  1 stalled …`) is running, its agent present and quiet for
+`stallSeconds`: nothing is sent to it, and its own deadline or turn limit ends it. To end it now,
+`system stop <workflow run>`. A run **being looked at** (`being looked at after their holder
+stopped`) needs nothing yet: it fails as gone on a `dead` verdict, or reaches you as above after
+`maxUnknownVerdicts` looks. Stopping a run that no process holds gives it a verdict too: found gone,
+it simply ends; otherwise it ends `aborted` and is held as above.
+
 ## Set up a run's worktree
 
 A new worktree holds what git tracks, so no dependencies, and a Worker's commands have no network:

@@ -115,11 +115,12 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), the roster route (operator only, valid against
-`mcp-roster@1.1`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
-the queue (labels by effect, a batch verdict, a refused one as an alert), a press a refresh lands
-on that still counts, a verdict not recorded that stays as an alert through refreshes until
-dismissed, and the Workers tab (counts, cards by status, a description or a derived line marked,
-the step in one sentence).
+`mcp-roster@1.2`, labels shown, a Worker's runs whose liveness needs a look, unknown without a
+Worker registry), and, with a browser, the runs, the queue (labels by effect, a batch verdict, a
+refused one as an alert), a press a refresh lands on that still counts, a verdict not recorded
+that stays as an alert through refreshes until dismissed, and the Workers tab (counts, cards by
+status, a description or a derived line marked, the step in one sentence, and under Doing now a
+run held for want of a verdict with what frees it and a link to its run).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its

@@ -4,11 +4,11 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { outline, reply } from '@tsuuanmi/system-gateway-core'
-import type { Classification, Tier } from '@tsuuanmi/system-workers-core'
+import type { Classification, LivenessQuery, Tier } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import type { Workflow } from './index.ts'
 import { DEFAULT_TEMPLATES } from './spec.ts'
-import type { RunView, TaskClaim } from './types.ts'
+import type { Explanation, RunView, TaskClaim } from './types.ts'
 import { usageView } from './views.ts'
 
 /**
@@ -235,11 +235,35 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('explain', {
     scope: 'client',
-    description: 'The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.',
+    description: 'The decision chain behind a run (egress, tier, route, acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do), or the inputs of any artifact id, or such an execution by its id.',
     inputSchema: { id: zod.string().max(200) },
   }, async (args) => {
     const id = String(args.id)
-    const explained = w.explain(id) ?? ctx.artifacts.explain(id)
-    return explained ? json(explained) : failure(new Error(`nothing is known about ${id}`))
+    const run = w.explain(id)
+    if (run) {
+      const told = await livenessOf(ctx, { runId: id })
+      return json(told?.liveness.length || told?.livenessUnread ? { ...run, ...told } : run)
+    }
+    const artifact = ctx.artifacts.explain(id)
+    if (artifact) return json(artifact)
+    // An execution a Worker source tells of (an agent run whose liveness is unknown, say), by its own id.
+    const execution = await livenessOf(ctx, { execution: id })
+    return execution?.liveness.length ? json({ execution: id, ...execution }) : failure(new Error(`nothing is known about ${id}`))
   })
+}
+
+/**
+ * The executions whose liveness needs a look (PROP-0013), from `ctx.workers.liveness` where its
+ * provider offers it: a run's, or one execution's. A source that could not tell is named
+ * (`livenessUnread`), never read as having none (INV-2); undefined with no `liveness` to ask.
+ */
+async function livenessOf(ctx: Context, query: LivenessQuery): Promise<Pick<Explanation, 'liveness' | 'livenessUnread'> & { liveness: NonNullable<Explanation['liveness']> } | undefined> {
+  const workers = ctx.get('workers')
+  if (!workers?.liveness) return undefined
+  try {
+    const told = await workers.liveness(query)
+    return { liveness: told.runs, ...(told.unread.length ? { livenessUnread: told.unread } : {}) }
+  } catch (error) {
+    return { liveness: [], livenessUnread: [{ source: 'workers', detail: (error as Error).message.slice(0, 200) }] }
+  }
 }

@@ -9,7 +9,10 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   may name the Workers a session must stay on (`affinity`), and why a session
   takes no input now (`held`, PROP-0013: asked of every source, the first
   reason given wins, and a source whose `held` throws cannot show the session
-  free). The router
+  free), and its runs whose liveness needs the operator's look (`liveness`,
+  PROP-0013: every source that tells it is asked, the runs merged latest first,
+  at most 64, the counts summed, and a source that throws named in `unread`,
+  never read as having none). The router
   returns the admitted Worker with its source's name; `source(name)` finds the
   source. Three sources register today: website Workers (`ctx.turns`, one Worker
   per account and mapped tier), agent Workers
