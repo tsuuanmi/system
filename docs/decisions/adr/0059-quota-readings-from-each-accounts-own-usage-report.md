@@ -1,7 +1,9 @@
 # ADR-0059: Each account's quota is read from its runtime's own usage report
 
-- **Status:** Proposed
-- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator, D55: `get_usage` read only on the
+  Claude Code versions whose format was checked, `limitReadSeconds` 600 by default, and Claude's
+  five-hour and seven-day windows mapped)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0043](0043-antigravity-cli-workers-gated-on-a-version-verified-live.md),
   [ADR-0051](0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md),
