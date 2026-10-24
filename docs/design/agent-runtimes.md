@@ -412,8 +412,17 @@ the tree the previous attempt's writing step left. One change at a time per repo
   given the tree, and the commit (`carried_commit`) once it is. A carry asked again finds its work
   done (`carried: false`). A worktree cut and not given the tree is never run in (its first agent
   run fails unsent as `config_error`); a carry asked again gives it the tree, or, when the tree can
-  no longer be given, puts it back to its base, a fresh worktree a run may use. One that cannot be
-  put back stays, marked, for the operator.
+  no longer be given, puts it back to its base, a fresh worktree a run may use. What such a worktree
+  holds is no run's work (a crash between the cut and the reading leaves its index empty, every
+  file of its base staged as deleted), so the retention and the operator's removal put it back to
+  its base before they retire it, and nothing of it is ever committed on its branch. Put back means
+  its index and files are its HEAD, the base it was cut at, and then it holds nothing else; one that
+  is not intact, or still holds files its base does not (what a reading cut short wrote), stays,
+  marked, for the operator. A branch that a retention before this rule committed such a tree on
+  (its tip the system's `system: keep the uncommitted work of workflow run <runId>` commit, the
+  worktree's row still marked) is never added again: the run's agent fails `config_error`, and the
+  branch is left for the operator. The crash suite kills the daemon between the cut and the reading
+  ([carry.crash.ts](../../packages/system-bundle/tests/crash/carry.crash.ts)).
 
 Never a force, a reset of a branch, a deletion, or a push. The earlier worktree is clean afterwards,
 and the retention removes it as any other; its branch keeps the carry commit, which is never merged.

@@ -422,8 +422,14 @@ The **`agents` Worker source**: agent runtimes as Workers
     is recorded last (`carried_commit`). A worktree cut and not yet given the tree (a crash, or a
     failure there) is never run in (`acquire` refuses it, `config_error`); the carry asked again
     gives it the tree, or, when the tree can no longer be given, puts it back to the base, a fresh
-    worktree; one that cannot be put back stays marked for the operator. A carry asked again after
-    it was done answers `carried: false`. Never a force, a reset of a branch, a deletion, or a push.
+    worktree. The retention and the operator's removal put it back too before they retire it, so
+    what it holds (its index empty, every file of its base staged as deleted) is never committed;
+    put back is `read-tree -u --reset HEAD`, then nothing left over, and one that is not intact or
+    still holds files its base does not (a reading cut short) stays marked, nothing committed, for
+    the operator (`failure` says why). `acquire` refuses to add such a worktree again from a branch
+    whose tip is an earlier retention's commit of that tree (by the system, `system: keep the
+    uncommitted work of workflow run <runId>`). A carry asked again after it was done answers
+    `carried: false`. Never a force, a reset of a branch, a deletion, or a push.
 - **Metering** ([resources](../../../docs/design/resources.md)), for a Worker
   with a `pool`, through `ctx.resources` (optional: read when present, never
   injected):

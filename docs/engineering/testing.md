@@ -114,6 +114,11 @@ scenario of the suite, on the same provider, does not stay.
     enrollment slot's allocation and its verification leaves the slot `enrolled`,
     never `ready`, until the operator verifies it
     ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
+    A daemon killed between a carried worktree's `git worktree add --no-checkout` and the reading
+    of the earlier tree into it (a `git` on the harness's PATH whose `read-tree` never returns)
+    leaves that worktree marked, no agent run in it; past the retention it is put back to its base
+    and removed with nothing committed on its branch, and the run's agent later works on the base's
+    files ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
 - **Architecture rules**
   ([`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
   Capability-routed code names no tools (INV-11). Native protocol objects stay
