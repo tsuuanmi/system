@@ -676,7 +676,9 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
   })
 })
 
-describe('a Codex Worker under the bundle\'s default policy, end to end (docs/design/agent-runtimes.md#tool-gate)', () => {
+// The gate hook runs as a real Node process for each tool call, as Codex runs it, and the probe runs
+// it first: 4.0 to 4.7 s of the 5 s default in loaded runs of the suite.
+describe('a Codex Worker under the bundle\'s default policy, end to end (docs/design/agent-runtimes.md#tool-gate)', { timeout: 30_000 }, () => {
   const root = mkdtempSync(join(tmpdir(), 'cxw-'))
   afterAll(() => rmSync(root, { recursive: true, force: true }))
 
