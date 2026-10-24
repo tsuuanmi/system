@@ -338,13 +338,15 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
 }
 
 /**
- * What the load would refuse in this row's Workers, before a host starts on it (`system check`):
- * the first problem {@link configuredWorkers} finds, or none. What only the host can tell (a runtime,
- * a sign-in, a repository) is checked when the Workers are probed.
+ * What the load would refuse in this row's Workers and their worktree setups, before a host starts
+ * on it (`system check`): the first problem {@link configuredWorkers} or {@link loadSetups} finds, or
+ * none. What only the host can tell (a runtime, a sign-in, a repository) is checked when the Workers
+ * are probed.
  */
 export function checkConfig(config: Partial<Config> = {}): string[] {
   try {
-    configuredWorkers(config)
+    const { workers } = configuredWorkers(config)
+    loadSetups(config.worktreeSetup, [...workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     return []
   } catch (error) {
     return [(error as Error).message]

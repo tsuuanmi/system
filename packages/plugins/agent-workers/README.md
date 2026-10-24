@@ -49,8 +49,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   name one of them, never a step that names none; unset, it takes any work. A
   malformed or repeated kind, an empty list, or kinds on a review member (whose
   steps name no kind) is refused at load (`config_error`). `checkConfig(config)`
-  makes the same checks of the row's Workers and roles without a host, so
-  `system check` names such a problem before a restart.
+  makes the same checks of the row's Workers and roles, and of its `worktreeSetup`
+  entries (ADR-0058), without a host, so `system check` names such a problem
+  before a restart.
 - **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
   [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
   - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,

@@ -192,7 +192,7 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(() => deriveWorkers([ROLE('member', { reviewMember: true, kinds: ['code'] })], [], [])).toThrow(/not for a review member/)
   })
 
-  it('checks a row as its load does, before a host starts on it (system check): the operations examples pass, a disagreement on worktreePerRun or a bad kind does not (D36, ADR-0057)', () => {
+  it('checks a row as its load does, before a host starts on it (system check): the operations examples pass, a disagreement on worktreePerRun, a bad kind, or a setup no worktree runs does not (D36, ADR-0057, ADR-0058)', () => {
     const rowOf = (file: string): Record<string, unknown> => {
       const rows = parseYaml(readFileSync(fileURLToPath(new URL(`../../../../docs/operations/examples/${file}`, import.meta.url)), 'utf8')) as Array<{ id: string; config: Record<string, unknown> }>
       return rows.find((r) => r.id === 'agent-workers')!.config
@@ -210,6 +210,9 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(checkConfig({ workers: system.map((w) => (w.id === 'codex-review' ? { ...w, worktreePerRun: false } : w)) })).toEqual([expect.stringMatching(/share the workspace \/home\/tan\/workspaces\/system, and only one of them works in a worktree per run/)])
     expect(checkConfig({ workers: [{ ...system[0]!, kinds: ['Code'] }] })).toEqual([expect.stringMatching(/kinds "Code" is not a kind of work/)])
     expect(checkConfig({ roles: [ROLE('code', { kinds: [] })], assignments: [{ account: ACC1, roles: ['code'] }] })).toEqual([expect.stringMatching(/kinds must list 1 to 16/)])
+    // A worktree setup as its load checks it (ADR-0058): a repository's, of a Worker with worktreePerRun.
+    expect(checkConfig({ workers: system, worktreeSetup: [{ repository: '/home/tan/workspaces/system', commands: ['pnpm install --offline'] }] })).toEqual([])
+    expect(checkConfig({ workers: system, worktreeSetup: [{ repository: '/home/tan/workspaces/other', commands: ['pnpm install --offline'] }] })).toEqual([expect.stringMatching(/is the workspace of no Worker with worktreePerRun, so its setup would never run/)])
   })
 
   it('refuses both shapes in one row, and per-account settings beside hand-named Workers, at load', async () => {
