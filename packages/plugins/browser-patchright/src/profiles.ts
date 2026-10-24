@@ -21,7 +21,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { OWNED_PROFILE_SWITCH, type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
 import type { BrowserContext, Page } from 'patchright-core'
-import { abortable, closeWithin, newPage } from './async.ts'
+import { abortable, closePageWithin, closeWithin, newPage } from './async.ts'
 
 /** How long a closed profile's Chrome may take to exit before it is stopped. */
 const EXIT_WAIT_MS = 10_000
@@ -273,7 +273,7 @@ export class ProfileContexts {
       const kept = keep === undefined ? undefined : held.kept.get(keep)
       if (kept) held.kept.delete(keep!)
       const fresh = kept !== undefined && !kept.page.isClosed() && Date.now() - kept.at <= MAX_KEPT_IDLE_MS
-      if (kept && !fresh) await kept.page.close().catch(() => undefined)
+      if (kept && !fresh) await closePageWithin(kept.page)
       if (kept && fresh) {
         page = kept.page
         reused = true
@@ -301,7 +301,7 @@ export class ProfileContexts {
       signal?.removeEventListener('abort', onAbort)
       page.off('close', onClose)
       if (keepIt && keep !== undefined && !page.isClosed() && this.held.get(account) === held) await this.keepTab(held, keep, page)
-      else await page.close().catch(() => undefined)
+      else await closePageWithin(page)
       this.release(account, held)
     }
     const onClose = (): void => void end(false)
@@ -315,7 +315,7 @@ export class ProfileContexts {
     const tab = held?.kept.get(keep)
     if (!held || !tab) return
     held.kept.delete(keep)
-    await tab.page.close().catch(() => undefined)
+    await closePageWithin(tab.page)
   }
 
   /** Keep `page` as the session's tab, least recently used last out; past the bound, the oldest closes. */
@@ -338,7 +338,7 @@ export class ProfileContexts {
       held.kept.delete(oldest)
       closing.push(tab.page)
     }
-    await Promise.all(closing.map((tab) => tab.close().catch(() => undefined)))
+    await Promise.all(closing.map((tab) => closePageWithin(tab)))
   }
 
   /**
@@ -355,7 +355,7 @@ export class ProfileContexts {
         try {
           return await run(page, held.context)
         } finally {
-          await page.close().catch(() => undefined)
+          await closePageWithin(page)
         }
       } finally {
         this.release(account, held)

@@ -200,6 +200,22 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(pool(ctx).profileStates()).toEqual([])
     }, 90_000)
 
+    it('ends a turn whose page close the browser never confirms within the bound, freeing its page; the tab closes with its context (INV-9, CI 2026-10-24)', async () => {
+      const ctx = await boot()
+      const dir = await signedInProfile()
+      const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
+      // As Chrome does with a close that lands as the page's navigation commits: acknowledged, then dropped.
+      turn.page.close = () => new Promise<void>(() => undefined)
+      const started = Date.now()
+      await turn.close()
+      expect(Date.now() - started).toBeLessThan(10_000)
+      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 0, kept: 0, reserved: false }])
+      expect(turn.page.isClosed()).toBe(false)
+      await pool(ctx).close('acct')
+      expect(turn.page.isClosed()).toBe(true)
+      expect(profileUsers(dir)).toEqual([])
+    }, 90_000)
+
     it('reserves the profile for the operator: refused while a turn runs; once reserved, turns fail as overloaded until every reservation is released', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
