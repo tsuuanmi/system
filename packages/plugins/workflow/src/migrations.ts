@@ -104,4 +104,9 @@ export const MIGRATIONS = [{
   version: 18,
   sql: `ALTER TABLE workflow_tasks ADD COLUMN landing TEXT;
   UPDATE workflow_tasks SET landing = json_object('state', 'none', 'reason', 'reported before landing existed (ADR-0060): merge its branch by hand', 'at', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE phase = 'reported';`,
+}, {
+  // Starting from the previous attempt's work (docs/design/workflow-engine.md#starting-from-the-previous-attempts-work,
+  // ADR-0061): whether the run's worktree holds it, as JSON `TaskCarry`. A run admitted before it carries nothing.
+  version: 19,
+  sql: 'ALTER TABLE workflow_tasks ADD COLUMN carry TEXT;',
 }]

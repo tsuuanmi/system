@@ -28,6 +28,7 @@ import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
+import { TaskCarries } from './carries.ts'
 import { withdrawCalls } from './continuations.ts'
 import { TaskDigests } from './digests.ts'
 import { TaskLandings } from './landings.ts'
@@ -91,10 +92,13 @@ export class TaskRuns {
   readonly digests: TaskDigests
   /** The landings of the results the board accepted on a run's worktree. */
   readonly landings: TaskLandings
+  /** Whether each run starts from the work its task's previous attempt left. */
+  readonly carries: TaskCarries
 
   constructor(private readonly e: Engine) {
     this.digests = new TaskDigests(e)
     this.landings = new TaskLandings(e)
+    this.carries = new TaskCarries(e)
   }
 
   row(runId: string): TaskRow | undefined {
@@ -122,6 +126,7 @@ export class TaskRuns {
       ...(row.budget ? { budget: budgetView(JSON.parse(row.budget) as TaskBudget) } : {}),
       ...(row.question ? { question: JSON.parse(row.question) as TaskQuestion } : {}),
       ...(row.landing ? { landing: this.landings.view(row)! } : {}),
+      ...(row.carry ? { carry: this.carries.view(row)! } : {}),
     }
   }
 
@@ -202,12 +207,14 @@ export class TaskRuns {
     // before it; both settled before the task is taken, so a failure here claims nothing.
     const frame = await this.frameOf(board, task, project, classification)
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
+    // Whether its worktree starts from the work the previous attempt left, carried at its first turn (ADR-0061).
+    const carry = this.carries.plan(task, runId)
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
-      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}),
+      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}),
     }
     // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
     // and the claim it took lapses back to ready on its own.
@@ -579,10 +586,16 @@ export class TaskRuns {
       const resumed = await this.resume(row, board)
       if (resumed !== 'go') return resumed
     } else if (row.lost || this.renewals.has(runId)) {
-      return 'go'
+      return this.carried(runId)
     }
     // After a restart, the lease is renewed before anything runs: a lapse shows now, not later.
     if ((await this.renew(this.row(runId)!, board)) === 'unknown') return 'wait'
+    return this.carried(runId)
+  }
+
+  /** Before the run's first step: the work the previous attempt left is carried into its worktree, or not (./carries.ts); then it goes. */
+  private async carried(runId: string): Promise<'go'> {
+    await this.carries.settle(runId)
     return 'go'
   }
 

@@ -65,7 +65,9 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
   const parts = instructionsOf(node)
   const task = e.tasks.frame(run.run_id)
   const own = new Set(parts.pointers.map((p) => p.ref))
-  const extra = (task?.pointers ?? []).filter((p) => !own.has(p.ref)).slice(0, BRIEF_LIMITS.pointers - parts.pointers.length)
+  // A run whose worktree starts from the previous attempt's work says so first (ADR-0061).
+  const carried = task ? e.tasks.carries.pointer(run.run_id) : undefined
+  const extra = [...(carried ? [carried] : []), ...(task?.pointers ?? [])].filter((p) => !own.has(p.ref)).slice(0, BRIEF_LIMITS.pointers - parts.pointers.length)
   const bound = node.subject ? (JSON.parse(node.subject) as { subject?: { type: 'git-head'; ref: string; version: string } }).subject : undefined
   const handle = spec.session.sessionId ? e.ctx.workers.handle(spec.session.sessionId) : undefined
   return {
