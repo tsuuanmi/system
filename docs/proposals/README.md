@@ -92,6 +92,15 @@ accepted/implemented -> superseded
   required for personal plans, under which a limit makes an account's work wait instead of moving
   it to another account of that provider, website accounts included.
 
+- [PROP-0013: Feedback from work](0013-feedback-from-work.md), **proposed**. Three ways for a
+  board task's attempts to learn from the work, as facts the core acts on: a code-host observer
+  (`scm-<host>`, egress declared) that records a bound PR's CI checks, reviews, and conflicts by
+  conditional polling, bound to the head SHA, and briefs the next attempt with the actionable ones,
+  with landing (merge or apply) on a `merge` approval bound to the base and head SHAs; a completion
+  gate that runs the required checks at a Worker's stop boundary and feeds a failure back in the
+  same session, bounded and failing closed; and a liveness verdict under which a failed probe is
+  never death and no automation sends input to a session blocked on an approval.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
