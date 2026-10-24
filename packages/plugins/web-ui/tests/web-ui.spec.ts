@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { ApprovalRequest, Verdict, VerdictResult } from '@tsuuanmi/system-approvals-core'
-import { chromium } from 'patchright-core'
+import { type Browser, chromium, type Page } from 'patchright-core'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -70,6 +70,18 @@ class StubApprovals extends Service {
 }
 
 const AT = '2026-10-24T09:29:58.000Z'
+/** When the roster's pages are read: every time they show is on its day, so each reads as a clock time. */
+const NOW = '2026-10-24T09:30:00.000Z'
+/**
+ * A page whose clock stands at NOW, in UTC, with a 24-hour clock: what it says of a time is the same
+ * whenever and wherever the test runs (a reset past the host's midnight would read as another day).
+ */
+async function pinnedPage(browser: Browser): Promise<Page> {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-GB' })
+  const page = await context.newPage()
+  await page.clock.setFixedTime(NOW)
+  return page
+}
 /** A run whose step runs on worker:plus/standard now. */
 const STEP = { runId: 'run_xyz', template: 'review', status: 'running', specHash: 'sha256:00', createdAt: AT, updatedAt: AT, nodes: [{ nodeId: 'review:m1:propose', state: 'RUNNING', minTier: 'standard', attempt: 1, worker: 'worker:plus/standard' }] }
 /** A stand-in router for the roster: a website account's two tiers, one busy, one resting at its limit. */
@@ -122,7 +134,7 @@ class StubResources extends Service {
   constructor(ctx: Context) {
     super(ctx, 'resources')
   }
-  readonly at = Date.now()
+  readonly at = Date.parse(NOW)
   async pools() {
     const windows = [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }, { id: 'seven-day', kind: 'rolling', seconds: 604_800 }, { id: 'credit', kind: 'credit' }]
     const read = (window: (typeof windows)[number], extra: Record<string, unknown>) => ({ schema: 'limit-state@1.0', pool: 'plan/plus', account: 'plus', window, source: 'runtime-result', observedAt: new Date(this.at - 60_000).toISOString(), ...extra })
@@ -313,17 +325,17 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const { origin, token } = await boot({ roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
-    const page = await browser.newPage()
+    const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/#token=${token}`)
     await page.getByRole('link', { name: 'Workers' }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(new URL(page.url()).search).toBe('?view=workers')
     // The operator's words: free, and resting until a clock time.
-    expect(await page.getByLabel('Worker counts').innerText()).toMatch(/^1 working · 0 free · 1 resting \(the first until .+\) · 0 unavailable$/)
+    expect(await page.getByLabel('Worker counts').innerText()).toBe('1 working · 0 free · 1 resting (the first until 11:00) · 0 unavailable')
     // The account once, its roles in its header, its rest said once for both.
     const account = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
     expect(await account.getByRole('heading', { level: 3 }).innerText()).toBe('Chatgpt · Studio Plus: frontier, standard')
-    expect(await account.innerText()).toMatch(/Its account is resting until .+ \((in|.* ago)/)
+    expect(await account.innerText()).toContain('Its account is resting until 11:00 (in 2 h)')
     const busy = account.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
     expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('standard')
     const shown = await busy.innerText()
@@ -340,7 +352,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // A reason that blocks work stays visible: resting until when.
     const resting = account.getByRole('article', { name: 'Chatgpt · Studio Plus · frontier' })
     const rest = await resting.innerText()
-    expect(rest).toMatch(/Resting until .+ \((in|.* ago)/)
+    expect(rest).toContain('Resting until 11:00 (in 2 h)')
     expect(rest).not.toContain('derived')
     await resting.getByText('details', { exact: true }).click()
     expect(await resting.innerText()).toContain('chatgpt-web Worker, frontier tier, subscription-chat, remote (no description is configured)')
@@ -356,14 +368,15 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const { origin, token } = await boot({ roster: true, pools: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
-    const page = await browser.newPage()
+    const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/?view=workers#token=${token}`)
     // The quota is the account's: shown once, under its header (T119).
     const busy = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
     const line = (window: string) => busy.getByLabel(`window ${window} of plan/plus`)
     await expect.poll(() => line('five-hour').count()).toBe(1)
-    expect(await line('five-hour').innerText()).toMatch(/^5 h: used 42 % — resets [^,()]+ \(read [^)]+\)$/)
-    expect(await line('seven-day').innerText()).toMatch(/^7 d: at its limit, used unknown \(its latest reading gives no used share\) — resets [^,()]+ \(read [^)]+\)$/)
+    // Read a minute before NOW; reset 15 min and 1 h after it: each on the page's day, so a clock time.
+    expect(await line('five-hour').innerText()).toBe('5 h: used 42 % — resets 09:45 (read 09:29)')
+    expect(await line('seven-day').innerText()).toBe('7 d: at its limit, used unknown (its latest reading gives no used share) — resets 10:30 (read 09:29)')
     expect(await line('credit').innerText()).toBe('credit: no reading yet')
     // A small bar beside a window whose share is read; the window at its limit first, in a pool at its limit (T116).
     expect(await line('five-hour').locator('meter').getAttribute('value')).toBe('42')
@@ -375,14 +388,14 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByRole('link', { name: 'Home' }).click()
     const capacity = page.getByLabel('Capacity of Chatgpt · Studio Plus')
     await expect.poll(() => capacity.count()).toBe(1)
-    expect(await capacity.innerText()).toMatch(/^Chatgpt · Studio Plus: resting until .+; 5 h used 42 %, resets .+$/)
+    expect(await capacity.innerText()).toBe('Chatgpt · Studio Plus: resting until 11:00 (in 2 h); 5 h used 42 %, resets 09:45')
     expect(await capacity.locator('meter').getAttribute('value')).toBe('42')
     expect(await page.getByLabel('Capacity of Claude · slot 1').innerText()).toBe('Claude · slot 1: 5 h no reading yet')
     await page.getByRole('link', { name: 'Workers' }).click()
     await expect.poll(() => page.getByRole('article', { name: 'agent:acc-a/develop' }).count()).toBe(1)
     // No reading yet, with why its account's usage report could not be read, its time on the clock (T111).
     const agent = page.getByRole('region', { name: 'Account Claude · slot 1' }).getByLabel('window five-hour of plan/agent')
-    expect(await agent.innerText()).toMatch(/^5 h: no reading yet: its account's usage report could not be read at [^:]*\d\d:\d\d[^:]*: the runtime gave no answer within 30 s$/)
+    expect(await agent.innerText()).toBe('5 h: no reading yet: its account\'s usage report could not be read at 09:20: the runtime gave no answer within 30 s')
     expect(await agent.innerText()).not.toContain('2026-10-24T')
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
