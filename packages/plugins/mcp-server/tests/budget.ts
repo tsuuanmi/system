@@ -33,22 +33,23 @@ export const BUDGET = {
     /**
      * Trimmed from 46,975 B to 44,521 (T108); its 10 % (49,000) would be over the ceiling, which
      * stays. `status` and `report` saying they show the reviews held for the operator add 61 B (T107).
+     * `status` listing only the checks that are not ok, with its `checks` argument, adds 75 B (T115).
      */
-    operator: { measured: 44_582, ceiling: 47_200 },
-    /** Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107). */
-    client: { measured: 26_413, ceiling: 29_000 },
+    operator: { measured: 44_657, ceiling: 47_200 },
+    /** Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107); 75 B for `checks` (T115). */
+    client: { measured: 26_488, ceiling: 29_000 },
   },
   /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling (`board_charter`). */
   tool: { measured: 4_085, ceiling: 4_500 },
   /** Canonical replies (the whole JSON-RPC response of a `tools/call`). */
   replies: {
     /**
-     * `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead;
-     * both ceilings stay (their 10 % would be over them). The `reviews` check (none held) adds 69 B
-     * and 32 B (T107), from 1,951 and 847.
+     * `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead:
+     * every check is ok, so health lists none and counts them (`okOmitted`), and a check added while
+     * it is ok adds nothing. From 2,020 B and 879 B when every check was listed (T115).
      */
-    statusOperator: { measured: 2_020, ceiling: 2_100 },
-    statusClient: { measured: 879, ceiling: 900 },
+    statusOperator: { measured: 419, ceiling: 470 },
+    statusClient: { measured: 327, ceiling: 360 },
     /** `result` of a failed run on the shipped profile (an `ask` with no account: reauth_required). */
     resultFailed: { measured: 1_363, ceiling: 1_500 },
     /** `usage` on the shipped profile holding that one run. */

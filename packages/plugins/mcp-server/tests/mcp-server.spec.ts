@@ -16,7 +16,7 @@ import { FakePluginHost, manifestText } from '../../../plugin-host-core/conforma
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
-import McpEndpoint, { needsLook } from '../src/index.ts'
+import McpEndpoint, { compactHealth, needsLook, STATUS_SCHEMA } from '../src/index.ts'
 
 type Tokens = Record<'operator' | 'client' | 'model', string>
 
@@ -75,18 +75,44 @@ describe('system MCP server on ctx.webServer', () => {
     expect(status.structuredContent).not.toHaveProperty('stage')
   })
 
-  it('reports health in status: every check for both scopes, what to do only for the operator (REQ-HOST-6, ADR-0023)', async () => {
+  it('reports health in status: every check for both scopes when asked, what to do only for the operator (REQ-HOST-6, ADR-0023)', async () => {
     const { url, tokens } = await boot()
-    type Health = { state: string; checks: Array<{ name: string; state: string; detail: string }> }
-    const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: Health }).health
+    type Health = { state: string; checks: Array<{ name: string; state: string; detail: string }>; okOmitted?: number }
+    const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: Health }).health
     const operator = await health(tokens.operator)
     const client = await health(tokens.client)
     expect(operator.checks.map((c) => c.name)).toEqual(['plugins', 'runtime', 'store', 'disk'])
     expect(operator.checks[0]).toMatchObject({ name: 'plugins', state: 'ok' })
     expect(operator.checks.find((c) => c.name === 'store')).toMatchObject({ state: 'ok' })
+    expect(operator).not.toHaveProperty('okOmitted')
     expect(client.state).toBe(operator.state)
     // A client sees which checks are ok, never versions, paths, sizes, or names.
     expect(client.checks).toEqual(operator.checks.map(({ name, state }) => ({ name, state })))
+  })
+
+  it('lists unasked only the checks that are not ok, counting the rest, and checks its reply against mcp-status@1.0 (README "Token budget")', async () => {
+    const { url, tokens, ctx } = await boot()
+    const schemas = new SchemaRegistry()
+    const call = async (token: string, args: Record<string, unknown> = {}) => (await connect(url, token)).callTool({ name: 'status', arguments: args })
+    for (const token of [tokens.operator, tokens.client]) {
+      const all = await call(token, { checks: true })
+      const unasked = await call(token)
+      for (const reply of [all, unasked]) schemas.assertDef(STATUS_SCHEMA, 'status-output', reply.structuredContent)
+      const every = (all.structuredContent as { health: { state: string; checks: Array<{ state: string }> } }).health
+      const health = (unasked.structuredContent as { health: unknown }).health
+      expect(health).toEqual({ state: every.state, checks: every.checks.filter((c) => c.state !== 'ok'), okOmitted: every.checks.filter((c) => c.state === 'ok').length })
+      // The text summary counts every check, listed or not.
+      expect((unasked.content as Array<{ text: string }>)[0]!.text).toBe((all.content as Array<{ text: string }>)[0]!.text)
+    }
+    // A check that is not ok is listed in full, with what to do, for the operator.
+    const broken = ctx.plugin({ name: 'broken-plugin', apply: () => { throw new Error('bad config') } } as never, {} as never)
+    await Promise.resolve(broken).catch(() => undefined)
+    onTestFinished(() => broken.dispose())
+    expect(((await call(tokens.operator)).structuredContent as { health: unknown }).health).toEqual({
+      state: 'down', checks: [{ name: 'plugins', state: 'down', detail: expect.stringMatching(/^broken-plugin failed: bad config/) }], okOmitted: 3,
+    })
+    expect(((await call(tokens.client)).structuredContent as { health: unknown }).health).toEqual({ state: 'down', checks: [{ name: 'plugins', state: 'down' }], okOmitted: 3 })
+    expect(compactHealth({ state: 'ok', checks: [] })).toEqual({ state: 'ok', checks: [] })
   })
 
   it('is degraded by a run whose usage the ledger could not count in its pool\'s current window, until the ledger counts a record of it (D25)', async () => {
@@ -98,7 +124,7 @@ describe('system MCP server on ctx.webServer', () => {
       for (const fiber of fibers.reverse()) await fiber.dispose()
     })
     type Check = { name: string; state: string; detail: string }
-    const usage = async () => ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Check[] } }).health.checks.find((c) => c.name === 'usage')
+    const usage = async () => ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: { checks: Check[] } }).health.checks.find((c) => c.name === 'usage')
     expect(await usage()).toMatchObject({ state: 'ok' })
     const observedAt = new Date().toISOString()
     ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
@@ -211,7 +237,7 @@ describe('system MCP server on ctx.webServer', () => {
       const client = await connect(url, tokens.operator)
       const roster = await client.callTool({ name: 'roster', arguments: {} })
       schemas.assertDef('mcp-roster@1.5', 'roster-output', roster.structuredContent)
-      const status = (await client.callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }
+      const status = (await client.callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }
       return { roster, text: (roster.content as Array<{ text: string }>)[0]!.text, workers: status.health.checks.find((c) => c.name === 'workers')! }
     }
     const early = await read()
@@ -249,7 +275,7 @@ describe('system MCP server on ctx.webServer', () => {
     const fiber = ctx.plugin(Board)
     await fiber
     onTestFinished(() => fiber.dispose())
-    const status = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }).health
+    const status = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }).health
     const operator = await status(tokens.operator)
     expect(operator.checks.find((c) => c.name === 'reviews')).toEqual({
       name: 'reviews', state: 'ok', detail: expect.stringMatching(new RegExp(`^1 review\\(s\\) held for you: task-6b16 of system expires in (3 h|2 h 5[0-9] min) \\(at ${expiresAt.replaceAll('.', '\\.')}\\)\\. Accept or Reject each on /ui`)),
@@ -276,7 +302,7 @@ describe('system MCP server on ctx.webServer', () => {
     const fiber = ctx.plugin(Board)
     await fiber
     onTestFinished(() => fiber.dispose())
-    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail?: string }> } }).health
+    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail?: string }> } }).health
     expect(health.checks.find((c) => c.name === 'reviews')).toEqual({ name: 'reviews', state: 'ok', detail: 'no review is held for you (the first 64 of 65 open projects read)' })
     expect(read).toHaveLength(64)
   })
@@ -333,7 +359,7 @@ describe('system MCP server on ctx.webServer', () => {
     await fiber
     onTestFinished(() => fiber.dispose())
     type Status = { liveness?: Record<string, unknown>; health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }
-    const call = async (token: string) => (await connect(url, token)).callTool({ name: 'status', arguments: {} })
+    const call = async (token: string) => (await connect(url, token)).callTool({ name: 'status', arguments: { checks: true } })
     const operator = await call(tokens.operator)
     const status = operator.structuredContent as Status
     // Read once for the check and the list.
@@ -467,7 +493,7 @@ describe('system MCP server on ctx.webServer', () => {
     const fine = ctx.plugin({ name: 'fine-plugin', apply: (c: Context) => { c.inject(['settings'], () => {}) } } as never, {} as never)
     await fine
     onTestFinished(() => fine.dispose())
-    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }).health
+    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }).health
     expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'ok' })
   })
 

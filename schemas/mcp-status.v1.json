@@ -1,0 +1,400 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-status:v1",
+  "title": "MCP status tool",
+  "description": "Input and output of the `status` MCP tool: the host's health (REQ-HOST-6), its kernel services and providers, and for the operator the plugins (REQ-HOST-7) and the runs whose liveness needs a look (PROP-0013). Unasked, health lists only the checks that are not ok and counts the rest, and the plugins only those that need a look; `checks` and `plugins` list every one. A client scope sees each listed check's name and state, never its detail, and no plugins or liveness. The root describes one call (tool, input, structured output); the endpoint validates its output against `#/$defs/status-output` before it is sent.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "const": "status"
+    },
+    "input": {
+      "$ref": "#/$defs/status-input"
+    },
+    "output": {
+      "$ref": "#/$defs/status-output"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "healthState": {
+      "enum": [
+        "ok",
+        "degraded",
+        "down"
+      ]
+    },
+    "status-input": {
+      "type": "object",
+      "properties": {
+        "plugins": {
+          "description": "Operator: list every plugin, not only those that need a look.",
+          "type": "boolean"
+        },
+        "checks": {
+          "description": "List every health check, not only those that are not ok (`system health` asks for it).",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "check": {
+      "type": "object",
+      "required": [
+        "name",
+        "state"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "state": {
+          "$ref": "#/$defs/healthState"
+        },
+        "detail": {
+          "description": "What is wrong and what to do; only an operator-scope caller gets it.",
+          "type": "string",
+          "maxLength": 32768
+        }
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "required": [
+        "state",
+        "checks"
+      ],
+      "properties": {
+        "state": {
+          "description": "The worst state of every check, listed or not.",
+          "$ref": "#/$defs/healthState"
+        },
+        "checks": {
+          "description": "Every check, in the report's order, when asked with `checks`; unasked, only the checks that are not ok.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        },
+        "okOmitted": {
+          "description": "Unasked: how many checks are ok and not listed; absent when none is left out.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        }
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "description": "What the plugin host's manifest check found in a plugin a row mounts (ADR-0048).",
+      "type": "object",
+      "required": [
+        "kind",
+        "reason"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "no-manifest",
+            "unsatisfied"
+          ]
+        },
+        "manifest": {
+          "enum": [
+            "absent",
+            "refused"
+          ]
+        },
+        "seam": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "range": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 214
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      },
+      "additionalProperties": false
+    },
+    "plugin": {
+      "description": "A plugin of the composition: its rows, whether one is on, its manifest's state, version, and class, its recorded lifecycle, and what the manifest check found, with the decision that recorded it.",
+      "type": "object",
+      "required": [
+        "name",
+        "rows",
+        "mounted",
+        "manifest"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 214
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "mounted": {
+          "type": "boolean"
+        },
+        "manifest": {
+          "enum": [
+            "valid",
+            "absent",
+            "refused"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "class": {
+          "$ref": "urn:tsuuanmi:system:schema:plugin-manifest:v1#/properties/class"
+        },
+        "lifecycle": {
+          "$ref": "urn:tsuuanmi:system:schema:plugin-manifest:v1#/properties/_meta/properties/lifecycle"
+        },
+        "findings": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "checked": {
+          "description": "With findings: the `gate` decision that recorded them, and when.",
+          "type": "object",
+          "required": [
+            "since",
+            "decision"
+          ],
+          "properties": {
+            "since": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+            },
+            "decision": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "liveness": {
+      "description": "Operator: the runs whose liveness needs a look, present only when there is any: the counts in each state, the latest 16 runs, `runsOmitted` the rest, and `unread` the sources that could not tell.",
+      "type": "object",
+      "required": [
+        "counts",
+        "runs"
+      ],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "required": [
+            "stalled",
+            "looking",
+            "unknown"
+          ],
+          "properties": {
+            "stalled": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "looking": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unknown": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "runs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "source",
+              "execution",
+              "worker",
+              "state",
+              "since"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "execution": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "worker": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "state": {
+                "enum": [
+                  "stalled",
+                  "looking",
+                  "unknown"
+                ]
+              },
+              "since": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "runId": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "runsOmitted": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unread": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "source",
+              "detail"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "detail": {
+                "type": "string",
+                "maxLength": 4000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "status-output": {
+      "type": "object",
+      "required": [
+        "harness",
+        "store",
+        "artifacts",
+        "kernel",
+        "providers",
+        "health"
+      ],
+      "properties": {
+        "harness": {
+          "const": "system"
+        },
+        "store": {
+          "enum": [
+            "ok",
+            "absent"
+          ]
+        },
+        "artifacts": {
+          "description": "Artifacts stored, counted up to 1000; null when the artifacts service is not mounted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "kernel": {
+          "description": "The kernel services mounted.",
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "store",
+              "eventLog",
+              "leases",
+              "artifacts",
+              "credentials"
+            ]
+          }
+        },
+        "providers": {
+          "description": "The website drivers registered on ctx.providers.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "health": {
+          "$ref": "#/$defs/health"
+        },
+        "plugins": {
+          "description": "Operator, with the plugin host mounted: the plugins that need a look, or with `plugins` every one.",
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "$ref": "#/$defs/plugin"
+          }
+        },
+        "pluginsOmitted": {
+          "description": "Unasked: the plugins not listed.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "liveness": {
+          "$ref": "#/$defs/liveness"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

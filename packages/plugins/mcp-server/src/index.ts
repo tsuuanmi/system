@@ -19,7 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { dshHome, ensurePrivateDir, registerSecretPath, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
 import { type HealthReport, healthReport, type LivenessRead } from './health.ts'
@@ -410,8 +410,11 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'client',
-        description: 'Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check\'s detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).',
-        inputSchema: { plugins: zod.boolean().optional().describe('Operator: list every plugin, not only those that need a look') },
+        description: 'Health of the system harness: the worst of its checks (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count), each one not ok, and the kernel services and providers. The operator also gets each check\'s detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).',
+        inputSchema: {
+          plugins: zod.boolean().optional().describe('Operator: list every plugin, not only those that need a look'),
+          checks: zod.boolean().optional().describe('List the ok checks too'),
+        },
       },
       handler: async (args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
@@ -432,9 +435,15 @@ export class McpEndpoint extends McpTools {
           artifacts: artifacts ? artifacts.list({ limit: 1000 }).length : null,
           kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),
           providers: providers ? providers.list() : [],
-          health,
+          health: args.checks === true ? health : compactHealth(health),
           ...(all && listed ? { plugins: listed.map(pluginView), ...(listed.length < all.length ? { pluginsOmitted: all.length - listed.length } : {}) } : {}),
           ...(told && (livenessTotal(told) || told.unread.length) ? { liveness: livenessView(told) } : {}),
+        }
+        // Checked before it is sent (mcp-status@1.0): a reply that is not one is an error, never sent as health.
+        try {
+          statusSchemas().assertDef(STATUS_SCHEMA, 'status-output', status)
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text', text: `the status reply is not a valid ${STATUS_SCHEMA} record: ${(error as Error).message.slice(0, 500)}` }] }
         }
         const notOk = health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
         const plugins = all && listed ? `; ${all.length} plugins, ${listed.length === all.length ? 'all listed' : `${listed.length} need a look (plugins: true lists every one)`}` : ''
@@ -476,6 +485,22 @@ export default McpEndpoint
 
 /** Runs `status` lists by name at most; the rest are counted (`runsOmitted`), and `system explain` reads any one. */
 export const STATUS_LIVENESS_RUNS = 16
+
+/** The schema `status` replies with (schemas/mcp-status.v1.json). */
+export const STATUS_SCHEMA = 'mcp-status@1.0'
+let registry: SchemaRegistry | undefined
+const statusSchemas = (): SchemaRegistry => (registry ??= new SchemaRegistry())
+
+/**
+ * Health as `status` gives it unasked: the worst state, every check that is not ok, and how many
+ * are ok (`okOmitted`); `checks: true` (which `system health` asks) gives every check. The reply
+ * stays the same size as checks are added while they are ok (README "Token budget").
+ */
+export function compactHealth<C extends { state: string }>(health: { state: string; checks: C[] }): { state: string; checks: C[]; okOmitted?: number } {
+  const listed = health.checks.filter((c) => c.state !== 'ok')
+  const omitted = health.checks.length - listed.length
+  return { state: health.state, checks: listed, ...(omitted ? { okOmitted: omitted } : {}) }
+}
 
 /** What the `reviews` check reads of the board (`ctx.board`, optional), by shape: its projects, and a project's tasks in review. */
 interface BoardReads {

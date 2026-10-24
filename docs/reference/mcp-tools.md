@@ -709,13 +709,14 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check's detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).
+Health of the system harness: the worst of its checks (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count), each one not ok, and the kernel services and providers. The operator also gets each check's detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `plugins` | boolean |  | Operator: list every plugin, not only those that need a look |
+| `checks` | boolean |  | List the ok checks too |
 
 ## `stop`
 

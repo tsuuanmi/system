@@ -39,8 +39,13 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     (`needsLook`: the manifest check found something, the manifest was refused, or the recorded
     lifecycle is not the one the composition gives it: `default` mounted, `candidate` with its rows
     off, `retired` named by none), and `pluginsOmitted` counts the rest; `plugins: true` lists every
-    one (`system plugins` asks for it). Health is always complete (REQ-HOST-6, `src/health.ts`):
-    each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
+    one (`system plugins` asks for it). The reply is `mcp-status@1.0`
+    ([`mcp-status.v1.json`](../../../schemas/mcp-status.v1.json)), checked before it is sent: a
+    reply its schema refuses is a defect, and the call is an error. Health's `state` is always the
+    worst of every check (REQ-HOST-6, `src/health.ts`); unasked, `checks` lists only the checks
+    that are not `ok`, and `okOmitted` counts the rest (`compactHealth`), so the reply does not grow
+    with each check that is ok; `checks: true` lists every one (`system health` asks for it). The
+    report holds each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
     disk, vault key custody, accounts to sign in again or signed in as one person
     (`duplicateIdentities`), Worker availability, reviews held for the operator,
     login profiles held for a login, open with their kept tabs, or blocked by a
@@ -207,7 +212,8 @@ other payload (QA-12, INV-9).
   it, once: what a parameter's own description says is not repeated in the tool's, and the
   scope is the listing's `_meta`, never a word in the text. Every fact a client needs stays; the
   canonical docs keep the rationale and the references.
-- **Bounded reads:** `status` lists only the plugins that need a look unless asked; `usage`
+- **Bounded reads:** `status` lists only the checks that are not ok and the plugins that need a
+  look unless asked; `usage`
   lists 10 runs unless asked for up to 500, each run with its steps' Workers, tiers, quota
   classes, and tokens only (its answer, ids, and errors are in `result`).
 - **Ceilings:** in one place, [`tests/budget.ts`](tests/budget.ts), each beside the size it was
