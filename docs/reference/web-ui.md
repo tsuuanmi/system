@@ -106,7 +106,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
 
-## Starting a ready task
+### Starting a ready task
 
 Served when `ctx.board` is present; without it, both routes answer `503`. The operator starts a
 ready task's run the way the lead does with MCP `run` and `task`
