@@ -157,9 +157,9 @@ describe('the generator', () => {
   })
 
   it('lets a capability seam have an alternative provider, at the contract of the one whose row is on, its row off; never a guarantee seam, never two rows on (INV-1, QA-9, ADR-0036)', () => {
-    expect(of('digest-extractive').manifest).toMatchObject({ class: { kind: 'family', family: 'digest' }, provides: [{ seam: 'digests', version: '1.1.0' }] })
+    expect(of('digest-extractive').manifest).toMatchObject({ class: { kind: 'family', family: 'digest' }, provides: [{ seam: 'digests', version: '1.2.0' }] })
     expect(of('digest').manifest.provides).toEqual(of('digest-extractive').manifest.provides)
-    expect(of('workflow').manifest.consumes).toContainEqual({ seam: 'digests', range: '^1.1.0', optional: true })
+    expect(of('workflow').manifest.consumes).toContainEqual({ seam: 'digests', range: '^1.2.0', optional: true })
     const model = readFileSync(join(root, 'docs', 'architecture', 'plugin-model.md'), 'utf8')
     expect(() => derive(facts, undefined, model.replace('| Orchestration | `digests` | plugin: digest |', '| Orchestration | `digests` | core: gate |')))
       .toThrow(/ctx\.digests is provided by digest, digest-extractive, but it is not a capability seam in the seam catalog: a guarantee seam has one provider/)

@@ -11,7 +11,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
-import { type ArtifactRef, type DigestBody, DigestError, type DigestRequest, Digests, type DigestView, type EscalationDecision, escalation, ESCALATION_TIER, quoteCheck, type QuoteCheck, settlement, type SettlementDecision } from '../src/index.ts'
+import { type ArtifactRef, checkedRequest, type DigestBody, DigestError, type DigestRequest, Digests, type DigestView, type EscalationDecision, escalation, ESCALATION_TIER, quoteCheck, type QuoteCheck, settlement, type SettlementDecision } from '../src/index.ts'
 
 /**
  * How the digest Worker of a tier answers a request: the text of its answer, or a failure of its
@@ -90,7 +90,7 @@ const digests = (ctx: Context): number => ctx.artifacts.list({ kind: 'report', l
 
 interface Harness { ctx: Context; log: ArtifactRef; bench: ArtifactRef }
 
-const scenario = (id: string, title: string, drafter: ((h: { log: () => ArtifactRef; bench: () => ArtifactRef }) => Drafter) | undefined, run: (h: Harness) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, drafter: ((h: { log: () => ArtifactRef; bench: () => ArtifactRef }) => Drafter) | undefined, run: (h: Harness) => Promise<void>, since: '1.0' | '1.1' | '1.2' = '1.0'): Scenario<Boot> => ({
   id: `digests.${id}`, since, title,
   run: async (boot) => {
     const refs: { log?: ArtifactRef; bench?: ArtifactRef } = {}
@@ -112,7 +112,7 @@ const scenario = (id: string, title: string, drafter: ((h: { log: () => Artifact
 
 export const digestsSuite = defineSuite<Boot>({
   seam: 'digests',
-  contract: '1.1',
+  contract: '1.2',
   scenarios: [
     scenario('written', 'writes a digest@1.0 report whose every claim quotes the artifact it cites verbatim, over exactly the requested sources, at least as strict as they are, settled by an acceptance decision (INV-12, INV-13, INV-14)', (h) => () => ({ text: draft(h.log(), h.bench()) }), async ({ ctx, log, bench }) => {
       const view = await settled(ctx, await ctx.digests.request({ sources: [log, bench] }))
@@ -244,6 +244,33 @@ export const digestsSuite = defineSuite<Boot>({
       expect(view).toMatchObject({ state: 'not-written' })
       expect(view.escalation).toBeUndefined()
     }, '1.1'),
+
+    scenario('checks-before-recording', 'runs a request\'s check on the request as it would return it before it is recorded: one that throws records nothing, takes no key, and asks no Worker, and its error is the call\'s; one that passes saw what the call returned (INV-2, INV-14)', (h) => () => ({ text: draft(h.log(), h.bench()) }), async ({ ctx, log, bench }) => {
+      const decisions = ctx.artifacts.list({ kind: 'decision', limit: 1000 }).length
+      const seen: DigestView[] = []
+      const defect = new Error('the output its schema refuses')
+      const refused = ctx.digests.request({ sources: [log, bench], key: 'k-checked', check: (view) => {
+        seen.push(view)
+        throw defect
+      } })
+      await expect(refused).rejects.toBe(defect)
+      expect(seen).toEqual([expect.objectContaining({ state: 'pending', sources: [log, bench] })])
+      expect(await ctx.digests.get(seen[0]!.requestId)).toBeUndefined()
+      expect(asked).toEqual([])
+      expect(ctx.artifacts.list({ kind: 'decision', limit: 1000 })).toHaveLength(decisions)
+      // The key was not taken: the same key now makes the request, and a check that passes saw what came back.
+      const passed: DigestView[] = []
+      const made = await ctx.digests.request({ sources: [log, bench], key: 'k-checked', check: (view) => passed.push(view) })
+      expect(passed).toHaveLength(1)
+      expect(passed[0]!.requestId).toBe(made.requestId)
+      expect(made.requestId).not.toBe(seen[0]!.requestId)
+      // Asked again under its key, the check sees the request the key names, and refuses that call alone.
+      await expect(ctx.digests.request({ sources: [log, bench], key: 'k-checked', check: (view) => {
+        expect(view.requestId).toBe(made.requestId)
+        throw defect
+      } })).rejects.toBe(defect)
+      expect((await settled(ctx, made)).state).toBe('written')
+    }, '1.2'),
   ],
 })
 
@@ -270,10 +297,12 @@ export class FakeDigests extends Digests {
     if (input.key !== undefined) {
       const known = this.keys.get(input.key)
       if (known && known.sources !== JSON.stringify(sources)) throw new DigestError('invalid', `key ${input.key} was used for other sources`)
-      if (known) return this.requests.get(known.id)!
+      if (known) return checkedRequest(input, this.requests.get(known.id)!)
     }
     const at = new Date().toISOString()
     const requestId = `dig-${randomBytes(12).toString('hex')}`
+    // Seen as it is recorded, pending, before anything is: a check that throws leaves no trace (1.2).
+    checkedRequest(input, { requestId, state: 'pending', sources, createdAt: at, updatedAt: at })
     if (input.key !== undefined) this.keys.set(input.key, { id: requestId, sources: JSON.stringify(sources) })
     const answer = this.config.drafter?.(sources, 'economy')
     const settle = (view: Omit<DigestView, 'requestId' | 'sources' | 'createdAt' | 'updatedAt'>): DigestView => {

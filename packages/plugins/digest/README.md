@@ -35,7 +35,9 @@ depends on seam definitions only, and fails open.
 - **MCP tools** (client scope): `digests_request` and `digests_get`, the seam's own
   (`registerDigestTools` of `digest-core`), each input and output validated against
   [`mcp-digests.v1.json`](../../../schemas/mcp-digests.v1.json) (1.1: a request names its
-  `escalation`); both may wait up to 55 s for the request to settle.
+  `escalation`); both may wait up to 55 s for the request to settle. A request's `check`
+  (contract 1.2), through which `digests_request` checks its output, runs inside the transaction
+  that records it, before it commits: one that throws records nothing and schedules nothing.
 - **Bundle row:** on. With no read-only Worker on its tier (the agent rows off), every request
   settles `bypassed`, recorded, which is safe.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`; reads `eventLog` when present; `mcp`

@@ -20,7 +20,7 @@ guesses.
 |---|---|---|
 | store write | every record before commit | the write is rejected (typed error) |
 | store read | every record after load | the record is quarantined; the node becomes `BLOCKED` with `CODE_FIX_REQUIRED` |
-| MCP tool input and output | each call | MCP error to the client; nothing is executed |
+| MCP tool input and output | each call; a `board_*`, `approvals_*`, or `digests_request` call that changes anything checks its output inside its store transaction, before the change commits | MCP error to the client; nothing is executed, or nothing changed |
 | Worker structured output | the result against `acceptance.resultSchema` | an `acceptance` decision with outcome `rejected`, then escalation policy |
 | decision model input and output | each call | `decision: unavailable` path (PROP-0002) |
 | config bundles and patches | at startup | startup fails with the exact path (REQ-HOST-2) |

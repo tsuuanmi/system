@@ -6,7 +6,7 @@ A second provider of **`ctx.digests`**, extractive-first
 of the sources, and the digest Worker reads only those and cites each claim by a span's id. A
 capability plugin of the digest family
 ([ADR-0036](../../../docs/decisions/adr/0036-guarantee-core-and-capability-plugins.md)), beside
-[`digest`](../digest/README.md): the same seam, the same conformance suite at contract 1.1, the
+[`digest`](../digest/README.md): the same seam, the same conformance suite at contract 1.2, the
 same MCP tools; it depends on seam definitions only, and fails open.
 
 - **Bundle row:** `digest-extractive`, **off**. It replaces `digest` by configuration only: one

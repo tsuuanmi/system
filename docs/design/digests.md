@@ -22,11 +22,11 @@ Worker writes it; code keeps only the claims whose quotes are verbatim in the ar
 
 ## Seam
 
-`ctx.digests` (`Digests` in `@tsuuanmi/system-digest-core`), contract 1.1, a capability seam:
+`ctx.digests` (`Digests` in `@tsuuanmi/system-digest-core`), contract 1.2, a capability seam:
 
 | Method | Does |
 |---|---|
-| `request({ sources, key? })` | ask for a digest of 1 to 64 stored artifacts; durable at once, settled in the background; the same `key` returns the same request |
+| `request({ sources, key?, check? })` | ask for a digest of 1 to 64 stored artifacts; durable at once, settled in the background; the same `key` returns the same request; `check` (1.2) sees the request as it would be returned, before it is recorded |
 | `get(requestId)` | the request as it stands |
 | `wait(requestId, timeoutMs)` | wait until it settles or the time passes |
 
@@ -58,7 +58,7 @@ decision, and runs once more on the standard tier.
 
 | From → to | Who | Records | On failure |
 |---|---|---|---|
-| — → pending | `request`, by the lead (`digests_request`) or a plugin | the request row | refused (`invalid`, nothing recorded): no source, a repeated source, more than 64, a source that is not a stored artifact, a key reused for other sources; `overloaded` at `maxPending` pending |
+| — → pending | `request`, by the lead (`digests_request`) or a plugin | the request row; its `check`, when given, runs on the request in the same transaction, before it commits | refused (`invalid`, nothing recorded): no source, a repeated source, more than 64, a source that is not a stored artifact, a key reused for other sources; `overloaded` at `maxPending` pending; a `check` that throws: its error, nothing recorded, no key taken, no Worker asked |
 | pending (routed and started) | the provider, under the request's lease | a `brief@1.1` (`objective`) recorded before the run, its sources by content id; the execution named on the request in the same transaction | no Worker admitted: bypassed, naming the `admission` decision; a start refused: bypassed |
 | pending → written | the provider, once the run completed | the `digest@1.0` report (its envelope's inputs are the sources), the `acceptance` decision that names it, and `digests.settled`, in one transaction | — |
 | pending (escalated) | the provider, when every claim of the economy answer failed the quote check and the request has not escalated | the `escalation` decision (rule `digests.escalation`) and the request's new tier, in one transaction under the lease; then a brief and a start as above, on the standard tier, with a key of its own | no standard Worker admitted, a start refused, or its run failed or timed out: `not-written` on the economy answer's check, saying why the escalation gave no answer |
@@ -190,7 +190,7 @@ after.
 
 - **By configuration only.** One patch turns the `digest` row off and the `digest-extractive` row
   on ([runbook](../operations/runbooks.md#swap-the-digest-provider)). Both manifests provide
-  `digests` at contract 1.1, so every consumer's range (`^1.1.0`) accepts either, and the plugin
+  `digests` at contract 1.2, so every consumer's range (`^1.2.0`) accepts either, and the plugin
   host's manifest check finds nothing; it records the swap as two `lifecycle` decisions (`digest`
   to `candidate`, `digest-extractive` to `default`). The workflow engine and the report reach the
   seam through its definition, and the MCP tools are the seam's, so no other row and no file of
@@ -227,6 +227,16 @@ after.
 - **Measured live.** The same comparison on the operator's live Worker, in tokens from the
   resource ledger, is a check of the [release checklist](../validation/release-checklist.md).
 
+## The lead's tools
+
+`digests_request` and `digests_get` are the seam's own (`registerDigestTools`), so every provider
+serves them the same way. Each call's input and output are checked against
+[`mcp-digests.v1.json`](../reference/schemas.md#mcp-tools-digests_). `digests_request` checks the
+output it would give through the request's `check` (contract 1.2), inside the transaction that
+records the request, before it commits: an output its schema refuses (a defect) is refused with
+nothing recorded, no key taken, and no Worker asked (INV-2, INV-14). A request waited on
+(`waitSeconds`) is checked again as it stands after the wait.
+
 ## Trigger
 
 - **A board task's result**, on its own: once a workflow run's result reached its task, the
@@ -251,7 +261,8 @@ its own: an operator who set the `digest` row sets the same on `digest-extractiv
 
 ## Conformance
 
-[`digest-core/conformance/digests.ts`](../../packages/digest-core/conformance/digests.ts), 12
-scenarios at contract 1.1 (three of them, the escalation, since 1.1), run against the fake
+[`digest-core/conformance/digests.ts`](../../packages/digest-core/conformance/digests.ts), 13
+scenarios at contract 1.2 (three of them, the escalation, since 1.1; the request's `check` since
+1.2), run against the fake
 provider and against both store-backed providers over real routing with the seam's scripted Worker
 ([`conformance/worker.ts`](../../packages/digest-core/conformance/worker.ts)) on each tier.
