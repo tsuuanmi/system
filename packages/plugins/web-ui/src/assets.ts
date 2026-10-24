@@ -715,7 +715,7 @@ export const APP_JS = `'use strict'
   const sinceItems = (activity, roster, seen, titles) => {
     const items = []
     const task = (id) => titles.get(id)
-    for (const r of activity.runs) {
+    if ('value' in activity.runs) for (const r of activity.runs.value) {
       const what = task(r.taskId) ? '"' + task(r.taskId) + '"' : 'a ' + r.template + ' run'
       items.push({ at: r.at, line: el('span', { class: r.status === 'failed' ? 'state failed' : '' }, r.status === 'failed' ? 'Failed: ' + what + (r.error ? ' — ' + r.error : '') + ' ' : 'Finished: ' + what + ' '), link: runLink({ runId: r.runId }, 'open the run') })
     }
@@ -763,8 +763,12 @@ export const APP_JS = `'use strict'
       el('h3', {}, 'Since you last looked ', el('span', { class: 'muted' }, relative(seen.at) + ' (' + clockOf(seen.at) + ')')),
       items.length ? el('ul', { class: 'since' }, items.slice(0, SINCE_SHOWN).map((i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at))))) : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
       items.length > SINCE_SHOWN ? el('p', { class: 'muted' }, (items.length - SINCE_SHOWN) + ' older not shown.') : null,
+      'value' in activity.runs ? null : el('p', { class: 'unknown' }, 'The runs that ended are unknown (' + activity.runs.unknown + ').'),
       'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
       'value' in activity.expired ? null : el('p', { class: 'unknown' }, 'The requests that expired are unknown (' + activity.expired.unknown + ').'),
+      // A part that holds more than it lists, or than one read goes through, says so (T127).
+      [['runs', 'runs ended'], ['tasks', 'tasks moved'], ['expired', 'requests may have expired']].filter(([k]) => activity[k].more)
+        .map(([k, words]) => el('p', { class: 'muted' }, 'More ' + words + ' than the ' + activity[k].value.length + ' read here.')),
       el('div', { class: 'actions' }, mark, el('span', { class: 'muted' }, 'kept in this browser only')))
   }
 
@@ -774,7 +778,10 @@ export const APP_JS = `'use strict'
     'workflow.node.blocked': 'a step waits for you', 'agent-workers.tool.notified': 'a tool call ran', 'agent-workers.tool.checks-pending': 'a tool call ran, its checks pending',
     'agent-workers.tool.denied': 'a tool call was denied', 'agent-workers.tool.deferred': 'a tool call waits for your verdict', 'agent-workers.run.stalled': 'its agent stalled',
   }
-  const liveOf = async () => { try { return new Map((await api('runs/live')).runs.map((r) => [r.runId, r])) } catch { return undefined } }
+  // The running runs as they move, by id, or why they are unknown: a failed read is said, never shown as nothing running (T127).
+  const liveOf = async () => {
+    try { const { runs } = await api('runs/live'); return 'value' in runs ? { runs: new Map(runs.value.map((r) => [r.runId, r])) } : { unknown: runs.unknown } } catch (error) { return { unknown: error.message } }
+  }
   const lastText = (r) => 'value' in r.lastEvent ? 'last event: ' + (EVENT_WORDS[r.lastEvent.value.type] || r.lastEvent.value.type) + ', ' + relative(r.lastEvent.value.at) : 'last event unknown (' + r.lastEvent.unknown + ')'
   const stalledOf = (r) => 'value' in r.stalled && r.stalled.value ? el('div', { class: 'state failed', role: 'alert' }, 'Stalled since ' + clockOf(r.stalled.value.since) + ': no activity past its source\\'s bound. Stop run ends it.') : null
 
@@ -854,7 +861,7 @@ export const APP_JS = `'use strict'
     const evidence = run.status === 'running' ? undefined : await reviewOf(runId, run.updatedAt)
     const landing = evidence && !evidence.error ? evidence.landing : undefined
     const moving = run.status === 'running' ? await liveOf() : undefined
-    const now = moving && moving.get(runId)
+    const now = moving && moving.runs && moving.runs.get(runId)
     let roster = null
     try { roster = await api('roster') } catch {}
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
@@ -907,6 +914,7 @@ export const APP_JS = `'use strict'
       now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now', whatIs('step')),
         now.steps.map((st) => el('div', {}, 'Step ' + st.nodeId + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
         el('div', { class: 'muted' }, lastText(now)), stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
+      moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
@@ -1080,7 +1088,7 @@ export const APP_JS = `'use strict'
         t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
         t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
-        (t.state === 'running' || t.state === 'claimed') && t.run && moving && moving.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.get(t.run.runId))), stalledOf(moving.get(t.run.runId))] : null,
+        (t.state === 'running' || t.state === 'claimed') && t.run && moving.runs && moving.runs.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.runs.get(t.run.runId))), stalledOf(moving.runs.get(t.run.runId))] : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
         t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
         t.landing ? landingLine(t.landing) : null,
