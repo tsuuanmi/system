@@ -685,6 +685,16 @@ export class Worktrees {
     // A fresh worktree is cut from the repository's HEAD: the earlier work is carried only onto that same commit.
     const head = (await git(repository, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).catch(() => '')).trim()
     if (!cut && head !== base) return refuse('base-moved', `the HEAD of ${repository} is ${head || 'unreadable'} now, not ${base}, the commit the tree ${subject} is on: a fresh worktree starts from the HEAD, so the earlier work is not carried onto another base`)
+    // Where the run's worktree goes, checked before anything changes: nothing there is ever taken over.
+    const branch = branchOf(step.runId)
+    let path = cut?.path
+    if (!path) {
+      if (await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).then(() => true, () => false)) return refuse('exists', `the branch ${branch} exists already, and a branch is never taken over`)
+      mkdirSync(this.root, { recursive: true, mode: 0o700 })
+      path = join(realpathSync(this.root), repositoryKey(repository), step.runId)
+      ensurePrivateDir(dirname(path))
+      if (lstatSync(path, { throwIfNoEntry: false })) return refuse('exists', `${path} exists and is not the worktree of run ${step.runId}; nothing was changed`)
+    }
     const inside = (args: string[]): Promise<string> => git(from.path, [`--git-dir=${from.gitdir}`, `--work-tree=${from.path}`, ...args])
     await this.clearSystem(from, inside)
     const current = captureGitSubject(from.path)
@@ -700,14 +710,8 @@ export class Worktrees {
     }
     const commit = (await inside(['rev-parse', 'HEAD'])).trim()
     if (!cut) {
-      const branch = branchOf(step.runId)
-      if (await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).then(() => true, () => false)) return refuse('exists', `the branch ${branch} exists already, and a branch is never taken over`)
-      mkdirSync(this.root, { recursive: true, mode: 0o700 })
-      const path = join(realpathSync(this.root), repositoryKey(repository), step.runId)
-      ensurePrivateDir(dirname(path))
-      if (lstatSync(path, { throwIfNoEntry: false })) return refuse('exists', `${path} exists and is not the worktree of run ${step.runId}; nothing was changed`)
       // Added on its own branch at the base, its files not checked out: the commit's tree is read in next.
-      await git(repository, ['worktree', 'add', '--quiet', '--no-checkout', '-b', branch, path, base])
+      await git(repository, ['worktree', 'add', '--no-checkout', '-b', branch, path, base])
       const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)

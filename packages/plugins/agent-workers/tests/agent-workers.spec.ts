@@ -2063,6 +2063,11 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
       expect((await run(ctx, 'agent:dev', 'k-own', 'run_taken_next')).status).toBe('completed')
       expect(await carry(ctx, 'run_taken_next', taken)).toMatchObject({ outcome: 'refused', cause: 'exists', reason: expect.stringMatching(/already has the worktree .*, cut from the HEAD of .*: it is not cut again/) })
 
+      const branched = await wrote(ctx, agent, 'run_branched')
+      git(repo, 'branch', 'system/run/run_branched_next', head)
+      expect(await carry(ctx, 'run_branched_next', branched)).toMatchObject({ outcome: 'refused', cause: 'exists', reason: 'the branch system/run/run_branched_next exists already, and a branch is never taken over' })
+      expect(git(branched.workspace, 'status', '--porcelain')).toContain('calc.py')
+
       const based = await wrote(ctx, agent, 'run_based')
       writeFileSync(join(repo, 'README.md'), 'calc\n')
       git(repo, 'add', 'README.md')
@@ -2076,7 +2081,7 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
         expect(git(repo, 'branch', '--list', `system/run/${runId}`)).toBe('')
       }
       // And no earlier branch moved but the removed one's, which the operator's removal committed.
-      for (const runId of ['run_moved', 'run_empty', 'run_tampered', 'run_taken', 'run_based']) expect(git(repo, 'rev-parse', `system/run/${runId}`)).toBe(head)
+      for (const runId of ['run_moved', 'run_empty', 'run_tampered', 'run_taken', 'run_branched', 'run_based']) expect(git(repo, 'rev-parse', `system/run/${runId}`)).toBe(head)
     })
 
     it('carries nothing while an agent run of the earlier workflow run is unfinished: it may still write the tree (INV-15)', async () => {
