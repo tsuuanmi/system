@@ -153,6 +153,9 @@ export const APP_JS = `'use strict'
   let pending = null
   const show = (...parts) => {
     const kept = parts.flat().filter((part) => part !== null && part !== undefined)
+    // A page that finished rendering after the operator moved to another one is dropped: a slow read never overwrites the page now shown.
+    const head = kept[0]
+    if (head && head.dataset && head.dataset.page && head.dataset.page !== shownPage()) return
     if (pressed) pending = kept
     else { pending = null; main.replaceChildren(...kept) }
   }
@@ -296,7 +299,9 @@ export const APP_JS = `'use strict'
   // Idle capacity, and the step that puts it to work.
   const capacityText = (free, ready) => (free === undefined ? 'How many Workers are free is unknown now' : free + (free === 1 ? ' Worker free' : ' Workers free')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
     + (ready ? '. A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
-  const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
+  const pageHead = (page, title, runId) => [el('h2', { class: 'page', 'data-page': page === 'run' ? 'run:' + runId : page }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
+  // The page the address names now: what a render must be of to be shown.
+  function shownPage() { return view === 'policy' || view === 'board' || view === 'workers' || view === 'help' ? view : current ? 'run:' + current : 'home' }
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
   // What the operator's last verdict did, outside the refreshed page: it stays until dismissed.
@@ -874,7 +879,7 @@ export const APP_JS = `'use strict'
       : running.length ? 'It is running: ' + running.map((n) => 'step ' + n.nodeId + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ') + '.'
       : 'It is ' + run.status + '.'
     show(
-      pageHead('run', 'Run ' + run.runId),
+      pageHead('run', 'Run ' + run.runId, run.runId),
       el('p', {}, el('span', { class: 'state ' + run.status }, run.status), ' · ' + run.template + ' run, started ', ago(run.createdAt), ', last changed ', ago(run.updatedAt), '. ' + sentence),
       tie ? el('div', { class: 'panel' },
         el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + relative(tie.until) + ' (' + absolute(tie.until) + ') it waits for your deciding vote, then ends inconclusive.'),
