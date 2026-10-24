@@ -10,6 +10,8 @@
  * `usage-record` from the runtime's own numbers after it, and its limit observations as readings.
  * A run that fails `quota_exhausted` with no limit reading the ledger keeps closes its pool for a
  * bounded cooldown; with no pool, every Worker of its runtime cools down (one home, one sign-in).
+ * Each account's own usage report (`limits`, ADR-0059) is read into its pool after its runs and
+ * every `limitReadSeconds` (./reports.ts), and never opens a window a limit closed.
  * Every Worker of one runtime is one account, its `siblings`: a cooldown or a closed pool of any of
  * them holds them all, and a failover or a team counts them as one.
  * A Worker configured with `worktreePerRun` works in a git worktree of its own per workflow run
@@ -33,7 +35,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf,
+  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf, readLimits,
 } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
@@ -44,15 +46,17 @@ import {
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
-import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
+import { type LimitState, type PoolState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, CapabilityOffer, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart, WorkScope } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration } from './migrate.ts'
 import { Probes, refused } from './probes.ts'
+import { ReportSchedule, type ReportTarget } from './reports.ts'
 import {
-  type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT, setsDerivedOnly,
+  type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
+  MAX_LIMIT_READ_SECONDS, setsDerivedOnly,
 } from './roles.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools } from './tools.ts'
@@ -145,8 +149,8 @@ export interface Config {
    * default) or `pooled`, which needs `pooledTerms`, the operator's recorded decision. A runtime
    * no entry names is assigned. `slots`: how many accounts may be enrolled for it (ADR-0051; default
    * 1, its own home adopted as slot 1). With roles and assignments only: `maxConcurrentRunsPerAccount`,
-   * and what each of its accounts draws on (`pool`, a template of the resources row; `windows`;
-   * `limitCooldownSeconds`).
+   * what each of its accounts draws on (`pool`, a template of the resources row; `windows`;
+   * `limitCooldownSeconds`), and how often its usage report is read into that pool (`limitReadSeconds`).
    */
   providers?: AgentProviderConfig[]
   /** Role templates (PROP-0012 phase F), each defined once: what the work needs, whatever account serves it. */
@@ -307,7 +311,7 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
   }
   const derivedOnly = providers.find(setsDerivedOnly)
   if (!derived && derivedOnly) {
-    throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, and limitCooldownSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
+    throw new ProviderError('config_error', `agent-workers.providers (${derivedOnly.provider}): maxConcurrentRunsPerAccount, pool, windows, limitCooldownSeconds, and limitReadSeconds apply to Workers derived from roles and assignments; a hand-named Worker sets its own`)
   }
   const workers = new Map<string, WorkerSpec>()
   for (const worker of [...config.workers ?? [], ...derived ? deriveWorkers(config.roles ?? [], config.assignments ?? [], providers) : []] as WorkerSpec[]) {
@@ -413,6 +417,7 @@ export class AgentWorkers extends Service {
       pool: z.string().description('The pool template (resources templates) each of its accounts draws on: pool <pool>/<accountId>; unset: not metered. With roles and assignments only'),
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the template\'s window ids; with pool only'),
       limitCooldownSeconds: z.natural().min(60).max(604_800).description('How long a limit hit with no reset time closes an account\'s pool, or with no pool cools the account down (default 3600); with roles and assignments only'),
+      limitReadSeconds: z.natural().max(MAX_LIMIT_READ_SECONDS).description(`How often each ready account with a pool has its runtime's usage report read into its pool's windows (ADR-0059; default ${DEFAULT_LIMIT_READ_SECONDS}, at least 60; 0 turns the periodic read off); with pool only`),
     })).default([]).description('How each agent runtime\'s accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052)'),
     accountHomes: z.string().description('Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
@@ -467,6 +472,8 @@ export class AgentWorkers extends Service {
   readonly agentAccounts: AgentAccounts
   /** The move from hand-named rows to derived Workers, once the operator applied it (PROP-0012 phase F). */
   private readonly cutover: Cutover
+  /** The periodic read of each account's usage report into its pool (ADR-0059, ./reports.ts). */
+  private readonly reports: ReportSchedule
   private sweeping: Promise<SweepOutcome> | undefined
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
@@ -512,6 +519,16 @@ export class AgentWorkers extends Service {
         void tracked.finally(() => this.inflight.delete(tracked))
       },
       warn: (message) => this.warnOnce(message),
+    })
+    this.reports = new ReportSchedule({
+      targets: () => this.reportTargets(),
+      stopped: this.stopped.signal,
+      // A stop waits for a read in flight, each bounded (readLimits) and aborted by the stop.
+      track: (work) => {
+        const tracked = work.then(() => undefined, () => undefined)
+        this.inflight.add(tracked)
+        void tracked.finally(() => this.inflight.delete(tracked))
+      },
     })
     ctx.store.migrate('agent-workers', [{
       version: 1,
@@ -620,6 +637,7 @@ export class AgentWorkers extends Service {
       queueMicrotask(() => {
         this.recover()
         this.sweepSafely()
+        this.reports.start()
       })
       const hourly = setInterval(() => this.sweepSafely(), SWEEP_MS)
       hourly.unref()
@@ -627,6 +645,7 @@ export class AgentWorkers extends Service {
         clearInterval(hourly)
         // A stop is not a failure: a started run stays as it is, and the next start reconciles it.
         this.stopped.abort()
+        this.reports.close()
         this.probes.close()
         for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of [...this.schedulers.values(), ...this.accountSchedulers.values()]) scheduler.close(new ProviderError('aborted', 'agent Workers stopped'))
@@ -888,6 +907,69 @@ export class AgentWorkers extends Service {
       this.warnOnce(`agent Workers: the pool of ${id} cannot be read: ${(error as Error).message}`)
       return { state: 'unavailable' }
     }
+  }
+
+  /**
+   * Read now each account's usage report that is due (ADR-0059): the periodic read's pass, which
+   * also runs on its own schedule. Resolves when the reads it started ended; never rejects.
+   */
+  readUsageReports(): Promise<void> {
+    return this.reports.pass()
+  }
+
+  /**
+   * The accounts the periodic read covers (ADR-0059): each ready, assigned account whose derived
+   * Workers draw on a declared pool, whose provider's `limitReadSeconds` is not 0, and whose runtime
+   * reads a usage report (`limits`), once each.
+   */
+  private reportTargets(): ReportTarget[] {
+    if (!this.derived) return []
+    const targets = new Map<string, ReportTarget>()
+    for (const [id, worker] of this.workers) {
+      const account = worker.derived?.accountId
+      if (account === undefined || worker.pool === undefined || targets.has(account)) continue
+      const seconds = this.providerOf.get(worker.runtime)?.limitReadSeconds ?? DEFAULT_LIMIT_READ_SECONDS
+      if (!seconds || typeof this.ctx.agentRuntimes.get(worker.runtime)?.limits !== 'function') continue
+      if (this.agentAccounts.accountGate(account).state !== 'ready') continue
+      targets.set(account, { account, runtime: worker.runtime, periodMs: seconds * 1000, read: () => this.periodicReport(id, worker) })
+    }
+    return [...targets.values()]
+  }
+
+  /** One periodic read of the account a derived Worker runs on, in its account's home, recorded as readings of its pool. Never rejects. */
+  private async periodicReport(id: string, worker: WorkerSpec): Promise<void> {
+    try {
+      const provider = this.ctx.agentRuntimes.get(worker.runtime)
+      const named = provider ? this.namedHome(worker, provider) : undefined
+      if (!provider || (named && 'why' in named)) return
+      const limits = await this.usageReport(worker, named?.home, 'its periodic read')
+      const meter = limits?.length ? this.meter(id, worker) : undefined
+      if (!meter) return
+      await this.declareAccounts(meter.resources)
+      await this.observe(id, worker, meter, limits!, true)
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the periodic read of ${accountOf(worker)}'s usage report failed, and nothing was recorded: ${(error as Error).message}`)
+    }
+  }
+
+  /**
+   * The usage report of the account a Worker runs on, read in `home` (its runtime's own when
+   * undefined) through `readLimits`: bounded, aborted by a stop, and fail-closed (ADR-0059). Undefined
+   * when its runtime reads none, or when the report cannot be read: that is logged, nothing is
+   * recorded, and its windows keep their last readings.
+   */
+  private async usageReport(worker: WorkerSpec, home: string | undefined, when: 'its periodic read' | `after run ${string}`): Promise<LimitObservation[] | undefined> {
+    const provider = this.ctx.agentRuntimes.get(worker.runtime)
+    if (typeof provider?.limits !== 'function') return undefined
+    this.reports.noted(accountOf(worker))
+    const report = await readLimits(provider, home !== undefined ? { home } : {}, this.stopped.signal)
+    if ('limits' in report) return report.limits
+    if (this.stopped.signal.aborted) return undefined
+    const message = `agent Workers: the usage report of ${accountOf(worker)} (${when}) cannot be read, so nothing is recorded and its windows keep their last readings: ${report.unreadable}`
+    // The periodic read says a standing problem once; a run's own read, each time.
+    if (when === 'its periodic read') this.warnOnce(message)
+    else this.ctx.logger.warn(message)
+    return undefined
   }
 
   /**
@@ -1554,6 +1636,12 @@ export class AgentWorkers extends Service {
     const startedAt = Date.now()
     const deadline = AbortSignal.timeout(this.config.runTimeoutMs ?? 15 * 60_000)
     const watched = this.watch(row, lease)
+    // After the run, the account's own usage report (ADR-0059), once, before its usage is recorded and
+    // its reservation released: after each run of a derived Worker on a declared pool, so the latest
+    // reading has the share; and after any run that hit a limit, so a reset read there wins over the
+    // cooldown fallback. In the home the run ran in.
+    const reportAfter = async (failed: string | undefined): Promise<LimitObservation[]> =>
+      (worker.derived && meter) || failed === 'quota_exhausted' ? await this.usageReport(worker, spec.home, `after run ${row.run_id}`) ?? [] : []
     executing.add(row.run_id)
     let result: RunResult
     try {
@@ -1572,11 +1660,13 @@ export class AgentWorkers extends Service {
         : deferred && !signal.aborted ? waiting(row, deferred, error) : error
       const kind = toProviderError(failure).kind
       const metering = meteringOf(error)
-      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', Date.now() - startedAt) : false
+      const durationMs = Date.now() - startedAt
+      const report = await reportAfter(kind)
+      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', durationMs, report) : false
       // A limit hit that left no limited reading in the ledger is never retried there unseen (INV-2).
       if (kind === 'quota_exhausted' && !limited) {
         // The run's own outcome stays the limit, whatever recording it does.
-        await this.limitHit(row, worker, meter, metering?.limits ?? [], toProviderError(failure).message).catch((caught: unknown) => {
+        await this.limitHit(row, worker, meter, [...metering?.limits ?? [], ...report], toProviderError(failure).message).catch((caught: unknown) => {
           this.ctx.logger.warn(`agent Workers: the limit ${row.worker} hit could not be recorded: ${(caught as Error).message}`)
         })
       }
@@ -1587,12 +1677,13 @@ export class AgentWorkers extends Service {
     }
     // A run whose gate deferred a call did not finish, whatever its runtime reported (INV-2).
     const deferred = deferral()
+    const durationMs = Date.now() - startedAt
     if (deferred) {
       this.noteDeferral(row, deferred, lease)
-      if (meter) await this.account(row, worker, meter, result, 'failed', Date.now() - startedAt)
+      if (meter) await this.account(row, worker, meter, result, 'failed', durationMs, await reportAfter(undefined))
       throw waiting(row, deferred)
     }
-    if (meter) await this.account(row, worker, meter, result, 'completed', Date.now() - startedAt)
+    if (meter) await this.account(row, worker, meter, result, 'completed', durationMs, await reportAfter(undefined))
     return result
   }
 
@@ -1781,10 +1872,14 @@ export class AgentWorkers extends Service {
    * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
    * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
    * is reconciled later). The run's own outcome never depends on the ledger: a refusal is logged.
+   * `report`: what the account's usage report said after the run (ADR-0059), recorded after the run's
+   * own observations, so the latest reading has its share, and never opening a window a limit closed.
    * Whether a `limited` reading of the pool was recorded.
    */
-  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number): Promise<boolean> {
-    const limited = metering?.limits?.length ? await this.observe(row.worker, worker, meter, metering.limits) : false
+  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number, report: readonly LimitObservation[] = []): Promise<boolean> {
+    const ran = metering?.limits?.length ? await this.observe(row.worker, worker, meter, metering.limits) : false
+    const reported = report.length ? await this.observe(row.worker, worker, meter, report, true) : false
+    const limited = ran || reported
     const usage = usageOf(metering)
     if (!usage.usage && metering?.turns === undefined) {
       this.unknownUsage(row, meter, 'not-reported', 'its runtime reported neither tokens nor turns', { outcome })
@@ -1809,22 +1904,40 @@ export class AgentWorkers extends Service {
     return limited
   }
 
-  /** Record the runtime's limit observations as readings of the pool's mapped windows; whether a `limited` one was recorded. */
-  private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: LimitObservation[]): Promise<boolean> {
+  /**
+   * Record the runtime's limit observations as readings of the pool's mapped windows; whether a
+   * `limited` one was recorded. `report`: the observations are an account's usage report (ADR-0059),
+   * which closes a window as a run's do, and never opens one a `limited` reading closed until the
+   * later of its reset and cooldown: such an `ok` reading is not recorded, and is logged. Its
+   * rejections are recorded first, so its own `ok` of a window it closes is not either.
+   */
+  private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: readonly LimitObservation[], report = false): Promise<boolean> {
     const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
     const cooldownMs = (worker.limitCooldownSeconds ?? 3600) * 1000
     let limited = false
-    for (const limit of limits) {
+    /** Windows this call closed: a report's `ok` of one of them is not recorded either. */
+    const closed = new Set<string>()
+    const ordered = report ? [...limits].sort((a, b) => Number(b.status === 'rejected') - Number(a.status === 'rejected')) : limits
+    // A usage report read every period names the same unmapped windows each time: it says so once.
+    const unmapped = (message: string): void => (report ? this.warnOnce(message) : this.ctx.logger.warn(message))
+    for (const limit of ordered) {
       const windowId = worker.windows?.[limit.window]
       const mapped = windowId === undefined ? undefined : pool?.windows.find((w) => w.id === windowId)
       // A limit hit the ledger cannot place (an unmapped or unnamed window) closes every window of
       // the pool: it is never retried on the same pool unseen (INV-2). Anything else unmapped is skipped.
       const windows = mapped ? [mapped] : limit.status === 'rejected' ? pool?.windows ?? [] : []
       if (!windows.length) {
-        this.ctx.logger.warn(`agent Workers: ${id} observed limit window ${limit.window}, which ${windowId === undefined ? 'its windows do not map' : `maps to ${windowId}, not a window of pool ${meter.pool}`}; not recorded`)
+        unmapped(`agent Workers: ${report ? `the usage report of ${meter.account}` : id} observed limit window ${limit.window}, which ${windowId === undefined ? 'its windows do not map' : `maps to ${windowId}, not a window of pool ${meter.pool}`}; not recorded`)
         continue
       }
       for (const window of windows) {
+        if (report && limit.status !== 'rejected') {
+          const until = closed.has(window.id) ? Number.POSITIVE_INFINITY : closedUntil(pool, window.id)
+          if (until !== undefined && Date.parse(limit.observedAt) < until) {
+            this.ctx.logger.info(`agent Workers: the usage report of ${meter.account} reads window ${window.id} of pool ${meter.pool} open (${limit.window}), and a limit closed it until ${Number.isFinite(until) ? new Date(until).toISOString() : 'a later reading'}; not recorded: a report never opens a window a limit closed`)
+            continue
+          }
+        }
         const reading: LimitState = {
           schema: 'limit-state@1.0', pool: meter.pool, account: meter.account,
           window: { id: window.id, kind: window.kind, ...(window.seconds !== undefined ? { seconds: window.seconds } : {}) },
@@ -1840,7 +1953,10 @@ export class AgentWorkers extends Service {
           this.ctx.logger.warn(`agent Workers: a limit reading of ${id} was not recorded: ${(error as Error).message}`)
           return false
         })
-        if (recorded && reading.state === 'limited') limited = true
+        if (recorded && reading.state === 'limited') {
+          limited = true
+          closed.add(window.id)
+        }
       }
     }
     return limited
@@ -1939,6 +2055,17 @@ export class AgentWorkers extends Service {
   private row(runId: string): RunRow | undefined {
     return this.ctx.store.db.prepare('SELECT * FROM agent_runs WHERE run_id = ?').get(runId) as RunRow | undefined
   }
+}
+
+/**
+ * Until when a window's latest reading in `pool` closes it (ms): the later of its reset and cooldown
+ * when it is `limited`, without end when it names neither; undefined when it is not `limited`.
+ */
+function closedUntil(pool: PoolState | undefined, windowId: string): number | undefined {
+  const latest = pool?.readings.find((r) => r.window.id === windowId)
+  if (latest?.state !== 'limited') return undefined
+  const times = [latest.resetsAt, latest.cooldownUntil].filter((t): t is string => t !== undefined).map((t) => Date.parse(t)).filter((t) => Number.isFinite(t))
+  return times.length ? Math.max(...times) : Number.POSITIVE_INFINITY
 }
 
 /** Whether a runtime's evidence admits a Worker: available, reads confined, its sandbox enforced, and a gate asked before each tool call. */
