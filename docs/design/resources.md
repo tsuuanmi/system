@@ -110,35 +110,40 @@ shows each account's own windows and resets.
 
 ### Readings from an account's usage report
 
-> Proposed: [ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
-> from the operator's request of 2026-10-24 (T96;
-> [research](../research/quota-builtins-2026-10-24.md)). Not built: today an account's windows are
-> read only from its runs ([limit readings](agent-runtimes.md#limit-readings)), so a Claude Code
-> window's used share is usually unknown, and an idle account's windows are as its last run left
-> them.
+> Decision: [ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md)
+> (accepted 2026-10-24, D55), from the operator's request of 2026-10-24 (T96;
+> [research](../research/quota-builtins-2026-10-24.md)). Implemented in the agent runtimes'
+> `limits` ([an account's usage report](agent-runtimes.md#an-accounts-usage-report)) and the
+> `agents` source ([`agent-workers`](../../packages/plugins/agent-workers/README.md)). Differs
+> from target: each reader is checked on the installed versions and fixtures, not yet on a live
+> account ([release checklist](../validation/release-checklist.md)); website accounts and the
+> Gemini API have no report to read.
 
 Each account's pool is fed by that account's own readings, so its windows show its own plan and
 its own use, with no plan written into configuration:
 
 | When | What is read | Recorded as |
 |---|---|---|
-| during a run | the runtime's own events (Claude Code's `rate_limit_event`; Codex's limit message) | as now |
-| after each metered run, once, before its usage is recorded | the account's usage report (`limits({ home })` on the agent runtime: Claude Code's `get_usage`, the Codex app server's `account/rateLimits/read`, the Antigravity CLI's `/usage` JSON), in the account's home, without a model turn | `limit-state@1.0` readings of the mapped windows, `source: runtime-result` |
-| every `limitReadSeconds` (the provider entry; default 600, `0` off) for each ready, assigned account with a declared pool, unless a report of it is newer | the same report | the same |
+| during a run | the runtime's own events (Claude Code's `rate_limit_event`; Codex's limit message) | readings of the mapped windows, `source: runtime-result` |
+| after each run of a derived Worker on a declared pool, and after any run that hit a limit, once, before its usage is recorded and its reservation released | the account's usage report (`limits({ home })` on the agent runtime: Claude Code's `get_usage`, the Codex app server's `account/rateLimits/read`, the Antigravity CLI's `/usage` JSON), in the home the run ran in, without a model turn | `limit-state@1.0` readings of the mapped windows, `source: runtime-result`, after the run's own; with no pool, a rejected window's reset ends the account's cooldown |
+| every `limitReadSeconds` (the provider entry; default 600, 60 to 86400, `0` off) for each ready, assigned account with a declared pool, unless a read of it is less than that old; one periodic read in flight per runtime | the same report | the same |
 
 - **Pools come from enrollment, as now.** A newly enrolled account assigned a role is declared, so
   it gets `<template>/<accountId>`, and its first report fills its windows. Two Claude Code accounts
   on different plans read different shares from their own reports; nothing is configured per plan.
-- **Fail closed.** A report never opens a window that a `limited` reading closed before that
-  reading's reset or cooldown (rule 2 below); a report that cannot be read, or is on a runtime
+- **Fail closed.** A report never opens a window that a `limited` reading closed before the later
+  of that reading's reset and cooldown (without end when it names neither; rule 2 below): that
+  `ok` reading is not recorded, and is logged. A report that cannot be read, or is on a runtime
   version whose format was not checked, records nothing, and the window keeps its last reading with
-  its `observedAt`. A report that says a window has nothing left closes it until its reset.
+  its `observedAt`. A report that says a window has nothing left closes it until its reset; one
+  used up in a window the provider's `windows` does not map closes every window of the pool.
 - **What stays unknown:** absolute amounts (reports give shares); windows a runtime does not report;
   accounts on an API key (no plan windows); the Antigravity CLI beyond its one home; website
   accounts and the Gemini API, which tell a limit only when it is hit.
-- **The seam does not change** (ADR-0036): `observe` takes these readings as it takes a run's; the
-  roster already shows each window's `used`, `resets`, and `observedAt`, which the Workers tab
-  renders as "used 42 % of 5 h, resets 14:20 (read 14:05)".
+- **The seam does not change** (ADR-0036): `observe` takes these readings as it takes a run's
+  (contract 1.1, `limit-state@1.0`); the roster already shows each window's `used`, `resets`, and
+  `observedAt` (`mcp-roster@1.1`), which the Workers tab renders as "used 42 % of 5 h, resets 14:20
+  (read 14:05)".
 
 ## Counting
 

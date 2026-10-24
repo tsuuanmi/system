@@ -945,8 +945,12 @@ its Workers stop (PROP-0012 open question 4).
   `unverified`. Slot 1's hand-named Workers run as before enrollment; no Worker derived for one of
   its accounts takes work until a reader is verified (PROP-0012 open question 1).
 - **A new runtime version:** the readers are pinned to the versions they were checked on (Codex
-  0.164.0, Claude Code 2.1.308). On another version an account reads `unverified`; slot 1's
-  Workers still run as before, and the reader waits for a check on that version.
+  0.164.0, Claude Code 2.1.308 to 2.1.310). On another version an account reads `unverified`; slot
+  1's Workers still run as before, and the reader waits for a check on that version. The usage
+  report readers are pinned the same way ([read each account's quota](#read-each-accounts-quota)).
+  An installed Claude Code that updates itself (`~/.local/bin/claude`) leaves the pinned versions
+  this way: at the next probe, `system account list` shows its accounts quarantined `unverified`,
+  naming the version, and their derived Workers take no work until a release pins that version.
 
 ## Resolve a quarantined agent account
 
@@ -1027,6 +1031,75 @@ under the new ids.
 
 If the daemon refuses the `agent-workers` row at start with "the hand-named agent Workers … were
 migrated", the patch still names `workers`: put the printed row in, or roll back.
+
+## Read each account's quota
+
+Each ready, assigned agent account whose Workers draw on a pool template has its pool's windows
+read from its runtime's own usage report, without a model turn: once after each of its runs, and
+every `limitReadSeconds` ([ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
+[design](../design/agent-runtimes.md#an-accounts-usage-report)). Two accounts on different plans
+read their own shares; nothing is configured per plan. The Workers tab (and `system roster`) shows
+each window as `five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)`.
+
+1. **Move to accounts × roles first** ([above](#migrate-agent-workers-to-accounts--roles)): the
+   periodic read covers derived Workers' accounts only. A hand-named Worker's account is read only
+   once after a run that hit a limit, for its reset.
+2. **Give the runtime a pool template and map its window names** (the `resources` row's
+   `templates`, the provider entry's `pool` and `windows`). For Claude Code, the five-hour and
+   seven-day windows (D55):
+
+   ```yaml
+   - id: resources
+     config:
+       templates:
+         - template: claude-plan
+           group: claude-agent-sdk
+           kind: interactive
+           windows:
+             - { id: five-hour, kind: rolling, seconds: 18000 }
+             - { id: seven-day, kind: rolling, seconds: 604800 }
+   - id: agent-workers
+     config:
+       providers:
+         - { provider: claude-agent-sdk, slots: 2, pool: claude-plan, windows: { five_hour: five-hour, seven_day: seven-day }, limitReadSeconds: 600 }
+   ```
+
+   The runtimes' window names, which `windows` maps:
+
+   | Runtime | Its windows |
+   |---|---|
+   | Claude Code | `five_hour`, `seven_day`, `seven_day_oauth_apps`, `seven_day_opus`, `seven_day_sonnet` (the names its `rate_limit_event` uses too) |
+   | Codex | each window by its length in minutes: `300m` (five hours), `10080m` (a week), as the account reports them |
+   | Antigravity CLI | each bucket's `id`, as `HOME=<home> agy --print=/usage --output-format json` lists them under `command.data.groups[].buckets[]` |
+
+   A window the report gives and `windows` does not map is skipped (logged once), unless it is used
+   up: then every window of the pool closes until its reset (fail closed). Map each window that can
+   stop the account's work, or accept that an unmapped one at 100 % holds the account.
+3. **Choose `limitReadSeconds`** on the provider entry: how often each account is read (default
+   600; 60 to 86400; `0` turns the periodic read off and keeps the read after each run). Each read
+   starts one runtime process per account (Claude Code, `codex app-server`, or `agy`), no model
+   turn: five accounts at 600 s is thirty short processes an hour, one at a time per runtime.
+4. **Restart** with the patch (`system shutdown`, `system start`): the first reads run a few
+   seconds after the start, the longest unread account first.
+5. **Check:** each window shows `used … %` and a `read` time that moves; MCP `resources_pools`
+   gives each window's latest reading, `source: runtime-result`, and `observedAt`.
+
+When a window says unknown, or its `read` time stops moving:
+
+- **`used unknown (its latest reading gives no used share)`**: its latest reading was a run's own
+  event (Claude Code reports a share only near a limit); the next report fills it.
+- **The report cannot be read.** The daemon's log names why, once per reason: `the usage report of
+  <accountId> (its periodic read) cannot be read, so nothing is recorded and its windows keep their
+  last readings: …`. Most often a runtime version whose report was not checked (`… Claude Code
+  2.1.311 is not verified`): the shares stay unknown until a release pins that version after
+  checking it, never misread. An account on an API key has no plan windows (`… reports no plan
+  limits`): give its pool `unknown: available`, or no pool.
+- **A window stays `limited` though the report reads it open**: a report never opens a window a
+  limit closed before that limit's reset or cooldown; the log says so (`… a report never opens a
+  window a limit closed`). It opens at `until`.
+- **The Antigravity CLI** has no identity reader, so its accounts are never `ready` and are not read
+  periodically; a hand-named Antigravity Worker's account is read once after a run that hit its
+  quota, for the reset.
 
 ## Backup and restore
 
@@ -2113,9 +2186,11 @@ and a Worker that draws on it:
 ```
 
 Without `unknown: available`, a window nobody has read yet fails the pool closed, and a closed pool
-admits no run that could give it a reading: only a run's result records readings today, so set it
-on a pool whose windows report only after a run. The runtime's window names (`five_hour`) are mapped to
-your window ids by the Worker's `windows`.
+admits no run that could give it a reading: a hand-named Worker's configured pool is read only from
+its runs, so set it on a pool whose windows report only after a run. An account's pool made from a
+template is read from its own usage report between runs too
+([read each account's quota](#read-each-accounts-quota)). The runtime's window names (`five_hour`)
+are mapped to your window ids by the Worker's `windows`.
 
 Reading a limit:
 
@@ -2134,19 +2209,21 @@ Reading a limit:
   is never retried on that pool.
 - Codex and the Antigravity CLI read a limit's reset time from the agent's own report
   ([limit readings](../design/agent-runtimes.md#limit-readings)): Codex's usage-limit message
-  names no window, so every window of the pool reads `limited` until that time; an Antigravity
-  bucket is a window by its `id` (map the ids your account's `agy --print=/usage --output-format
-  json` shows under `command.data.groups[].buckets[]` in the Worker's `windows`; an exhausted
-  bucket left unmapped closes every window). When the runtime read no reset time, the run still
-  fails `quota_exhausted`, its error says why (`its reset time is not read: …`, an agy or Codex
-  version not verified, say), and every window of the pool reads `limited` (source
-  `limit-notice`) for the Worker's `limitCooldownSeconds`.
+  names no window, so every window of the pool reads `limited` until that time; for the
+  Antigravity CLI, the source reads the account's usage report after the run, and a bucket is a
+  window by its `id` (map the ids your account's `agy --print=/usage --output-format json` shows
+  under `command.data.groups[].buckets[]` in the Worker's `windows`; an exhausted bucket left
+  unmapped closes every window). After any run that hit a limit, the account's usage report is read
+  once, and a used-up window there sets the reset. When neither gave a reset time, the run still
+  fails `quota_exhausted` (Codex's error says why: `its reset time is not read: …`, a Codex
+  version not verified, say; the log says why a report could not be read), and every window of the
+  pool reads `limited` (source `limit-notice`) for the Worker's `limitCooldownSeconds`.
 - **A Worker with no pool** is not metered, but a limit it hits cools down every Worker of its
   runtime (they share one sign-in): `system health` lists them `quota-exhausted`, a run on one
   fails `quota_exhausted` before the agent starts, and event `agent-workers.cooldown`
   (`system events --type agent-workers.cooldown`) names the runtime, the run, and `until`: the
-  reset time the runtime named, else `limitCooldownSeconds`, at most seven days. It survives a
-  restart and ends only at `until`.
+  reset time the runtime named (in the run, or in the account's usage report read after it), else
+  `limitCooldownSeconds`, at most seven days. It survives a restart and ends only at `until`.
 
 What to do:
 

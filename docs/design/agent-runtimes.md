@@ -64,7 +64,10 @@ interface AgentRuntimeProvider {
       observer?: RunObserver): Promise<RunResult>;   // its process and activity (PROP-0013)
   identity?(home: string, key: Uint8Array): Promise<IdentityReading>;  // who is signed in (below)
   loginCommand?(home: string): { command: string; args: string[]; env: Record<string, string> };
+  limits?(options: { home?: string }, signal: AbortSignal): Promise<LimitReport>;  // an account's usage report (below)
 }
+
+type LimitReport = { limits: LimitObservation[] } | { unreadable: string };  // never a throw
 
 interface RuntimeEvidence {
   available: boolean;
@@ -409,7 +412,7 @@ operator's forwarded variables. Only the keyed hash (and a masked email) leaves 
 | Runtime | Reader | Pinned to | Sign-in check | Principal (hashed) | Hint |
 |---|---|---|---|---|---|
 | `codex-sdk` | `codex-auth-json` | Codex 0.164.0 | `codex login status` says `Logged in using ChatGPT` (an API-key sign-in names no person: `ambiguous`) | `tokens.account_id` of `auth.json`, the ChatGPT account id | none (the email is only in the id token, which is never read) |
-| `claude-agent-sdk` | `claude-state-file` | Claude Code 2.1.308 | `claude auth status` says `loggedIn`, and the home keeps that sign-in in its own `.credentials.json` (existence only; elsewhere is `unverified`) | `oauthAccount.accountUuid` and `oauthAccount.organizationUuid` of `.claude.json`, both whole (never the email alone) | `oauthAccount.emailAddress`, masked |
+| `claude-agent-sdk` | `claude-state-file` | Claude Code 2.1.308, 2.1.309, 2.1.310 | `claude auth status` says `loggedIn`, and the home keeps that sign-in in its own `.credentials.json` (existence only; elsewhere is `unverified`) | `oauthAccount.accountUuid` and `oauthAccount.organizationUuid` of `.claude.json`, both whole (never the email alone) | `oauthAccount.emailAddress`, masked |
 | `antigravity-cli` | none | — | — | no file or command was shown to name the signed-in Google account: every account is `unverified` | — |
 
 - **Version-pinned** as agy's hook is ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)):
@@ -417,7 +420,11 @@ operator's forwarded variables. Only the keyed hash (and a masked email) leaves 
 - **Evidence.** The file and field names were seen on this host (two Codex
   homes signed in as two accounts showed two `tokens.account_id`; values were never read into any
   record), and each reader is tested against redacted fixtures of that shape and passes the
-  identity suite. **Phase A's supervised check on the operator's real accounts is still owed**: that
+  identity suite. Claude Code 2.1.309 and 2.1.310 were checked against 2.1.308 from their binaries
+  (2026-10-24, T101): every unit of code the reader relies on (`auth status`'s JSON, the config
+  directory, the credentials and state file paths, the `oauthAccount` writer) is the same but for
+  minified names, and `--version` and a signed-out `auth status` in a throwaway home answer as
+  2.1.308's. **Phase A's supervised check on the operator's real accounts is still owed**: that
   each id stays equal across a restart, a token refresh, and a re-login, and differs for two
   accounts, on the pinned versions. Until it is done the pins rest on the shapes seen, not on that
   check.
@@ -646,14 +653,16 @@ provider that names a pool template (its account's pool,
 3. After the run, completed or not, one `usage-record` (source `runtime-result`) carries the
    runtime's numbers, and each limit observation becomes a `limit-state` reading of the pool
    window the configuration maps the runtime's window name to (`windows`); an unmapped window is
-   skipped. Then the reservation is released. The reservation and the record name the board task
+   skipped. Before the record, a derived Worker's account's own usage report is read once, and its
+   observations recorded after the run's ([an account's usage report](#an-accounts-usage-report)).
+   Then the reservation is released. The reservation and the record name the board task
    and project the run's brief serves, if any, so the ledger counts the run against that task's
    budget ([a task's budget](workflow-engine.md#a-tasks-budget)).
-4. A run that fails `quota_exhausted` and left no `limited` reading (its runtime read no reset
-   time, or one the ledger could not place) closes every window of the pool: a `limited` reading
-   (source `limit-notice`) for the Worker's `limitCooldownSeconds`, until a later reading says
-   otherwise. A limit is never retried on the same pool unseen
-   ([fail-closed rules](resources.md#fail-closed-rules)).
+4. A run that fails `quota_exhausted` and left no `limited` reading (neither its runtime nor the
+   account's usage report read after it gave a reset time, or the ledger could not place one)
+   closes every window of the pool: a `limited` reading (source `limit-notice`) for the Worker's
+   `limitCooldownSeconds`, until a later reading says otherwise. A limit is never retried on the
+   same pool unseen ([fail-closed rules](resources.md#fail-closed-rules)).
 
 A run that started before a restart has no result message, so nothing is recorded for it then;
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no
@@ -661,8 +670,9 @@ pool is not metered, but its limits still hold: a run that fails `quota_exhauste
 metered Worker whose ledger did not take the reading) cools down every Worker of its account (for
 hand-named Workers, every Worker of the runtime, which share its one home and so its one sign-in).
 They are `quota-exhausted` until the
-reset time the runtime named, else for `limitCooldownSeconds`, at most seven days, across a
-restart (event `agent-workers.cooldown`; [agent Workers](../../packages/plugins/agent-workers/README.md)).
+reset time the runtime named (in the run, or in the account's usage report read after it), else for
+`limitCooldownSeconds`, at most seven days, across a restart (event `agent-workers.cooldown`;
+[agent Workers](../../packages/plugins/agent-workers/README.md)).
 
 A metered run whose usage the ledger could not count (its runtime reported neither tokens nor
 turns, the host stopped while it ran, or the ledger refused or failed its record) is recorded as
@@ -677,17 +687,18 @@ the installed agent itself reports, never from the model's text, and only on a v
 format was checked ([fail-closed rules](resources.md#fail-closed-rules)). A reading that cannot
 be read is no reading: the run's limit then closes the pool for the Worker's
 `limitCooldownSeconds`, never opens it. On a version not checked, the format is not read at all,
-and the run's error says so (`its reset time is not read: …`).
+and says so: Codex's run error (`its reset time is not read: …`), or an account's usage report
+`unreadable`, naming the version.
 
 | Runtime | What the installed version exposes | What is read | Versions |
 |---|---|---|---|
 | Claude Code | a `rate_limit_event` per limit check in the SDK's stream: `rateLimitType` (the window), `status`, `resetsAt` (Unix seconds), `utilization` | every event, as an observation of its window | any (the SDK's own types) |
 | Codex | `codex exec --experimental-json`, which the SDK drives, emits no rate-limit event; a turn that hits the usage limit fails (`turn.failed`) with Codex's message, which names when to try again, to the minute, in the process's local time: `… try again at 3:04 PM.` (today) or `… at Oct 25th, 2026 3:04 PM.`, or `… try again later.` | the reset time of a `quota_exhausted` turn's message, as a `rejected` observation of window `*` (the message names no window, so the pool closes as a whole), one minute late (the minute is truncated). The time is read in the zone the child ran in: the `TZ` of its environment (the operator's `env.TZ`, else the daemon's `TZ`), else the host's zone as Node resolves it; the runtime never sets `TZ`. A time without a date is on the child's date when read (late past its midnight, never early); a wall-clock time a DST change shows twice, or never, is read as the later instant. A `TZ` that is no IANA zone name as the child would read it (empty, a POSIX rule such as `UTC0`, an offset, a name in the wrong case, or one Intl does not know) gives no reading, and the error says so | `VERIFIED_LIMIT_VERSIONS`: 0.164.0 |
-| Antigravity CLI | the run's stream and its quota errors name no reset (`individual quota reached`, `You have exhausted your quota on this model.`); print mode answers `/usage` itself, without an agent turn, and `--output-format json` writes the quota summary: groups of buckets, each with an `id`, `window`, `disabled`, `remaining_fraction`, `remaining_amount`, and `reset_time` (RFC 3339, UTC) | after a run that hit a quota, `agy --print=/usage --output-format json` under the home's confinement: each enabled bucket that says what is left is an observation of the window its `id` names, `rejected` when nothing is left, with its reset; a report not in the checked shape gives none | `VERIFIED_LIMIT_VERSIONS`: 1.4.6 |
+| Antigravity CLI | the run's stream and its quota errors name no reset (`individual quota reached`, `You have exhausted your quota on this model.`); print mode answers `/usage` itself, without an agent turn, and `--output-format json` writes the quota summary: groups of buckets, each with an `id`, `window`, `disabled`, `remaining_fraction`, `remaining_amount`, and `reset_time` (RFC 3339, UTC) | nothing in the run; after a run that hit a quota, the `agents` source reads the account's usage report (`limits`: `agy --print=/usage --output-format json`, [below](#an-accounts-usage-report)), whose rejected bucket gives the reset | `VERIFIED_LIMIT_VERSIONS`: 1.4.6 |
 
-The runtime's window names (a Claude `rateLimitType`, an Antigravity bucket `id`) are opaque, and
-the Worker's `windows` maps them to the pool's windows; `*`, or an unmapped rejection, closes every
-window of the pool ([metering](#metering), step 3).
+The runtime's window names (a Claude `rateLimitType` or `get_usage` window, a Codex window's length,
+an Antigravity bucket `id`) are opaque, and the Worker's `windows` maps them to the pool's windows;
+`*`, or an unmapped rejection, closes every window of the pool ([metering](#metering), step 3).
 
 Evidence, checked 2026-10-24 on the installed versions; no account was used, so each format is
 also a [release check](../validation/release-checklist.md) on a live account:
@@ -701,8 +712,9 @@ also a [release check](../validation/release-checklist.md) on a live account:
   (`%-I:%M %p`; `%b %-d` + `st|nd|rd|th` + `, %Y %-I:%M %p`). `codex app-server generate-ts`
   shows the app server's `account/rateLimits/read` and `account/rateLimits/updated`
   (`RateLimitSnapshot`: `primary` and `secondary` windows with `usedPercent`,
-  `windowDurationMins`, `resetsAt` in Unix seconds), which `codex exec` does not emit and the
-  runtime does not use. Fixtures: `runtime-codex-sdk/tests/fixtures/codex-0.164.0-limit-messages.json`.
+  `windowDurationMins`, `resetsAt` in Unix seconds), which `codex exec` does not emit and an
+  account's usage report reads ([below](#an-accounts-usage-report)). Fixtures:
+  `runtime-codex-sdk/tests/fixtures/codex-0.164.0-limit-messages.json`.
 - **agy 1.4.6** (`~/.local/bin/agy`). Its embedded changelog: print mode answers `/usage`,
   `/quota`, and `/credits` "without starting an agent turn, spending quota, or leaving a
   conversation behind", and "piped and `--json` output still use UTC timestamps". Its Go type
@@ -715,10 +727,70 @@ also a [release check](../validation/release-checklist.md) on a live account:
   formats a reset with RFC 3339, and `headless.buildOutput` sets `status` to `SUCCESS`. Fixtures:
   `runtime-antigravity-cli/tests/fixtures/agy-1.4.6-usage.json`.
 
-Not read: the Codex app server's rate-limit snapshot (it would need a second Codex process per
-reading on the experimental app-server protocol); usage percentages of a Codex run that did not
-hit a limit (`codex exec` reports none); the Antigravity report before or after a run that did not
-hit a quota (each read is one more agy process and backend call); agy's credits (`/credits`).
+Not read in a run: usage percentages of a Codex run (`codex exec` reports none); agy's credits
+(`/credits`). An account's shares between runs come from its usage report (below).
+
+### An account's usage report
+
+> Decision: [ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md)
+> (accepted 2026-10-24, D55), from the operator's request of 2026-10-24 (T96;
+> [research](../research/quota-builtins-2026-10-24.md)). Implemented in the three runtimes'
+> `limits` and in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/reports.ts`). Differs from target: each reader rests on the installed binaries and on
+> fixtures, not yet on a live account ([release checklist](../validation/release-checklist.md)); the
+> Codex reader's exchange rests on `codex app-server generate-ts` on 0.164.0, not re-checked since.
+
+A run's own events give a window's share only near or at a limit (Claude Code's
+`rate_limit_event` carries `utilization` only then), and nothing is read between runs. Each runtime
+also reports every window of the signed-in account on request, without a model turn: the optional
+`limits({ home }, signal)` reads it, and the `agents` source records it in the account's pool
+([resources: readings from an account's usage report](resources.md#readings-from-an-accounts-usage-report)).
+
+- **The seam.** `limits` reads the account signed in to `home` (its own home when absent; a
+  provider without `homes` answers a named home `unreadable`), under the probe's confinement and
+  environment, starting no model turn, spending no quota a run would, and leaving no conversation
+  behind; a runtime that cannot promise that does not implement it. It reads a format only on a
+  runtime version whose format was checked, else `unreadable`, naming the version; it never throws.
+  A Worker source asks it through `readLimits` (30 s, aborted with its caller, fail-closed on
+  anything the seam does not define). The usage report suite (`agentRuntimeLimitsConformance`)
+  checks it; the fake and the three readers pass it.
+- **The readers** (each converts its own units: a share used 0 to 100, ISO times, a reset more than
+  400 days away dropped, and a window with nothing left `rejected`; a report in any other shape is
+  `unreadable` as a whole):
+
+  | Runtime | Report | Windows | Versions |
+  |---|---|---|---|
+  | Claude Code | the SDK's `get_usage` control request (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`) in a session sent no message (streaming input that never yields), with no tool, settings, MCP server, or hook, and no session written (`persistSession: false`); then closed | each window of `rate_limits` (when `rate_limits_available`) whose `utilization` is a number: `five_hour`, `seven_day`, `seven_day_oauth_apps`, `seven_day_opus`, `seven_day_sonnet`, by name (the names a `rate_limit_event` uses); `model_scoped`, `extra_usage`, the plan type, and the session are not read; `rate_limits_available: false` (an API key) is `unreadable` | `VERIFIED_LIMIT_VERSIONS`: 2.1.308, 2.1.309, 2.1.310 |
+  | Codex | `codex app-server` in the account's `CODEX_HOME` (a home with no MCP server, the runtime's `--config` overrides): `initialize`, `initialized`, `account/rateLimits/read`, then ended; no thread, no turn | `primary` and `secondary`, each named by its length, `<windowDurationMins>m` (`300m`, `10080m`), since which is the five-hour window is not fixed by name; one of no stated length only when used up, as `*` | `VERIFIED_RATE_LIMITS_VERSIONS`: 0.164.0 |
+  | Antigravity CLI | `agy --print=/usage --output-format json` in its own home only, which print mode answers itself (as [above](#limit-readings)) | each enabled bucket that says what is left, by its `id` | `VERIFIED_LIMIT_VERSIONS`: 1.4.6 |
+
+- **When the `agents` source reads** (for a runtime that implements `limits`): once after each run
+  of a derived Worker on a declared pool, and after any run that hit a limit (so a reset read there
+  wins over the cooldown fallback; with no pool, the account cools down until the report's
+  rejected reset), in the home the run ran in, before the run's usage is recorded and its
+  reservation released; and every `limitReadSeconds` (the provider entry; default 600, 60 to
+  86400, `0` off, with `pool` only) for each ready, assigned account with a declared pool, skipped
+  while a read of it is less than that old, at most one periodic read in flight per runtime, the
+  first pass a few seconds after a start. A stop aborts a read in flight.
+- **Fail-closed.** A report's observations become readings as a run's do (`source:
+  runtime-result`, the same `windows` and cooldown), except that **a report never opens a window a
+  `limited` reading closed** before the later of that reading's `resetsAt` and `cooldownUntil`:
+  that `ok` reading is not recorded, and is logged. An `unreadable` report, a timeout, or a failure
+  records nothing and is logged; the window keeps its last reading and `observedAt`, which the
+  roster shows.
+- **Evidence** (2026-10-24, no account used): Claude Code's handler, the shaping of its answer
+  (`rate_limits` is the body of the account's `GET /api/oauth/usage`, or the CLI's snapshot of it
+  under a minute old, kept per account in the home's `.claude.json`), the response schema (window
+  `{ utilization, resets_at }`, "Percentage of the window used, 0-100"), and the `/usage` renderer
+  (`Math.floor(utilization)` "% used") are the same in 2.1.308, 2.1.309, and 2.1.310 but for
+  minified names, and the read writes no transcript and sends no model request; Codex's and agy's
+  as [above](#limit-readings). Fixtures: `runtime-claude-agent-sdk/tests/fixtures/claude-get-usage.json`,
+  `runtime-codex-sdk/tests/fixtures/codex-0.164.0-rate-limits.json`,
+  `runtime-antigravity-cli/tests/fixtures/agy-1.4.6-usage.json`.
+- **What stays unknown:** absolute amounts (each report gives shares); windows a runtime does not
+  report; an account on an API key; the Antigravity CLI beyond its one home (no identity reader, so
+  its accounts are never `ready` and no derived Worker of it is read periodically); website accounts
+  and the Gemini API.
 
 ## Admission evidence
 

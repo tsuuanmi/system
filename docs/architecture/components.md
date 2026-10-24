@@ -129,6 +129,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)); a
   run the ledger counts nothing of is recorded as a `usage.unknown` fact in the event log
   ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)).
+  Each ready account with a declared pool also has its runtime's own usage report read into its
+  pool after its runs and every `limitReadSeconds`, never opening a window a limit closed
+  ([an account's usage report](../design/agent-runtimes.md#an-accounts-usage-report)).
   A Worker configured with `worktreePerRun` works, per workflow run, in that run's own git
   worktree of its repository, and the source removes the worktree, its changes committed on
   the run's branch, once the run has been idle past a retention

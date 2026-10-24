@@ -633,7 +633,11 @@ guesses.
   pool's configuration says whether `unknown` leaves it available (a pool that never reports,
   such as a local model) or not, which is the default (fail closed).
 - `runtime-result` readings come from what an agent runtime itself reports
-  ([limit readings](../design/agent-runtimes.md#limit-readings)), never from the model's text.
+  ([limit readings](../design/agent-runtimes.md#limit-readings)), never from the model's text: its
+  events during a run, and the account's usage report read on request
+  ([an account's usage report](../design/agent-runtimes.md#an-accounts-usage-report),
+  ADR-0059), which `observedAt` dates. A report's `ok` reading never replaces a `limited` one
+  before the later of its `resetsAt` and `cooldownUntil`: its Worker source does not record it.
 - `history-estimate` readings are computed by code from recorded usage, conservatively. Examples:
   [`limit-state.five-hour.json`](../../schemas/examples/limit-state.five-hour.json),
   [`limit-state.limited.json`](../../schemas/examples/limit-state.limited.json).
