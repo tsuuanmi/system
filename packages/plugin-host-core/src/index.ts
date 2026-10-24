@@ -308,23 +308,27 @@ export const UNDECLARED_SEAM_VERSION = '1.0.0'
 
 /**
  * Whether `version` satisfies the caret range `range` (`^major.minor.patch`), as semver does for a
- * major above zero; undefined when either is not of that form, or the range's major is 0 (whose
- * caret semantics differ). A generated manifest declares only such ranges, and a range the host
- * cannot read is a finding, never a pass (INV-2).
+ * major above zero: a pre-release version (`1.2.3-rc.1`) satisfies none, since such a range names
+ * no pre-release. Undefined when either is not of that form (a version is `major.minor.patch` with
+ * an optional pre-release, nothing after it), or the range's major is 0 (whose caret semantics
+ * differ). A generated manifest declares only such ranges, and a range the host cannot read is a
+ * finding, never a pass (INV-2).
  */
 export function satisfies(version: string, range: string): boolean | undefined {
-  const r = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range)
-  const v = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
+  const r = /^\^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(range)
+  const v = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$/.exec(version)
   if (!r || !v || Number(r[1]) === 0) return undefined
-  const [rm, rn, rp] = r.slice(1).map(Number) as [number, number, number]
-  const [vm, vn, vp] = v.slice(1).map(Number) as [number, number, number]
+  if (v[4] !== undefined) return false
+  const [rm, rn, rp] = r.slice(1, 4).map(Number) as [number, number, number]
+  const [vm, vn, vp] = v.slice(1, 4).map(Number) as [number, number, number]
   return vm === rm && (vn > rn || (vn === rn && vp >= rp))
 }
 
 /**
  * 1.1: the manifest check of a composition, the same for every provider. Only a plugin a row mounts
  * runs, so only it is checked, and only it provides. It must declare a valid manifest, unless its
- * package ships none and `allowWithoutManifest` names it (the DSH rows the bundle composes). Each
+ * package was read as shipping none and `allowWithoutManifest` names it (the DSH rows the bundle
+ * composes); one `manifests` gives no read for is never allowed. Each
  * seam it consumes must be provided at a version its range accepts, by every mounted plugin whose
  * manifest provides it; a required seam no manifest declares is taken at contract 1.0, and an
  * optional one is not checked (it may be absent, which an optional consumer works without).
@@ -343,7 +347,8 @@ export function checkComposition(rows: readonly CompositionRow[], manifests: Rea
   for (const plugin of mounted) {
     const read = manifests.get(plugin.name) ?? { state: 'absent', reason: `${plugin.name} was not read` }
     if (read.state !== 'valid') {
-      if (read.state === 'absent' && allowed.has(plugin.name)) continue
+      // Only a package read as shipping none is allowed: one not read may ship any manifest (INV-2).
+      if (read.state === 'absent' && manifests.has(plugin.name) && allowed.has(plugin.name)) continue
       out.set(plugin.name, [{ kind: 'no-manifest', manifest: read.state, reason: read.state === 'absent' ? `it runs with no manifest: ${read.reason}` : `it runs with a manifest the host refused: ${read.reason}` }])
       continue
     }
@@ -417,8 +422,11 @@ export function checkHash(rows: readonly CompositionRow[], manifests: ReadonlyMa
   }) as ArtifactRef
 }
 
-/** What a finding is, its reason aside: a reworded reason is the same finding, never recorded again. */
-const findingKeys = (findings: readonly ManifestFinding[]): string => canonicalJson(findings.map((finding) => ({ ...finding, reason: '' })))
+/**
+ * What a plugin's findings are, reasons and order aside: a reworded reason, or the same findings in
+ * another order (rows or a manifest's seams reordered), are the same findings, never recorded again.
+ */
+const findingKeys = (findings: readonly ManifestFinding[]): string => canonicalJson(findings.map((finding) => canonicalJson({ ...finding, reason: '' })).sort())
 
 /** At most the 32 reasons a candidate holds (`decision@1.x`), the last one counting the rest. */
 const bounded = (reasons: string[]): string[] => (reasons.length <= 32 ? reasons : [...reasons.slice(0, 31), `and ${reasons.length - 31} more finding(s), each in the outcome's detail`])

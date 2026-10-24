@@ -103,6 +103,20 @@ describe('the manifest check (1.1)', () => {
     expect([satisfies('1.0.0', '1.0.0'), satisfies('1.0.0', '>=1'), satisfies('0.2.0', '^0.2.0'), satisfies('x', '^1.0.0')]).toEqual([undefined, undefined, undefined, undefined])
   })
 
+  it('accepts no pre-release under a caret range, as semver does, and reads no version or range with more than major.minor.patch (INV-2)', () => {
+    expect([satisfies('1.2.3-rc.1', '^1.2.3'), satisfies('1.3.0-rc.1', '^1.2.3'), satisfies('2.0.0-rc.1', '^1.0.0')]).toEqual([false, false, false])
+    expect([satisfies('1.2.3garbage', '^1.2.3'), satisfies('1.2.3.4', '^1.2.3'), satisfies('01.2.3', '^1.2.3'), satisfies('1.2.3', '^01.2.3'), satisfies('1.2.3', '^1.2.3-rc.1')]).toEqual([undefined, undefined, undefined, undefined, undefined])
+    const rows = [{ id: 'p', name: '@x/p', mounted: true }, { id: 'c', name: '@x/c', mounted: true }]
+    const manifests = new Map([read('@x/p', { provides: [{ seam: 'thing', version: '1.1.0-rc.1' }] }), read('@x/c', { consumes: [{ seam: 'thing', range: '^1.1.0' }] })])
+    expect(checkComposition(rows, manifests).get('@x/c')).toEqual([{ kind: 'unsatisfied', seam: 'thing', range: '^1.1.0', provider: '@x/p', version: '1.1.0-rc.1', reason: expect.stringMatching(/does not satisfy/) }])
+  })
+
+  it('allows no package without a manifest whose manifest was not read: only one read as absent (INV-2)', () => {
+    const rows = [{ id: 'dsh', name: '@x/dsh', mounted: true }]
+    expect(checkComposition(rows, new Map(), ['@x/dsh']).get('@x/dsh')).toEqual([{ kind: 'no-manifest', manifest: 'absent', reason: expect.stringMatching(/was not read/) }])
+    expect(checkComposition(rows, new Map([['@x/dsh', { state: 'absent', reason: 'it ships none' }]]), ['@x/dsh']).get('@x/dsh')).toBeUndefined()
+  })
+
   it('finds a range the host cannot read, never passing it (INV-2)', () => {
     const rows = [{ id: 'p', name: '@x/p', mounted: true }, { id: 'c', name: '@x/c', mounted: true }]
     const manifests = new Map([read('@x/p', { provides: [{ seam: 'thing', version: '1.0.0' }] }), read('@x/c', { consumes: [{ seam: 'thing', range: '>=1.0.0' }] })])
@@ -141,6 +155,19 @@ describe('the manifest check (1.1)', () => {
     const [cleared] = reconcileChecks([], new Map(), [], recorded('it ships none')).changes
     expect(cleared).toMatchObject({ name: '@x/dsh', findings: [], decision: { inputs: [`sha256:${'4'.repeat(64)}`], outcome: { option: 'pass', detail: { rows: [], from: 'fail' } } } })
     expect(cleared!.decision.candidates[0]!.reasons[0]).toMatch(/no row of the composition mounts it/)
+  })
+
+  it('records the same findings in another order as the same ones: a reordered composition or manifest records nothing (INV-4)', () => {
+    const provides = [{ seam: 'one', version: '1.0.0' }, { seam: 'two', version: '1.0.0' }]
+    const consumes = [{ seam: 'one', range: '^2.0.0' }, { seam: 'two', range: '^2.0.0' }]
+    const rows = [{ id: 'p', name: '@x/p', mounted: true }, { id: 'p-2', name: '@x/p2', mounted: true }, { id: 'c', name: '@x/c', mounted: true }]
+    const first = reconcileChecks(rows, new Map([read('@x/p', { provides }), read('@x/p2', { provides }), read('@x/c', { consumes })]), [], new Map())
+    const recorded = new Map<string, RecordedCheck>([['@x/c', { name: '@x/c', findings: first.findings.get('@x/c')!, since: '2026-10-23T00:00:00.000Z', decision: `sha256:${'6'.repeat(64)}` }]])
+    const reordered = new Map([read('@x/p', { provides }), read('@x/p2', { provides }), read('@x/c', { consumes: [...consumes].reverse() })])
+    const again = reconcileChecks([rows[1]!, rows[0]!, rows[2]!], reordered, [], recorded)
+    expect(again.findings.get('@x/c')).toHaveLength(4)
+    expect(again.findings.get('@x/c')).not.toEqual(first.findings.get('@x/c'))
+    expect(again.changes).toEqual([])
   })
 
   it('lists a plugin\'s findings with the decision that recorded them, and nothing for one without', () => {
