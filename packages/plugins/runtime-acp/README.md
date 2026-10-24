@@ -41,7 +41,9 @@ first-class provider.
     agent's message chunks;
   - an abort sends `session/cancel`; after 3 s the process gets SIGTERM, and
     after 5 s more SIGKILL (`cancelMs`, `killMs`: constructor timing, not
-    configuration), so an agent that ignores both cannot hang a run;
+    configuration), so an agent that ignores both cannot hang a run. A run
+    aborted before its prompt was sent (while the agent starts or makes its
+    session) never sends it: the agent gets SIGTERM at once;
   - stop reasons map to the failure taxonomy (`max_tokens` / `max_turn_requests`
     → `timeout`, `refusal` → `invalid_input`, `cancelled` → `aborted`).
 - **Verified:** against a scripted ACP agent subprocess, and live with

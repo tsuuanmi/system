@@ -2,16 +2,24 @@
 // permission first, "read:<path>" asks the client to read a file, "hang" waits for a cancel,
 // "stubborn" ignores both a cancel and SIGTERM, "env:<NAME>" answers with that variable,
 // "look:<path>" reads the disk on its own (as any agent can), without asking the client.
-import { existsSync } from 'node:fs'
+// With SCRIPTED_MARKS set to a directory, it marks where it is there, one empty file each: `session`
+// (making a session, which waits for `go` while `hold` exists), `prompted`, `hanging` and `stubborn`
+// (waiting, as those prompts do), and `cancelled`.
+import { existsSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
+const marks = process.env.SCRIPTED_MARKS
+const mark = (name) => marks && writeFileSync(join(marks, name), '')
 const cancelled = new Map()
 new AgentSideConnection((conn) => ({
   async initialize() {
     return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: true }, agentInfo: { name: 'scripted', version: '1.0.0' } }
   },
   async newSession() {
+    mark('session')
+    while (marks && existsSync(join(marks, 'hold')) && !existsSync(join(marks, 'go'))) await new Promise((resolve) => setTimeout(resolve, 10))
     return { sessionId: 'h-1' }
   },
   async loadSession() {
@@ -21,13 +29,16 @@ new AgentSideConnection((conn) => ({
     return {}
   },
   async cancel({ sessionId }) {
+    mark('cancelled')
     cancelled.get(sessionId)?.()
   },
   async prompt({ sessionId, prompt }) {
+    mark('prompted')
     const text = prompt.map((b) => (b.type === 'text' ? b.text : '')).join('')
     const say = (t) => conn.sessionUpdate({ sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: t } } })
     if (text.includes('stubborn')) {
       process.on('SIGTERM', () => undefined)
+      mark('stubborn')
       await new Promise(() => undefined)
     }
     const env = /env:(\S+)/.exec(text)
@@ -41,7 +52,9 @@ new AgentSideConnection((conn) => ({
       return { stopReason: 'end_turn' }
     }
     if (text.includes('hang')) {
-      await new Promise((resolve) => cancelled.set(sessionId, resolve))
+      const cancel = new Promise((resolve) => cancelled.set(sessionId, resolve))
+      mark('hanging')
+      await cancel
       return { stopReason: 'cancelled' }
     }
     if (text.includes('permission')) {
