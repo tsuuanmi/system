@@ -39,7 +39,10 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
     action's target resolves through nothing (`unresolved`), and when an action
     misses its postcondition (`postcondition`), once per element and kind per
     page. It carries `outlineOf`'s structural outline of the region
-    ([drift evidence](../../docs/design/ui-operations.md#drift-evidence));
+    ([drift evidence](../../docs/design/ui-operations.md#drift-evidence)), the
+    page's path (`url`), and for an unresolved element `matches`: what each
+    candidate finds there, hidden matches counted apart from visible ones
+    (`matches(element)` gives the same counts to a driver);
     `driftData` turns a report into the `ui.drift` event's data, keeping the
     outline as a local-private `evidence` artifact. `drift(element, kind)`
     reports a stale element a driver found itself, with the same evidence.

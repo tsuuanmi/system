@@ -34,6 +34,20 @@ export interface DriftEvent {
   outline?: UiOutline
   /** `readback`: where the text read back first differs from the text inserted (structure only). */
   readback?: ReadbackDiff
+  /** The page's path when it drifted (never its query), as a stall's `url`: a page the site sent elsewhere shows here. */
+  url?: string
+  /**
+   * `unresolved`: what each candidate found, in the map's order, where the element is looked for
+   * (its scope, or the page): counts only. A candidate that finds the element but shows none of it
+   * (`found` above `shown`) tells a control the page hides from one it renamed or removed.
+   */
+  matches?: CandidateMatches[]
+}
+
+/** One candidate's matches: every element it finds, hidden ones too, and how many of them are visible. */
+export interface CandidateMatches {
+  found: number
+  shown: number
 }
 
 /**
@@ -253,6 +267,33 @@ export class UiEngine {
     await this.reportDrift(element, kind, -1)
   }
 
+  /**
+   * What each of an element's candidates finds now, where the element is looked for (its scope,
+   * or every frame for `frames: any`), hidden matches counted apart from visible ones. Undefined
+   * when its scope does not resolve, so nothing is counted in the wrong place.
+   */
+  async matches(id: string): Promise<CandidateMatches[] | undefined> {
+    const spec = this.element(id)
+    const roots: Array<Page | Locator | Frame> = []
+    if (spec.frames === 'any') roots.push(...this.page.frames().filter((frame) => !frame.isDetached()))
+    else if (spec.scope) {
+      const scope = await this.tryResolve(spec.scope)
+      if (!scope) return undefined
+      roots.push(scope.locator)
+    } else roots.push(this.page)
+    const counts: CandidateMatches[] = []
+    for (const candidate of spec.candidates) {
+      let found = 0
+      let shown = 0
+      for (const root of roots) {
+        found += await toLocator(root, candidate, this.map.locales, { includeHidden: true }).count()
+        shown += await toLocator(root, candidate, this.map.locales).filter({ visible: true }).count()
+      }
+      counts.push({ found, shown })
+    }
+    return counts
+  }
+
   /** Evaluate a named state now. */
   async state(id: string): Promise<boolean> {
     return this.evaluate({ state: id }, new Map())
@@ -393,8 +434,8 @@ export class UiEngine {
   /**
    * Report a stale map once per element and kind for this page, with a structural outline: of the
    * found element's parent on a fallback, of an unresolved element's scope, or else of the page
-   * body, its side navigation folded. An outline that cannot be read is left out; it never fails
-   * the turn.
+   * body, its side navigation folded. It names the page's path, and for an unresolved element what
+   * each candidate found. Evidence that cannot be read is left out; it never fails the turn.
    */
   private async reportDrift(element: string, kind: DriftEvent['kind'], candidate: number, source?: 'shipped' | 'overlay', found?: Locator, readback?: ReadbackDiff): Promise<void> {
     if (!this.options.onDrift || this.drifted.has(`${kind}\0${element}`)) return
@@ -404,7 +445,21 @@ export class UiEngine {
     const root = found ? found.first().locator('xpath=..') : scope?.locator
     const redact = await this.options.redact?.().catch(() => []) ?? []
     const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body', undefined, redact, { foldNavigation: !root }).catch(() => undefined)
-    this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}), ...(readback ? { readback } : {}) })
+    const matches = kind === 'unresolved' && spec ? await this.matches(element).catch(() => undefined) : undefined
+    const url = this.path()
+    this.options.onDrift({
+      provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(url ? { url } : {}),
+      ...(matches ? { matches } : {}), ...(outline ? { outline } : {}), ...(readback ? { readback } : {}),
+    })
+  }
+
+  /** The page's path, never its query or fragment; undefined when its URL cannot be read. */
+  private path(): string | undefined {
+    try {
+      return new URL(this.page.url()).pathname
+    } catch {
+      return undefined
+    }
   }
 
   /**
@@ -415,12 +470,7 @@ export class UiEngine {
     const redact = await this.options.redact?.().catch(() => []) ?? []
     const outline = await outlineOf(this.page, `turn page (${phase} stalled)`, undefined, redact, { foldNavigation: true }).catch(() => undefined)
     const seen = await this.page.evaluate(() => ({ visibility: document.visibilityState as string, focused: document.hasFocus() })).catch(() => undefined)
-    let url: string | undefined
-    try {
-      url = new URL(this.page.url()).pathname
-    } catch {
-      url = undefined
-    }
+    const url = this.path()
     return { provider: this.map.provider, phase, ...seen, ...(url ? { url } : {}), ...(outline ? { outline } : {}) }
   }
 

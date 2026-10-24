@@ -150,7 +150,10 @@ drift and does not silently break.
   its text ([drift evidence](../design/ui-operations.md#drift-evidence)).
   `system evidence <outline id>` shows it (operator only). It holds no text, and
   email addresses and the account's name are masked, but it is local-private:
-  pasting it into a model session is the operator's own egress choice. To map
+  pasting it into a model session is the operator's own egress choice. The event itself gives the
+  page's path (`url`) and, for an unresolved element, `matches`, one entry per candidate in the
+  map's order: `found` above `shown` means the page has the control but hides it (a layout or an
+  overlay, not a rename), and `found: 0` everywhere means it was renamed or removed. To map
   the element again:
   1. Find the node that plays the element's part by its role, label, test id,
      or state (for a toggle, the `pressed`, `checked`, or `expanded` state that
