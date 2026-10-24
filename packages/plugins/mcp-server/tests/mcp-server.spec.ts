@@ -10,7 +10,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import EventLog from '@tsuuanmi/system-event-log'
 import Store from '@tsuuanmi/system-store'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z as zod } from 'zod'
 import { FakePluginHost, manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
@@ -23,12 +23,18 @@ type Tokens = Record<'operator' | 'client' | 'model', string>
 async function boot(): Promise<{ url: string; token: string; tokens: Tokens; dir: string; ctx: Context; stop: () => Promise<void> }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-mcp-'))
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  // The host's own disk check reads this test's directory with no minimum, so health never depends
+  // on the machine's home or its free space (a CI runner has no DSH home).
+  vi.stubEnv('DSH_HOME', dir)
+  onTestFinished(() => {
+    vi.unstubAllEnvs()
+  })
   const ctx = new Context()
   const fibers = [
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(Store, { path: join(dir, 'system.db') }),
     ctx.plugin(Artifacts, {}),
-    ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
+    ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json'), minFreeBytes: 0 }),
   ]
   await Promise.all(fibers)
   // Unloaded when the test finishes, or before, by a test that looks at what unloading does.
@@ -458,10 +464,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(operator.health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'down', detail: expect.stringMatching(/^@x\/c: it runs with a manifest the host refused: it declares _meta.*; @x\/dsh: it runs with no manifest/) })
     expect(operator.health.state).toBe('down')
     // The text is a summary of the answer, never the answer again.
-    // The host's own checks (disk) depend on where the test runs, so the expected text names what this health reports.
-    const notOk = operator.health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
-    expect(notOk).toContain('manifests down')
-    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: `health down: 5 checks, ${notOk.join(', ')}; 5 plugins, 3 need a look (plugins: true lists every one)` }])
+    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: 'health down: 5 checks, manifests down; 5 plugins, 3 need a look (plugins: true lists every one)' }])
     for (const args of [{}, { plugins: true }]) {
       const client = await status(tokens.client, args)
       expect(client.plugins).toBeUndefined()
