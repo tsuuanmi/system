@@ -28,7 +28,7 @@ import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
-import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
+import { CHARTER } from '../../../board-core/conformance/board.ts'
 
 const WORKSPACE = mkdtempSync(join(tmpdir(), 'system-gate-ws-'))
 afterAll(() => rmSync(WORKSPACE, { recursive: true, force: true }))
@@ -124,6 +124,26 @@ const decisionOf = (ctx: Context, reason: string) => {
   return ctx.artifacts.get(id!)!.body as { decisionType: string; decider: { type: string; id: string }; outcome: { option: string; detail?: Record<string, unknown> } }
 }
 const bash = (command: string) => ({ tool: 'Bash', input: { command } })
+
+// The board's own steps to a ready task, as the workflow's suite takes them; kept here so the agent
+// Workers' tests compose the engine's code, never its tests (docs/engineering/testing.md#test-groups).
+async function activeProject(ctx: Context, projectId = 'p1'): Promise<void> {
+  const { approvalRequest } = await ctx.board.charter({ projectId, title: `project ${projectId}`, charter: CHARTER })
+  const request = await ctx.approvals.get(approvalRequest)
+  const [verdict] = await ctx.approvals.decide([{ requestId: approvalRequest, subject: request!.subject, verdict: 'approved' }])
+  expect(verdict?.refused).toBeUndefined()
+  await ctx.board.sweep(new Date())
+  expect((await ctx.board.project(projectId))?.state).toBe('active')
+}
+
+/** A `read` task of project p1, proposed and made ready by the board's sweep. */
+async function readyTask(ctx: Context, title: string) {
+  const proposed = await ctx.board.propose({ projectId: 'p1', title, goal: `do ${title}`, acceptance: [{ id: 'a1', statement: 'it answers' }], actionClass: 'read' })
+  await ctx.board.sweep(new Date())
+  const task = (await ctx.board.task(proposed.taskId))!
+  expect(task.state).toBe('ready')
+  return task
+}
 
 describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool-calls)', () => {
   it('lets a read inside the workspace run on its auto decision; denies one outside it, and a tool it does not classify, by its own rule, without asking anyone', async () => {
