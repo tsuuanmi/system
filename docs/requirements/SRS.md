@@ -123,6 +123,11 @@
   acceptance failure is bounded, configured, and recorded (purpose P4).
 - **REQ-WRK-10** API and local models are Workers behind `ctx.models`, routed,
   egress-checked, and bounded like other Workers (purposes P3, P4).
+- **REQ-WRK-16** A run is declared dead only when its holder and its runtime are both
+  positively gone and no activity was seen within a bound; a failed probe, a failed lease
+  renewal, or a signal never reported is not death
+  ([PROP-0013](../proposals/0013-feedback-from-work.md),
+  [liveness verdict](../design/scheduling-and-leases.md#liveness-verdict)).
 
 ## Teams (`REQ-TEAM`)
 
@@ -215,13 +220,15 @@
   enforced on every message, and egress on every delivery into the receiver's turn. A
   rejected message produces a decision artifact.
 - **REQ-SES-5** An idle session is woken by an incoming message, cold-resumed
-  when needed. Peers never poll each other.
+  when needed. Peers never poll each other. A session blocked on an approval is not woken:
+  its messages wait, durable, until it takes input (PROP-0013).
 - **REQ-SES-6** Long-running sessions emit checkpoint artifacts at bounded
   intervals. When context grows past a threshold, an engine-owned compaction
   writes a `handoff` summary, and the session continues from it.
 - **REQ-SES-7** A session can enter `INPUT_REQUIRED` and resume when the operator
   or a peer supplies input. Lifetime, idle, turn, message, and token budgets are
-  bounded, and exceeding one is a classified failure.
+  bounded, and exceeding one is a classified failure. A session blocked on an approval
+  takes no automated input but that approval's resolution (PROP-0013).
 - **REQ-SES-8** Calls that start long work (MCP, CLI) return a `SessionId` or a
   turn or run id immediately, or within a bounded wait below client timeouts.
   Clients continue, poll, or stream by that id, and never block for the duration

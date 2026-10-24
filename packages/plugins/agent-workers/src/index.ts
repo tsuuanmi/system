@@ -33,15 +33,15 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf,
+  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf,
 } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, dshHome, pooledTermsDecision, sha256,
-  USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, dshHome, type Liveness, LIVENESS_RULE, livenessOf,
+  type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
@@ -158,6 +158,22 @@ export interface Config {
   probeTtlMs?: number
   /** Hard deadline per run; the agent is stopped and the run fails as `timeout` (default 15 min). */
   runTimeoutMs?: number
+  /**
+   * A running agent whose process is present and that showed no activity for this long is `stalled`
+   * (default 300 s): reported once per stall, never prodded or stopped (PROP-0013, ADR-0054).
+   */
+  stallSeconds?: number
+  /**
+   * A run that started and was not finished by its holder is `dead`, and reconciled, only when its
+   * holder and its agent process are both positively gone and no activity was seen for this long
+   * (default 120 s, twice the run's lease) (PROP-0013, ADR-0054).
+   */
+  deadAfterSeconds?: number
+  /**
+   * How many verdicts in a row other than `dead` a started run gets, looked at again with a bounded
+   * backoff, before it goes to the operator, never declared dead (default 3).
+   */
+  maxUnknownVerdicts?: number
   /** Where the worktrees of `worktreePerRun` Workers go (default `<DSH_HOME>/system/worktrees`). */
   worktreeRoot?: string
   /**
@@ -198,6 +214,21 @@ interface RunRow {
   session_generation?: number | null
   /** JSON: the earlier runs of its session it replays, in order, fixed when it is first prepared (ADR-0049). */
   replay?: string | null
+  /** JSON `ProcessIdentity`: the process that submitted the run and held it while it ran (PROP-0013). */
+  holder?: string | null
+  /** JSON `ProcessIdentity`: the agent process its runtime started, when the runtime reported it. */
+  agent_process?: string | null
+  /** The latest activity of its agent recorded (at most once per heartbeat); the submission counts as one. */
+  activity_at?: string | null
+  /** When its current stall was reported (cleared once the agent is active again). */
+  stalled_at?: string | null
+  /** The approval request its gate deferred a call on: the run stopped there. */
+  deferred_request?: string | null
+  /** The liveness verdicts it got after its holder stopped holding it, in a row, and the last of them. */
+  liveness_looks?: number | null
+  liveness_verdict?: string | null
+  /** The `reconciliation` decision that ended it after a restart or a lost lease (INV-4, INV-13). */
+  liveness_decision?: string | null
   created_at: string
   updated_at: string
 }
@@ -217,7 +248,20 @@ const now = (): string => new Date().toISOString()
 /** The longest a runtime cools down for one limit hit, whatever reset time its runtime named (INV-9). */
 const MAX_COOLDOWN_MS = 604_800_000
 /** The row's settings at their defaults, left out of the row `system account migrate` prints. */
-const SETTING_DEFAULTS: Record<string, unknown> = { maxReplayChars: 200_000, probeTtlMs: 5 * 60_000, runTimeoutMs: 15 * 60_000, worktreeRetentionHours: 168 }
+const SETTING_DEFAULTS: Record<string, unknown> = {
+  maxReplayChars: 200_000, probeTtlMs: 5 * 60_000, runTimeoutMs: 15 * 60_000, worktreeRetentionHours: 168, stallSeconds: 300, deadAfterSeconds: 120, maxUnknownVerdicts: 3,
+}
+/** How often a running agent's activity is written and its stall looked at: the run lease's heartbeat (a bounded write rate). */
+const BEAT_MS = LEASE_TTL_MS / 3
+/** The longest a started run waits between two liveness verdicts (INV-9). */
+const MAX_LOOK_MS = 15 * 60_000
+/** The rule a started run's reconciliation applies (PROP-0013, ADR-0054). */
+const RECONCILE_RULE = { type: 'rule', id: 'agent-workers.reconcile', version: '2' } as const
+/**
+ * The agent runs whose agent this process is running now, across every instance of this source in
+ * it: a run recorded as held by this very process is gone from it only when it is not among them.
+ */
+const executing = new Set<string>()
 /**
  * The account a Worker runs on: a derived Worker's own (PROP-0012 phase F); for a hand-named one its
  * runtime's, whose one home holds one sign-in (phase C). Its siblings, cooldowns, and limits are that
@@ -285,6 +329,9 @@ export class AgentWorkers extends Service {
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a runtime\'s probe result stands, from when its probe started: the next probe starts in the background at half of it, a result past it admits no Worker until one finishes, and a probe not settled within it is refused as timed out (0: every read waits for a probe, bounded at 5 min)'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
+    stallSeconds: z.natural().min(1).max(86_400).default(300).description('A running agent whose process is present and that showed no activity for this long is stalled: reported once per stall, never prodded or stopped'),
+    deadAfterSeconds: z.natural().min(1).max(86_400).default(120).description('A started run its holder did not finish is dead, and reconciled, only when its holder and its agent process are both positively gone and no activity was seen for this long'),
+    maxUnknownVerdicts: z.natural().min(1).max(20).default(3).description('Verdicts other than dead a started run gets in a row, looked at again with a bounded backoff, before it goes to the operator, never declared dead'),
     worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
     worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them)'),
   }) as unknown as z<Config>
@@ -439,7 +486,20 @@ export class AgentWorkers extends Service {
       version: 9,
       // Keyed by the account the limit holds: a hand-named Worker's runtime, a derived Worker's account id.
       sql: 'CREATE TABLE agent_cooldowns (runtime TEXT PRIMARY KEY, until TEXT NOT NULL, worker TEXT NOT NULL, run_id TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);',
-    }, ACCOUNTS_MIGRATION, CUTOVER_MIGRATION])
+    }, ACCOUNTS_MIGRATION, CUTOVER_MIGRATION, {
+      // The liveness verdict (PROP-0013, ADR-0054): who held a run, its agent process, its latest
+      // activity, a stall reported, the request it stopped on, and the verdicts it got after its holder stopped.
+      version: 12,
+      sql: `ALTER TABLE agent_runs ADD COLUMN holder TEXT;
+      ALTER TABLE agent_runs ADD COLUMN agent_process TEXT;
+      ALTER TABLE agent_runs ADD COLUMN activity_at TEXT;
+      ALTER TABLE agent_runs ADD COLUMN stalled_at TEXT;
+      ALTER TABLE agent_runs ADD COLUMN deferred_request TEXT;
+      ALTER TABLE agent_runs ADD COLUMN liveness_looks INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE agent_runs ADD COLUMN liveness_verdict TEXT;
+      ALTER TABLE agent_runs ADD COLUMN liveness_decision TEXT;
+      CREATE INDEX agent_runs_session ON agent_runs (session_id, created_at);`,
+    }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -476,6 +536,7 @@ export class AgentWorkers extends Service {
       // The Worker stays (session affinity); without a handle the next run starts a new agent session,
       // and in a new generation a replayed conversation starts empty (ADR-0049).
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL, generation = generation + 1 WHERE session_id = ?').run(sessionId).changes) > 0,
+      held: (sessionId) => this.held(sessionId),
     })
     // The operator's enrollment tools, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => registerAccountTools(c, this.agentAccounts, this))
@@ -979,6 +1040,174 @@ export class AgentWorkers extends Service {
     this.retries.add(timer)
   }
 
+  /** The liveness bounds, from configuration (INV-9). */
+  private bounds(): { stallSeconds: number; deadAfterSeconds: number } {
+    return { stallSeconds: this.config.stallSeconds ?? 300, deadAfterSeconds: this.config.deadAfterSeconds ?? 120 }
+  }
+
+  /**
+   * The verdict on a started run whose lease this process has just taken (PROP-0013, ADR-0054): the
+   * holder's lease lapsed (it could be taken: expired or released), the holder's process and the
+   * agent process as this host shows them now, and the latest activity recorded (its submission at
+   * least). A signal never recorded, as on a run from before this was kept, is unknown.
+   */
+  private livenessOf(row: RunRow): Liveness {
+    const activity = [row.submitted_at, row.activity_at].map((t) => (t ? Date.parse(t) : Number.NaN)).filter(Number.isFinite)
+    return livenessOf({
+      at: Date.now(),
+      holder: { lease: { state: 'lapsed', why: 'this process took it, so it had expired or was released' }, process: this.holderProbe(row) },
+      runtime: probeProcess(processIdentityOf(parsed(row.agent_process))),
+      lastActivityAt: activity.length ? Math.max(...activity) : undefined,
+    }, this.bounds())
+  }
+
+  /** The process that held a run: when it is this one, gone only once this process runs no agent of the run; else as this host shows it. */
+  private holderProbe(row: RunRow): ProcessProbe {
+    const recorded = processIdentityOf(parsed(row.holder))
+    const self = currentProcess()
+    if (recorded && self && recorded.host === self.host && recorded.boot === self.boot && recorded.pid === self.pid && recorded.startTicks === self.startTicks) {
+      return executing.has(row.run_id) ? { state: 'present' } : { state: 'gone', why: 'it is this process, which runs no agent of this run now' }
+    }
+    return probeProcess(recorded)
+  }
+
+  /** The `reconciliation` decision that ends a started run its holder no longer holds (INV-4, INV-13): the verdict and every signal behind it. */
+  private reconciled(row: RunRow, liveness: Liveness, looks: number): ContentId {
+    const dead = liveness.verdict === 'dead'
+    const max = this.config.maxUnknownVerdicts ?? 3
+    return this.ctx.artifacts.recordDecision({
+      decisionType: 'reconciliation',
+      question: `Is agent run ${row.run_id} on ${row.worker}, which started and which its holder no longer holds, gone?`,
+      inputs: [],
+      candidates: [
+        { option: 'dead', selected: dead, reasons: dead ? liveness.reasons : [`not dead: the verdict is ${liveness.verdict}, and only dead is death`, ...liveness.reasons] },
+        {
+          option: 'operator', selected: !dead,
+          reasons: dead ? ['not the operator\'s: it is positively gone, so it fails as reconciliation_failed and is never run again'] : [`${looks} verdicts in a row, none dead (at most ${max}): a failed probe is never death, so it goes to the operator, and its session stays held`],
+        },
+      ],
+      decider: RECONCILE_RULE,
+      outcome: { option: dead ? 'dead' : 'operator', detail: { agentRun: row.run_id, worker: row.worker, verdict: liveness.verdict, rule: `${LIVENESS_RULE.id}@${LIVENESS_RULE.version}`, looks, ...this.bounds() } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), classification: row.classification as Classification }).id as ContentId
+  }
+
+  /**
+   * Why a session of this source takes no input now (PROP-0013, ADR-0054), derived when asked from
+   * durable facts, never stored as a flag: its latest run has not finished; or it ended without being
+   * known to be gone; or it stopped on a tool call whose approval request is still open (asked of the
+   * queue: none loaded, or unreadable, and it cannot be shown free). Undefined when the session is
+   * free, or not this source's.
+   */
+  private async held(sessionId: string): Promise<string | undefined> {
+    const db = this.ctx.store.db
+    if (!db.prepare('SELECT 1 FROM agent_sessions WHERE session_id = ?').get(sessionId)) return undefined
+    const latest = db.prepare('SELECT * FROM agent_runs WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(sessionId) as RunRow | undefined
+    if (!latest) return undefined
+    if (latest.status !== 'failed' && latest.status !== 'completed') return `its latest run ${latest.run_id} has not finished (${latest.status}), and one native session is driven by one run at a time`
+    // Any run of it that ended without being known to be gone, the latest or one a later run was refused after.
+    const alive = db.prepare("SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND liveness_decision IS NOT NULL AND COALESCE(liveness_verdict, '') != 'dead' LIMIT 1")
+      .get(sessionId) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
+    if (alive) return `its run ${alive.run_id} ended without being known to be gone (liveness ${alive.liveness_verdict ?? 'unknown'}, decision ${alive.liveness_decision}), so its agent may still be running`
+    if (latest.status === 'completed') return undefined
+    const request = this.deferredOn(latest)
+    if (!request) return undefined
+    const waits = `its latest run ${latest.run_id} stopped on a tool call that waits for approval request ${request}`
+    const approvals = this.ctx.get('approvals')
+    if (!approvals) return `${waits}, and no approval queue is loaded to tell whether it is still open`
+    let state: string | undefined
+    try {
+      state = (await approvals.get(request))?.state
+    } catch (error) {
+      return `${waits}, which cannot be read now (${(error as Error).message.slice(0, 200)})`
+    }
+    if (state === undefined) return `${waits}, which the approval queue does not hold`
+    if (state === 'open' || state === 'batched') return `${waits}, still ${state}: the session takes no input but that request's resolution`
+    return undefined
+  }
+
+  /**
+   * The approval request a failed run's gate deferred a call on, if any: as the run records it, or,
+   * for a run from before that was recorded, as the gate's `agent-workers.tool.deferred` event of it names it.
+   */
+  private deferredOn(row: RunRow): string | undefined {
+    if (row.deferred_request) return row.deferred_request
+    if (!row.submitted_at || !row.session_id || !row.error?.includes('"config_error"')) return undefined
+    const event = this.ctx.get('eventLog')?.query({ type: 'agent-workers.tool.deferred', sessionId: row.session_id, limit: 1000 })
+      .filter((e) => e.data?.['agentRun'] === row.run_id && typeof e.data['requestId'] === 'string').at(-1)
+    return event ? String(event.data!['requestId']) : undefined
+  }
+
+  /**
+   * What a running agent reports of itself (PROP-0013): its process, recorded once, and its activity,
+   * recorded at most once per beat (a bounded write rate), each write fenced by the run's lease. At
+   * each beat a run whose process is present and that has been quiet for `stallSeconds` is `stalled`:
+   * reported once per stall (`agent-workers.run.stalled`), never prodded or stopped; the run's own
+   * deadline and turn limit end it. A record that cannot be written is logged and changes nothing.
+   */
+  private watch(row: RunRow, lease: () => Lease): { observer: RunObserver; stop: () => void } {
+    let last = Date.now()
+    let written = last
+    let agent: ProcessIdentity | undefined
+    let reported = false
+    let stalled = false
+    let warned = false
+    const write = (fields: Partial<Omit<RunRow, 'run_id'>>): void => {
+      try {
+        this.update(row.run_id, fields, lease)
+      } catch (error) {
+        if (!warned) this.ctx.logger.warn(`agent Workers: what ${row.run_id} on ${row.worker} reports of its agent could not be recorded: ${(error as Error).message}`)
+        warned = true
+      }
+    }
+    const observer: RunObserver = {
+      onProcess: ({ pid }) => {
+        if (reported) return
+        reported = true
+        agent = processIdentity(pid)
+        if (agent) write({ agent_process: JSON.stringify(agent) })
+        else this.ctx.logger.warn(`agent Workers: the agent process ${pid} of ${row.run_id} could not be read as it started; its liveness stays unknown`)
+      },
+      onActivity: (at) => {
+        if (!Number.isFinite(at) || at <= last) return
+        last = at
+        if (stalled) {
+          // Active again: this stall is over, and a later one is reported anew.
+          stalled = false
+          written = last
+          write({ stalled_at: null, activity_at: new Date(last).toISOString() })
+        } else if (last - written >= BEAT_MS) {
+          written = last
+          write({ activity_at: new Date(last).toISOString() })
+        }
+      },
+    }
+    const beat = setInterval(() => {
+      if (last > written) {
+        written = last
+        write({ activity_at: new Date(last).toISOString() })
+      }
+      if (stalled) return
+      const liveness = livenessOf({
+        at: Date.now(), holder: { lease: { state: 'live' }, process: { state: 'present' } }, runtime: agent ? probeProcess(agent) : { state: 'unknown', why: 'never reported' }, lastActivityAt: last,
+      }, this.bounds())
+      if (liveness.verdict !== 'stalled') return
+      stalled = true
+      write({ stalled_at: now() })
+      this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} is stalled (${liveness.reasons.join('; ')}); nothing is sent to it, and its own deadline ends it`)
+      try {
+        this.ctx.get('eventLog')?.append({
+          type: 'agent-workers.run.stalled', ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}),
+          data: { agentRun: row.run_id, worker: row.worker, quietSeconds: Math.floor((Date.now() - last) / 1000), stallSeconds: this.bounds().stallSeconds, rule: `${LIVENESS_RULE.id}@${LIVENESS_RULE.version}` },
+        })
+      } catch (error) {
+        this.ctx.logger.warn(`agent Workers: the stall of ${row.run_id} was not appended: ${(error as Error).message}`)
+      }
+    }, Math.min(BEAT_MS, this.bounds().stallSeconds * 500))
+    beat.unref()
+    return { observer, stop: () => clearInterval(beat) }
+  }
+
   private schedule(runId: string): void {
     if (this.stopped.signal.aborted) return
     const running = this.runOwned(runId).catch(() => undefined)
@@ -996,9 +1225,30 @@ export class AgentWorkers extends Service {
         const row = this.row(runId)
         if (!row || row.status === 'completed' || row.status === 'failed') return
         if (row.submitted_at) {
-          // Started before a stop: the agent may already have acted in its workspace.
-          this.fail(row, new ProviderError('reconciliation_failed',
-            `the host stopped while ${row.worker} was running this task${row.native_handle ? ` (native session ${row.native_handle})` : ''}; it is not run again automatically`), current)
+          // Started, and its holder no longer holds it: the agent may already have acted in its
+          // workspace, and may still be acting. It is never run again (INV-4); it is reconciled as
+          // gone only on a `dead` verdict, and otherwise looked at again, then left to the operator.
+          const liveness = this.livenessOf(row)
+          const max = this.config.maxUnknownVerdicts ?? 3
+          if (liveness.recheckAt !== undefined) {
+            // Every signal is positively gone, and only the activity bound is not past yet: no probe
+            // failed, so this look is not counted; the verdict is given again once the bound is past.
+            this.retryLater(runId, Math.min(MAX_LOOK_MS, Math.max(1000, liveness.recheckAt - Date.now() + 1000)))
+            return
+          }
+          const looks = (row.liveness_looks ?? 0) + 1
+          if (liveness.verdict !== 'dead' && looks < max) {
+            this.update(row.run_id, { liveness_looks: looks, liveness_verdict: liveness.verdict }, current)
+            const delay = Math.min(MAX_LOOK_MS, LEASE_TTL_MS * 2 ** (looks - 1))
+            this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} started and its holder no longer holds it, and it is not known to be gone (${liveness.verdict}: ${liveness.reasons.join('; ')}); looked at again in ${Math.round(delay / 1000)} s (${looks} of ${max})`)
+            this.retryLater(runId, delay)
+            return
+          }
+          const decision = this.reconciled(row, liveness, looks)
+          this.fail(row, new ProviderError('reconciliation_failed', liveness.verdict === 'dead'
+            ? `${row.worker} was running this task when its holder stopped, and it is gone (liveness ${liveness.verdict}, decision ${decision})${row.native_handle ? `; native session ${row.native_handle}` : ''}; it is not run again automatically`
+            : `${row.worker} was running this task when its holder stopped, and after ${looks} looks it is not known to be gone (liveness ${liveness.verdict}: ${liveness.reasons.join('; ')}; decision ${decision}); it is not declared dead, so its session stays held, and the operator decides${row.native_handle ? ` (native session ${row.native_handle})` : ''}`),
+          current, { liveness_looks: looks, liveness_verdict: liveness.verdict, liveness_decision: decision })
           // Its usage is not invented: it comes from the agent's transcript, reconciled later. Until
           // then the ledger counts none of it, which is recorded (docs/design/resources.md).
           if (row.reservation_id) {
@@ -1157,6 +1407,10 @@ export class AgentWorkers extends Service {
     // it would hit it again (INV-2). Its own pool is its reservation's to check.
     const held = await this.accountGate(worker, false)
     if (held.state !== 'ready') throw new ProviderError(held.state === 'quota-exhausted' ? 'quota_exhausted' : 'config_error', `${row.worker}: ${held.why}; nothing was run`)
+    // One writer per worktree and one driver per native session (INV-15): an earlier run that ended
+    // without being known to be gone may still be acting there (PROP-0013).
+    const alive = this.notKnownGone(row, worker)
+    if (alive) throw new ProviderError('config_error', `${row.worker}: run ${alive.run_id} of ${alive.why} ended without being known to be gone (liveness ${alive.liveness_verdict ?? 'unknown'}, decision ${alive.liveness_decision}); its agent may still be acting, so nothing was run`)
     const workspace = await this.workspaceOf(row, worker)
     // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
     if (row.files && workspace !== worker.workspace) {
@@ -1202,10 +1456,15 @@ export class AgentWorkers extends Service {
    * brief names one and no run is asked to resume it.
    */
   private async submit(row: RunRow, worker: WorkerSpec, provider: AgentRuntimeProvider, spec: RunSpec, native: boolean, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined): Promise<RunResult> {
-    // Submitted from here on: the agent may act as soon as it starts.
-    this.update(row.run_id, { status: 'running', submitted_at: now() }, lease)
+    // Submitted from here on: the agent may act as soon as it starts. Its holder, this process, is
+    // recorded with it, and the submission is its first activity (PROP-0013).
+    const submittedAt = now()
+    const holder = currentProcess()
+    this.update(row.run_id, { status: 'running', submitted_at: submittedAt, activity_at: submittedAt, ...(holder ? { holder: JSON.stringify(holder) } : {}) }, lease)
     const startedAt = Date.now()
     const deadline = AbortSignal.timeout(this.config.runTimeoutMs ?? 15 * 60_000)
+    const watched = this.watch(row, lease)
+    executing.add(row.run_id)
     let result: RunResult
     try {
       result = await provider.run(spec, AbortSignal.any([signal, deadline]), (handle) => {
@@ -1214,9 +1473,10 @@ export class AgentWorkers extends Service {
           db.prepare('UPDATE agent_runs SET native_handle = ?, updated_at = ? WHERE run_id = ?').run(handle, now(), row.run_id)
           if (row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
         })
-      })
+      }, watched.observer)
     } catch (error) {
       const deferred = deferral()
+      if (deferred && !signal.aborted) this.noteDeferral(row, deferred, lease)
       const failure = deadline.aborted && !signal.aborted
         ? new ProviderError('timeout', `${row.worker} did not finish within ${this.config.runTimeoutMs ?? 15 * 60_000} ms; it was stopped`, { cause: error })
         : deferred && !signal.aborted ? waiting(row, deferred, error) : error
@@ -1231,15 +1491,48 @@ export class AgentWorkers extends Service {
         })
       }
       throw failure
+    } finally {
+      executing.delete(row.run_id)
+      watched.stop()
     }
     // A run whose gate deferred a call did not finish, whatever its runtime reported (INV-2).
     const deferred = deferral()
     if (deferred) {
+      this.noteDeferral(row, deferred, lease)
       if (meter) await this.account(row, worker, meter, result, 'failed', Date.now() - startedAt)
       throw waiting(row, deferred)
     }
     if (meter) await this.account(row, worker, meter, result, 'completed', Date.now() - startedAt)
     return result
+  }
+
+  /**
+   * An earlier run that ended without being known to be gone (reconciled, not `dead`) on what this run
+   * would drive: its session, or, for a Worker with a worktree per run, its workflow run's worktree.
+   */
+  private notKnownGone(row: RunRow, worker: AgentWorkerConfig): { run_id: string; liveness_verdict: string | null; liveness_decision: string; why: string } | undefined {
+    const unknown = "run_id != ? AND liveness_decision IS NOT NULL AND COALESCE(liveness_verdict, '') != 'dead'"
+    const db = this.ctx.store.db
+    const session = row.session_id
+      ? db.prepare(`SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE session_id = ? AND ${unknown} LIMIT 1`).get(row.session_id, row.run_id) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
+      : undefined
+    if (session) return { ...session, why: `session ${row.session_id}` }
+    const worktree = worker.worktreePerRun && row.workflow_run_id
+      ? db.prepare(`SELECT run_id, liveness_verdict, liveness_decision FROM agent_runs WHERE workflow_run_id = ? AND ${unknown} LIMIT 1`).get(row.workflow_run_id, row.run_id) as { run_id: string; liveness_verdict: string | null; liveness_decision: string } | undefined
+      : undefined
+    return worktree ? { ...worktree, why: `the worktree of workflow run ${row.workflow_run_id}` } : undefined
+  }
+
+  /**
+   * Record the approval request the run's gate deferred a call on, so its session is known to wait on
+   * it (PROP-0013). A write the lease no longer allows is left out: the gate's event still names it.
+   */
+  private noteDeferral(row: RunRow, deferred: Deferral, lease: () => Lease): void {
+    try {
+      this.update(row.run_id, { deferred_request: deferred.requestId }, lease)
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the approval request ${deferred.requestId} that ${row.run_id} stopped on was not recorded on it (its gate's event names it): ${(error as Error).message}`)
+    }
   }
 
   /** Store the result as a `report` artifact and complete the run. */
@@ -1534,9 +1827,9 @@ export class AgentWorkers extends Service {
     return scheduler
   }
 
-  private fail(row: RunRow, error: unknown, lease: () => Lease): void {
+  private fail(row: RunRow, error: unknown, lease: () => Lease, fields: Partial<Omit<RunRow, 'run_id'>> = {}): void {
     const typed = toProviderError(error)
-    this.update(row.run_id, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
+    this.update(row.run_id, { ...fields, status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
   }
 
   private update(runId: string, fields: Partial<Omit<RunRow, 'run_id'>>, lease: () => Lease): void {
@@ -1578,7 +1871,17 @@ function execution(row: RunRow): WorkerExecution {
     id: row.run_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: [row.egress_decision, row.budget_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
+    decisions: [row.egress_decision, row.budget_decision, row.liveness_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
+  }
+}
+
+/** A stored JSON column's value, or undefined when it holds nothing readable. */
+function parsed(json: string | null | undefined): unknown {
+  if (!json) return undefined
+  try {
+    return JSON.parse(json) as unknown
+  } catch {
+    return undefined
   }
 }
 

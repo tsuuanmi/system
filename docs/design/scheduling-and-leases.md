@@ -43,15 +43,24 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   resource and has not expired. Because it runs under the transaction's write lock, no
   successor can take over before the commit lands.
 - Every durable runner holds its lease through one loop, `ctx.leases.hold`:
-  acquire, a heartbeat at a third of the TTL, `lost` when a renewal fails, and
+  acquire, a heartbeat at a third of the TTL, `lost` on a positive loss, and
   release. Each runner decides what a lost lease means and when to look again.
+  A positive loss is a renewal that finds the lease expired, taken over, or
+  invalidated (`LeaseLost`), or the lease's own expiry passing with no renewal. A
+  renewal that fails otherwise (the store busy or failing) is not a loss: it is
+  tried again at the next beat, and never later than the expiry. Fencing is the
+  same either way, so a holder whose lease lapsed commits nothing
+  ([ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+  leases contract 1.1).
 - Website turns (`ctx.turns`) hold a `turn:<id>` lease with a heartbeat. The
   receipt written before the send, the routing, and the completion are fenced, so
   two processes sharing one home never send the same turn twice. This is covered
   by a two-process test.
 - Agent runs (`agent-workers`) hold an `agent-run:<id>` lease. A run whose lease
   another process holds, or whose lease was lost, is looked at again once the
-  lease can be taken, so it is never stranded until the next start.
+  lease can be taken, so it is never stranded until the next start. A lease that
+  can be taken does not make a started run gone: it is reconciled only on a
+  [liveness verdict](#liveness-verdict) of `dead`.
 - Workflow executions use the same lease primitive with heartbeats. Target: on
   startup, a `RUNNING` node with an expired lease or a foreign owner moves to
   `RECOVERING`. Today a run advances under a `run:<id>` lease. A lost lease re-arms
@@ -61,6 +70,34 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
 
 Fences are required only where an old execution can race a new one. They are not
 added by reflex. Every fence is justified by a failing race test.
+
+## Liveness verdict
+
+Whether a run that another process held, or held before a restart, is gone is a
+verdict, never an assumption
+([ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+PROP-0013). `livenessOf` in [`libs`](../../packages/libs/README.md) is a pure rule,
+pinned as `liveness@1`, over three signals and two configured bounds:
+
+| Signal | What is recorded | Probed |
+|---|---|---|
+| holder | the process that held the run (host, boot, pid, start time), and its lease | the lease: lapsed when it could be taken; the process: from this host's `/proc` |
+| runtime | the agent process the runtime started, when it reports one (`RunObserver.onProcess`) | from this host's `/proc` |
+| activity | the submission, then the runtime's activity (`onActivity`), written at most once per heartbeat | the latest time recorded |
+
+| Verdict | When |
+|---|---|
+| `alive` | the holder's lease is live and the agent process present, with activity within `stallSeconds` |
+| `stalled` | the agent process is present, with no activity for `stallSeconds` or more |
+| `unknown` | any probe failed, a signal was never reported, or anything else |
+| `dead` | the holder's lease lapsed and its process is gone, the agent process is gone, and no activity was seen within `deadAfterSeconds` |
+
+Only `dead` is death. A process is gone only on positive evidence: no process has
+its pid, the one that has it started at another time, it has exited, or the host
+booted again. A process recorded on another host is `unknown`. What each verdict
+does to an agent run is the `agents` source's
+([restart and liveness](agent-runtimes.md#restart-and-liveness)). Website turns keep
+their receipts; the verdict does not apply to them.
 
 ## Optimistic revisions
 

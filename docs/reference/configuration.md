@@ -79,6 +79,9 @@
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
 | `probeTtlMs` | number (0…) | `300000` | How long a runtime's probe result stands, from when its probe started: the next probe starts in the background at half of it, a result past it admits no Worker until one finishes, and a probe not settled within it is refused as timed out (0: every read waits for a probe, bounded at 5 min) |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
+| `stallSeconds` | number (1…86400) | `300` | A running agent whose process is present and that showed no activity for this long is stalled: reported once per stall, never prodded or stopped |
+| `deadAfterSeconds` | number (1…86400) | `120` | A started run its holder did not finish is dead, and reconciled, only when its holder and its agent process are both positively gone and no activity was seen for this long |
+| `maxUnknownVerdicts` | number (1…20) | `3` | Verdicts other than dead a started run gets in a row, looked at again with a bounded backoff, before it goes to the operator, never declared dead |
 | `worktreeRoot` | string |  | Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees) |
 | `worktreeRetentionHours` | number (0…) | `168` | Hours a workflow run's worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them) |
 

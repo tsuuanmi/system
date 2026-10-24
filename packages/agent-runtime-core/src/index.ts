@@ -276,6 +276,31 @@ export function meteringOf(error: unknown): RunMetering | undefined {
 }
 
 /**
+ * What a run reports of itself while it runs, for its Worker source's liveness verdict (PROP-0013,
+ * ADR-0054). Both are optional: a provider that reports neither leaves those signals unknown, and a
+ * missing signal is never read as gone. A callback that throws changes nothing about the run.
+ */
+export interface RunObserver {
+  /**
+   * The agent process the run started: the outermost process of its confinement, whose end ends the
+   * agent. Reported once, as soon as it exists.
+   */
+  onProcess?(process: { pid: number }): void
+  /** The agent did something (a stream event, a tool call asked), at `at` (milliseconds since the epoch). May be called often. */
+  onActivity?(at: number): void
+}
+
+/** Tell an observer, never letting it change the run: a callback that throws is ignored. */
+export function observe(observer: RunObserver | undefined, event: { process: { pid: number } } | { activity: number }): void {
+  try {
+    if ('process' in event) observer?.onProcess?.(event.process)
+    else observer?.onActivity?.(event.activity)
+  } catch {
+    // The run's own outcome never depends on what its source records of it.
+  }
+}
+
+/**
  * One agent runtime. `run` drives the agent's own loop to its terminal event. A policy the
  * runtime cannot enforce exactly is refused (an error of kind `config_error`); it is never
  * loosened. Errors carry a `kind` from the provider failure taxonomy (provider-core). A run
@@ -291,7 +316,8 @@ export interface AgentRuntimeProvider {
   readonly home?: string | undefined
   /** What it proves now, for its own home or, when it reports `homes`, the one `options.home` names. */
   probe(options?: ProbeOptions): Promise<RuntimeEvidence>
-  run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult>
+  /** `observer` (optional, PROP-0013): the agent process and its activity, as far as the provider can tell them. */
+  run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult>
   /**
    * Who is signed in to `home`, read under the same confinement as a run, hashed with `key` (the
    * per-install key, at least 16 bytes) by {@link identityHmac} (ADR-0051). Optional: a provider

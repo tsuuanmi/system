@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -21,6 +21,14 @@ Capability **seam definition** for agent runtimes
   [`agent-workers`](../plugins/agent-workers/README.md) source maps them into the ledger.
 - A provider refuses a policy it cannot enforce exactly, with a `config_error`.
   It never loosens a policy.
+- **What a run reports of itself** (PROP-0013,
+  [restart and liveness](../../docs/design/agent-runtimes.md#restart-and-liveness)): `run`'s
+  optional fourth argument, a `RunObserver`, takes `onProcess({ pid })` (the outermost process of
+  the agent's confinement, once) and `onActivity(at)` (a stream event). Both are optional, and a
+  provider that reports neither leaves its Worker source's liveness signals unknown, never gone.
+  A provider reports through `observe`, which ignores a callback that throws. The provider suite
+  checks that a reported process and activity are consistent (one positive pid, times in order
+  and within the run), or absent. Claude Code reports both; the fake reports activity only.
 - **Tool gate** ([approvals](../../docs/design/approvals.md#a-workers-tool-calls)):
   `RunSpec.toolGate` is a per-tool-call gate from the Worker source that owns
   the run (trusted, INV-6): given a `ToolCall` (`tool`, `input`, and the

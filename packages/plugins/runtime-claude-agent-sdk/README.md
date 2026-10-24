@@ -16,7 +16,10 @@ installed.
     coding agent's login (the operator's `~/.claude` included) are hidden; only
     the operator's tools (read-only), its home (writable), and the run's
     workspace (as the run's sandbox allows) come back. A bind that would expose
-    a hidden path is refused before anything starts (`config_error`);
+    a hidden path is refused before anything starts (`config_error`). The
+    confinement's outermost process is the run's agent process: its pid is
+    reported to the run's observer (`onProcess`), and each SDK message as
+    activity (`onActivity`), for the source's liveness verdict (PROP-0013);
   - **commands, by the SDK's sandbox:** a `workspace-write` run offers `Bash`
     and enables the SDK's sandbox (Anthropic's sandbox runtime: bubblewrap and
     a network proxy on Linux) with exactly `enabled: true`,

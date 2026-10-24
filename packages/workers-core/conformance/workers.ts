@@ -190,6 +190,27 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('says why a session takes no input now, from the source that owns it, and never shows a session free when its source cannot tell (PROP-0013, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.held !== 'function') return
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b')], { held: async (id) => (id === 'ses_blocked' ? 'its latest run waits on approval request apr_1' : undefined) }))
+        ctx.workers.register(source('broken', [worker('w:c')], {
+          held: async (id) => {
+            if (id === 'ses_broken') throw new Error('the store failed')
+            return undefined
+          },
+        }))
+        expect(await ctx.workers.held('ses_blocked')).toBe('its latest run waits on approval request apr_1')
+        expect(await ctx.workers.held('ses_free')).toBeUndefined()
+        expect(await ctx.workers.held('ses_broken')).toMatch(/cannot tell.*the store failed/)
+      } finally {
+        await dispose()
+      }
+    })
+
     it('releases sessions at every source that owns some of them, and counts what became due', async () => {
       const { ctx, dispose } = await boot()
       try {

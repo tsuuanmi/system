@@ -16,8 +16,12 @@
   - `current`.
   - `hold(resource, ttlMs, body)`: the one lease loop every durable runner uses
     (website turns, agent runs, workflow runs). It acquires, renews on a heartbeat
-    every third of the TTL, aborts `lost` when a renewal fails, and releases when
-    the body ends. While another holder's lease is live it runs nothing and returns
+    every third of the TTL, and releases when the body ends. It aborts `lost` only
+    on a positive loss: a renewal that throws `LeaseLost`, or the lease's own expiry
+    passing with no renewal. A renewal that fails otherwise (the store busy or
+    failing) is logged and tried again at the next beat, never later than the
+    expiry ([ADR-0054](../../../docs/decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)).
+    While another holder's lease is live it runs nothing and returns
     when to look again: that lease's expiry plus a second, at least a second.
 - **Reuse:** the claim, heartbeat, and release by token follow
   `@gm-hz/agent-dag-workflow`. The generation fence is ours, because that package
@@ -25,7 +29,7 @@
 - **Injects:** `store`.
 - **Config:** `maxTtlMs`.
 - The conformance suite is [`conformance/leases.ts`](conformance/leases.ts), run through the
-  [conformance runner](../../libs/conformance/runner.ts) at contract 1.0 against this plugin
+  [conformance runner](../../libs/conformance/runner.ts) at contract 1.1 against this plugin
   over a real store:
   - one holder per resource, as a `lease@1.0` record;
   - a generation that rises on every new holder and every invalidation, and never falls on
@@ -36,4 +40,9 @@
     committing transaction;
   - TTLs capped at `maxTtlMs`, and a TTL that is not a positive integer rejected;
   - `hold`: release when the body ends or throws, when to look again while another lease is
-    live, the heartbeat, and `lost` on invalidation.
+    live, the heartbeat, and `lost` on invalidation;
+  - since 1.1, `hold` through a store that fails: a renewal error is not a loss (the lease is
+    kept, renewed once the store answers, and no one else takes it), and with every renewal
+    failing `lost` aborts with `LeaseLost` at the lease's expiry, after which a new holder
+    takes the resource and the old holder's commit is refused. The suite makes the store fail
+    through `ctx.store.transaction`, which a provider's commit fence runs inside.

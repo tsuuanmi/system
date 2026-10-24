@@ -230,6 +230,13 @@ export interface WorkerSource {
   /** Start the session's next work in a fresh native conversation, on the same Worker (a compaction, REQ-SES-6). */
   reset?(sessionId: string): boolean
   /**
+   * Why the session takes no input now, when this source owns it and it does not (PROP-0013,
+   * ADR-0054): its latest run stopped on a tool call whose approval request is still open, or has
+   * not finished, or is not known to be gone. Derived when asked, from the source's durable facts;
+   * a source that cannot tell says so here, never undefined. Undefined: free, or not this source's.
+   */
+  held?(sessionId: string): Promise<string | undefined>
+  /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
    * its records became due; zero when it owns none of them.
@@ -375,6 +382,13 @@ export abstract class Workers extends Service {
 
   /** Start a session's next work in a fresh native conversation; false when no source owns it. */
   abstract reset(sessionId: string): boolean
+
+  /**
+   * Why a session takes no input now, from the source that owns it (`WorkerSource.held`); undefined
+   * when it is free. Optional: a caller that finds no `held` cannot tell, and gives the session no
+   * automated input (PROP-0013, ADR-0054).
+   */
+  abstract held?(sessionId: string): Promise<string | undefined>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }

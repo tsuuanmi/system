@@ -1,11 +1,12 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { generateKeyPairSync } from 'node:crypto'
 import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Context } from '@deepseek-ai/cordis'
-import { type RunMetering, withMetering } from '@tsuuanmi/system-agent-runtime-core'
+import { type RunMetering, type RunObserver, withMetering } from '@tsuuanmi/system-agent-runtime-core'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type SandboxMode } from '@tsuuanmi/system-agent-runtimes'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
@@ -30,14 +31,22 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-/** A scripted agent: it answers with the prompt, and records every run's policy. */
+/**
+ * A scripted agent: it answers with the prompt, and records every run's policy. With `process`, each
+ * run starts a real child process that stands for the agent, reports it (PROP-0013), and ends it when
+ * the run ends; with `activity`, it reports activity every so many milliseconds while it holds.
+ */
 class ScriptedAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: RunSpec[] = []
+  /** The agent processes its runs started, by pid. */
+  readonly processes: number[] = []
   constructor(private readonly options: {
     sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; gatesToolCalls?: boolean; act?: (spec: RunSpec) => string | undefined
     /** What each run reports it consumed. */
     metering?: RunMetering
+    process?: boolean
+    activityEveryMs?: number
   } = {}) {}
   async probe() {
     return {
@@ -46,17 +55,32 @@ class ScriptedAgent implements AgentRuntimeProvider {
       gatesToolCalls: this.options.gatesToolCalls ?? true,
     }
   }
-  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void) {
+  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void, observer?: RunObserver) {
     this.runs.push(spec)
-    onHandle?.(spec.resume ?? `h-${this.runs.length}`)
-    if (this.options.holdMs) {
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, this.options.holdMs)
-        signal.addEventListener('abort', () => (clearTimeout(timer), reject(new ProviderError('aborted', 'stopped'))), { once: true })
-      })
+    const child = this.options.process ? spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' }) : undefined
+    if (child) {
+      await once(child, 'spawn')
+      this.processes.push(child.pid!)
+      observer?.onProcess?.({ pid: child.pid! })
     }
-    if (this.options.fail) throw this.options.fail
-    return { text: this.options.act?.(spec) ?? `echo: ${spec.prompt}`, nativeHandle: spec.resume ?? `h-${this.runs.length}`, turns: 1, ...this.options.metering }
+    const active = this.options.activityEveryMs ? setInterval(() => observer?.onActivity?.(Date.now()), this.options.activityEveryMs) : undefined
+    try {
+      onHandle?.(spec.resume ?? `h-${this.runs.length}`)
+      if (this.options.holdMs) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, this.options.holdMs)
+          signal.addEventListener('abort', () => (clearTimeout(timer), reject(new ProviderError('aborted', 'stopped'))), { once: true })
+        })
+      }
+      if (this.options.fail) throw this.options.fail
+      return { text: this.options.act?.(spec) ?? `echo: ${spec.prompt}`, nativeHandle: spec.resume ?? `h-${this.runs.length}`, turns: 1, ...this.options.metering }
+    } finally {
+      clearInterval(active)
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL')
+        await once(child, 'exit')
+      }
+    }
   }
 }
 
@@ -411,7 +435,8 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
 
   it('never runs a started run again after a restart: it fails for the operator to inspect (INV-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
-    const first = await boot(new ScriptedAgent({ holdMs: 30_000 }), undefined, dir)
+    // The agent's process is reported, and ends with the stop: the verdict can find it gone (PROP-0013).
+    const first = await boot(new ScriptedAgent({ holdMs: 30_000, process: true }), undefined, dir)
     const admitted = await first.ctx.workers.route(requirement())
     const source = first.ctx.workers.source('agents')!
     const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: admitted.decisions })
@@ -419,7 +444,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)
     const again = new ScriptedAgent()
-    const second = await boot(again, undefined, dir)
+    const second = await boot(again, { workers: [worker()], deadAfterSeconds: 1 }, dir)
     const done = await second.ctx.workers.source('agents')!.wait(started.id, 10_000)
     expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed', disposition: 'USER_ACTION' } })
     expect(done.error!.message).toContain('h-1')
@@ -879,7 +904,7 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
 
   it('never invents the usage of a run that started before a restart: it fails, and its usage is left to transcript reconciliation (INV-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
-    const first = await boot(new ScriptedAgent({ holdMs: 30_000 }), { workers: [metered()] }, dir, LEDGER)
+    const first = await boot(new ScriptedAgent({ holdMs: 30_000, process: true }), { workers: [metered()] }, dir, LEDGER)
     const source = first.ctx.workers.source('agents')!
     const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -887,7 +912,7 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)
     const again = new ScriptedAgent({ metering: METERING })
-    const second = await boot(again, { workers: [metered()] }, dir, LEDGER)
+    const second = await boot(again, { workers: [metered()], deadAfterSeconds: 1 }, dir, LEDGER)
     expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed' } })
     expect(again.runs).toEqual([])
     expect((await second.ctx.resources.usage()).records).toEqual([])
@@ -998,6 +1023,113 @@ describe('agents source: a usage limit its runtime gives no reading for is never
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'ready' })
     expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM agent_cooldowns').get()).toEqual({ n: 0 })
   })
+})
+
+describe('agents source: a run is gone only on a liveness verdict (PROP-0013, ADR-0054)', () => {
+  /** Start a run in `session` on a first boot, stop that boot while the agent runs, and return what a restart needs. */
+  const started = async (agent: ScriptedAgent, session = 'ses_live') => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
+    const first = await boot(agent, undefined, dir)
+    const admitted = await first.ctx.workers.route(requirement())
+    const execution = first.ctx.workers.source('agents')!.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    return { dir, id: execution.id, session }
+  }
+  const restart = async (dir: string, config: Partial<Config> = {}) => {
+    const again = new ScriptedAgent()
+    const booted = await boot(again, { workers: [worker()], deadAfterSeconds: 1, ...config }, dir)
+    cleanups.splice(cleanups.indexOf(booted.stop), 1)
+    return { ...booted, again }
+  }
+  const decisionOf = (ctx: Context, done: WorkerExecution) => done.decisions.map((d) => ctx.artifacts.get(d)!.body as { decisionType: string; decider: { id: string; version: string }; outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; reasons: string[] }> })
+    .find((d) => d.decisionType === 'reconciliation')
+
+  it('records the holder and the agent process of a run, and reconciles it as dead only when both are gone and it has been quiet long enough (REQ-WRK-16, INV-4)', async () => {
+    const agent = new ScriptedAgent({ holdMs: 30_000, process: true })
+    const { dir, id, session } = await started(agent)
+    const db = new DatabaseSync(join(dir, 'system.db'))
+    const row = db.prepare('SELECT holder, agent_process, activity_at, submitted_at FROM agent_runs WHERE run_id = ?').get(id) as Record<string, string>
+    db.close()
+    expect(JSON.parse(row.holder!)).toMatchObject({ pid: process.pid })
+    expect(JSON.parse(row.agent_process!)).toMatchObject({ pid: agent.processes[0] })
+    expect(row.activity_at).toBe(row.submitted_at)
+    const { ctx, again, stop } = await restart(dir)
+    const done = await ctx.workers.source('agents')!.wait(id, 10_000)
+    expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed', disposition: 'USER_ACTION', message: expect.stringContaining('it is gone (liveness dead') } })
+    expect(again.runs).toEqual([])
+    const decision = decisionOf(ctx, done)!
+    expect(decision).toMatchObject({ decider: { id: 'agent-workers.reconcile', version: '2' }, outcome: { option: 'dead', detail: { verdict: 'dead', rule: 'liveness@1', looks: 1, deadAfterSeconds: 1 } } })
+    expect(decision.candidates[0]!.reasons).toEqual([
+      expect.stringContaining('the holder\'s lease: lapsed'), 'the holder\'s process: gone (it is this process, which runs no agent of this run now)',
+      `the agent process: gone (no process ${agent.processes[0]} exists)`, expect.stringMatching(/^activity: the latest \d+ s ago$/),
+    ])
+    // Dead, so its session is free for the next run.
+    expect(await ctx.workers.held!(session)).toBeUndefined()
+    await stop()
+  }, 30_000)
+
+  // The failure mode PROP-0013 found: a run whose liveness could not be shown was failed at restart as if it were gone.
+  it('never takes a failed probe for death: a run whose agent process was never reported is looked at again, not failed, then goes to the operator with its session held (REQ-WRK-16, INV-15)', async () => {
+    const { dir, id, session } = await started(new ScriptedAgent({ holdMs: 30_000 }))
+    const second = await restart(dir)
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    const look = second.ctx.store.db.prepare('SELECT status, liveness_looks, liveness_verdict, liveness_decision FROM agent_runs WHERE run_id = ?').get(id)
+    expect(look).toEqual({ status: 'running', liveness_looks: 1, liveness_verdict: 'unknown', liveness_decision: null })
+    expect(await second.ctx.workers.held!(session)).toContain('has not finished (running)')
+    await second.stop()
+    // The bound reached: to the operator, never declared dead.
+    const third = await restart(dir, { maxUnknownVerdicts: 2 })
+    const done = await third.ctx.workers.source('agents')!.wait(id, 10_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed', disposition: 'USER_ACTION', message: expect.stringContaining('it is not declared dead, so its session stays held') } })
+    const decision = decisionOf(third.ctx, done)!
+    expect(decision).toMatchObject({ outcome: { option: 'operator', detail: { verdict: 'unknown', looks: 2 } } })
+    expect(decision.candidates[0]!.reasons).toContain('the agent process: unknown (never reported)')
+    const heldWhy = new RegExp(`^its run ${id} ended without being known to be gone \\(liveness unknown, decision sha256:`)
+    expect(await third.ctx.workers.held!(session)).toMatch(heldWhy)
+    // The source itself never drives that session again, whoever asks (INV-15), and a refused later run frees nothing.
+    const admitted = await third.ctx.workers.route(requirement())
+    const later = third.ctx.workers.source('agents')!.start({ key: 'k-later', worker: 'agent:reviewer', prompt: 'next', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
+    expect(await third.ctx.workers.source('agents')!.wait(later.id, 10_000)).toMatchObject({
+      status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining(`run ${id} of session ${session} ended without being known to be gone`) },
+    })
+    expect(await third.ctx.workers.held!(session)).toMatch(heldWhy)
+    expect([second.again.runs, third.again.runs]).toEqual([[], []])
+    await third.stop()
+  }, 30_000)
+
+  it('takes a holder recorded on another host as unknown, never gone, though its agent process is gone (REQ-WRK-16)', async () => {
+    const { dir, id } = await started(new ScriptedAgent({ holdMs: 30_000, process: true }))
+    const db = new DatabaseSync(join(dir, 'system.db'))
+    const holder = JSON.parse((db.prepare('SELECT holder FROM agent_runs WHERE run_id = ?').get(id) as { holder: string }).holder) as Record<string, unknown>
+    db.prepare('UPDATE agent_runs SET holder = ? WHERE run_id = ?').run(JSON.stringify({ ...holder, host: 'another-host' }), id)
+    db.close()
+    const { ctx, stop } = await restart(dir, { maxUnknownVerdicts: 1 })
+    const done = await ctx.workers.source('agents')!.wait(id, 10_000)
+    expect(decisionOf(ctx, done)).toMatchObject({ outcome: { option: 'operator', detail: { verdict: 'unknown' } } })
+    expect(decisionOf(ctx, done)!.candidates[0]!.reasons).toContain('the holder\'s process: unknown (it ran on another host (another-host))')
+    await stop()
+  }, 30_000)
+
+  it('reports a running agent stalled once per stall, while its process is present and it is quiet, and never stops it', async () => {
+    const quiet = new ScriptedAgent({ holdMs: 3500, process: true })
+    const { ctx } = await boot(quiet, { workers: [worker()], stallSeconds: 1 })
+    const admitted = await ctx.workers.route(requirement())
+    const source = ctx.workers.source('agents')!
+    const run = source.start({ key: 'quiet', worker: 'agent:reviewer', prompt: 'quiet', sessionId: 'ses_q', requirement: requirement(), decisions: admitted.decisions })
+    expect(await source.wait(run.id, 10_000)).toMatchObject({ status: 'completed' })
+    const stalls = ctx.eventLog.query({ type: 'agent-workers.run.stalled' })
+    expect(stalls).toHaveLength(1)
+    expect(stalls[0]).toMatchObject({ sessionId: 'ses_q', data: { agentRun: run.id, worker: 'agent:reviewer', stallSeconds: 1, rule: 'liveness@1' } })
+    // An agent that keeps showing activity, or one whose process is not known, is never reported stalled.
+    for (const agent of [new ScriptedAgent({ holdMs: 2500, process: true, activityEveryMs: 200 }), new ScriptedAgent({ holdMs: 2500 })]) {
+      const other = await boot(agent, { workers: [worker()], stallSeconds: 1 })
+      const id = other.ctx.workers.source('agents')!.start({ key: 'busy', worker: 'agent:reviewer', prompt: 'busy', requirement: requirement(), decisions: admitted.decisions }).id
+      expect(await other.ctx.workers.source('agents')!.wait(id, 10_000)).toMatchObject({ status: 'completed' })
+      expect(other.ctx.eventLog.query({ type: 'agent-workers.run.stalled' })).toEqual([])
+    }
+  }, 30_000)
 })
 
 describe('agents source: every Worker of one runtime is one account, its siblings (PROP-0012 phase C)', () => {
@@ -1417,6 +1549,25 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(git(workspace, 'symbolic-ref', '--short', 'HEAD')).toBe('system/run/run_done')
     expect(git(workspace, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'system/run/run_done'))
     untouched(repo, head)
+  })
+
+  it('keeps the worktree of a workflow run whose agent run ended without being known to be gone, and runs nothing more there, until a verdict says dead (INV-15, PROP-0013)', async () => {
+    const repo = repository()
+    const agent = new ScriptedAgent({ sandboxes: SANDBOXES, act: writes })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    const first = await run(ctx, 'agent:dev', 'k-1', 'run_unknown')
+    expect(first.status).toBe('completed')
+    const workspace = agent.runs[0]!.workspace
+    // As a restart leaves it when the verdicts stayed unknown: failed, for the operator, not dead.
+    const reconcile = (verdict: string) => ctx.store.db.prepare("UPDATE agent_runs SET status = 'failed', liveness_verdict = ?, liveness_decision = ? WHERE run_id = ?").run(verdict, `sha256:${'1'.repeat(64)}`, first.id)
+    reconcile('unknown')
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [] })
+    expect(existsSync(workspace)).toBe(true)
+    const refused = await run(ctx, 'agent:dev', 'k-2', 'run_unknown')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining(`run ${first.id} of the worktree of workflow run run_unknown ended without being known to be gone (liveness unknown`) } })
+    expect(agent.runs).toHaveLength(1)
+    reconcile('dead')
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
   })
 
   it('keeps a worktree while its workflow run has an agent run to finish, and leaves one it cannot remove in place, committed, for the next sweep (INV-9)', async () => {

@@ -130,6 +130,20 @@ export class WorkerRouter extends Workers {
     return false
   }
 
+  async held(sessionId: string): Promise<string | undefined> {
+    for (const source of this.registry.values()) {
+      let why: string | undefined
+      try {
+        why = await source.held?.(sessionId)
+      } catch (error) {
+        // A source that cannot answer cannot show the session free (INV-2).
+        why = `source ${source.name} cannot tell whether session ${sessionId} takes input now: ${(error as Error).message.slice(0, 200)}`
+      }
+      if (why) return why
+    }
+    return undefined
+  }
+
   release(sessionIds: readonly string[], reason: string): { due: number } {
     let due = 0
     if (sessionIds.length) for (const source of this.registry.values()) due += source.release?.(sessionIds, reason).due ?? 0

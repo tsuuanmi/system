@@ -207,6 +207,15 @@ exactly one other (a chain), resumes the session of the run before it when:
 - the template keeps a conversation across its steps (a node on the run's session);
 - that session's Worker keeps a native session (`ctx.workers.handle`) and can resume it now: it
   is listed, ready or busy, and proves `persistent-conversation`;
+- the session takes input now: its Worker source does not hold it (`ctx.workers.held`). A
+  source holds a session whose latest run stopped on a tool call whose approval request is still
+  open, or has not finished, or is not known to be gone
+  ([held sessions](agent-runtimes.md#held-sessions)). Such a session takes no input but that
+  request's resolution ([a deferred tool call](#a-deferred-tool-call)), so the attempt never
+  resumes it. A provider of `ctx.workers` without `held`, or one that fails, cannot show the
+  session free (PROP-0013,
+  [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+  workflow contract 1.6);
 - the session has served fewer than `maxSessionRuns` runs (default 5, INV-9).
 
 The run then continues that session, and the new brief is its next message, so the Worker keeps
@@ -538,6 +547,12 @@ operator approves that request, the engine continues the session by itself, once
 - **At most once per approval:** a settled deferral continues nothing again, here or in another
   process. A run that moved on first (the operator continued, stopped, or deleted it, or another
   node failed beside it) is settled with nothing run; the operator decides it as before.
+- **The only input.** While the request is open, the session takes nothing else from automation
+  (PROP-0013): a board task's next attempt starts a fresh session ([resume from a
+  brief](#a-board-tasks-brief)), and wake-on-message keeps a peer's mail durable and unread. Before
+  each automated wake (a delivery, a settled turn, a restart) the engine asks `ctx.workers.held`.
+  A held session is looked at again at each read of the queue, and at the next start, and woken
+  once it takes input ([sessions](sessions-and-messaging.md#direct-messaging)).
 
 ## Board tasks
 

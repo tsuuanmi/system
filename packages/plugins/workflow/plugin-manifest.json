@@ -10,7 +10,7 @@
   "provides": [
     {
       "seam": "workflow",
-      "version": "1.5.0"
+      "version": "1.6.0"
     }
   ],
   "consumes": [
@@ -28,7 +28,7 @@
     },
     {
       "seam": "leases",
-      "range": "^1.0.0"
+      "range": "^1.1.0"
     },
     {
       "seam": "egress",

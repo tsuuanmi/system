@@ -64,12 +64,49 @@ export function wake(e: Engine, sessionId: string): RunView | undefined {
   })
 }
 
-export function wakeSafely(e: Engine, sessionId: string): void {
+/**
+ * Why automation gives a session no input now (PROP-0013, ADR-0054), from the Worker source that owns
+ * it (`ctx.workers.held`): its latest run waits on an open approval request, has not finished, or is
+ * not known to be gone. A provider without `held`, or one that fails, cannot show it free (INV-2).
+ */
+export async function heldWhy(e: Engine, sessionId: string): Promise<string | undefined> {
+  const workers = e.ctx.workers
+  if (typeof workers.held !== 'function') return 'the Workers provider cannot tell whether it takes input now (it has no held)'
   try {
-    wake(e, sessionId)
+    return await workers.held(sessionId)
   } catch (error) {
-    e.ctx.logger.warn(`workflow: could not wake session ${sessionId}: ${(error as Error).message}`)
+    return `whether it takes input now cannot be told: ${(error as Error).message.slice(0, 200)}`
   }
+}
+
+/**
+ * An automated wake (a delivery, a settled turn, a restart): only of a session that takes input now.
+ * A held one keeps its mail, durable and unread, and is looked at again at each read of the queue
+ * (`approvalPollSeconds`) and at the next start; the only input a session blocked on an approval
+ * takes is that request's resolution (the engine's continuation of a deferred call).
+ */
+export function wakeSafely(e: Engine, sessionId: string, then: (e: Engine, sessionId: string) => unknown = wake): void {
+  if (e.draining || e.stopped.signal.aborted) return
+  const check = heldWhy(e, sessionId).then((why) => {
+    if (e.stopped.signal.aborted) return
+    if (why) {
+      if (e.heldWakes.get(sessionId) !== why) e.ctx.logger.warn(`workflow: session ${sessionId} has mail and is not woken: it takes no input now (${why})`)
+      e.heldWakes.set(sessionId, why)
+      return
+    }
+    e.heldWakes.delete(sessionId)
+    then(e, sessionId)
+  }).catch((error: unknown) => {
+    e.ctx.logger.warn(`workflow: could not wake session ${sessionId}: ${(error as Error).message}`)
+  })
+  e.wakeChecks.add(check)
+  void check.finally(() => e.wakeChecks.delete(check))
+}
+
+/** The sessions left unwoken because they took no input, looked at again (each queue poll). */
+export function retryHeldWakes(e: Engine): void {
+  // Each check settles later, so the map is not changed while it is read here.
+  for (const sessionId of e.heldWakes.keys()) wakeSafely(e, sessionId)
 }
 
 /**
@@ -134,8 +171,9 @@ export function settleWake(e: Engine, runId: string): void {
     }
     db.prepare('UPDATE workflow_wakes SET done = 1 WHERE run_id = ?').run(runId)
   })
-  // Messages that arrived during the turn wake it again, after a compaction if one is due.
-  e.ctx.store.afterCommit(() => (compactNow ? compact(e, wake.session_id) : wakeSafely(e, wake.session_id)))
+  // Messages that arrived during the turn wake it again, after a compaction if one is due; neither
+  // while the session takes no input (its turn stopped on a deferred call, say).
+  e.ctx.store.afterCommit(() => wakeSafely(e, wake.session_id, compactNow ? compact : undefined))
 }
 
 /** Compaction (REQ-SES-6): the session writes its own handoff summary, in its own conversation, as one more turn. */

@@ -13,8 +13,8 @@ import { isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  type AgentRuntimeProvider, type IdentityReading, type LoginCommand, type ProbeOptions, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage,
-  accountIdOf, identityHmac, maskEmail, probeIn,
+  type AgentRuntimeProvider, type IdentityReading, type LoginCommand, type ProbeOptions, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage,
+  accountIdOf, identityHmac, maskEmail, observe, probeIn,
 } from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
@@ -137,6 +137,27 @@ export function agentRuntimeProviderConformance(name: string, make: () => AgentR
       }
       await expect(runtime.run({ prompt: 'x', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
       expect(asked).toEqual([])
+    })
+
+    it('reports its agent process and its activity consistently, or not at all: one process with a positive pid, activity times in order and within the run (PROP-0013)', async () => {
+      const processes: Array<{ pid: number }> = []
+      const activity: number[] = []
+      const before = Date.now()
+      await make().run({ prompt: 'hello', workspace, sandbox: 'read-only' }, new AbortController().signal, undefined, {
+        onProcess: (p) => processes.push(p), onActivity: (at) => activity.push(at),
+      })
+      const after = Date.now()
+      expect(processes.length, 'at most one agent process').toBeLessThanOrEqual(1)
+      for (const p of processes) expect(Number.isInteger(p.pid) && p.pid > 0, 'a positive pid').toBe(true)
+      for (let i = 0; i < activity.length; i++) {
+        expect(activity[i]! >= before && activity[i]! <= after, 'within the run').toBe(true)
+        if (i) expect(activity[i]!, 'in order').toBeGreaterThanOrEqual(activity[i - 1]!)
+      }
+      // An observer that throws changes nothing about the run.
+      const result = await make().run({ prompt: 'hello', workspace, sandbox: 'read-only' }, new AbortController().signal, undefined, {
+        onProcess: () => { throw new Error('observer') }, onActivity: () => { throw new Error('observer') },
+      })
+      expect(result.text).toBe('echo: hello')
     })
 
     it('stops when aborted and reports it as aborted', async () => {
@@ -298,12 +319,14 @@ export class FakeAgentRuntime implements AgentRuntimeProvider {
     return user ? base : { ...base, available: false, detail: `${options.home} is not signed in` }
   }
 
-  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
+  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
     const refuse = (message: string): Error => Object.assign(new Error(`${this.kind}: ${message}`), { kind: 'config_error' })
     if (!isAbsolute(spec.workspace)) throw refuse('the workspace must be an absolute path')
     if (spec.sandbox !== 'read-only') throw refuse(`only read-only is offered, not ${spec.sandbox}`)
     if (spec.home !== undefined && (!isAbsolute(spec.home) || !existsSync(spec.home))) throw refuse(`the home ${spec.home} is not an existing absolute path`)
     if (signal.aborted) throw Object.assign(new Error(`${this.kind}: aborted`), { kind: 'aborted' })
+    // It starts no process of its own, so it reports none: only its activity (PROP-0013).
+    observe(observer, { activity: Date.now() })
     onHandle?.('h-1')
     return { text: `echo: ${spec.prompt}`, nativeHandle: 'h-1' }
   }
