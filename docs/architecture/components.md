@@ -115,6 +115,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   `account_remove`, `account_agents`, and `account_migrate` tools on `ctx.mcp`
   ([agent accounts](../design/agent-runtimes.md#enrollment-and-quarantine),
   [account × role](../design/agent-runtimes.md#workers--account--role)).
+  A read-only Worker configured `reviewMember` takes a `review` team member's steps, and only
+  those, every tool call denied ([review members](../design/agent-runtimes.md#review-members)).
   The agent runs here but its model is remote, so each prompt passes the egress check first.
   Every tool call passes the run's gate, the autonomy policy through `ctx.approvals`, before it
   runs; a runtime that cannot ask a gate first is not admitted, and a call the policy asks
@@ -130,8 +132,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   the run's branch, once the run has been idle past a retention
   ([workspaces](../design/agent-runtimes.md#workspaces)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
-  (Codex SDK), ACP agents, and the Antigravity CLI (its installed `agy`, every tool call held by
-  its PreToolUse hook, bridged to the run) ([agent runtimes](../design/agent-runtimes.md)). Each agent
+  (Codex SDK), ACP agents, and the Antigravity CLI (its installed `agy`, only on a version verified
+  live, every tool call held by its PreToolUse hook, bridged to the run)
+  ([agent runtimes](../design/agent-runtimes.md)). Each agent
   process starts without the daemon's credentials, in a home of its own, and cannot read host
   state (the DSH home, the session's runtime and temporary directories, registered secret
   paths, every agent's login): the registry owns the read confinement, applied with
@@ -156,10 +159,14 @@ runs the work the router admitted to them. Callers never reach a source directly
   `key`; `runId` names the workflow run the execution belongs to; `brief` names the
   `brief@1.x` the source renders its prompt from at start, its pointers resolved and
   egress-checked there, [briefs](../design/workflow-engine.md#briefs)), `get`, `wait`, and
-  optional `sandbox` (the confinement a brief names), `affinity`, `handle`, `reset`, `cancel`. An agent runtime
+  optional `reserve` (an admission counted in the Worker's load until it starts), `sandbox` (the
+  confinement a brief names), `affinity`, `siblings` (the Workers on its account), `handle`,
+  `reset`, `release`, `cancel`. An agent runtime
   provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`, whose
   result may carry what the run consumed (`RunMetering`) and whose `spec.toolGate` it asks
-  before each tool call (`allow`, `deny`, `defer`). `ctx.models`
+  before each tool call (`allow`, `deny`, `defer`); for agent accounts, optionally its own `home`,
+  `identity(home, key)`, and `loginCommand(home)`, and runs and probes in a named home
+  (`spec.home`, `probe({ home })`) when its evidence reports `homes`. `ctx.models`
   provides `list()` (catalog entries with availability) and `complete(request, signal)`.
 - **Packages:** [turns](../../packages/plugins/turns/README.md),
   [agent-workers](../../packages/plugins/agent-workers/README.md),
@@ -185,8 +192,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   3. What result and evidence did it produce?
 - **Does not own:** the internals of a Worker. Model, runtime, tools, and state are not
   normalized into a universal interface.
-- **Contracts:** `workers.route(requirement, { restrict, exclude }) → AdmittedWorker` (with `tier` and
-  `route` decisions) or `AdmissionFailure` (with an `admission` decision);
+- **Contracts:** `workers.route(requirement, { restrict, excludeWorkers, exclude, input, assignment })
+  → AdmittedWorker` (with `tier` and `route` decisions) or `AdmissionFailure` (with an `admission`
+  decision; `limitUntil`, the earliest known reset, when every Worker refused only for its limit is
+  on an assigned account);
   `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
@@ -195,11 +204,15 @@ runs the work the router admitted to them. Callers never reach a source directly
   the store while that configuration is unchanged), and the one batched approval queue, whose
   expiry denies, with the MCP tools `approvals_list`, `approvals_get`, `approvals_policy`, and the
   operator's `approvals_decide` and `approvals_policy_propose`, and the operator's queue and policy
-  page on the web UI ([approvals](../design/approvals.md)); `ctx.resources` (provider
-  `resources`, on the store), configured pools, limit readings, reservations before a run, and deduplicated usage after it,
-  with the MCP tools `resources_pools` and `resources_usage`
+  page on the web UI ([approvals](../design/approvals.md)); the queue may also propose a policy
+  change itself, never apply it, from repeated identical approvals, off unless configured
+  ([the queue proposes a policy change](../design/approvals.md#the-queue-proposes-a-policy-change));
+  `ctx.resources` (provider `resources`, on the store), configured pools and pools made from
+  templates for the accounts a Worker source declares, limit readings, reservations before a run,
+  and deduplicated usage after it, with the MCP tools `resources_pools` and `resources_usage`
   ([resources](../design/resources.md)). Contracts: `approvals.check / request / batch / decide /
-  withdraw / sweep`, and from contract 1.1 `proposePolicy / policyChanges`; `resources.pools / observe / reserve / release / record / usage`.
+  withdraw / sweep`, and from contract 1.1 `proposePolicy / policyChanges`; `resources.pools /
+  observe / reserve / release / record / usage`, and from contract 1.1 `declare`.
 - **Policy inputs:** proven capabilities, data locality, Worker state, tier, session
   affinity, and provider family, compared only for inequality. This is where the three [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
@@ -225,7 +238,12 @@ runs the work the router admitted to them. Callers never reach a source directly
   task it serves, its criteria, and the Worker's confinement
   ([briefs](../design/workflow-engine.md#briefs)). A run may serve one attempt of a board task: the engine is that
   run's owner on `ctx.board` (optional), which it reaches through the abstract `Board` only; a
-  task's next attempt resumes the session of the one before it when its Worker can. Through the
+  task's next attempt resumes the session of the one before it when its Worker can. Before each
+  step of such a run it reserves the task's budget lines on `ctx.resources` (optional); a spent
+  line starts no new step and blocks the task with a funding request, none on its last attempt
+  ([a task's budget](../design/workflow-engine.md#a-tasks-budget)). A node refused only for
+  assigned accounts' limits waits for the reset, bounded, spending no attempt
+  ([waiting for an account's limit](../design/workflow-engine.md#waiting-for-an-accounts-limit)). Through the
   abstract `Approvals` (`ctx.approvals`, optional) a remediation fix's gate asks the approval
   queue, an approved deferred tool call's session is continued once, and a plain run that wrote
   records the policy's checks still pending ([remediation on the
@@ -252,18 +270,18 @@ runs the work the router admitted to them. Callers never reach a source directly
   `digest-extractive` (its row off, swapped in by configuration) gives it verbatim spans code
   selected first and fills each claim's quote from them
   ([extractive-first](../design/digests.md#extractive-first)).
-- **Experiment registry** (`ctx.experiments`, defined): hypotheses and pre-registered experiments
-  with their exact identity and structured fingerprint; every registration answered EXACT_REPEAT,
-  RELATED, CONTEXT_CHANGED, or NOVEL, and pre-registered or refused as a `registration` decision;
-  each experiment's state while the evaluation engine runs it; and lessons, whose applicability is
-  computed when they are read ([experiments](../design/experiments.md)). No provider yet: its
-  suite runs against a fake.
-- **Evaluation engine** (`ctx.evaluations`, defined): a pre-registered experiment run offline
-  under its pins and seals as paired trials, measured by collectors (the verification family,
-  registered through `evaluations.collector`) and by the resource ledger, analysed once at the
-  horizon, and classified by the deterministic verdict rule as a `verdict` decision; it decides no
-  promotion, which always asks the operator ([evaluations](../design/evaluations.md)). No provider
-  yet: its suite runs against a fake.
+- **Experiment registry** (`ctx.experiments`, [defined](plugin-model.md#seam-catalog)):
+  hypotheses and pre-registered experiments with their exact identity and structured fingerprint;
+  every registration answered EXACT_REPEAT, RELATED, CONTEXT_CHANGED, or NOVEL, and pre-registered
+  or refused as a `registration` decision; each experiment's state while the evaluation engine
+  runs it; and lessons, whose applicability is computed when they are read
+  ([experiments](../design/experiments.md)).
+- **Evaluation engine** (`ctx.evaluations`, [defined](plugin-model.md#seam-catalog)): a
+  pre-registered experiment run offline under its pins and seals as paired trials, measured by
+  collectors (the verification family, registered through `evaluations.collector`) and by the
+  resource ledger, analysed once at the horizon, and classified by the deterministic verdict rule
+  as a `verdict` decision; it decides no promotion, which always asks the operator
+  ([evaluations](../design/evaluations.md)).
 - **Statistics** (library): the intervals the verdict rule reads, pinned by version in each
   experiment; inference only, holding no threshold: the exact paired sign-flip test and the
   interval that inverts it, golden-tested against SciPy ([statistics](../design/statistics.md)).

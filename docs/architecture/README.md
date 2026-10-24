@@ -7,8 +7,9 @@ and under which constraints. *How* each mechanism works belongs in [design](../d
 > Target state, proposed in [PROP-0001](../proposals/0001-unified-system-architecture.md); the
 > core and plugin classes are decided in
 > [ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md).
-> Diagrams mark what is **planned**; everything else is built. What each package does now is in
-> its own `README.md`.
+> Diagrams mark what is **planned**, or only **defined** (a definition and its conformance suite,
+> no provider: [seam catalog](plugin-model.md#seam-catalog)); everything else is built. What each
+> package does now is in its own `README.md`.
 
 ## Documents
 
@@ -34,7 +35,7 @@ flowchart LR
   host["system host<br/>own harness on DSH core (Cordis)<br/>single operator"]
   subgraph workers["Workers"]
     web["ChatGPT Web, Gemini Web<br/>(headed browser per account)"]
-    agents["Claude Code (Claude Agent SDK)<br/>Codex (Codex SDK)<br/>ACP agents"]
+    agents["Claude Code (Claude Agent SDK)<br/>Codex (Codex SDK)<br/>ACP agents, the Antigravity CLI"]
     models["API and local models<br/>(a route per endpoint)"]
   end
   state[("DSH_HOME/system/<br/>SQLite store, encrypted vault")]
@@ -70,8 +71,9 @@ third-party plugins that the operator has not installed are not (see the
 
 Every box is a **plugin** that publishes a Cordis service, or *seam*, under a `ctx.*` key, or a
 library beside them ([plugin model](plugin-model.md)). Consumers find a seam by key and never
-reach into a provider's internals. Dependencies point **down**, with two deliberate inversions:
-the Worker sources register with `ctx.workers` and ask `ctx.egress`, and plugins contribute
+reach into a provider's internals. Dependencies point **down**, with deliberate inversions: the
+Worker sources register with `ctx.workers` and ask `ctx.egress`, the agent Workers also ask
+`ctx.approvals` before each tool call and meter through `ctx.resources`, and plugins contribute
 their tools to `ctx.mcp`. The generated [package graph](packages.md) lists every edge and each
 inversion.
 
@@ -83,6 +85,7 @@ flowchart TB
     msg["gateway-anthropic<br/>/anthropic"]
     resp["gateway-responses<br/>/openai"]
     ui["web-ui /ui"]
+    rep["report"]
     cli["system CLI"]
     gt["gateway-turns (library)"]
   end
@@ -90,12 +93,18 @@ flowchart TB
     direction LR
     wf["ctx.workflow<br/>DAG engine, templates, teams"]
     ws["ctx.workerSessions<br/>sessions, mailboxes"]
+    bd["ctx.board<br/>projects, board tasks"]
+    dg["ctx.digests<br/>digest, digest-extractive"]
+    fx["ctx.experiments, ctx.evaluations<br/>(defined)"]
+    stat["statistics (library)"]
     prof["profiles<br/>software-development,<br/>scientific-research"]
   end
   subgraph RT["Routing"]
     direction LR
     wk["ctx.workers<br/>sources, admission, router, acceptance"]
     eg["ctx.egress<br/>classification + secret scan"]
+    apr["ctx.approvals<br/>autonomy policy, approval queue"]
+    rs["ctx.resources<br/>pools, reservations, usage"]
   end
   subgraph CAP["Capabilities: Worker sources"]
     direction LR
@@ -156,14 +165,14 @@ ADR. Capability plugins talk to the core, never to each other across families. T
 flowchart TB
   subgraph SURF["surface family"]
     direction LR
-    s1["ctx.mcp, gateway-anthropic,<br/>gateway-responses, web-ui, CLI"]
+    s1["ctx.mcp, gateway-anthropic,<br/>gateway-responses, web-ui, report, CLI"]
   end
   subgraph CORE["core: guarantee seams"]
     direction LR
     led["ledger of record<br/>ctx.store, ctx.artifacts,<br/>ctx.eventLog, ctx.credentials"]
-    sm["work state machine<br/>ctx.workflow, ctx.workerSessions,<br/>ctx.leases, ctx.board, ctx.experiments"]
+    sm["work state machine<br/>ctx.workflow, ctx.workerSessions,<br/>ctx.leases, ctx.board,<br/>ctx.experiments (defined)"]
     run["runner<br/>workflow engine, ctx.turnReceipts"]
-    gate["gate<br/>ctx.egress, workers admission<br/>and acceptance, ctx.approvals,<br/>ctx.evaluations"]
+    gate["gate<br/>ctx.egress, workers admission<br/>and acceptance, ctx.approvals,<br/>ctx.evaluations (defined)"]
     res["resource ledger and metering<br/>ctx.resources"]
     host["plugin host<br/>DSH core, Cordis, system bundle,<br/>ctx.pluginHost"]
   end
@@ -172,7 +181,7 @@ flowchart TB
     wkr["Worker<br/>ctx.turns, ctx.agentWorkers, ctx.models<br/>and their provider runtimes"]
     dec["decision<br/>router policy, decisions (planned)"]
     ver["verification<br/>acceptance contracts, quote checks"]
-    dig["digest (planned)"]
+    dig["digest<br/>ctx.digests: digest,<br/>digest-extractive"]
     ctxp["context (planned)"]
     wfl["workflow<br/>templates, profiles"]
     kn["knowledge (planned)"]
@@ -198,13 +207,13 @@ flowchart TB
       xvfb["Xvfb (private, X-authenticated)"]
       chrome["headed Chrome<br/>one context per account"]
     end
-    subgraph remote["remote login (system account login)"]
+    subgraph remote["remote login (system account login, a website account)"]
       rx["private Xvfb + plain Chrome"]
       vnc["VNC server on an<br/>owner-only unix socket"]
       novnc["noVNC page, loopback,<br/>URL token"]
     end
-    runtimes["agent runtime children<br/>claude · codex · ACP agents"]
-    home[("~/.dsh/system/<br/>system.db (SQLite WAL), vault.enc + vault.key,<br/>login-profiles/, browsers/,<br/>operator.token, client.token, model.token, mcp.json")]
+    runtimes["agent runtime children<br/>claude · codex · agy · ACP agents"]
+    home[("~/.dsh/system/<br/>system.db (SQLite WAL), vault.enc + vault.key,<br/>login-profiles/, browsers/,<br/>the agent runtimes' homes, agent-homes/, worktrees/,<br/>operator.token, client.token, model.token, mcp.json")]
     stdio["system mcp-stdio<br/>(spawned by a client)"]
     clients["Claude Code, Codex,<br/>system CLI"]
   end
