@@ -13,7 +13,9 @@ holds no engine code and no rules of its own.
   ([nodes](../../../docs/reference/workflow-templates.md#algorithm-development)):
   - `develop:1` (`develop`, `local-data`; `code` work) states the hypothesis and changes the
     code in the run's own git worktree (agent Workers with `worktreePerRun`), on
-    the run's session, which the task's next attempt resumes. Its variants `docs`
+    the run's session, which the task's next attempt resumes; when that attempt failed only
+    after this step (its review's session broke, say), the next attempt's worktree already holds
+    the change, and its brief says so ([starting from the previous attempt's work](../../../docs/design/workflow-engine.md#starting-from-the-previous-attempts-work)). Its variants `docs`
     and `tests` make it that kind of work, changing documentation only or tests
     only (`system run algorithm-development --variant docs`, MCP `run` with
     `variant`);
@@ -62,6 +64,12 @@ holds no engine code and no rules of its own.
   the criteria and their checks but not the caller's input; validation with no
   Worker proving `validate`; an unlisted validation command; writers given kinds,
   each step (the fix, and the `docs` variant's) on the writer of its kind.
+  [`tests/landing.spec.ts`](tests/landing.spec.ts) lands an accepted result (ADR-0060), and
+  [`tests/carry.spec.ts`](tests/carry.spec.ts) starts a task's next attempt from the work its
+  previous attempt left (ADR-0061): T110a's attempt, whose review's session broke after
+  `develop:1`, carried and landed; a review that asked for changes, a result the board rejected, a
+  tree off the commit the task writes or onto a moved HEAD, and a changed or removed worktree, never
+  carried.
   [`tests/agent-review.spec.ts`](tests/agent-review.spec.ts) runs `agent-review`'s
   review node after an agent's change on the same pilot: its re-review is given
   the caller's input composed in place of `{{input}}`, never the placeholder.

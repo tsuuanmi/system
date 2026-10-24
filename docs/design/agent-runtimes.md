@@ -222,8 +222,9 @@ names it in `WorkerStart.runId`) works in that run's own git worktree of the rep
 the branch `system/run/<runId>`, never in the repository's main working tree
 ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)). There is one
 worktree per repository and workflow run: the first agent run creates it from the
-repository's HEAD, and every later one of that run on that repository works in it, reviewers
-included. So exact-subject review and remediation
+repository's HEAD (or, for a board task's next attempt, the engine had it cut from the work its
+previous attempt left: [carrying](#carrying-an-earlier-runs-work)), and every later one of that
+run on that repository works in it, reviewers included. So exact-subject review and remediation
 ([workflow engine](workflow-engine.md#exact-subject-gates)) bind to the tree the writer
 changed. The provider only sees a `RunSpec` whose workspace is the worktree. A worktree under
 the DSH home is bound back like any workspace: writable for `workspace-write`, read-only for
@@ -294,7 +295,9 @@ worktreeSetup:
   a path that climbs is refused (`config_error`).
 
 What the setup writes stays in the worktree. Files the repository ignores (`node_modules/`) are not
-in the run's subject, and go with the worktree at its retention.
+in the run's subject, and go with the worktree at its retention. A worktree carried from an earlier
+run's work is set up as a new one, on the tree it holds: the repository's files as that earlier
+agent left them ([carrying](#carrying-an-earlier-runs-work)).
 
 Worktrees are bounded ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)):
 once every agent run of a workflow run has finished and the retention has passed, a
@@ -379,6 +382,41 @@ a special file is named, not read. A retired worktree's change is read from its 
 changes only). Bounded (`CHANGE_BOUNDS`): 200 files, 64,000 characters of one file's diff, 512,000
 in all; past them the rest is cut or counted. A worktree that cannot be read throws, and the
 registry names its source as unread, never as no change (INV-2).
+
+### Carrying an earlier run's work
+
+> Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
+> (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/worktrees.ts`); the engine decides and asks
+> ([starting from the previous attempt's work](workflow-engine.md#starting-from-the-previous-attempts-work)).
+
+The `agents` source answers `carry(step)` on the `workers` seam for the worktrees it holds: before
+the first step of a board task's next attempt, the engine asks it to start that run's worktree from
+the tree the previous attempt's writing step left. One change at a time per repository:
+
+- **Checked first, nothing changed on a refusal:** the new run has no worktree or branch yet
+  (`exists`); the earlier worktree is still there (`gone`), no agent run of its workflow run is
+  unfinished or not known to be gone (`busy`, INV-15), it is intact and on its branch (`failed`),
+  the repository's HEAD is still the commit the tree is on, where a fresh worktree is cut from
+  (`base-moved`), it is still exactly the subject its writing step left, captured after `.system/`
+  is removed as the retention removes it (`moved`), and it holds a change (`empty`).
+- **The earlier tree is committed on its own branch**, as the retention would commit it: `git add
+  --all` and one commit by `system <system@localhost>` with the engine's message and
+  `System-Subject` and `System-Carried-To` trailers.
+- **The new worktree is cut at the same base, holding it:** added on `system/run/<runId>` at that
+  commit without a checkout, then given the commit's tree, index and files (`git read-tree -u
+  --reset`), so its HEAD is the base and the earlier change is its own, staged: its subject is the
+  base with the change on top, and a review binds to the whole change. The answer names the commit,
+  its branch, the base, the new branch, and the worktree.
+- **Restart:** the worktree's row records the run it was cut for (`carried_from`) before it is
+  given the tree, and the commit (`carried_commit`) once it is. A carry asked again finds its work
+  done (`carried: false`). A worktree cut and not given the tree is never run in (its first agent
+  run fails unsent as `config_error`); a carry asked again gives it the tree, or, when the tree can
+  no longer be given, puts it back to its base, a fresh worktree a run may use. One that cannot be
+  put back stays, marked, for the operator.
+
+Never a force, a reset of a branch, a deletion, or a push. The earlier worktree is clean afterwards,
+and the retention removes it as any other; its branch keeps the carry commit, which is never merged.
 
 ## Credentials and egress
 

@@ -354,6 +354,22 @@
   in the checkout as any reviewed change does: a tool there that runs files
   automatically (a directory's environment file, a build step) runs what was
   merged. Nothing is pushed.
+
+  **Carrying** ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)):
+  a board task's next attempt may start from the tree its previous attempt's
+  writer left, so content one agent run wrote is the starting point of the next
+  run's worktree. It is carried only when no review or person judged it, only
+  while it is exactly the tree that writer left (any later edit refuses it) and
+  no run of it can still write it, and only onto the commit a fresh worktree
+  would be cut from; the next attempt's review is shown and binds to the whole
+  change, so carried content reaches a merge only through the same review and
+  approval as any change. The worktree's setup (ADR-0058) then runs on that
+  content: a repository's install scripts as the earlier agent left them run
+  under the setup's confinement (the host read-only but the worktree, no
+  network, a deadline), the same bounds as the agent's own commands, with read
+  access to the package store's files a view shows read-only. A listed setup or
+  validation command is allowed by its argv, never by what the repository's files
+  make it run.
 - **Local or private data leaks to a provider website or API through a prompt or
   attachment.** `ctx.egress` checks the **actual outgoing payload** inside the
   Worker source, after routing chose the Worker and before anything is sent

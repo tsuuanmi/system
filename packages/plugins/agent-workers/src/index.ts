@@ -63,7 +63,7 @@ import {
 } from './roles.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
-import { notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
+import { CARRY_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -627,7 +627,7 @@ export class AgentWorkers extends Service {
       // The operator frees what a run that ended not known to be gone held, on their word that its agent is gone.
       version: 14,
       sql: 'ALTER TABLE agent_runs ADD COLUMN liveness_freed TEXT;',
-    }])
+    }, CARRY_MIGRATION])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -670,6 +670,8 @@ export class AgentWorkers extends Service {
       land: (step) => this.worktrees.land(step),
       // A workflow run's change in its worktrees, read only, for the operator's review (T122).
       changes: (runId) => this.worktrees.changes(runId),
+      // A board task's next attempt starting from the work its previous attempt left (ADR-0061).
+      carry: (step) => this.worktrees.carry(step),
     })
     // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => {

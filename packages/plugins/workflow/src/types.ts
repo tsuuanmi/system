@@ -166,6 +166,31 @@ export interface TaskView {
   question?: TaskQuestion
   /** The landing of the run's accepted result, when it is on a worktree a Worker source holds (docs/design/workflow-engine.md#landing-an-accepted-result). */
   landing?: TaskLanding
+  /** Whether the run started from the work its task's previous attempt left (docs/design/workflow-engine.md#starting-from-the-previous-attempts-work). */
+  carry?: TaskCarry
+}
+
+/**
+ * Whether a task's run starts from the work its previous attempt left (ADR-0061), decided when the
+ * run is admitted, once that attempt left a writing step's result in a worktree: `due` until the
+ * run's first turn, before any step, asks the Worker source that holds the tree to carry it; then
+ * `carried` (the run's worktree holds it) or `fresh` (the worktree is cut from HEAD, as for any
+ * attempt; `cause` and `reason` say why).
+ */
+export interface TaskCarry {
+  state: 'due' | 'carried' | 'fresh'
+  /** The previous attempt: its run, its number, its writing step and that step's result, and the tree it left. */
+  from: { runId: string; attempt: number; nodeId: string; result: ArtifactRef; workspace: string; subject: { ref: string; version: string } }
+  /** The admission decision, then the `gate` decision that records what the source did (rule `workflow.task-worktree`). */
+  decisions: ArtifactRef[]
+  /** Once carried: where, and the commit on the earlier run's branch the run's worktree holds. */
+  repository?: string
+  worktree?: string
+  branch?: string
+  commit?: string
+  cause?: string
+  reason?: string
+  at: string
 }
 
 /**
@@ -331,7 +356,7 @@ export interface Explanation {
   specHash: ContentId
   /**
    * The engine's decisions on the run as a whole, which no step holds, in the order they were made:
-   * a board task's admission and session, its holder, the result's subject and acceptance, the
+   * a board task's admission, session, and start from its previous attempt's work, its holder, the result's subject and acceptance, the
    * report, the funding gate, and the digest. Only when there are any.
    */
   decisions?: ExplainedDecision[]
@@ -487,6 +512,8 @@ export interface TaskRow {
   question?: string | null
   /** JSON {@link TaskLanding}: the landing of the run's accepted result, once it was reported on a working tree. */
   landing?: string | null
+  /** JSON {@link TaskCarry}: whether the run starts from the work its task's previous attempt left. */
+  carry?: string | null
   created_at: string
   updated_at: string
 }

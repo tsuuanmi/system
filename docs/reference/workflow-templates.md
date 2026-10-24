@@ -163,7 +163,10 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   `validate:1` on one given `tests`; `review:1` names none, so it needs a reviewer given no kinds.
   The variants are this template's docs work and test work; no other template carries them.
 - `develop:1` states the hypothesis it tests, then changes the code toward the task; in the `docs`
-  variant it changes documentation only, in the `tests` variant tests only.
+  variant it changes documentation only, in the `tests` variant tests only. When the attempt before
+  failed only after its `develop:1` completed (its review's session broke, say), no review having
+  judged that change, this attempt's worktree already holds it, and its brief says so: it builds on
+  it ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
 - `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
   and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
   change, never the developer's answer. Blocking findings grow a fix (on `develop:1`'s
@@ -195,7 +198,8 @@ board task's run also reads the task frame its brief states first
 ([a board task's brief](../design/workflow-engine.md#a-board-tasks-brief)): the project, the task
 and attempt, the goal, the acceptance criteria with what checks each (`brief@1.3`), the budget left
 at that step, the pointers (the results of the tasks it depends on, the previous attempt's result
-and the decision behind this one), and the board's `TASKS.md` in the worktree.
+and the decision behind this one, and, when its worktree starts from the previous attempt's work,
+the decision that carried it), and the board's `TASKS.md` in the worktree.
 
 | Step | Reads | Never reads |
 |---|---|---|

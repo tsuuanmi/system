@@ -183,6 +183,12 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
 5. **End the day with the report**: `system report --project <id> --days 1`. Check the attention
    line against the charter, and the ledger's usage against the pool.
 
+An attempt that failed only after its develop step (its review's session broke, a limit, a
+timeout) leaves its change to the next attempt: the Lead starts the task again as usual, and that
+run's worktree starts from the change, recorded with why
+([runbook](runbooks.md#a-tasks-next-attempt-starts-from-the-previous-attempts-work)). A review that
+asked for changes, or a result you rejected, is never carried: the next attempt starts from HEAD.
+
 A task that waits for input, an expired request, or a run that failed each have a runbook:
 [a waiting task](runbooks.md#a-board-task-is-blocked-or-waiting-for-input),
 [an expired request](runbooks.md#an-approval-request-expired),

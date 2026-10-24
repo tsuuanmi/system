@@ -298,6 +298,32 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('carries an earlier run\'s tree through the source that holds it, with its name; none holding it is undefined, and a source that throws is a refusal, never read as not holding it (ADR-0061, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.carry !== 'function') return
+        const carry = (workspace: string) => ({ runId: 'run_2', from: { runId: 'run_1', workspace, subject: { ref: 'a'.repeat(40), version: 'b'.repeat(64) } }, message: 'carry' })
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b')], {
+          carry: async (step) => step.from.workspace === '/wt/two'
+            ? { outcome: 'carried', repository: '/repo', from: { branch: 'system/run/run_1', commit: 'c'.repeat(40) }, base: 'a'.repeat(40), branch: 'system/run/run_2', worktree: '/wt/run_2', carried: true }
+            : undefined,
+        }))
+        ctx.workers.register(source('broken', [worker('w:c')], {
+          carry: async (step) => {
+            if (step.from.workspace === '/wt/broken') throw new Error('the store failed')
+            return undefined
+          },
+        }))
+        expect(await ctx.workers.carry(carry('/wt/two'))).toMatchObject({ outcome: 'carried', from: { commit: 'c'.repeat(40) }, worktree: '/wt/run_2', source: 'two' })
+        expect(await ctx.workers.carry(carry('/wt/nobody'))).toBeUndefined()
+        expect(await ctx.workers.carry(carry('/wt/broken'))).toMatchObject({ outcome: 'refused', cause: 'failed', source: 'broken', reason: expect.stringMatching(/could not carry the worktree \/wt\/broken into run run_2: the store failed/) })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('lists the runs whose liveness needs a look from every source that tells it, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
       const { ctx, dispose } = await boot()
       try {

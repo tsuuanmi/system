@@ -6,7 +6,7 @@
  * workspace its run spec names. The report plugin's tests run their pilot on it too.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
@@ -73,6 +73,10 @@ export interface Script {
    * reviewer and the digest Worker are given none.
    */
   kinds?: boolean
+  /** How many reviews end on a broken session before one answers (default 0): T110a's review that reached its turn limit. */
+  reviewFails?: number
+  /** Whether the developer commits its change in its worktree, moving the worktree's HEAD off the commit the task writes (default false). */
+  commits?: boolean
 }
 
 /** The scripted agent runtime: every run asks its gate before each tool call, then acts as its role does. */
@@ -80,7 +84,10 @@ export class PilotAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: Array<RunSpec & { role: Role }> = []
   readonly calls: Array<{ role: Role; tool: string; verdict: ToolVerdict }> = []
+  /** What calc.py held in its worktree when each develop run started. */
+  readonly found: string[] = []
   private reviews = 0
+  private brokenReviews = 0
   constructor(readonly script: Script = {}) {}
 
   async probe() {
@@ -107,7 +114,9 @@ export class PilotAgent implements AgentRuntimeProvider {
     let text: string
     switch (role) {
       case 'develop':
+        this.found.push(readFileSync(join(spec.workspace, 'calc.py'), 'utf8'))
         if (await call('Write', { file_path: join(spec.workspace, 'calc.py'), content: FIXED })) writeFileSync(join(spec.workspace, 'calc.py'), FIXED)
+        if (this.script.commits) git(spec.workspace, 'commit', '-q', '-a', '-m', 'developer: add adds')
         text = 'Hypothesis: add() returns the difference, so the tests that sum fail. Changed calc.py; criterion a1 should now be met.'
         break
       case 'fix':
@@ -115,6 +124,10 @@ export class PilotAgent implements AgentRuntimeProvider {
         text = 'Added test_calc.py, the test the review asked for.'
         break
       case 'review': {
+        if (this.brokenReviews < (this.script.reviewFails ?? 0)) {
+          this.brokenReviews++
+          throw new ProviderError('session_broken', 'scripted: Reached maximum number of turns (4)')
+        }
         await call('Read', { file_path: join(spec.workspace, 'calc.py') })
         const subject = /^Subject: (\S+)$/m.exec(spec.prompt)![1]!
         const changes = this.reviews++ < (this.script.changes ?? 0)

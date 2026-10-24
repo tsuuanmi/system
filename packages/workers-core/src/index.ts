@@ -357,6 +357,43 @@ export interface WorkChange {
 export const CHANGE_BOUNDS = { files: 200, fileChars: 64_000, totalChars: 512_000 } as const
 
 /**
+ * Start a workflow run's worktree from an earlier run's work (ADR-0061): the next attempt of a board
+ * task whose previous attempt's writing step completed, and failed only after it, continues from that
+ * tree instead of redoing it. The source that holds `from.workspace` as the worktree of workflow run
+ * `from.runId` commits it on that worktree's branch, only while it is still exactly `from.subject`
+ * (the tree the writing step left) and no run of it can still write it, with `message`; then it cuts
+ * the worktree of `runId` at the commit `from.subject.ref` names, only while that is still the
+ * repository's HEAD (where a fresh worktree is cut from), holding the committed tree as changes on top.
+ * Never a force, a reset, or a push.
+ */
+export interface CarryStep {
+  runId: string
+  from: { runId: string; workspace: string; subject: { ref: string; version: string } }
+  message: string
+}
+
+/**
+ * Why a carry changed nothing that matters: the new worktree, if any is cut later, starts from HEAD as
+ * before. `moved`: the earlier tree is no longer the subject its writing step left; `gone`: its worktree
+ * was removed; `busy`: a run of it is unfinished or not known to be gone; `base-moved`: the repository's
+ * HEAD is no longer the tree's base; `exists`: the new run has a worktree (or its branch) already;
+ * `empty`: the earlier tree holds no change; `failed`: anything else, such as a worktree not intact.
+ */
+export type CarryRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'exists' | 'empty' | 'failed'
+
+/**
+ * What a carry did (ADR-0061):
+ * - `carried`: the earlier tree is the commit `from.commit` on `from.branch`, on top of `base`, and the
+ *   worktree `worktree` of the new run, on `branch` at `base`, holds it (`carried` false when it did
+ *   before this step, such as after a restart);
+ * - `refused`: nothing more is done, and why (the earlier tree may have been committed on its branch,
+ *   as the retention would commit it).
+ */
+export type Carried =
+  | { outcome: 'carried'; repository: string; from: { branch: string; commit: string }; base: string; branch: string; worktree: string; carried: boolean }
+  | { outcome: 'refused'; cause: CarryRefusal; reason: string }
+
+/**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept
  * this work now, how is it invoked, what did it produce). `describe` is called on every
  * route, so states are current.
@@ -419,6 +456,12 @@ export interface WorkerSource {
    * be read, which is never read as no change (INV-2).
    */
   changes?(runId: string): Promise<WorkChange[] | undefined>
+  /**
+   * Start workflow run `step.runId`'s worktree from the earlier run's tree at `step.from.workspace`
+   * (ADR-0061). Undefined when this source holds no such worktree. A step repeated after a restart
+   * finds its own work done and says so (INV-4).
+   */
+  carry?(step: CarryStep): Promise<Carried | undefined>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -604,6 +647,14 @@ export abstract class Workers extends Service {
    * show a change.
    */
   abstract changes?(runId: string): Promise<{ changes: Array<WorkChange & { source: string }>; unread: Array<{ source: string; detail: string }> }>
+
+  /**
+   * Start a workflow run's worktree from an earlier run's tree, by the source that holds that tree
+   * (`WorkerSource.carry`), with that source's name; undefined when none holds it. A source that throws
+   * is a refusal (`failed`), never read as not holding it (ADR-0061). Optional: a caller that finds no
+   * `carry` starts the run's worktree from HEAD, as before.
+   */
+  abstract carry?(step: CarryStep): Promise<(Carried & { source: string }) | undefined>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }

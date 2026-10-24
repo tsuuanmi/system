@@ -2395,7 +2395,8 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
 
 - **Where:** `<worktreeRoot>/<repository name>-<12 hex digits>/<workflow run id>`, by default
   `~/.dsh/system/worktrees` (owner-only), on the branch `system/run/<workflow run id>`, cut from the
-  repository's HEAD when the run's first agent run starts. Every later agent run of that workflow
+  repository's HEAD when the run's first agent run starts (or, for a board task's next attempt, from
+  the work the previous attempt left: [below](#a-tasks-next-attempt-starts-from-the-previous-attempts-work)). Every later agent run of that workflow
   run, reviewers included, uses it; the repository's own working tree and branch are written only by
   a landing you approved ([land an accepted result](#land-an-accepted-result)).
   Find it with `ls ~/.dsh/system/worktrees/*/<run id>`, `git -C <repository> worktree list`, or
@@ -2508,6 +2509,43 @@ has the `workflow.landing` decisions under the run's last step):
 
 The repository's checkout is written only here, by a merge you approved at the exact SHAs shown.
 Never a force, a reset, a branch deletion, or a push.
+
+## A task's next attempt starts from the previous attempt's work
+
+Seen as a board task's attempt whose developer starts with the change already in its worktree, the
+daemon log line `workflow: run <id> of board task <task> starts from the work of run <earlier>
+(<commit> on system/run/<earlier>)`, and `task.carry` on the run's view. It happens when the attempt
+before failed only after its writing step completed, for a reason that says nothing about the change
+(T110a: the review reached its turn limit; a Worker or a session failed, a limit, the budget, a
+timeout), no review judged the change, and the task writes a commit the change is on
+([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work),
+[ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
+Nothing is asked of you: the board decides and counts the attempt as always.
+
+1. **Read why.** `system explain <runId>` lists, among the run's own decisions, the
+   `workflow.task-worktree` ones: the admission decision (`carry`, or `fresh` with the bound that
+   did not hold), then what the source did (`carry` naming the earlier run, the commit on its branch,
+   the base, and this run's worktree; or `fresh` with why: the tree changed or was removed, an agent
+   run of it was still unfinished, the repository's HEAD moved, the source could not answer).
+2. **Where the work is.** The earlier tree is committed on the earlier run's branch by the system
+   (`git -C <repository> log -1 system/run/<earlier>`, with `System-Carried-To: <runId>`); this run's
+   worktree is cut at the same base and holds it as uncommitted, staged changes (`git -C <worktree>
+   diff --cached --stat`). The developer builds on it, the review reviews the whole change, and an
+   accepted result lands as one change ([land an accepted result](#land-an-accepted-result)). The
+   earlier branch's carry commit is never merged: delete that branch once the task is done.
+3. **To have the next attempt start from HEAD instead**, before the Lead starts it: remove the
+   earlier run's worktree, its change kept on its branch (`system worktrees remove --run <earlier>
+   --commit-changes`), or move the repository's HEAD. The carry is then refused (`gone`, or
+   `base-moved`), recorded, and the attempt starts from HEAD as any other. Or cancel the task and
+   propose the work again.
+4. **When it did not carry** although you expected it to, the `fresh` decision says which bound did
+   not hold: only the attempt just before is carried; a review that asked for changes, a result the
+   board judged, a stop, a question, or a task that writes no subject never is.
+
+A worktree cut for the work and not given it (a crash at that moment) is never run in: its first
+agent run fails `config_error` ("…that work is not in it"); the next carry gives it the work or puts
+it back to its base. One the source could not put back is yours: read it, then
+`git -C <repository> worktree remove --force <path>`.
 
 ## A run's liveness is unknown
 

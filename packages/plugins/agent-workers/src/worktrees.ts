@@ -18,6 +18,12 @@
  * branch, only while both are still where the approval saw them. A conflict is aborted, so the
  * repository is as it was; nothing is ever forced, reset, or pushed.
  *
+ * Carrying (ADR-0061): a board task's next attempt may start from the work its previous attempt left,
+ * when that attempt failed only after its writing step. On the engine's ask, the earlier worktree is
+ * committed on its branch, only while it is still exactly the tree its writing step left, and the new
+ * run's worktree is cut at that tree's base, only while the base is still the repository's HEAD,
+ * holding the committed tree as its change: what a fresh worktree is, plus the earlier work.
+ *
  * git runs with fixed argument lists, always with `-C <path>`, no shell, no hooks, no system or
  * global configuration (as the subject capture, `captureGitSubject`), and bounded time. Inside a
  * worktree, git is pointed at the worktree's own administrative directory recorded at creation,
@@ -32,7 +38,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import { CHANGE_BOUNDS, type ChangedFile, type Landed, type LandStep, type WorkChange } from '@tsuuanmi/system-workers-core'
+import { type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandStep, type WorkChange } from '@tsuuanmi/system-workers-core'
 
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -45,6 +51,18 @@ export const SYSTEM_AUTHOR = { name: 'system', email: 'system@localhost' } as co
 
 /** The trailer a landing's commit carries: the exact subject it holds, so a commit repeated after a restart is found done (INV-4). */
 export const SUBJECT_TRAILER = 'System-Subject'
+/** The trailer the commit of a carried tree carries: the workflow run whose worktree starts from it (ADR-0061). */
+export const CARRIED_TRAILER = 'System-Carried-To'
+
+/**
+ * A worktree cut from an earlier run's work (ADR-0061): that workflow run, and the commit on its
+ * branch the worktree holds, set once the tree is in it (absent meanwhile: no agent runs there).
+ */
+export const CARRY_MIGRATION = {
+  version: 15,
+  sql: `ALTER TABLE agent_worktrees ADD COLUMN carried_from TEXT;
+  ALTER TABLE agent_worktrees ADD COLUMN carried_commit TEXT;`,
+}
 /** Characters of a change's `git diff --stat` a landing reports at most (INV-9). */
 const STAT_CHARS = 1500
 
@@ -201,6 +219,9 @@ interface WorktreeRow {
   /** Why the last attempt to retire it failed. */
   failure: string | null
   failed_at: string | null
+  /** The workflow run whose work it was cut from (ADR-0061), and the commit it holds once that work is in it. */
+  carried_from: string | null
+  carried_commit: string | null
 }
 
 export type RepositoryCheck = { repository: string } | { problem: string }
@@ -318,6 +339,8 @@ export class Worktrees {
       const row = this.row(repository, runId)
       const branch = branchOf(runId)
       if (row && row.removed_at === null && existsSync(row.path)) {
+        // Cut to hold an earlier run's work that never got into it (ADR-0061): no agent runs in a tree half made.
+        if (row.carried_from !== null && row.carried_commit === null) throw new WorktreeError(`${row.path} was cut to start from the work of run ${row.carried_from}, and that work is not in it; nothing runs there, and it is left for the operator`)
         await this.verify(row)
         return row.path
       }
@@ -336,10 +359,11 @@ export class Worktrees {
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
       // Added again, it starts over: a later retirement is a decision of its own, and its setup runs again.
+      // Its branch holds what it held (the retention committed it), so it is no longer a carried tree.
       this.ctx.store.transaction((db) => {
         db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
           ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
-          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL`).run(repository, runId, path, branch, gitdir, new Date().toISOString())
+          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = NULL, carried_commit = NULL`).run(repository, runId, path, branch, gitdir, new Date().toISOString())
       })
       this.ctx.logger.info(`agent Workers: run ${runId} works in ${path} on ${branch}, ${exists ? 'added again from that branch' : `branched from the HEAD of ${repository}`}`)
       return path
@@ -693,6 +717,146 @@ export class Worktrees {
     } finally {
       closeSync(fd)
     }
+  }
+
+  /**
+   * Start the worktree of workflow run `step.runId` from the earlier run's tree at `step.from.workspace`
+   * (ADR-0061); undefined when no worktree of this source is that one. One change at a time per
+   * repository, as every worktree change:
+   *
+   * - the earlier worktree is committed on its branch, as the retention commits it, only while no
+   *   agent run of its workflow run is unfinished or not known to be gone (INV-15), while it is intact,
+   *   and while it is still exactly `step.from.subject`, the tree its writing step left (INV-5);
+   * - only while that subject's commit is still the repository's HEAD, where a fresh worktree is cut
+   *   from: the carry never moves a run onto another base;
+   * - the new worktree is added on the run's branch at that commit and given the committed tree, staged,
+   *   so its subject is the base with the earlier change on top, as if the change had been made in it.
+   *
+   * Each step checks first that its work is not done already, so a carry repeated after a restart says
+   * so instead of doing it twice (INV-4). Nothing is forced, reset, deleted, or pushed.
+   */
+  async carry(step: CarryStep): Promise<Carried | undefined> {
+    const from = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(step.from.runId, step.from.workspace) as WorktreeRow | undefined
+    if (!from) return undefined
+    return this.exclusive(from.repository, () => this.carryFrom(from, step))
+  }
+
+  private async carryFrom(from: WorktreeRow, step: CarryStep): Promise<Carried> {
+    const { repository } = from
+    const base = step.from.subject.ref
+    if (!RUN_ID.test(step.runId)) return { outcome: 'refused', cause: 'failed', reason: `${step.runId} cannot name a worktree` }
+    const earlier = this.row(repository, step.runId)
+    if (earlier && earlier.removed_at === null) {
+      if (earlier.carried_from !== from.workflow_run_id) return { outcome: 'refused', cause: 'exists', reason: `run ${step.runId} already has the worktree ${earlier.path}, cut from the HEAD of ${repository}: it is not cut again` }
+      // Carried before a restart: done.
+      if (earlier.carried_commit) {
+        try {
+          await this.verify(earlier)
+        } catch (error) {
+          return { outcome: 'refused', cause: 'failed', reason: (error as Error).message }
+        }
+        return { outcome: 'carried', repository, from: { branch: from.branch, commit: earlier.carried_commit }, base, branch: earlier.branch, worktree: earlier.path, carried: false }
+      }
+    }
+    let carried: Carried | undefined
+    try {
+      carried = await this.carryInto(from, step)
+    } finally {
+      // Cut for the work and never given it (a failure, or a restart that finds the work can no longer be given): made fresh again.
+      const cut = this.row(repository, step.runId)
+      if (carried?.outcome !== 'carried' && cut && cut.removed_at === null && cut.carried_from === from.workflow_run_id && !cut.carried_commit) await this.unmark(cut, base)
+    }
+    return carried
+  }
+
+  /** {@link carryFrom}'s work: the earlier tree checked and committed, the run's worktree cut (unless a restart finds it cut) and given the tree. */
+  private async carryInto(from: WorktreeRow, step: CarryStep): Promise<Carried> {
+    const refuse = (cause: CarryRefusal, reason: string): Carried => ({ outcome: 'refused', cause, reason })
+    const { repository } = from
+    const base = step.from.subject.ref
+    const subject = subjectId({ type: 'git-head', ...step.from.subject })
+    // Cut before a restart and not yet given the tree: no agent has run there, so it is given it now.
+    let cut = this.row(repository, step.runId)
+    if (!cut || cut.removed_at !== null) cut = undefined
+    if (from.removed_at !== null || !existsSync(from.path)) return refuse('gone', `the worktree ${from.path} of run ${from.workflow_run_id} was removed (its branch ${from.branch} keeps what the retention committed), so the tree ${subject} can no longer be checked`)
+    if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(repository, from.workflow_run_id, null)) {
+      return refuse('busy', `an agent run of workflow run ${from.workflow_run_id} is unfinished or not known to be gone, so it may still write ${from.path} (INV-15)`)
+    }
+    try {
+      await this.verify(from)
+    } catch (error) {
+      return refuse('failed', (error as Error).message)
+    }
+    // A fresh worktree is cut from the repository's HEAD: the earlier work is carried only onto that same commit.
+    const head = (await git(repository, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).catch(() => '')).trim()
+    if (!cut && head !== base) return refuse('base-moved', `the HEAD of ${repository} is ${head || 'unreadable'} now, not ${base}, the commit the tree ${subject} is on: a fresh worktree starts from the HEAD, so the earlier work is not carried onto another base`)
+    // Where the run's worktree goes, checked before anything changes: nothing there is ever taken over.
+    const branch = branchOf(step.runId)
+    let path = cut?.path
+    if (!path) {
+      if (await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).then(() => true, () => false)) return refuse('exists', `the branch ${branch} exists already, and a branch is never taken over`)
+      mkdirSync(this.root, { recursive: true, mode: 0o700 })
+      path = join(realpathSync(this.root), repositoryKey(repository), step.runId)
+      ensurePrivateDir(dirname(path))
+      if (lstatSync(path, { throwIfNoEntry: false })) return refuse('exists', `${path} exists and is not the worktree of run ${step.runId}; nothing was changed`)
+    }
+    const inside = (args: string[]): Promise<string> => git(from.path, [`--git-dir=${from.gitdir}`, `--work-tree=${from.path}`, ...args])
+    await this.clearSystem(from, inside)
+    const current = captureGitSubject(from.path)
+    if (!current) return refuse('failed', `${from.path} is no longer a git working tree`)
+    if (current.subject.ref === base && current.subject.version === step.from.subject.version) {
+      if (!(await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return refuse('empty', `the worktree ${from.path} holds no change on ${base}: there is no work to carry`)
+      await inside(['add', '--all'])
+      await inside(['commit', '--quiet', '--no-verify', '-m', `${step.message.trimEnd()}\n${SUBJECT_TRAILER}: ${subject}\n${CARRIED_TRAILER}: ${step.runId}`])
+      // Nothing moves the tree while the commit is made (no run of it is left, one change at a time per repository).
+      if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return refuse('failed', `${from.path} still holds changes after the commit on ${from.branch}; it is left for the operator`)
+    } else if (!(await this.carriedCommit(inside, base, subject, step.runId))) {
+      return refuse('moved', `the worktree ${from.path} is now ${subjectId(current.subject)}, not ${subject} as its writing step left it: it changed since, so its work is not carried`)
+    }
+    const commit = (await inside(['rev-parse', 'HEAD'])).trim()
+    if (!cut) {
+      // Added on its own branch at the base, its files not checked out: the commit's tree is read in next.
+      await git(repository, ['worktree', 'add', '--no-checkout', '-b', branch, path, base])
+      const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
+      const gitdir = pointer(path)
+      if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
+      this.ctx.store.transaction((db) => {
+        db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at, carried_from, carried_commit) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, NULL)
+          ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
+          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = excluded.carried_from, carried_commit = NULL`).run(repository, step.runId, path, branch, gitdir, new Date().toISOString(), from.workflow_run_id)
+      })
+      cut = this.row(repository, step.runId)!
+    }
+    if (pointer(cut.path) !== cut.gitdir) return refuse('failed', `the .git file of ${cut.path} no longer points to the worktree's own directory ${cut.gitdir}; it is left for the operator`)
+    try {
+      // Index and files become the commit's tree; HEAD stays at the base, so the earlier change is the worktree's own change.
+      await git(cut.path, [`--git-dir=${cut.gitdir}`, `--work-tree=${cut.path}`, 'read-tree', '-u', '--reset', commit])
+    } catch (error) {
+      return refuse('failed', `the work of ${from.branch} at ${commit} could not be read into ${cut.path}: ${(error as Error).message}`)
+    }
+    this.ctx.store.transaction((db) => void db.prepare('UPDATE agent_worktrees SET carried_commit = ? WHERE repository = ? AND workflow_run_id = ?').run(commit, repository, step.runId))
+    this.ctx.logger.info(`agent Workers: run ${step.runId} works in ${cut.path} on ${cut.branch}, starting from the work of run ${from.workflow_run_id} (${commit} on ${from.branch}, on top of ${base})`)
+    return { outcome: 'carried', repository, from: { branch: from.branch, commit }, base, branch: cut.branch, worktree: cut.path, carried: true }
+  }
+
+  /** The earlier worktree is clean, and its HEAD is the system's commit of `subject` for `runId` on top of `base`: committed before a restart. */
+  private async carriedCommit(inside: (args: string[]) => Promise<string>, base: string, subject: string, runId: string): Promise<boolean> {
+    if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return false
+    const [parent, author, ...message] = (await inside(['log', '-1', '--format=%P%n%an <%ae>%n%B', 'HEAD'])).split('\n')
+    return parent === base && author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` && message.includes(`${SUBJECT_TRAILER}: ${subject}`) && message.includes(`${CARRIED_TRAILER}: ${runId}`)
+  }
+
+  /**
+   * A worktree cut to hold an earlier run's work that it was never given: its index and files are put
+   * back to the base it was cut at, and it is a fresh worktree a run may work in. No agent has run in
+   * it ({@link acquire} refuses one so marked). One that cannot be put back stays marked, and nothing
+   * runs in it.
+   */
+  private async unmark(cut: WorktreeRow, base: string): Promise<void> {
+    const restored = pointer(cut.path) === cut.gitdir
+      && await git(cut.path, [`--git-dir=${cut.gitdir}`, `--work-tree=${cut.path}`, 'read-tree', '-u', '--reset', base]).then(() => true, () => false)
+    if (restored) this.ctx.store.transaction((db) => void db.prepare('UPDATE agent_worktrees SET carried_from = NULL WHERE repository = ? AND workflow_run_id = ?').run(cut.repository, cut.workflow_run_id))
+    else this.ctx.logger.warn(`agent Workers: the worktree ${cut.path} of run ${cut.workflow_run_id} was cut for the work of run ${cut.carried_from} and could not be put back to ${base}; nothing runs in it, and it is left for the operator`)
   }
 
   /** Commit the worktree's changes on its branch, while it is still exactly the accepted subject. */

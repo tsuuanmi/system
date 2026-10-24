@@ -395,6 +395,24 @@ second execution path (INV-1).
     PROP-0013), and the session has served fewer than
     `maxSessionRuns` runs (default 5); else it starts fresh. Either is an `admission` decision
     (`workflow.task-session`), made before the task is taken;
+  - **Starting from the previous attempt's work** ([design](../../../docs/design/workflow-engine.md#starting-from-the-previous-attempts-work),
+    ADR-0061 proposed): when the immediately previous attempt's writing step (a `develop` step)
+    completed with an agent's result on a git tree, an `admission` decision
+    (`workflow.task-worktree`) made before the task is taken chooses `carry` only when that run
+    failed, and only as a later step fails (`session_broken`, `provider_stalled`, `timeout`,
+    `network`, `overloaded`, `quota_exhausted`, `reauth_required`, `challenge`,
+    `reconciliation_failed`, `config_error`, `internal`, `budget_spent`, `holder_lost`), nothing in
+    it was grown, no review of it judged the change other than approved, no step asked questions,
+    and the task writes a `git-head` subject the tree is on (the one the run was admitted with);
+    else `fresh`, with why. A carry is `due` (`carry` on the run's `workflow_tasks` row,
+    migration 19) until the run's first turn, before any step: then `ctx.workers.carry` (optional)
+    asks the source that holds the earlier tree, and a `gate` decision of the same rule records
+    what it did (`carry`, naming the earlier run, the commit on its branch, the base, and the new
+    worktree) or why the run starts from HEAD instead (`fresh`: no source holds it, a refusal, a
+    source that cannot answer, a lost holder); a `workflow.task.carry` event, and the view's
+    `task.carry`. Every brief of a carried run points at that decision first (`prior`, its note
+    saying the worktree already holds the change). The writing step still runs, and the review
+    reviews the whole change;
   - such a run is not continued, superseded, deleted, or expired before its outcome is reported;
   - once its result reached the board (accepted, rejected, held for the operator, or reconciled
     completed), the engine asks `ctx.digests` for a digest of the result's artifacts, after the
@@ -754,6 +772,7 @@ in `engine.ts`:
 | `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
 | `tasks.ts` | runs that serve a board task: what their briefs carry, resuming the session before them, taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
+| `carries.ts` | whether a task's run starts from the work its previous attempt left: decided at admission within its bounds, carried through the workers seam's `carry` before the run's first step, recorded, and pointed at by every brief of the run |
 | `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done, its `merge` put to the policy and asked on the queue, merged on the approval, through the workers seam's `land` |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |
