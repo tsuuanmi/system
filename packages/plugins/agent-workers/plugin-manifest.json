@@ -24,7 +24,7 @@
     },
     {
       "seam": "leases",
-      "range": "^1.0.0"
+      "range": "^1.1.0"
     },
     {
       "seam": "workers",
@@ -95,6 +95,18 @@
     },
     {
       "key": "runTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "stallSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "deadAfterSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "maxUnknownVerdicts",
       "sensitive": false
     },
     {

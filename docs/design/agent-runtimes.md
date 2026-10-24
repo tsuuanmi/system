@@ -8,7 +8,9 @@
 > plugins below; differs from target: `persistent-conversation` rests on the probe's `resume`
 > flag, not on a resume conformance test (planned), or, for a review member's steps on a runtime
 > without it, on the source's exact replay; a started run is never reconciled from the
-> agent's own records (it fails as `reconciliation_failed`); evidence beyond the final message
+> agent's own records (it fails as `reconciliation_failed` once a liveness verdict finds it gone,
+> [restart and liveness](#restart-and-liveness)); only Claude Code reports its agent process, so
+> another runtime's started runs reach the operator as `unknown`; evidence beyond the final message
 > and the workspace's git subject is not stored; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
 > Workers; the Antigravity CLI gates only on an agy version verified live (1.4.6), and offers no
@@ -50,7 +52,8 @@ interface AgentRuntimeProvider {
   readonly kind: string;                    // "claude-agent-sdk", "codex-sdk", "acp:<name>", "antigravity-cli"
   probe(options?: { home?: string }): Promise<RuntimeEvidence>;  // a named home: through probeIn only
   run(spec: RunSpec, signal: AbortSignal,
-      onHandle?: (nativeHandle: string) => void): Promise<RunResult>;
+      onHandle?: (nativeHandle: string) => void,
+      observer?: RunObserver): Promise<RunResult>;   // its process and activity (PROP-0013)
   identity?(home: string, key: Uint8Array): Promise<IdentityReading>;  // who is signed in (below)
   loginCommand?(home: string): { command: string; args: string[]; env: Record<string, string> };
 }
@@ -82,6 +85,11 @@ interface RunSpec {
 type ToolGate = (call: { tool: string; input: unknown; callId?: string }, signal: AbortSignal) =>
   Promise<{ decision: "allow" } | { decision: "deny"; reason: string }
         | { decision: "defer"; reason: string; requestId: string }>;
+
+interface RunObserver {                     // optional; a callback that throws changes nothing
+  onProcess?(process: { pid: number }): void; // the outermost confined agent process, once
+  onActivity?(at: number): void;            // the agent did something (a stream event)
+}
 
 interface RunResult extends RunMetering { text: string; nativeHandle?: string }
 
@@ -734,9 +742,10 @@ is off.
 
 - **Idempotency.** Every run is keyed by a logical request id. Target: where the agent writes
   a local session or rollout record, reconciliation reads it before restarting a run. Today a
-  run that started before a stop is never run again: it fails as `reconciliation_failed` and
-  names its native session. A run whose lease another process holds is looked at again when
-  that lease would expire, so a crashed holder never strands it.
+  run that started before a stop is never run again: once a [liveness verdict](#restart-and-liveness)
+  finds it gone, it fails as `reconciliation_failed` and names its native session. A run whose
+  lease another process holds is looked at again when that lease would expire, so a crashed
+  holder never strands it.
 - **Completion.** The SDK's terminal event means *provider terminal*, not acceptance. The
   Worker's result is accepted only by the routing layer
   ([INV-3](../architecture/invariants.md#inv-3-completion-boundaries-are-distinct)).
@@ -747,3 +756,56 @@ is off.
   the workspace the run worked in (with `worktreePerRun`, its [worktree](#workspaces)), and, for a git working tree, its exact subject after the run, which a review
   binds to (a tree git cannot read then fails the run as `reconciliation_failed`, never stored as one with no subject); with `@1.2`, the run's main model and token usage, in total and per model. Target: diffs, commands run, and test results stored as artifacts with their
   hashes.
+
+## Restart and liveness
+
+A started run is gone only on a [liveness verdict](scheduling-and-leases.md#liveness-verdict) of
+`dead`, never on its lease alone
+([ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+PROP-0013 L1 and L2).
+
+- **What is recorded.** At submission the `agents` source records the run's holder (this
+  process: host, boot, pid, start time) and the submission as its first activity. A runtime that
+  reports its agent process (`RunObserver.onProcess`; Claude Code reports the outermost process of
+  its confinement, whose end ends the agent under `--die-with-parent`) has it recorded once. Its
+  activity (`onActivity`; Claude Code reports each SDK message) is written at most once per
+  heartbeat, a third of the run lease. Every write is fenced by the run's lease. Codex, ACP, and the
+  Antigravity CLI report neither yet, so those signals stay `unknown`.
+- **A heartbeat that fails** does not stop a run: its lease is lost only when a renewal finds it
+  expired, taken over, or invalidated, or when its expiry passes unrenewed
+  ([lease generations](scheduling-and-leases.md#lease-generations)).
+- **A started run whose holder no longer holds it** (a restart, a lost lease retaken) gets a
+  verdict before anything is reconciled:
+  - `dead`: it fails as `reconciliation_failed` (`USER_ACTION`), never run again, with a
+    `reconciliation` decision (rule `agent-workers.reconcile` version 2) that records the verdict and
+    every signal. Its session and worktree are free again;
+  - every signal gone but activity within `deadAfterSeconds` (default 120, twice the run lease): it
+    is looked at again once the bound has passed, and that look is not counted;
+  - anything else (`unknown`, or `stalled` for an agent process still present): looked at again
+    with a bounded backoff (a minute, doubling, at most 15 minutes). After `maxUnknownVerdicts`
+    (default 3) verdicts in a row it goes to the operator: it fails as `reconciliation_failed`, the
+    decision saying it is not declared dead.
+- **A run that ended without being known to be gone** holds its session and its worktree (INV-15).
+  The source runs nothing more in either (`config_error`, unsent), the retention sweep keeps the
+  worktree, and [`held`](#held-sessions) says so.
+- **A stall.** While a run is held, at each beat a run whose agent process is present and that
+  has been quiet for `stallSeconds` (default 300) is `stalled`. It is reported once per stall: event
+  `agent-workers.run.stalled` (`agentRun`, `worker`, `quietSeconds`, `stallSeconds`, `rule`) and a
+  log line. Nothing is sent to the session and nothing is stopped: the run's own deadline and turn
+  limit end it.
+
+### Held sessions
+
+The `agents` source answers `held(sessionId)` on the `workers` seam: why the session takes no input
+now, derived when asked from its durable facts, never a stored flag. A session is held when:
+
+- its latest run has not finished;
+- any of its runs ended without being known to be gone;
+- its latest run stopped on a deferred tool call whose approval request is still open. The run
+  records the request; for a run from before that, the gate's `agent-workers.tool.deferred` event
+  names it. The queue is asked for the request's state. With no queue loaded, or a request it cannot
+  read or does not hold, the session cannot be shown free.
+
+An answered request (approved, rejected, expired, or withdrawn) frees it. On approval, the engine's
+one continuation of the deferred call is the session's input
+([a deferred tool call](workflow-engine.md#a-deferred-tool-call)).

@@ -1,13 +1,13 @@
 ---
 id: PROP-0013
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-24
 summary: Three ways for a board task's attempts to learn from the work itself, each as recorded facts that the core acts on and a capability plugin never acts on. First, a code-host observer (`scm-<host>`, egress declared) polls a bound PR or branch with conditional requests and records CI checks, reviews, and merge conflicts as facts bound to the head SHA; the actionable ones brief the next attempt, and landing (merge or apply) is a `merge` approval bound to the base and head SHAs. Second, a completion gate at the Worker's stop boundary runs the required checks in the run's own confinement and feeds a failure back into the same session, bounded and recorded, failing closed. Third, a liveness verdict declares a run dead only when its holder and its runtime are both positively gone and nothing happened within a bound; a failed probe is never death, and automation never sends input to a session blocked on an approval.
 owners: [operator]
 evidence: [coordination/research/paseo-superorchestrator-2026-10-23, coordination/research/orchestrators-survey-2026-10-24]
 related: [PROP-0008, PROP-0010, PROP-0011, PROP-0012, ADR-0015, ADR-0024, ADR-0036, ADR-0038, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0047, REQ-WF-4, REQ-WF-5, REQ-WF-8, REQ-WRK-3, REQ-WRK-6, REQ-SES-5, REQ-SES-7]
-implementation: []
+implementation: [ADR-0054]
 ---
 
 # Proposal: Feedback from work — code-host observations, a completion gate, and a liveness verdict
@@ -648,10 +648,52 @@ no completion gate. The lease rule narrows when `lost` fires and changes no reco
 
 ## Decision
 
-Pending the operator's review. On acceptance, each phase writes the ADRs named in the
-[phased plan](#phased-plan).
+Accepted by the operator on 2026-10-24 (D32), for phases L1 and L2. Every other phase starts on
+its own go-ahead and writes the ADRs the [phased plan](#phased-plan) names.
 
 ## Implementation
 
-None yet. When a phase starts, the [roadmap](roadmap.md#later-candidates) moves it from the later
-candidates into a milestone table.
+The state of each phase is in the [roadmap](roadmap.md#feedback-from-work-prop-0013). Built:
+
+- **L1** (2026-10-24), [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+  proposed:
+  - `ctx.leases.hold` aborts `lost` only on `LeaseLost` or the lease's own expiry passing
+    unrenewed. Any other renewal error is tried again, never later than the expiry (leases
+    contract 1.1; the race test: every renewal failing loses the lease at expiry, a new holder
+    takes it, and the old holder's commit is refused);
+  - `livenessOf` (`liveness@1`) and its process probes in `libs`, tested over every row of the
+    table and every probe failure;
+  - the `agents` source records each run's holder, its agent process, and its activity.
+    `agentRuntimes` gained an optional `RunObserver` (`onProcess`, `onActivity`), and Claude Code
+    reports both;
+  - `workers` gained an optional `held(sessionId)`. The `agents` source derives it from the
+    session's latest run: unfinished, not known to be gone, or stopped on a deferred call whose
+    request is open. A board task's next attempt never resumes a held session, and starts fresh
+    saying why (workflow contract 1.6). An automated wake keeps a held session's mail durable and
+    unread until it takes input.
+- **L2** (2026-10-24):
+  - every reconciliation of a started agent run gives a verdict first. `dead` fails it as
+    `reconciliation_failed` with a `reconciliation` decision naming every signal. Anything else is
+    looked at again with a bounded backoff, then goes to the operator after `maxUnknownVerdicts`,
+    never declared dead, its session and worktree held;
+  - `agent-workers.run.stalled` is reported once per stall;
+  - the crash suite's agent case: a dead verdict, and an `unknown` one when no process was reported.
+
+Choices where this proposal left room:
+
+- **The ADR-0015 amendment.** The seam table expected one for held peer delivery. The
+  `workerSessions` mailbox is unchanged, though: delivery still appends, and only the engine's
+  wake decides when a turn is taken. So no amendment was made, and ADR-0054 records why.
+- **Phase W1's `brief@1.2` pointer rule** is untouched.
+- **The activity signal.** The submission counts as the first activity. An open activity window
+  is waited out without counting as an `unknown` look, since no probe failed.
+- **Bounds** (open question 7): `stallSeconds` 300, `deadAfterSeconds` 120 (twice the run lease),
+  and `maxUnknownVerdicts` 3, as proposed.
+
+Open:
+
+- `stalled` events and runs waiting on an `unknown` verdict are not yet listed by `status`,
+  `system explain`, or the report.
+- A session held by a run that ended `unknown` has no command that frees it.
+- Codex, ACP, and the Antigravity CLI report no agent process. After a restart their started
+  runs reach the operator as `unknown`, where before they failed at once.

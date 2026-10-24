@@ -3,8 +3,8 @@
 Non-normative. This is the ordered queue of milestones for
 [PROP-0001](0001-unified-system-architecture.md), from M6a
 [PROP-0003](0003-production-readiness.md), from B1
-[PROP-0010](0010-base-version.md), and from F1 [PROP-0011](0011-feedback-loop.md). What each
-release stage must
+[PROP-0010](0010-base-version.md), from F1 [PROP-0011](0011-feedback-loop.md), and from L1
+[PROP-0013](0013-feedback-from-work.md). What each release stage must
 deliver, and its exit criteria, are defined in
 [release scope](../requirements/release-scope.md). This file only orders the work
 and says what remains. What a package does now is in its own `README.md`; what was
@@ -55,6 +55,18 @@ started F1 on 2026-10-23, in parallel with the Base pilot (B8).
 | **F5** Review contract and suite | not started | the `review` objective contract; a three-partition suite seeded from [self-build](../validation/self-build.md); collectors | F1, F4 |
 | **F6** Controller and promotion | not started | the `improve` template; promotion bound to the exact evaluation and subject | F1, F3, F4 |
 | **F7** First experiment | not started | worker agnosticism on `review`, the acceptance test of v1 | F3 to F6 |
+
+## Feedback from work (PROP-0013)
+
+What each phase delivers is in [PROP-0013](0013-feedback-from-work.md#phased-plan). The operator
+accepted L1 and L2 on 2026-10-24 (D32); every other phase waits for its own go-ahead.
+
+| Phase | State | Delivers | Depends on |
+|---|---|---|---|
+| **L1** Liveness rules | built: `ctx.leases.hold` aborts `lost` only on a positive loss (leases contract 1.1, with the race test); `livenessOf` (`liveness@1`) and its table tests in [`libs`](../../packages/libs/README.md); the holder, the agent process (`RunObserver`, reported by Claude Code), and activity recorded on agent runs; `held(sessionId)` on the `workers` seam, so a board task's next attempt never resumes a session blocked on an approval, unfinished, or not known to be gone (workflow contract 1.6), and an automated wake keeps its mail unread; [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md), proposed. Open: the operator's acceptance of ADR-0054; no command frees a session held by a run that ended `unknown` | the lease rule and its ADR; `livenessOf`; holder and process recorded; no input to a blocked session | — |
+| **L2** Liveness in reconciliation | built: a verdict before every reconciliation of a started agent run ([restart and liveness](../design/agent-runtimes.md#restart-and-liveness)): `dead` fails it with a `reconciliation` decision, anything else is looked at again and goes to the operator after `maxUnknownVerdicts`, its session and worktree held; `agent-workers.run.stalled` once per stall; the crash suite's agent case on a dead verdict and on an unknown one. Open: `stalled` and the runs waiting on an `unknown` verdict are events and log lines, not yet listed by `status`, `system explain`, or the report; Codex, ACP, and the Antigravity CLI report no agent process, so their started runs reach the operator as `unknown` after a restart | verdicts before reconciliation; `stalled` events; `unknown` to the operator; the crash suite | L1 |
+| **C1–C3** Completion gate | not started | [PROP-0013](0013-feedback-from-work.md#phased-plan) | — |
+| **W1–W5** Code-host feedback and landing | not started | [PROP-0013](0013-feedback-from-work.md#phased-plan) | B8 for W2 and W5 |
 
 ## Done and open milestones
 
@@ -128,8 +140,8 @@ Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), a
 ACP client gateway for editors, sandboxed or SSH `exec` providers, more website
 providers, and a desktop launcher.
 
-Proposed, not scheduled: [PROP-0013](0013-feedback-from-work.md), feedback from work. Its phases,
-each on the operator's go-ahead, in the proposed order: L1 and L2 (a liveness verdict: a failed
-probe is not death, no automated input to a session blocked on an approval), C1 to C3 (a completion
-gate at the Worker's stop boundary, then its checks at acceptance), and W1 to W5 (code-host
-observations briefing the next attempt, then landing). W2 and W5 need B8's branches.
+[PROP-0013](0013-feedback-from-work.md), feedback from work: L1 and L2 are built
+([above](#feedback-from-work-prop-0013)). Its other phases wait for the operator's go-ahead, in
+the proposed order: C1 to C3 (a completion gate at the Worker's stop boundary, then its checks at
+acceptance), and W1 to W5 (code-host observations briefing the next attempt, then landing). W2
+and W5 need B8's branches.

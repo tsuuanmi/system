@@ -426,8 +426,30 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails
   as `timeout`. The run was submitted, so it is not retried automatically.
 - **Restart:** a queued run starts. A run that had started is never run again:
-  the agent may already have acted. It fails as `reconciliation_failed`
-  (`USER_ACTION`) and names its native session. Its reservation is released,
+  the agent may already have acted. It is reconciled only on a liveness verdict
+  ([restart and liveness](../../../docs/design/agent-runtimes.md#restart-and-liveness),
+  [ADR-0054](../../../docs/decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)):
+  - each run records, fenced by its lease, its holder (this process: host,
+    boot, pid, start time) and the submission as its first activity, then the
+    agent process its runtime reports (`onProcess`) and its activity
+    (`onActivity`, written at most once per heartbeat, a third of the 60 s
+    lease);
+  - `dead` (`livenessOf`: its holder's lease lapsed and its process gone, its
+    agent process gone, no activity for `deadAfterSeconds`, default 120): it
+    fails as `reconciliation_failed` (`USER_ACTION`) and names its native
+    session, with a `reconciliation` decision (rule `agent-workers.reconcile`
+    version 2) on the run naming every signal;
+  - every signal gone but the activity window still open: looked at again once
+    it is past, uncounted;
+  - anything else (a process never reported or that cannot be read, a holder on
+    another host): looked at again after a minute, doubling, at most 15 minutes;
+    after `maxUnknownVerdicts` (default 3) in a row it fails as
+    `reconciliation_failed` for the operator, the decision saying it is not
+    declared dead. Its session and its workflow run's worktree stay held: the
+    source runs nothing more in either (`config_error`, unsent), and the
+    retention sweep keeps the worktree.
+
+  Its reservation is released,
   and its usage is not invented: no result message means no `runtime-result`
   record; its usage comes from transcript reconciliation (`source:
   transcript`), later (not built yet). Until then a metered one is recorded
@@ -436,8 +458,22 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **Never stranded:** a run whose `agent-run:<id>` lease another process holds
   is looked at again once that lease would expire (it finishes the run, or it
   crashed). A run whose lease was lost is looked at again after the lease
-  period; a run already submitted then fails as `reconciliation_failed`, never
-  run again (INV-4).
+  period; a run already submitted then gets the verdict above, never run again
+  (INV-4). A heartbeat whose renewal merely fails does not lose the lease
+  (`ctx.leases.hold`), so a transient store error never stops a live agent.
+- **Stalled:** while a run is held, at each beat a run whose agent process is
+  present and that has been quiet for `stallSeconds` (default 300) is reported
+  once per stall: event `agent-workers.run.stalled` (with `ctx.eventLog`) and a
+  log line. Nothing is sent to it and nothing stops it; its own deadline and turn
+  limit end it.
+- **Held sessions** (`held`, on the `workers` seam): a session is held while any
+  of its runs ended without being known to be gone, or its latest run has not
+  finished or stopped
+  on a deferred tool call whose approval request is still open (the run records
+  the request, `deferred_request`; for older runs the gate's
+  `agent-workers.tool.deferred` event names it; the queue is asked, and a queue
+  that is not loaded, cannot be read, or does not hold the request cannot show it
+  free). The workflow engine gives a held session no automated input.
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
   resume the agent's native session, on a runtime that reports `resume`; no
   other runtime is ever asked to resume one, and the session keeps no native

@@ -371,7 +371,10 @@ second execution path (INV-1).
     behind this one ([a board task's brief](../../../docs/design/workflow-engine.md#a-board-tasks-brief));
   - a task's next attempt, or the first of a task that depends on exactly one other, resumes the
     session of the run before it when the template keeps a conversation, the session's Worker
-    keeps a native session it can resume now, and the session has served fewer than
+    keeps a native session it can resume now, its source does not hold the session
+    (`ctx.workers.held`: its latest run waits on an open approval request, has not finished, or
+    is not known to be gone; a provider without `held`, or one that fails, cannot show it free;
+    PROP-0013), and the session has served fewer than
     `maxSessionRuns` runs (default 5); else it starts fresh. Either is an `admission` decision
     (`workflow.task-session`), made before the task is taken;
   - such a run is not continued, superseded, deleted, or expired before its outcome is reported;
@@ -392,6 +395,13 @@ second execution path (INV-1).
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
     or `close`.
+  - Every automated wake (a delivery, a settled turn, a start) first asks
+    `ctx.workers.held`: a session its source holds (blocked on an open approval
+    request, say) keeps its mail durable and unread, is logged once per reason,
+    and is looked at again at each read of the queue (`approvalPollSeconds`) and
+    at the next start (PROP-0013). A compaction waits the same way. The only
+    input such a session takes is its request's resolution: the engine's one
+    continuation of an approved deferred call.
   - The session takes one turn on its unread messages as an `ask` run on its
     own session. Session affinity keeps it on its Worker (Model A), and the
     session is ACTIVE, with its native conversation handle, for that turn.
@@ -561,7 +571,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.5 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.6 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -594,6 +604,9 @@ second execution path (INV-1).
   - since 1.5 (REQ-TEAM-4), a team member never takes a sibling of a Worker another member holds,
     even of another family, and takes a Worker of another account; a member whose held Worker's
     siblings name different accounts is refused, `config_error`, with nothing sent;
+  - since 1.6 ([ADR-0054](../../../docs/decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)),
+    a task's next attempt never resumes a session its source holds: it starts fresh, given its
+    brief, the decision saying why, and resumes it again once the source frees it;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

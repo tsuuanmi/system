@@ -6,7 +6,10 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
 
 - **Sources.** A plugin registers a `WorkerSource` for its own lifetime. A
   source describes its Workers, runs work on them (`start`, `get`, `wait`), and
-  may name the Workers a session must stay on (`affinity`). The router
+  may name the Workers a session must stay on (`affinity`), and why a session
+  takes no input now (`held`, PROP-0013: asked of every source, the first
+  reason given wins, and a source whose `held` throws cannot show the session
+  free). The router
   returns the admitted Worker with its source's name; `source(name)` finds the
   source. Three sources register today: website Workers (`ctx.turns`, one Worker
   per account and mapped tier), agent Workers

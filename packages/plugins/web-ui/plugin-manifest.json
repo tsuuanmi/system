@@ -15,7 +15,7 @@
     },
     {
       "seam": "workflow",
-      "range": "^1.5.0"
+      "range": "^1.6.0"
     },
     {
       "seam": "approvals",

@@ -80,7 +80,13 @@ stateDiagram-v2
    the target mailbox with a sequence number. Delivery is at least once, and the
    receiver deduplicates by `messageId`.
 4. **Wake.** An `IDLE` target is activated, cold-resumed if necessary, and
-   receives its unread messages in order as one turn.
+   receives its unread messages in order as one turn. A session that takes no input now is not
+   woken: its Worker source holds it (`ctx.workers.held`) while its latest run waits on an open
+   approval request, has not finished, or is not known to be gone. Its messages stay durable and
+   unread, and it is woken once it takes input; the only input it takes meanwhile is that
+   request's resolution (PROP-0013,
+   [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md);
+   [a deferred tool call](workflow-engine.md#a-deferred-tool-call)).
 5. The engine **records** every message but **never relays or rewrites**
    content.
 
