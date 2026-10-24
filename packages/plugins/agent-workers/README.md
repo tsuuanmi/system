@@ -282,7 +282,7 @@ The **`agents` Worker source**: agent runtimes as Workers
     only when they are written: a run of no workflow run, or of a Worker
     without `worktreePerRun`, gets none;
   - **a worktree's setup** (`worktreeSetup`, [`src/setup.ts`](src/setup.ts),
-    ADR-0058 proposed, [design](../../../docs/design/agent-runtimes.md#a-worktrees-setup),
+    ADR-0058 accepted, [design](../../../docs/design/agent-runtimes.md#a-worktrees-setup),
     [runbook](../../../docs/operations/runbooks.md#set-up-a-runs-worktree)): per
     repository (a `worktreePerRun` Worker's workspace, else refused at load), 1 to
     16 command lines (words split on single spaces, no shell metacharacter, at most

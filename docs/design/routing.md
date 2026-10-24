@@ -88,7 +88,7 @@ ballot, debate) from the admitted spec, never from a template or model text (INV
 
 ### Work kinds
 
-> Decision: [ADR-0057](../decisions/adr/0057-route-work-by-kind.md) (proposed), from the
+> Decision: [ADR-0057](../decisions/adr/0057-route-work-by-kind.md) (accepted 2026-10-24, D47), from the
 > operator's D35. Requirement: REQ-WRK-11.
 
 Capabilities say what work needs, never what it is about: a source-code change and a docs change

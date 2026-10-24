@@ -361,7 +361,7 @@ characters) fails the same way, and so does an Antigravity turn over its
 
 Give each writing agent Worker the **kinds of work** it takes, and each step goes to a Worker of its
 kind ([work kinds](../design/routing.md#work-kinds),
-[ADR-0057](../decisions/adr/0057-route-work-by-kind.md), proposed). This is configuration: which
+[ADR-0057](../decisions/adr/0057-route-work-by-kind.md), accepted). This is configuration: which
 runtime takes which kind is the Worker list's, never a template's.
 
 What names a kind today ([templates](../reference/workflow-templates.md#algorithm-development)):
@@ -2292,9 +2292,11 @@ before the agent starts, offline, confined, each command allowed by the autonomy
    keeps a Worker that writes its worktree from changing the store. Each worktree then holds its
    own `node_modules` (about 700 MB for `system`), kept as long as the worktree.
 3. **The policy.** Each setup command is judged as a command, by its exact argv. Under the
-   bundle's studio policy it asks the operator: list the exact line in the studio policy's
-   `commands` ([change the autonomy policy](#change-the-autonomy-policy)) so it runs unasked, or
-   approve it per workflow run (below).
+   bundle's studio policy it asks the operator. The standing way (the operator's D50): list the
+   exact line in the studio policy's `commands`
+   ([change the autonomy policy](#change-the-autonomy-policy)), one `policy-change` approval, so it
+   runs unasked in every worktree. Approving it per workflow run, then `system continue <runId>`
+   (below), is for a one-off.
 4. `system check`, then restart. The next workflow run's first agent run sets its worktree up;
    `system explain <runId>` shows the setup's decision (rule `agent-workers.worktree-setup`), and
    `system events --type agent-workers.worktree.setup` each setup (`ran`, `refused`, `waits`).

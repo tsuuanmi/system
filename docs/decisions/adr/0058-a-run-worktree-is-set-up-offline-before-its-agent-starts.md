@@ -1,7 +1,7 @@
 # ADR-0058: A run's worktree is set up offline, under the policy, before its agent starts
 
-- **Status:** Proposed
-- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator, D49)
 - **Related:** [ADR-0024](0024-agent-workers-confined-for-reads.md),
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0038](0038-confined-commands-for-claude-code-workers.md),
@@ -142,6 +142,10 @@ it), and every Worker of a repository with no setup.
   the engine does not continue it by itself. A board task's next attempt is a new run with a new
   worktree, which asks again, so for board work the setup's command belongs in the policy's
   commands list.
+- The standing way to let a setup run is the operator's (D50, 2026-10-24): list the exact setup
+  command in the studio policy's `commands`, one `policy-change` approval, so every worktree's
+  setup runs unasked. Approving it per workflow run and `system continue` stay for a one-off; the
+  engine is not taught to continue a setup's wait.
 
 ## Where it leaves room
 

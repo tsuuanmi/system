@@ -1,7 +1,7 @@
 # ADR-0057: A step names its kind of work; a Worker the operator gives kinds takes only those
 
-- **Status:** Proposed (the operator decides; from D35 and D36, 2026-10-24)
-- **Date:** 2026-10-24
+- **Status:** Accepted (from D35 and D36, 2026-10-24)
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator, D47)
 - **Related:** [ADR-0027](0027-provider-diversity-in-routing.md),
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0038](0038-confined-commands-for-claude-code-workers.md),

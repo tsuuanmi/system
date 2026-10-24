@@ -1,4 +1,4 @@
-# Route work by kind (operator decisions D35 and D36, 2026-10-24; ADR-0057, proposed), on the live
+# Route work by kind (operator decisions D35 and D36, 2026-10-24; ADR-0057, accepted), on the live
 # install's hand-named agent Workers (runbook: Route work by kind,
 # docs/operations/runbooks.md#route-work-by-kind).
 #
