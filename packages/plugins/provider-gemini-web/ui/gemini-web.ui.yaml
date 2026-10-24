@@ -22,13 +22,21 @@ elements:
       - { css: 'iframe[src*="recaptcha"]' }
   site.terms-notice:
     description: >-
-      A notice of updated terms, as a banner over the input (its title, body, and an acknowledging
-      button), seen live on 2026-10-17 inside the input container: it covers the textbox and the
-      mode switcher until acknowledged. Only the operator acknowledges it; it is never clicked.
+      A notice of updated terms, as a banner over the input (its title, "Keep in mind", a body with
+      links, and its own button, "Got it"), seen live on 2026-10-16, 2026-10-17, and twice on
+      2026-10-24 inside the input container: it covers the textbox and the mode switcher until
+      acknowledged. On 2026-10-16 it showed while the account's button did not resolve, so it is
+      looked for whether or not the account shows. Only the operator acknowledges it; it is never
+      clicked.
     candidates:
       - { css: 'condensed-tos-disclaimer gem-banner.variant-overlay' }
   auth.account:
-    description: "The signed-in Google account's button; its name carries the account (Google Account, then the name and email)."
+    description: >-
+      The signed-in Google account's button, in the Google bar above the app (a link with role
+      button and the account's picture, no text); its name carries the account (Google Account,
+      then the name and email). Live on 2026-10-24 it did not resolve within 60 s on a rendered new
+      chat whose outline showed it as on every working page (ui.drift of auth.account): hidden or
+      renamed could not be told then; the drift's matches tell them apart now.
     candidates:
       - { role: link, name: { en: '^Google Account:' } }
       - { role: button, name: { en: '^Google Account:' } }
@@ -358,6 +366,10 @@ states:
   auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { allOf: [{ visible: auth.login }, { not: { visible: auth.account } }] }] }
   auth.challenge: { anyOf: [{ url: '^https?://(www\.)?google\.com/sorry/' }, { visible: auth.challenge }] }
   site.terms-notice: { visible: site.terms-notice }
+  # The app has rendered: its composer, or a conversation's turns. The Google bar with the account's
+  # button renders before it (it comes first in the page), so from here the account is not waited
+  # on for the whole readiness bound.
+  page.rendered: { anyOf: [{ visible: composer.input }, { visible: turn.user }] }
   turn.running: { visible: composer.stop }
   # Nothing generating and nothing open: the page can be kept for the session's next turn.
   page.idle: { allOf: [{ not: { state: turn.running } }, { hidden: page.overlay }] }

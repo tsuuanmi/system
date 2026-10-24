@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { type Condition, copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page, Route } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -32,6 +32,12 @@ export interface DriverTimeouts {
   pollMs?: number
   /** Page readiness after navigation (default 60 s: the live app took over 30 s to render several times). */
   readyMs?: number
+  /**
+   * How long the signed-in account may take to show once the app has rendered (default 15 s): the
+   * Google bar that holds it comes before the app in the page, so a rendered app is not waited on
+   * for the whole readiness bound (live 2026-10-24: 60 s on a new chat whose account never showed).
+   */
+  accountMs?: number
   /** How long a reopened conversation may take to render before it counts as not observed (default 20 s). */
   snapshotMs?: number
   /** How long a completed Deep research report may stay unreadable before it is UI drift (default 30 s). */
@@ -157,25 +163,51 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.researchPreset = options.researchMode === undefined ? undefined : options.modes?.[options.researchMode]
     this.maxInputChars = options.maxPromptChars ?? 30_000
     this.pageGapMs = options.pageGapMs ?? 10_000
-    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, planHangMs: 3 * 60_000, ...options.timeouts }
+    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, accountMs: 15_000, snapshotMs: 20_000, reportReadMs: 30_000, planHangMs: 3 * 60_000, ...options.timeouts }
   }
 
   async checkAuth(page: Page): Promise<AuthState> {
+    return (await this.readiness(page)).state
+  }
+
+  /**
+   * Whether the page is signed in and, when that cannot be told, what it showed instead. The wait
+   * ends at the first thing the page shows of itself: the account, a sign-in page, Google's
+   * traffic check, a terms notice (which can show while the account does not: live 2026-10-16), or
+   * the app. Once the app has rendered, the account has `accountMs` more, never the whole
+   * readiness bound. The site's own stops come before the account: a challenge or a terms notice
+   * is the operator's whether or not the account shows beside it.
+   */
+  private async readiness(page: Page): Promise<{ state: AuthState; why?: string }> {
     if (!page.url().startsWith(this.origin)) await page.goto(this.loginUrl, { waitUntil: 'domcontentloaded' })
     const engine = this.engine(page)
-    try {
-      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }, { state: 'auth.challenge' }] }, this.timeouts.readyMs)
-    } catch {
-      // Neither state: whatever the page shows instead (a dialog, an interstitial) is outlined as
-      // drift evidence, so it can be read without opening the operator's browser.
-      await engine.drift('auth.account').catch(() => undefined)
-      return 'unknown'
-    }
-    // Google's unusual-traffic check is neither: only the operator can pass it, and loading again deepens it.
+    const told: Condition[] = [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }, { state: 'auth.challenge' }, { state: 'site.terms-notice' }]
+    const rendered = await engine.waitFor({ anyOf: [...told, { state: 'page.rendered' }] }, this.timeouts.readyMs).then(() => true, () => false)
+    if (rendered) await engine.waitFor({ anyOf: told }, this.timeouts.accountMs).catch(() => undefined)
+    // Google's unusual-traffic check: only the operator can pass it, and loading again deepens it.
     if (await engine.state('auth.challenge')) throw new ProviderError('challenge', 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save')
-    if (await engine.state('auth.signed-out')) return 'signed-out'
+    if (await engine.state('auth.signed-out')) return { state: 'signed-out' }
     termsNotice(await engine.state('site.terms-notice'))
-    return 'signed-in'
+    if (await engine.state('auth.signed-in')) return { state: 'signed-in' }
+    // Neither: what the page shows instead is outlined as drift evidence, so it can be read without
+    // opening the operator's browser, with what each of the account's candidates found.
+    const why = await this.unsignedWhy(engine, rendered)
+    await engine.drift('auth.account').catch(() => undefined)
+    return { state: 'unknown', why }
+  }
+
+  /** What a page that is neither signed in nor signed out showed, from its structure only. */
+  private async unsignedWhy(engine: UiEngine, rendered: boolean): Promise<string> {
+    const matches = await engine.matches('auth.account').catch(() => undefined)
+    const hidden = !!matches?.some((m) => m.found > m.shown)
+    const overlay = await engine.state('page.busy-overlay').catch(() => false)
+    return [
+      rendered
+        ? `the app rendered, but neither the signed-in account nor a sign-in page showed within ${this.timeouts.accountMs / 1000} s`
+        : `the page showed neither the app, the signed-in account, nor a sign-in page within ${this.timeouts.readyMs / 1000} s`,
+      hidden ? 'its account button is on the page but hidden' : '',
+      overlay ? 'a dialog or menu is open' : '',
+    ].filter(Boolean).join('; ')
   }
 
   /** The account named on its own Google Account button; only a hash of it is ever stored. */
@@ -422,10 +454,13 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   private async open(page: Page, conversation: AskOptions['conversation'], binding: string | undefined): Promise<void> {
     // A kept tab already showing the conversation is checked as it is, never loaded again (ADR-0030).
     if (!(binding && (await this.showing(page, binding)))) await page.goto(binding ? `${this.origin}/app/${binding}` : this.loginUrl, { waitUntil: 'domcontentloaded' })
-    const auth = await this.checkAuth(page)
-    if (auth === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
+    const auth = await this.readiness(page)
+    if (auth.state === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
     // Neither signed in nor signed out (outlined as drift): loading it again on this account only adds traffic.
-    if (auth === 'unknown') throw new ProviderError('ui_drift', 'gemini-web: the page showed neither the signed-in account nor a sign-in page in time (outlined as a ui.drift of auth.account)')
+    if (auth.state === 'unknown') {
+      const moved = binding && this.bindingOf(page) !== binding ? `; the page is at ${new URL(page.url()).pathname}, not conversation ${binding}` : ''
+      throw new ProviderError('ui_drift', `gemini-web: ${auth.why}${moved} (outlined as a ui.drift of auth.account)`)
+    }
     if (binding && this.bindingOf(page) !== binding) {
       // Signed in, and the site sent the page elsewhere: it no longer has this conversation.
       throw new ProviderError('conversation_lost', `gemini-web: conversation ${binding} no longer opens (the site sent the page to ${new URL(page.url()).pathname}); a session that needs it cannot continue`)
