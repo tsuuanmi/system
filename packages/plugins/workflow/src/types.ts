@@ -90,6 +90,15 @@ export interface RunView {
   updatedAt: string
 }
 
+/**
+ * A run as the MCP `usage` report shows it: who served each step and what it spent, and nothing a
+ * run's `result` already gives (its answer, result and brief ids, what it waits for, errors, its
+ * task), so a page of recent runs stays small.
+ */
+export interface UsageRunView extends Pick<RunView, 'runId' | 'template' | 'status' | 'sessionId' | 'createdAt' | 'updatedAt'> {
+  nodes: Array<Omit<NodeView, 'result' | 'brief' | 'error'>>
+}
+
 export interface StartInput extends CallerOptions {
   template: string
   /** The caller's text: the prompt or the research question. */

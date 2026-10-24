@@ -52,6 +52,33 @@ function tools(runs: RunView[]): Map<string, Handler> {
 /** The JSON-RPC response of a `tools/call`, as the server sends it. */
 const reply = async (handler: Handler, args: Record<string, unknown>) => bytesOf({ result: await handler(args), jsonrpc: '2.0', id: 1 })
 
+describe('replies say it once (QA-12)', () => {
+  it('gives a completed run its answer as text, any other run a line on where it stands, and the run once, as structured content', async () => {
+    const result = tools([RESEARCH, ASK, FAILED]).get('result')!
+    expect(await result({ runId: ASK.runId })).toEqual({ content: [{ type: 'text', text: ASK.answer }], structuredContent: ASK })
+    expect(await result({ runId: FAILED.runId })).toEqual({ content: [{ type: 'text', text: `${FAILED.runId} (ask) failed: reauth_required: ${FAILED.error!.message}` }], structuredContent: FAILED })
+    const running: RunView = { ...RESEARCH, status: 'running', nodes: RESEARCH.nodes.map((n, i) => (i < 2 ? n : { ...n, state: 'RUNNING' })) }
+    expect((await tools([running]).get('result')!({ runId: running.runId }) as { content: unknown }).content).toEqual([{ type: 'text', text: `${running.runId} (research) running: 2 of 6 steps completed; poll result with its runId` }])
+  })
+
+  it('reports usage without answers, ids, or errors: per step its Worker, tier, quota class, and tokens; ten runs unless asked for more (QA-12, INV-9)', async () => {
+    const counted = { ...ASK, runId: `run_${hex('f4', 16)}`, nodes: [{ ...ASK.nodes[0]!, usage: { inputTokens: 7, outputTokens: 3 } }] }
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...counted, runId: `run_${String(i).padStart(16, '0')}` }))
+    const usage = tools(many).get('usage')!
+    const page = await usage({}) as { content: Array<{ text: string }>; structuredContent: { runs: Array<Record<string, unknown>> } }
+    expect(page.structuredContent.runs).toHaveLength(10)
+    expect(page.content).toEqual([{ type: 'text', text: '10 recent runs, 10 steps' }])
+    expect(page.structuredContent.runs[0]).toEqual({
+      runId: many[0]!.runId, template: 'ask', status: 'completed', createdAt: ASK.createdAt, updatedAt: ASK.updatedAt,
+      nodes: [{ nodeId: 'ask:1', state: 'COMPLETED', minTier: 'standard', attempt: 1, executionId: ASK.nodes[0]!.executionId, source: 'website', worker: 'worker:main-account/standard', tier: 'standard', quotaClass: 'subscription-chat', usage: { inputTokens: 7, outputTokens: 3 } }],
+    })
+    expect((await usage({ limit: 12 }) as typeof page).structuredContent.runs).toHaveLength(12)
+    const failed = (await tools([FAILED]).get('usage')!({}) as typeof page).structuredContent.runs[0]!
+    expect(failed).not.toHaveProperty('error')
+    expect(failed.nodes).toEqual([{ nodeId: 'ask:1', state: 'FAILED', minTier: 'standard', attempt: 1 }])
+  })
+})
+
 describe('reply budget (fixtures)', () => {
   it('keeps result of a completed ask and of a research run, and usage of three runs, under their ceilings (QA-12, INV-9)', async () => {
     const handlers = tools([RESEARCH, ASK, FAILED])
