@@ -53,6 +53,12 @@ export interface AskResult {
 export interface ProviderDriver<Page = unknown> {
   readonly provider: string
   /**
+   * The site's name for people (optional; plain text on one line, at most 64 characters), such as
+   * its product name: its Workers carry it (`capability-descriptor@1.8` `title`), and the roster's
+   * display name starts with it. Only the driver names its site; never a routing input (INV-11).
+   */
+  readonly title?: string
+  /**
    * Routing capabilities this driver implements and its tests prove (docs/design/routing.md
    * #capability-vocabulary), e.g. `reason`, `persistent-conversation`, `deep-research`.
    */

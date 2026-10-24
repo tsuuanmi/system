@@ -8,11 +8,12 @@ Routing **seam definition**
 |---|---|---|
 | `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, optional `sources()` (how each source answered its last read, `WorkerSourceRead`), `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, optional `held(sessionId)` (why a session takes no input now, from its source; PROP-0013, ADR-0056), optional `liveness(query)` (the runs whose liveness needs the operator's look, from every source that tells it, and each source that could not tell; PROP-0013), optional `land(step)` (one step of landing an accepted result, `commit` or `merge`, by the source that holds its worktree, with its name; a source that throws is a `failed` refusal; ADR-0060), `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, held, liveness, land, release, cancel), `LandStep`, `Landed`, `LandRefusal`, `RunLiveness`, `LivenessReport`, `LivenessQuery`, `LivenessState`, `MAX_LIVENESS_RUNS`, `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033; `account`, ADR-0052; `kinds`, ADR-0057), `WorkerAccount`, `AccountMode`, `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`; `kind`, ADR-0057), `WorkScope`, `provesFor(offer, requirement)`, `WORK_KIND`, `takesKind(worker, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure` (with `limitUntil`, ADR-0052), `AdmissionCheck`, `ADMISSION_CHECKS`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
-- The types mirror `capability-descriptor@1.7` (its optional `family`, an opaque
+- The types mirror `capability-descriptor@1.8` (its optional `family`, an opaque
   provider family; `maxInputChars`, the longest input the Worker takes; `load` and `cooldowns`;
   a capability offer's `scope`; the `account` it runs on, `{ id, group, mode, limitUntil? }`;
-  the `kinds` of work the operator gives it; and the operator's `description`, for people only,
-  never a routing input) and `work-requirement@1.2` (its optional `scope` and `kind`). A scoped
+  the `kinds` of work the operator gives it; the operator's `description` and its `title` (a
+  website provider's own, a model's from the operator's catalog), both for people only, never a
+  routing input) and `work-requirement@1.2` (its optional `scope` and `kind`). A scoped
   offer proves its capability only for work whose requirement names that scope (`provesFor`,
   [scoped offers](../../docs/design/routing.md#scoped-offers),
   [ADR-0049](../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)). A

@@ -129,6 +129,17 @@ describe('capability-descriptor@1.7', () => {
   })
 })
 
+describe('capability-descriptor@1.8', () => {
+  const titled = example('capability-descriptor.title')
+
+  it('adds a title for people, refused before 1.8, on one line of 1 to 64 characters; a description stays valid at 1.8 (T116)', () => {
+    expect(valid('capability-descriptor@1.8', titled)).toBe(true)
+    expect(valid('capability-descriptor@1.8', { ...titled, schema: 'capability-descriptor@1.7' })).toBe(false)
+    for (const title of ['', 'x'.repeat(65), 'two\nlines']) expect(valid('capability-descriptor@1.8', { ...titled, title }), JSON.stringify(title)).toBe(false)
+    expect(valid('capability-descriptor@1.8', without(titled, 'title'))).toBe(true)
+  })
+})
+
 describe('decision@1.8', () => {
   it('adds the enrollment decision and the recovery outcome wait, each refused before 1.8 (INV-13, INV-14)', () => {
     for (const name of ['decision.enrollment', 'decision.recovery-wait']) {

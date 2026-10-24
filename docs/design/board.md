@@ -12,7 +12,8 @@
 > [`board-core`](../../packages/board-core/README.md)), its bundle row on over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
 > [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts, and the operator
-> accepts or rejects a review, and pauses, resumes, or closes a project, on `/ui`
+> starts a ready task's run (as the lead does with MCP `run` and `task`), accepts or rejects a
+> review, and pauses, resumes, or closes a project, on `/ui`
 > ([`web-ui`](../../packages/plugins/web-ui/README.md)); differs from target: a budget is
 > enforced before each step of a run, never inside one, so a step in flight can overdraw its last
 > lines ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md));

@@ -60,6 +60,8 @@ export interface RosterDescriptor {
   family?: string | undefined
   /** `@1.7`: what it is for, in the operator's words. */
   description?: string | undefined
+  /** `@1.8`: its name for people, as its source gives it (a website provider's own, a model's from the operator's catalog). */
+  title?: string | undefined
   /** `@1.6`: the kinds of work the operator gives it. */
   kinds?: string[] | undefined
   account?: { id: string; group: string; mode: 'assigned' | 'pooled'; limitUntil?: string | undefined } | undefined
@@ -520,23 +522,27 @@ function derivedOf(d: RosterDescriptor, role: Known<string | null>): string {
 /**
  * A Worker's display name, `<runtime> · <account> · <role or tier> [<kinds>]`, for example
  * `Claude Code · science · develop [code]`, made from what was read
- * (docs/design/roster.md#display-names): the runtime's title, else its provider's first word
+ * (docs/design/roster.md#display-names): the Worker's own title (`@1.8`: a website provider's, a
+ * model's from the operator's catalog), else its runtime's title, else its provider's first word
  * capitalised (a model Worker's, its family's); for the operator the account's configured label,
  * else an agent account's masked hint and slot, or a website account's catalog label; for a client
  * (who gets no label) an agent account's slot, or the account id; with no account read, its
- * account's id, else the rest of its own id; then its role, else its tier, with the kinds of work it
- * takes. For people only: never a routing input, and never a key (the Worker id is).
+ * account's id, else the rest of its own id (none for a Worker of no account with its own title);
+ * then its role, else its tier, with the kinds of work it takes. For people only: never a routing input, and never a key (the Worker id is).
  */
 function nameOf(input: RosterInput, d: RosterDescriptor, role: Known<string | null>, scope: RosterScope, agent: AgentEntry | undefined, site: RosterWebsiteAccount | undefined): string {
   const word = (text: string): string => { const first = text.split(/[-_:.\s]/)[0] || text; return first.charAt(0).toUpperCase() + first.slice(1) }
-  const runtime = input.titles?.get(d.provider) ?? (d.account || d.family === undefined ? word(d.provider) : word(d.family))
+  // Its own title (`@1.8`) when its source gives a usable one: plain text on one line, at most 64 characters.
+  const title = d.title !== undefined && /^[^\p{Cc}]{1,64}$/u.test(d.title) ? d.title : undefined
+  const runtime = title ?? input.titles?.get(d.provider) ?? (d.account || d.family === undefined ? word(d.provider) : word(d.family))
   const slot = agent ? `slot ${agent.account.slot}` : undefined
   const own = d.worker.slice(d.worker.indexOf(':') + 1)
+  // A Worker of no account that has its own title (a model the operator named) is that title alone.
   const account = agent
     ? (scope === 'operator' ? agent.label ?? (agent.account.hint ? `${agent.account.hint}, ${slot}` : slot) : slot)
     : site
       ? (scope === 'operator' && site.label ? site.label : site.id)
-      : d.account?.id ?? own.split('/')[0]
+      : d.account?.id ?? (title ? undefined : own.split('/')[0])
   const work = `${isKnown(role) && role.value ? role.value : d.tier}${d.kinds?.length ? ` [${d.kinds.join(', ')}]` : ''}`
   return clip([runtime, account, work].filter((part): part is string => !!part).join(' · '), 200)
 }

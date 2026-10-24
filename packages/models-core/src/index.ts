@@ -29,6 +29,11 @@ export interface ModelEntry {
   family?: string
   /** What it is for, in the operator's words: its Worker's `description` (`capability-descriptor@1.7`); never a routing input. */
   description?: string
+  /**
+   * Its name for people, in the operator's words (`capability-descriptor@1.8` `title`), such as the
+   * product it reaches: its Worker's display name is the title and its tier. Never a routing input.
+   */
+  title?: string
   /** Session bounds for this entry (ADR-0031); the Worker source's defaults when absent. */
   maxSessionTurns?: number
   maxHistoryChars?: number

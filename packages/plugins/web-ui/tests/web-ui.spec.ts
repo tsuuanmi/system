@@ -82,8 +82,11 @@ class StubRouter extends Service {
     return [
       { worker: 'worker:plus/standard', provider: 'chatgpt-web', family: 'chatgpt-web', description: 'The studio\'s chat subscription for quick questions (standard tier)', account, load: { running: 1, queued: 0, pending: 0, slots: 2 }, tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote', state: 'ready', observedAt: AT },
       { worker: 'worker:plus/frontier', provider: 'chatgpt-web', family: 'chatgpt-web', account: { ...account, limitUntil: '2026-10-24T11:00:00.000Z' }, tier: 'frontier', quotaClass: 'subscription-chat', locality: 'remote', state: 'quota-exhausted', observedAt: AT },
+      ...this.extra,
     ]
   }
+  /** Workers beside the website account's: the pools suite's agent Worker. */
+  extra: unknown[] = []
   sources() { return [{ source: 'website', state: 'described', at: AT, workers: 2 }] }
   siblings() { return ['worker:plus/frontier', 'worker:plus/standard'] }
   /** An earlier run of the busy Worker that ended without being known to be gone, still holding its session (PROP-0013). */
@@ -102,6 +105,18 @@ class StubAccounts extends Service {
   async duplicateIdentities() { return [] }
 }
 
+/** A stand-in for the agent accounts: one slot whose last usage report could not be read (T111). */
+class StubAgentWorkers extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'agentWorkers')
+  }
+  readonly agentAccounts = {
+    list: () => [{ accountId: 'acc-a', provider: 'claude-agent-sdk', slot: 1, status: 'ready' }],
+    workersIn: () => ['agent:acc-a/develop'],
+    unreadReport: () => ({ why: 'the runtime gave no answer within 30 s', at: '2026-10-24T09:20:00.000Z' }),
+  }
+}
+
 /** A stand-in ledger: the website account's own pool, one window read from its usage report, one with no share, one never read (ADR-0059). */
 class StubResources extends Service {
   constructor(ctx: Context) {
@@ -111,7 +126,7 @@ class StubResources extends Service {
   async pools() {
     const windows = [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }, { id: 'seven-day', kind: 'rolling', seconds: 604_800 }, { id: 'credit', kind: 'credit' }]
     const read = (window: (typeof windows)[number], extra: Record<string, unknown>) => ({ schema: 'limit-state@1.0', pool: 'plan/plus', account: 'plus', window, source: 'runtime-result', observedAt: new Date(this.at - 60_000).toISOString(), ...extra })
-    return [{
+    return [{ pool: 'plan/agent', account: 'acc-a', kind: 'programmatic', windows: [windows[0]!], available: true, readings: [] }, {
       pool: 'plan/plus', account: 'plus', kind: 'interactive', windows, available: false, until: new Date(this.at + 3_600_000).toISOString(),
       readings: [read(windows[0]!, { state: 'ok', usedPercentage: 42, resetsAt: new Date(this.at + 900_000).toISOString() }), read(windows[1]!, { state: 'limited', resetsAt: new Date(this.at + 3_600_000).toISOString() })],
     }]
@@ -127,11 +142,12 @@ async function boot(options: { approvals?: boolean; roster?: boolean; pools?: bo
   const token = Buffer.alloc(32, 7).toString('base64url')
   const ctx = new Context()
   const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []),
-    ...(options.pools ? [ctx.plugin(StubResources)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
+    ...(options.pools ? [ctx.plugin(StubResources), ctx.plugin(StubAgentWorkers)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
   onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
   if (options.roster) (ctx as unknown as { workflow: StubWorkflow }).workflow.extra = [STEP]
+  if (options.pools) (ctx as unknown as { workers: StubRouter }).workers.extra = [{ worker: 'agent:acc-a/develop', provider: 'claude-agent-sdk', family: 'claude-agent-sdk', account: { id: 'acc-a', group: 'claude-agent-sdk', mode: 'assigned' }, tier: 'frontier', quotaClass: 'agent-plan', locality: 'local', state: 'ready', observedAt: AT }]
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
   return { ctx, origin, token, workflow: (ctx as unknown as { workflow: StubWorkflow }).workflow, approvals: () => (ctx as unknown as { approvals: StubApprovals }).approvals }
 }
@@ -324,7 +340,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows each window of an account\'s pool as "used X % of N h, resets HH:MM (read HH:MM)", and what its reading does not give as unknown, with why (ADR-0059)', async () => {
+  it.runIf(canRunBrowser)('shows each window of an account\'s pool as "5 h: used X % — resets HH:MM (read HH:MM)" with a small bar, at its limit first, and what its reading does not give as unknown, with why (ADR-0059, T116)', async () => {
     const { origin, token } = await boot({ roster: true, pools: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
@@ -333,9 +349,18 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const busy = page.getByRole('article', { name: 'worker:plus/standard' })
     const line = (window: string) => busy.getByLabel(`window ${window} of plan/plus`)
     await expect.poll(() => line('five-hour').count()).toBe(1)
-    expect(await line('five-hour').innerText()).toMatch(/^five-hour: used 42 % of 5 h, resets [^,()]+ \(read [^)]+\)$/)
-    expect(await line('seven-day').innerText()).toMatch(/^seven-day: used unknown \(its latest reading gives no used share\), resets [^,()]+ \(read [^)]+\); at its limit$/)
-    expect(await line('credit').innerText()).toBe('credit: used unknown (no reading yet), resets unknown (no reading yet)')
+    expect(await line('five-hour').innerText()).toMatch(/^5 h: used 42 % — resets [^,()]+ \(read [^)]+\)$/)
+    expect(await line('seven-day').innerText()).toMatch(/^7 d: at its limit, used unknown \(its latest reading gives no used share\) — resets [^,()]+ \(read [^)]+\)$/)
+    expect(await line('credit').innerText()).toBe('credit: no reading yet')
+    // A small bar beside a window whose share is read; the window at its limit first, in a pool at its limit (T116).
+    expect(await line('five-hour').locator('meter').getAttribute('value')).toBe('42')
+    expect(await line('credit').locator('meter').count()).toBe(0)
+    expect(await busy.locator('.window').evaluateAll((lines) => lines.map((l) => l.getAttribute('aria-label')))).toEqual(['window seven-day of plan/plus', 'window five-hour of plan/plus', 'window credit of plan/plus'])
+    expect(await busy.innerText()).toContain('plan/plus at a limit: closed, back in 1 h')
+    // No reading yet, with why its account's usage report could not be read, its time on the clock (T111).
+    const agent = page.getByRole('article', { name: 'agent:acc-a/develop' }).getByLabel('window five-hour of plan/agent')
+    expect(await agent.innerText()).toMatch(/^5 h: no reading yet: its account's usage report could not be read at [^:]*\d\d:\d\d[^:]*: the runtime gave no answer within 30 s$/)
+    expect(await agent.innerText()).not.toContain('2026-10-24T')
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 

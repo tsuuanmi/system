@@ -190,6 +190,17 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     const bare = await readRoster(services({}, [descriptor('model:fast', { provider: 'models', family: 'openai', tier: 'standard', locality: 'remote', quotaClass: 'metered' }), descriptor('agent:solo', { family: undefined, tier: 'economy' })]), { scope: 'operator', now: NOW })
     expect(entry(bare, 'model:fast').name).toBe('Openai · fast · standard')
     expect(entry(bare, 'agent:solo').name).toBe('Claude · solo · economy')
+    // A Worker's own title (`@1.8`) leads its name: a website provider's, with its account's label; a
+    // titled model of no account is its title and tier; a title that is not one line is not used (T116).
+    const titled = await readRoster(services({}, [
+      ...(await services().workers!.list()).map((d) => (d.worker === 'worker:plus/standard' ? { ...d, title: 'ChatGPT' } : d)),
+      descriptor('model:fast', { provider: 'models', family: 'gemini', title: 'Gemini API', tier: 'standard', locality: 'remote', quotaClass: 'metered' }),
+      descriptor('model:odd', { provider: 'models', family: 'openai', title: 'two\nlines', tier: 'economy', locality: 'remote', quotaClass: 'metered' }),
+    ]), { scope: 'operator', now: NOW })
+    valid(titled)
+    expect(entry(titled, 'worker:plus/standard').name).toBe('ChatGPT · Studio Plus · standard')
+    expect(entry(titled, 'model:fast').name).toBe('Gemini API · standard')
+    expect(entry(titled, 'model:odd').name).toBe('Openai · odd · economy')
     // Ready by its source, with no load, but the engine runs a step on it: busy, and said why.
     const quiet = await readRoster(services({}, [descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE) })]), { scope: 'operator', now: NOW })
     expect(entry(quiet, `agent:${CLAUDE}/review`).availability).toEqual({ state: 'busy', summary: 'busy: it runs 1 step(s) now (its source reports no load)' })

@@ -22,11 +22,11 @@ export const APP_CSS = `
 @media (prefers-color-scheme: dark) { :root { --fg: #f2f2f7; --bg: #111113; --muted: #a1a1a6; --line: #2c2c2e; --accent: #64a8ff; --bad: #ff6b60; --ok: #5fd068; --wait: #e2c044; } }
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
-header { display: flex; align-items: baseline; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; white-space: nowrap; display: inline-block; }
 header nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); } header nav a:hover { color: var(--accent); }
 h2.page { margin-bottom: 0; } p.lead { color: var(--muted); margin-top: 4px; }
-#status { color: var(--muted); }
+#status { color: var(--muted); margin-left: auto; }
 main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
@@ -64,7 +64,8 @@ textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320p
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
 pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
-@media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
+code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
+@media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
 
 export const APP_JS = `'use strict'
@@ -115,6 +116,14 @@ export const APP_JS = `'use strict'
     return out
   }
   const subjectText = (s) => s.type + ' ' + s.ref + (s.version ? ' @ ' + s.version : '')
+  // A text as a person reads it first: the proposed set for a policy set's hash, a hash in
+  // parentheses left out, any other long hash cut to its first 8 characters. The exact text stays folded beside it.
+  const LONG_HASH = /(?:sha256:)?[0-9a-f]{16,}/
+  const plainly = (text) => text
+    .replace(/the set (?:sha256:)?[0-9a-f]{16,}/g, 'the proposed set')
+    .replace(/\\s*\\((?:at )?(?:sha256:)?[0-9a-f]{16,}\\)/g, '')
+    .replace(/(?:sha256:)?[0-9a-f]{16,}/g, (hash) => hash.replace(/^sha256:/, '').slice(0, 8) + '…')
+  const folded = (text, summary) => LONG_HASH.test(text) ? [plainly(text), el('details', {}, el('summary', {}, summary), el('code', { class: 'exact' }, text))] : [text]
   const pretty = (value) => value === undefined ? '' : JSON.stringify(value, null, 2)
   const diffView = (before, after) => el('pre', { class: 'diff' }, lineDiff(pretty(before), pretty(after)).map(([kind, line]) =>
     el('span', kind === 'same' ? {} : { class: kind }, (kind === 'add' ? '+ ' : kind === 'del' ? '- ' : '  ') + line + '\\n')))
@@ -130,7 +139,7 @@ export const APP_JS = `'use strict'
     // A change the queue proposed itself says so, and why: never the operator's own proposal (INV-6).
     change.origin ? el('p', {}, el('strong', {}, 'Proposed by the queue, not by you: '), 'you approved ', el('code', {}, change.origin.shape.command),
       ' ' + change.origin.approved + ' times among the requests of the last ' + windowText(change.origin.windowSeconds) + ', and rejected none; decision ', el('code', {}, change.origin.decision)) : null,
-    el('p', { class: 'muted' }, 'Set ', el('code', {}, change.hash), ', proposed on ', el('code', {}, change.baseHash)),
+    el('details', {}, el('summary', {}, 'Hashes of both sets'), el('p', { class: 'muted' }, 'Set ', el('code', {}, change.hash), ', proposed on ', el('code', {}, change.baseHash))),
     effectView(change.effect),
     diffView(change.previous, change.policy))
   // replaceChildren turns null into the text "null": absent sections are dropped first. A render
@@ -164,7 +173,7 @@ export const APP_JS = `'use strict'
   }
   // Idle capacity, and the step that puts it to work.
   const capacityText = (idle, ready) => (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker idle' : ' Workers idle')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
-    + (ready ? '. A ready task starts when the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
+    + (ready ? '. A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
   const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
@@ -277,7 +286,7 @@ export const APP_JS = `'use strict'
       d = { title: 'Allow a tool call: ' + r.action.summary, subject: 'the exact ' + call[2] + ' call of agent run ' + call[1], yes: 'Approve: allow this call', no: 'Deny: refuse this call',
         next: 'The agent run gets your answer the next time it asks.' }
     } else if (r.action.class === 'policy-change') {
-      d = { title: r.action.summary, subject: 'the policy set with hash ' + (r.subject.version || ''),
+      d = { title: r.action.summary, subject: 'the policy set this change would put in force',
         approve: 'The proposed policy set comes into force at once; open requests are judged again under it.', deny: 'Nothing changes: the policy in force stays.',
         yes: 'Approve: put the change in force', no: 'Deny: keep the policy in force', next: 'See the Autonomy policy page.' }
     } else if (r.action.class === 'merge' && r.requester.component === 'workflow') {
@@ -372,9 +381,9 @@ export const APP_JS = `'use strict'
         el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.action.class), ' Asked by ' + d.by + ' · request ' + r.requestId + ' · ',
           el('span', { class: soon ? 'soon' : '' }, (Date.parse(r.expiresAt) > Date.now() ? 'expires ' : 'expired ') + relative(r.expiresAt) + ' — ' + absolute(r.expiresAt)), '; unanswered by then, it counts as denied.'),
         el('dl', {},
-          d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, r.action.summary)],
+          d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
           el('dt', {}, 'About'), el('dd', {}, d.subject, el('details', {}, el('summary', {}, 'Exact subject'), el('code', {}, subjectText(r.subject)))),
-          r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, r.action.consequences)]
+          r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
             : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
             : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
           r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null),
@@ -695,6 +704,46 @@ export const APP_JS = `'use strict'
         : l.state === 'refused' ? el('div', {}, 'Accepted — not merged: ' + (l.reason || 'refused'))
           : l.state === 'rejected' ? el('div', {}, 'Accepted — the merge was not approved; ' + (l.branch || 'its branch') + ' keeps the commit')
             : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
+    // The operator starts a ready task's run, as the lead does (MCP run with task): behind a
+    // confirmation that says what runs and on which kind of Worker, bound to the task and template shown.
+    const needs = (step) => step.source ? 'the system reads it itself, on no Worker'
+      : (step.team ? 'a team of ' + step.team.members + ' Workers, each of another provider, each' : 'a Worker') + ' of ' + step.tier + ' tier or above that can ' + step.capabilities.join(', ')
+        + (step.kind ? ', for ' + step.kind + ' work' : '') + (step.plans ? '; it plans further steps, which may ask for your approval' : '')
+    const start = (t) => async () => {
+      confirming = true
+      const close = el('button', { onclick: () => { confirming = false; shown.replaceChildren() } }, 'Cancel')
+      let preview
+      try { preview = await api('tasks/' + encodeURIComponent(t.taskId) + '/start') } catch (error) {
+        shown.replaceChildren(el('div', { class: 'panel bad', role: 'alert', 'aria-label': 'Cannot start ' + t.title },
+          el('h3', {}, 'It cannot start from here: "' + t.title + '"'), el('p', {}, error.message.replace(/^[a-z_]+: /, '')), close))
+        close.focus()
+        return
+      }
+      const { task, steps } = preview
+      const yes = el('button', { class: 'primary' }, 'Confirm start')
+      yes.addEventListener('click', async () => {
+        yes.disabled = true
+        close.disabled = true
+        yes.textContent = 'Starting…'
+        try {
+          const { run } = await api('tasks/' + encodeURIComponent(t.taskId) + '/start', { revision: task.revision, template: task.template })
+          report(true, 'Started: ' + t.title, [['Run ', runLink(run), ' of the ' + task.template + ' template claimed the task: it is under Working on the Board, and its page shows each step as it runs.']])
+        } catch (error) {
+          report(false, 'Not started: ' + t.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was started: the task is still ready.'])
+        }
+        await settle()
+      })
+      shown.replaceChildren(el('div', { class: 'panel', role: 'group', 'aria-label': 'Confirm start of ' + t.title },
+        el('h3', {}, 'Start "' + t.title + '"'),
+        el('ul', {},
+          el('li', {}, 'It runs the ' + task.template + ' template for this task, its attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ': the run claims the task, which moves to Working.'),
+          el('li', {}, steps.length === 1 ? 'Its step, and the kind of Worker it runs on:' : 'Its ' + steps.length + ' steps, in order, and the kind of Worker each runs on:',
+            el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step) + '.')))),
+          el('li', {}, (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' idle now') + '; a step no free Worker can take waits for one.'),
+          el('li', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
+        yes, close))
+      yes.focus()
+    }
     const cardOf = (p, t) => {
       const run = t.run ? working.get(t.run.runId) : undefined
       const since = t.updatedAt || t.createdAt
@@ -703,7 +752,8 @@ export const APP_JS = `'use strict'
         boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
         el('div', { class: 'muted' }, el('span', { class: 'tag' }, t.actionClass), ' ', ago(since)),
         t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
-        t.state === 'ready' ? el('div', {}, 'Waits for the lead to start it') : null,
+        t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
+        t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', {}, run ? [run.name + ', ', 'value' in run.since ? 'for ' + relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time'] : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
         t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
@@ -766,12 +816,27 @@ export const APP_JS = `'use strict'
   const when = (iso) => relative(iso) + ' (' + clockOf(iso) + ')'
   // A window's length as "5 h" or "7 d" (ADR-0059's "used 42 % of 5 h").
   const span = (seconds) => seconds % 86400 === 0 ? seconds / 86400 + ' d' : seconds % 3600 === 0 ? seconds / 3600 + ' h' : seconds % 60 === 0 ? seconds / 60 + ' min' : seconds + ' s'
-  // One window of a pool: "five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)", from its latest
-  // reading (an account's usage report, or a run's own); what that reading does not give stays unknown, with why.
-  const windowLine = (win) => win.id + ': ' + ('value' in win.used ? 'used ' + win.used.value + ' %' + (win.seconds ? ' of ' + span(win.seconds) : '') : 'used unknown (' + win.used.unknown + ')')
-    + ', resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
-    + (win.observedAt ? ' (read ' + clockOf(win.observedAt) + ')' : '')
-    + (win.state === 'limited' ? '; at its limit' : '')
+  // One window of a pool, as it reads after the per-account limits (ADR-0059): "5 h: used 9 % — resets
+  // 23:30 (read 22:05)" with a small bar, from its latest reading (an account's usage report, or a run's
+  // own); "5 h: no reading yet: <why>" before any; at its limit said first. What a reading does not
+  // give stays unknown, with why.
+  const ISO_TIME = /\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d(?::\\d\\d(?:\\.\\d+)?)?(?:Z|[+-]\\d\\d:\\d\\d)/g
+  const clocked = (text) => text.replace(ISO_TIME, (iso) => Number.isNaN(Date.parse(iso)) ? iso : clockOf(iso))
+  const windowLine = (win, label) => {
+    const limited = win.state === 'limited'
+    if (!('value' in win.used) && /^no reading yet/.test(win.used.unknown)) return label + ': ' + clocked(win.used.unknown)
+    return label + ': ' + (limited ? 'at its limit, ' : '') + ('value' in win.used ? 'used ' + win.used.value + ' %' : 'used unknown (' + win.used.unknown + ')')
+      + ' — resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
+      + (win.observedAt ? ' (read ' + clockOf(win.observedAt) + ')' : '')
+  }
+  // A pool's windows, the ones at their limit first, each named by its length ("5 h"; its id when it has none, or beside a twin).
+  const windowsView = (p) => {
+    const named = (win) => win.seconds ? span(win.seconds) + (p.windows.filter((w) => w.seconds === win.seconds).length > 1 ? ' (' + win.id + ')' : '') : win.id
+    const order = [...p.windows].sort((x, y) => Number(y.state === 'limited') - Number(x.state === 'limited'))
+    return order.map((win) => el('div', { class: 'window' + (win.state === 'limited' ? ' limited' : ''), 'aria-label': 'window ' + win.id + ' of ' + p.pool },
+      'value' in win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(win.used.value), 'aria-hidden': 'true' }) : null,
+      el('span', {}, windowLine(win, named(win)))))
+  }
   async function workersView() {
     const roster = await api('roster')
     const ready = await readyTasks()
@@ -804,9 +869,9 @@ export const APP_JS = `'use strict'
       if (isKnown(w.account) && w.account.value.limitUntil) lines.unshift('its account is back ' + when(w.account.value.limitUntil))
       return el('div', {},
         lines.map((line) => el('div', {}, line)),
-        known(w.pools, (pools) => pools.length ? el('div', {}, pools.map((p) => el('div', {},
-          el('strong', {}, p.pool), ' ' + (p.available ? 'open' : 'closed' + (p.until ? ', back ' + when(p.until) : '')),
-          p.windows.map((win) => el('div', { class: 'muted', 'aria-label': 'window ' + win.id + ' of ' + p.pool }, windowLine(win))),
+        known(w.pools, (pools) => pools.length ? el('div', {}, [...pools].sort((x, y) => Number(x.available) - Number(y.available)).map((p) => el('div', {},
+          el('strong', {}, p.pool), ' ' + (p.available ? 'open' : 'at a limit: closed' + (p.until ? ', back ' + when(p.until) : '')),
+          windowsView(p),
           isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
     }
     // Its display name heads the card; the id, the key every record uses, stays under it.
@@ -861,36 +926,113 @@ export const APP_JS = `'use strict'
     })
     const columns = effective.map((e) => e.projectId ? 'project ' + e.projectId : 'studio')
     const classes = effective[0].effective.map((e) => e.actionClass)
+    // The proposed record, edited as a form (a mode per action class, the commands as lines, the
+    // expiry and batch numbers) or, folded under Advanced, as JSON; both edit one draft. The queue
+    // validates the proposal as it always did: the page refuses nothing the queue would take.
+    const fixed = new Set(value.alwaysAsk || [])
     const editor = el('textarea', { 'aria-label': 'Proposed policy record (JSON)', spellcheck: 'false' })
     const note = el('input', { placeholder: 'why (optional)', 'aria-label': 'Note for the proposed change' })
     const preview = el('div', {})
+    const form = el('div', {})
     const NEW = '(a new project policy)'
     const pick = el('select', { 'aria-label': 'Policy to change' }, policies.map((p) => el('option', { value: p.id }, p.id)), el('option', { value: NEW }, NEW))
     const selected = () => policies.find((p) => p.id === pick.value)
+    let draft
+    // The JSON shown under Advanced follows the form; an edit there that is not JSON leaves the form as it was.
+    const sync = () => { editor.value = pretty(draft); preview.replaceChildren() }
+    const edit = (change) => { change(draft); sync() }
+    const hours = (seconds) => String(Math.round(seconds / 36) / 100)
+    const minutes = (seconds) => String(Math.round(seconds / 0.6) / 100)
+    const number = (label, id, shown, onvalue, extra) => {
+      const input = el('input', Object.assign({ id, type: 'number', value: shown, min: '0', step: 'any', class: 'number' }, extra || {}))
+      input.addEventListener('input', () => onvalue(input.value === '' ? undefined : Number(input.value)))
+      return el('label', { for: id }, label, input)
+    }
+    const modeText = { auto: 'auto: it runs on its own', notify: 'notify: it runs, then tells you', ask: 'ask: it waits for your approval', forbid: 'forbid: it never runs' }
+    const WHY = { merge: 'an accepted result lands only on your approval', 'external-send': 'it cannot be undone', deploy: 'it cannot be undone', 'delete-data': 'it cannot be undone', spend: 'it is your decision', charter: 'it is your decision', funding: 'it is your decision', 'policy-change': 'it is your decision', remediation: 'a fix that writes, or a lost run going on, is yours to allow', promotion: 'the system never approves its own change' }
+    const buildForm = () => {
+      const p = draft
+      const studio = p.scope !== 'project'
+      const ruleOf = (c) => (p.rules || []).find((r) => r.actionClass === c)
+      const modeRow = (c) => {
+        const rule = ruleOf(c)
+        if (fixed.has(c)) return el('tr', {}, el('td', {}, c), el('td', {}, el('strong', {}, rule && rule.mode === 'forbid' ? 'forbid' : 'ask')),
+          el('td', { class: 'muted' }, 'always asks, whatever a rule says: ' + (WHY[c] || 'the queue always asks for it') + (rule && rule.mode === 'forbid' ? '; forbidden here (change it under Advanced)' : '')))
+        const select = el('select', { id: 'mode-' + c, 'aria-label': 'Mode of ' + c },
+          el('option', { value: '' }, studio ? 'not named: the default (' + p.default + ')' : 'not named: as the studio'),
+          ['auto', 'notify', 'ask', 'forbid'].map((m) => el('option', { value: m }, m)))
+        select.value = rule ? rule.mode : ''
+        select.addEventListener('change', () => edit((d) => {
+          const kept = (d.rules || []).filter((r) => r.actionClass !== c)
+          const old = ruleOf(c)
+          d.rules = select.value ? (old ? d.rules.map((r) => r.actionClass === c ? Object.assign({}, r, { mode: select.value }) : r) : kept.concat([{ actionClass: c, mode: select.value }])) : kept
+          buildForm()
+          document.getElementById('mode-' + c).focus()
+        }))
+        return el('tr', {}, el('td', {}, el('label', { for: 'mode-' + c }, c)), el('td', {}, select),
+          el('td', { class: 'muted' }, rule ? modeText[rule.mode] + (rule.requires && rule.requires.length ? ', once ' + rule.requires.join(', ') + ' pass' : '') + (rule.expiresSeconds ? '; its requests wait ' + hours(rule.expiresSeconds) + ' h' : '') : studio ? 'no rule: ' + modeText[p.default] : 'no rule: the studio policy decides'))
+      }
+      const fallback = el('select', { id: 'policy-default', 'aria-label': 'Mode of a class no rule names' }, el('option', { value: 'ask' }, 'ask'), el('option', { value: 'forbid' }, 'forbid'))
+      fallback.value = p.default
+      fallback.addEventListener('change', () => edit((d) => { d.default = fallback.value; buildForm(); document.getElementById('policy-default').focus() }))
+      const commands = el('textarea', { id: 'policy-commands', class: 'lines', 'aria-label': 'Commands judged as workspace writes, one per line', spellcheck: 'false' })
+      commands.value = (p.commands || []).join('\\n')
+      commands.addEventListener('input', () => edit((d) => {
+        const lines = commands.value.split('\\n').map((l) => l.trim()).filter(Boolean)
+        if (lines.length) d.commands = lines
+        else delete d.commands
+      }))
+      const project = studio ? null : el('input', { id: 'policy-project', value: p.projectId || '', 'aria-label': 'Project of the new policy' })
+      if (project) project.addEventListener('input', () => edit((d) => { d.projectId = project.value.trim(); if (!selected()) d.id = project.value.trim() + '.policy' }))
+      const batch = p.batch || {}
+      form.replaceChildren(
+        el('p', {}, el('strong', {}, p.id), ' · ' + (selected() ? 'version ' + selected().version + ' → ' + p.version + ' (the next version, raised for you)' : 'a new project policy, version ' + p.version),
+          project ? el('span', {}, ' · ', el('label', { for: 'policy-project' }, 'project ', project)) : null),
+        table(['Action class', 'Mode', 'What it means'], classes.map(modeRow), 'modes'),
+        el('div', { class: 'batch-actions' },
+          studio ? el('label', { for: 'policy-default' }, 'A class no rule names', fallback) : null,
+          number('Requests wait (hours)', 'policy-expiry', hours(p.expiry.defaultSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { defaultSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
+          number('At most (hours)', 'policy-expiry-max', hours(p.expiry.maxSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { maxSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
+          number('Batch: at most (requests)', 'policy-batch-size', batch.maxSize === undefined ? '' : String(batch.maxSize), (n) => edit((d) => {
+            const next = Object.assign({}, d.batch, { maxSize: n })
+            if (next.maxSize === undefined && next.maxWaitSeconds === undefined) delete d.batch; else d.batch = next
+          }), { step: '1' }),
+          number('Batch: shown after (minutes)', 'policy-batch-wait', batch.maxWaitSeconds === undefined ? '' : minutes(batch.maxWaitSeconds), (m) => edit((d) => {
+            const next = Object.assign({}, d.batch, { maxWaitSeconds: m === undefined ? undefined : Math.round(m * 60) })
+            if (next.maxSize === undefined && next.maxWaitSeconds === undefined) delete d.batch; else d.batch = next
+          }))),
+        el('label', { for: 'policy-commands' }, 'Commands judged as workspace writes, one per line, matched word for word', commands))
+    }
     const fill = () => {
       const p = selected()
-      const draft = p ? Object.assign({}, p, { version: p.version + 1 })
+      draft = p ? Object.assign({}, p, { version: p.version + 1 })
         : { schema: 'autonomy-policy@1.0', id: 'project-id.policy', version: 1, scope: 'project', projectId: 'project-id', narrows: policies[0].id, rules: [{ actionClass: 'merge', mode: 'ask' }], default: 'ask', expiry: { defaultSeconds: 86400, maxSeconds: 1209600 } }
-      editor.value = pretty(draft)
-      preview.replaceChildren()
+      sync()
+      buildForm()
     }
     pick.addEventListener('change', fill)
     const parsed = () => {
       try { return JSON.parse(editor.value) } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, 'Not JSON: ' + error.message)); return undefined }
     }
+    // An edit of the JSON that parses to a record is the draft, and the form shows it.
+    editor.addEventListener('input', () => {
+      let next
+      try { next = JSON.parse(editor.value) } catch { return }
+      if (next && typeof next === 'object' && !Array.isArray(next) && Array.isArray(next.rules) && next.expiry && typeof next.expiry === 'object') { draft = next; buildForm() }
+    })
     const showDiff = () => {
-      const draft = parsed()
-      if (draft !== undefined) preview.replaceChildren(el('p', { class: 'muted' }, selected() ? 'Changes to ' + selected().id + ' version ' + selected().version + ':' : 'A new policy:'), diffView(selected(), draft))
+      const proposed = parsed()
+      if (proposed !== undefined) preview.replaceChildren(el('p', { class: 'muted' }, selected() ? 'Changes to ' + selected().id + ' version ' + selected().version + ':' : 'A new policy:'), diffView(selected(), proposed))
     }
     const propose = async () => {
-      const draft = parsed()
-      if (draft === undefined) return
+      const proposed = parsed()
+      if (proposed === undefined) return
       try {
-        const { change, request } = await api('policy/propose', { policy: draft, note: note.value })
+        const { change, request } = await api('policy/propose', { policy: proposed, note: note.value })
         status.textContent = 'proposed ' + change.changeId + ': decide request ' + request.requestId + ' in the approval queue'
         report(true, 'Proposed: ' + change.policy.id + ' version ' + change.policy.version, ['Recorded as change ' + change.changeId + '. Nothing changes yet: it waits for your verdict on request ' + request.requestId + ', shown at the top of this page and on Home.'])
         await policyView()
-      } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, error.message)) }
+      } catch (error) { preview.replaceChildren(el('p', { class: 'state failed', role: 'alert' }, 'Not proposed: ' + error.message)) }
     }
     const when = (t) => t ? ago(t) : '-'
     show(
@@ -905,13 +1047,14 @@ export const APP_JS = `'use strict'
       table(['Action class'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => el('td', {}, (e.effective.find((x) => x.actionClass === c) || {}).mode || '-')))), 'queue'),
       el('h3', {}, 'Policies'),
       table(['Policy', 'Scope', 'Version'], policies.map((p) => el('tr', {}, el('td', {}, el('code', {}, p.id)), el('td', {}, p.scope + (p.projectId ? ' ' + p.projectId : '')), el('td', {}, String(p.version))))),
-      proposals ? el('div', { class: 'panel' },
+      proposals ? el('section', { class: 'panel', 'aria-label': 'Propose a change' },
         el('h3', {}, 'Propose a change'),
-        el('p', { class: 'muted' }, 'Raise the version. The whole set must load as a configuration would; the change is asked in the approval queue on its exact hash, and applies only when you approve it there.'),
-        el('p', {}, pick),
-        editor, el('p', {}, note),
-        el('button', { onclick: showDiff }, 'Show diff'),
-        el('button', { class: 'primary', onclick: propose }, 'Propose'),
+        el('p', { class: 'muted' }, 'Change the modes, commands, or numbers below, see the change, then propose it. Nothing changes until you approve it in the approval queue; the whole set must load as a configuration would.'),
+        el('p', {}, el('label', {}, 'Policy ', pick)),
+        form,
+        el('details', { class: 'advanced' }, el('summary', {}, 'Advanced: the record as JSON'), el('p', { class: 'muted' }, 'Every field of the record, as the form edits it; an edit here shows in the form once it is valid JSON.'), editor),
+        el('p', {}, note),
+        el('div', { class: 'actions' }, el('button', { onclick: showDiff }, 'Show change'), el('button', { class: 'primary', onclick: propose }, 'Propose')),
         preview) : el('p', { class: 'muted' }, 'This approval queue changes its policy by configuration and a restart only.'),
       changes ? el('h3', {}, 'History') : null,
       changes && !changes.length ? el('p', { class: 'muted' }, 'No change was proposed yet.') : null,

@@ -5,7 +5,7 @@
  * (docs/design/approvals.md), and the autonomy policy in force, its history, and the operator's
  * proposed changes, each asked in that queue (docs/design/approvals.md#a-policy-change); and, when
  * `ctx.board` is present, the board's tasks in review with the operator's acceptance, and its
- * projects with the operator's pause, resume, and close (docs/design/board.md); and the roster of every
+ * projects with the operator's pause, resume, and close, and a ready task's start (docs/design/board.md); and the roster of every
  * Worker (docs/design/roster.md). It is served on the
  * DSH webserver under `/ui`, which is loopback-only:
  * - the page and script carry no data, under a strict content security policy;
@@ -20,7 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
-import { type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
+import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
@@ -127,7 +127,8 @@ export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) 
     if (of.length > CARDS_PER_STATE) more[state] = of.length - CARDS_PER_STATE
     for (const t of of.slice(0, CARDS_PER_STATE)) {
       out.push({
-        taskId: t.taskId, title: t.title, state: t.state, actionClass: t.actionClass, createdAt: t.createdAt, ...(t.updatedAt ? { updatedAt: t.updatedAt } : {}),
+        taskId: t.taskId, title: t.title, state: t.state, actionClass: t.actionClass, revision: t.revision, ...(t.template ? { template: t.template } : {}),
+        attempts: { count: t.attempts.count, max: t.attempts.max }, createdAt: t.createdAt, ...(t.updatedAt ? { updatedAt: t.updatedAt } : {}),
         ...(t.run ? { run: { runId: t.run.runId, startedAt: t.run.startedAt } } : {}),
         ...(t.holder ? { holder: { owner: t.holder.owner, leaseExpiresAt: t.holder.leaseExpiresAt } } : {}),
         ...(t.waiting ? { waiting: { reason: t.waiting.reason, ...(t.waiting.approvalRequest ? { approvalRequest: t.waiting.approvalRequest } : {}), since: t.waiting.since, expiresAt: t.waiting.expiresAt } } : {}),
@@ -251,6 +252,8 @@ export function apply(ctx: Context, config: Config = {}): void {
         policies: [...studio.policies, ...projects.flatMap((p) => p.policies.slice(1))],
         effective: [{ effective: studio.effective }, ...projects.map((p) => ({ projectId: p.projectId, effective: p.effective }))],
         proposals: typeof approvals.proposePolicy === 'function',
+        // The classes that always ask, whatever a rule says: the page shows them fixed at ask.
+        alwaysAsk: [...ALWAYS_ASK],
         ...(approvals.policyChanges ? { changes: await approvals.policyChanges({ limit: POLICY_HISTORY }) } : {}),
       })
     }
@@ -381,6 +384,44 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   /**
+   * The operator starts a ready board task's run (`tasks/<taskId>/start`), when `ctx.board` is
+   * present (else 503), the way the lead does with MCP `run` and `task`: `GET` says what would run
+   * (the task's template, step by step, and the Worker each step needs), `POST {revision, template}`
+   * starts it with `ctx.workflow.start` for that task, the run claiming the ready task itself. The
+   * start binds to the task and template the page showed (INV-5): a task changed since, no longer
+   * ready, or naming no template or another one is refused (`409`) and nothing starts. A refusal
+   * by the engine (a paused project, a spent budget, an overloaded host) is `409` with its reason.
+   */
+  const tasks = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
+    const board = ctx.get('board')
+    if (!board) return json(res, 503, { error: 'the board is not running' })
+    const match = /^tasks\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/start$/.exec(path)
+    if (!match) return json(res, 404, { error: 'not found' })
+    if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+    const taskId = match[1]!
+    try {
+      const body = req.method === 'POST' ? await readJson(req) : undefined
+      if (body && (!Number.isSafeInteger(body.revision) || (body.revision as number) < 0)) return json(res, 400, { error: 'revision must be the task revision the page showed' })
+      if (body && (typeof body.template !== 'string' || !body.template)) return json(res, 400, { error: 'template must be the template the page showed' })
+      const task = await board.task(taskId)
+      if (!task) return json(res, 404, { error: `unknown task ${taskId}` })
+      if (task.state !== 'ready') return json(res, 409, { error: `task ${taskId} is ${task.state}, not ready: nothing was started` })
+      if (!task.template) return json(res, 409, { error: `task ${taskId} names no template, so it cannot start from here: the lead starts it with a template it chooses (MCP run with task); nothing was started` })
+      const steps = ctx.workflow.templateSteps(task.template)
+      if (!steps) return json(res, 409, { error: `task ${taskId} names template ${task.template}, which is not served now (${ctx.workflow.refusedTemplates().find((t) => t.name === task.template)?.reason ?? 'no such template'}); nothing was started` })
+      if (!body) return json(res, 200, { task: { taskId, title: task.title, revision: task.revision, template: task.template, attempts: task.attempts }, steps })
+      // The start binds to the task the operator confirmed: one changed since is refused (INV-5).
+      if (task.revision !== body.revision) return json(res, 409, { error: `task ${taskId} changed since the page showed it (revision ${task.revision}, not ${String(body.revision)}); nothing was started` })
+      if (task.template !== body.template) return json(res, 409, { error: `task ${taskId} runs template ${task.template}, not ${String(body.template)}; nothing was started` })
+      // The task's own words are the run's input, as the requested change; a repeated press starts no second run.
+      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
+      return json(res, 200, { run })
+    } catch (error) {
+      return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
+    }
+  }
+
+  /**
    * The roster (docs/design/roster.md): `GET roster` gives every Worker in one read model, projected
    * on read from the services mounted, each one absent read as unknown with why. The page is the
    * operator's, so it shows account labels.
@@ -411,6 +452,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'policy' || path.startsWith('policy/')) return policy(req, res, path)
     if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path)
     if (path === 'projects' || path.startsWith('projects/')) return projects(req, res, path)
+    if (path.startsWith('tasks/')) return tasks(req, res, path)
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue))?$/.exec(path)

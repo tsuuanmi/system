@@ -21,6 +21,7 @@ Each website is a `ProviderDriver`. The runtime never branches on provider names
 ```ts
 interface ProviderDriver<Page> {                   // provider-core
   readonly provider: string;                       // "chatgpt-web", "gemini-web"
+  readonly title?: string;                         // the site's name for people ("ChatGPT"); its Workers carry it (@1.8), routing never reads it
   readonly capabilities: readonly string[];        // proven by its tests, e.g. reason
   readonly features?: readonly string[];           // per account, e.g. deep-research
   probeFeatures?(page): Promise<string[]>;         // read from the site; sends nothing

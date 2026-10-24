@@ -78,18 +78,24 @@ masked hint and slot, and its kinds, `@1.4`):
 <runtime> · <account> · <role or tier> [<kinds>]
 Claude Code · science · develop [code]
 Codex · c…@example.com, slot 2 · develop-2 [docs, tests]
-Chatgpt · Studio Plus · standard
+ChatGPT · main · frontier
+Gemini API · standard
 Openai · fast · standard
 ```
 
-- **Runtime:** the agent runtime's title as its provider gives it (`title`,
-  [seam contract](agent-runtimes.md#seam-contract)), else its provider's first word, capitalised
-  (a model Worker's, its family's): a website or model Worker is named so.
+- **Runtime:** the Worker's own title (`capability-descriptor@1.8` `title`): a website Worker's is
+  its site's, as its driver gives it ([driver interface](provider-turns.md#driver-interface)), a
+  model Worker's the operator's `models[].title`; else the agent runtime's title as its provider
+  gives it (`title`, [seam contract](agent-runtimes.md#seam-contract)); else its provider's first
+  word, capitalised (a model Worker's, its family's). A title comes only from a provider plugin or
+  the operator's configuration: no shared code names a vendor
+  ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
 - **Account:** for the operator, the account's label: an agent account's
   `assignments[].label` in the agent-workers row, else its masked hint and slot (or the slot); a
   website account's catalog label, else its id. For a client (the lead), who gets no label, an
   agent account's slot, or the account id. With no account record read, its account's id; a
-  Worker that names no account (a model), the rest of its own id (`model:fast`, `fast`).
+  Worker that names no account (a model), the rest of its own id (`model:fast`, `fast`), or nothing
+  when it has its own title, which names that one Worker (`Gemini API · standard`).
 - **Work:** its role (account × role), else its tier, and the kinds of work it takes
   (`capability-descriptor@1.6`).
 
@@ -144,11 +150,14 @@ The schema bounds every string and list as well
   the counts (working, idle, at a limit and when the first is back, unavailable), then one card per
   Worker grouped by status, headed by its display name with its id under it, under the page's
   security headers and the operator token, built with DOM methods and text only. **Doing now** lists its steps, then its runs whose liveness needs a
-  look (a held one marked as failed), each with a link to its run. Each window of a pool reads `five-hour: used 42 % of 5 h, resets 14:20
-  (read 14:05)`: `used` of the window's length, `resets`, and `observedAt` on the clock (an
+  look (a held one marked as failed), each with a link to its run. Each window of a pool reads `5 h: used 9 % — resets 23:30
+  (read 22:05)` beside a small bar of its share: the window named by its length (its id when it
+  has none, or beside one of the same length), `used`, `resets`, and `observedAt` on the clock (an
   account's own usage report keeps them fresh,
-  [ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md)), and
-  what its reading does not give as `unknown (why)`.
+  [ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md)); before
+  any reading, `5 h: no reading yet: <why>`, the why its account's last usage report could not be
+  read with its time on the clock; and what its reading does not give as `unknown (why)`. A window
+  at its limit reads `at its limit` first and is listed first, in a pool at a limit listed first.
 
 ## Rejected alternatives
 

@@ -1107,8 +1107,10 @@ Each ready, assigned agent account whose Workers draw on a pool template has its
 read from its runtime's own usage report, without a model turn: once after each of its runs, and
 every `limitReadSeconds` ([ADR-0059](../decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
 [design](../design/agent-runtimes.md#an-accounts-usage-report)). Two accounts on different plans
-read their own shares; nothing is configured per plan. The Workers tab (and `system roster`) shows
-each window as `five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)`.
+read their own shares; nothing is configured per plan. `system roster` lists each window's state,
+used share, and reset; the Workers tab shows it as `5 h: used 42 % — resets 14:20 (read 14:05)`
+with a small bar, or `5 h: no reading yet: <why>` while its account's usage report could not be
+read.
 
 1. **Move to accounts × roles first** ([above](#migrate-agent-workers-to-accounts--roles)): the
    periodic read covers derived Workers' accounts only. A hand-named Worker's account is read only

@@ -51,11 +51,12 @@ describe('the Gemini Web UI map and driver contract', () => {
     expect(() => new GeminiWebDriver({ modes: PRESETS, researchMode: 'ultra' })).toThrow(/research mode ultra/)
   })
 
-  it('registers itself on ctx.providers', async () => {
+  it('registers itself on ctx.providers, with its site\'s title for people (T116)', async () => {
     const ctx = new Context()
     await ctx.plugin(Providers)
     await ctx.plugin(GeminiWebPlugin, { origin: 'http://127.0.0.1:9' })
     expect(ctx.providers.get('gemini-web')).toBeInstanceOf(GeminiWebDriver)
+    expect(ctx.providers.get('gemini-web').title).toBe('Gemini')
   })
 
   it('logs drift as ui.drift, its outline kept as local-private evidence (drift evidence, INV-12)', async () => {

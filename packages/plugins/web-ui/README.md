@@ -18,7 +18,8 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - when `ctx.approvals` is present, the **approval queue**
   ([approvals](../../../docs/design/approvals.md)) above the runs: open requests by batch, each
   in plain words (what is asked, who asked, what approving and denying change, when it expires,
-  the exact subject behind **Exact subject**), and the operator's **Approve / Deny**, labelled by
+  the exact subject behind **Exact subject**, and what a verdict does in words, its long hashes
+  folded behind **details**), and the operator's **Approve / Deny**, labelled by
   their effect, for one request or a whole batch, each with an optional note. What a verdict did
   (recorded, with its ids and what happens next, or not recorded and why) stays above the page
   until dismissed ([the page](../../../docs/reference/web-ui.md#approval-queue)); a `policy-change`
@@ -28,7 +29,9 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   (its hash, and whether it is the configuration or a change the operator approved), the
   effective mode of every action class for the studio and each project, the policies, the latest
   changes with their diffs, and **Propose a change**: the operator edits one policy record (the
-  next version, or a new project's policy), sees its diff, and proposes it. The proposal is asked
+  next version, or a new project's policy) as a form (a mode per action class, the classes that
+  always ask fixed at ask with why, the commands as lines, the expiry and batch numbers; the JSON
+  folded under **Advanced**), sees the change, and proposes it. The proposal is asked
   in the queue as a `policy-change` request on the exact hash of the set it makes, and applies only
   when the operator approves it there ([a policy change](../../../docs/design/approvals.md#a-policy-change)).
   An asked change's card, with its **Approve** and **Deny**, is at the top of the page, and its
@@ -51,6 +54,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   (**Accepted — waiting to merge into main: approve**, linked to its `merge` request and shown under
   Waiting for you; merged, with the commit; or not merged, and why;
   [landing](../../../docs/design/workflow-engine.md#landing-an-accepted-result)).
+  A ready task's **Start…** starts its run as the lead does (MCP `run` with `task`): a
+  confirmation says what runs (its template's steps, each with the kind of Worker it needs, from
+  `ctx.workflow.templateSteps`), the start is bound to the task revision and template shown, and a
+  task that names no template is refused with why
+  ([starting a ready task](../../../docs/reference/web-ui.md#starting-a-ready-task)).
   The operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each opens a confirmation that says what the move does to this project (what goes on, what is
@@ -68,10 +76,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   a link to its run; its account, with the account's label and its enrolled, ready, signed-out, or
   quarantined state; what it serves (tier, quota class, locality, provider, family, role); its
   limits, with each reset relative and on the clock, and each window of its account's pools as
-  `five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)` (the window's latest reading, an
-  account's usage report among them, [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
-  its share of the window's length, its reset, and when it was read, each on the clock with the day
-  when not today; `; at its limit` while it is limited); and its load
+  `5 h: used 42 % — resets 14:20 (read 14:05)` beside a small bar of its share (the window's
+  latest reading, an account's usage report among them, [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
+  the window by its length, its share, its reset, and when it was read, each on the clock with the
+  day when not today; `at its limit` first, and listed first, while it is limited; `5 h: no reading
+  yet: <why>` before any reading); and its load
   ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
   `unknown (why)`, and a Worker source that did not answer is named above the cards.
 
@@ -153,7 +162,9 @@ re-gated by the board's next sweep; a rejection that changes nothing; a restart 
 applied set, a changed configuration that refuses the queue until it supersedes the stored set; a
 client token refused; proposals the load-time or version rules refuse; a change the queue proposed
 itself, shown with its origin and applied only on the operator's approval; and, with a browser,
-the policy page's diff, a proposal, its queue entry, and its approval, and a queue entry that says
+the policy page's diff, a proposal, its queue entry, and its approval, the policy edited as a
+form (each mode, the classes that always ask fixed, commands, expiry, batch, the JSON following,
+the queue's refusal shown), and a queue entry that says
 the queue proposed the change, and why.
 [`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
@@ -164,7 +175,11 @@ pause and a close refused to a client token, bound to the revision shown; a paus
 ready task the engine does not run and whose proposed task is not gated, resumed and run to done;
 a close refused while a task is in review, then cancelling the open tasks, releasing a claim, and
 withdrawing the requests a waiting task and a pending amendment were on, in the store-backed queue;
-and, with a browser, a charter founded from the queue (what approving and denying do, with the
+a ready task's run started for the operator's token only, bound to the revision and template
+shown, refused for a task naming no template; and, with a browser, a ready task started from its
+card after its confirmation (moving to Working) and a task naming no template refused with why;
+every page laid out at 600 px (none wider than the screen, the columns stacked, whole nav links);
+a charter founded from the queue (what approving and denying do, with the
 project's task counts; the approval recorded and reported with its ids; the project active after
 the board's sweep), a pause and a close each made only after its confirmation, and a Cancel that
 moves nothing. [`tests/web-ui.spec.ts`](tests/web-ui.spec.ts) also checks the projects routes

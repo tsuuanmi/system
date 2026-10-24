@@ -14,7 +14,10 @@ Every route is under `/ui/api` and passes the shared request guard first
 
 One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
 current one marked (`aria-current`) and named in the window's title; a run's page counts as Home's.
-Each page opens with its title and one line of what it is for.
+Each page opens with its title and one line of what it is for. On a narrow screen (600 px) no
+page is wider than the screen: the navigation wraps whole links with the refresh line under it,
+the Board's columns stack, each card the screen's width with its **Start…** across it, and the
+tables keep their first columns.
 
 **Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
 for review with when the first held for you expires, and the runs that need a look, each linking
@@ -74,7 +77,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), per state the most recently changed first, at most 50 each, `more` counting the rest per state |
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`, and for a done task whose accepted result is landed `landing {state, branch?, base?, requestId?, commit?, reason?}`: `watch`, `commit`, `committed`, `asked` (its `merge` request), `merging`, `merged` (the base's new head), `refused` or `rejected` (why); [landing](../design/workflow-engine.md#landing-an-accepted-result)), and its `revision`, `template` (when it names one), and `attempts {count, max}`, per state the most recently changed first, at most 50 each, `more` counting the rest per state |
 | `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
 | `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
 | `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
@@ -97,9 +100,35 @@ Served when `ctx.board` is present; without it, every route answers `503`
   **Accepted — waiting to merge into <base>: approve**, linked to its `merge` request
   (`?request=<id>`), and also shown under *Waiting for you*; **Accepted and merged into <base> as
   <commit>** (not pushed); **Accepted — not merged:** and why; or that the merge was not approved.
+- A ready task's card says what starts it (*Ready to start: a solo run*, or that it names no
+  template, so the lead starts it) and offers **Start…** ([below](#starting-a-ready-task)).
 - A close cancels every open task of the project (`project-closed`), releasing a claimed one's
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
+
+### Starting a ready task
+
+Served when `ctx.board` is present; without it, both routes answer `503`. The operator starts a
+ready task's run the way the lead does with MCP `run` and `task`
+([board](../design/board.md)): the run claims the ready task itself, and the board records it before
+any step runs.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET tasks/<taskId>/start` | — | `{task {taskId, title, revision, template, attempts}, steps}`: what would run, each step's `nodeId`, `objective`, `capabilities`, least `tier`, and `kind`, `team {kind, members}`, `source`, or `plans` when it has them (`ctx.workflow.templateSteps`) |
+| `POST tasks/<taskId>/start` | `{revision, template}`: the task revision and template the page showed | `{run}`: the run, started with `ctx.workflow.start({template, input, task: {taskId}})`, its input the task's title and goal |
+
+- An unknown task is `404`, a malformed body `400`. A task that is not ready, names no template
+  (the lead then starts it with a template it chooses), names a template not served, changed since
+  the page showed it (its revision), or names another template than the page sent is `409`, and
+  nothing starts. A refusal by the engine (a paused project, a spent budget, a drained host) is
+  `409` with its reason.
+- The card's **Start…** opens a confirmation that says what runs: the template, the attempt (*its
+  attempt 1 of 3*), each step with the kind of Worker it runs on (*Do solo: a Worker of standard
+  tier or above that can reason*), how many Workers are idle, and that nothing runs until
+  **Confirm start**; **Cancel** closes it. A task that names no template shows why it cannot start
+  here instead. The outcome (the run, linked, or why nothing started) is reported above the page,
+  and the card moves to *Working*.
 
 ## Approval queue
 
@@ -129,7 +158,11 @@ project …* or *Amend the charter of …*, a board task's step, a tool call, a 
 a policy change, an accepted result's merge, with its branch and both heads), who asked (the board for a task or project, an agent run, a run's step, the
 queue), the request's own text, what it is about with the exact subject behind **Exact
 subject**, what approving and what denying change, and when it expires, relative and absolute
-(unanswered by then, it counts as denied). The consequences a requester gave are shown as given;
+(unanswered by then, it counts as denied). The consequences a requester gave are shown as given,
+read first in words: a policy set's hash reads *the proposed set*, a hash in parentheses is left
+out, and any other long hash is cut to its first 8 characters, with the exact text behind
+**details** (a policy change's subject reads *the policy set this change would put in force*, its
+hash behind **Exact subject**);
 for a board charter or task request without them the page says what the board does with each
 verdict ([board](../design/board.md)), counting the project's proposed and open tasks from
 `GET projects` when the board runs. Each button names its effect (*Approve: activate project p1*,
@@ -156,12 +189,22 @@ set's hash folded, and what each mode means (*auto* runs on its own, *notify* ru
 you, *ask* waits for your approval, *forbid* never runs); its history's times read relative, the
 clock time beside.
 
+**Propose a change** edits one policy (the next version, raised for the operator, or a new
+project's policy) as a form: a mode per action class (*not named*, auto, notify, ask, forbid; a
+rule's required checks and wait kept), each class that always asks shown fixed at ask with why
+(*an accepted result lands only on your approval* for merge; a forbid set in the record is shown
+as such), the mode of a class no rule names, the commands judged as workspace writes as lines,
+the requests' wait and its maximum in hours, and the batch's size and wait. The record as JSON
+stays under **Advanced**, following the form (an edit there that parses shows in the form).
+**Show change** gives the record's diff, and **Propose** sends it; the page refuses nothing the
+queue would take, and a refusal is shown as *Not proposed:* with the queue's reason.
+
 Served when `ctx.approvals` is present; without it, both routes answer `503`
 ([a policy change](../design/approvals.md#a-policy-change)).
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), and its latest 20 `policy-change@1.x` records, newest first (a change the queue proposed itself carries its `origin`, `@1.1`) |
+| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), `alwaysAsk` (the classes that always ask, whatever a rule says: `ALWAYS_ASK` in approvals-core), and its latest 20 `policy-change@1.x` records, newest first (a change the queue proposed itself carries its `origin`, `@1.1`) |
 | `POST policy/propose` | `{policy, note?}`: one `autonomy-policy@1.0` record | `{change, request}`: the `policy-change@1.0` record (`asked`) and the `policy-change` request that asks for it |
 
 - The proposal goes to `ctx.approvals.proposePolicy` as the operator's (INV-6), at the server's

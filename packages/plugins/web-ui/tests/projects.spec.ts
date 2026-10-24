@@ -208,7 +208,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goBack()
     // Several projects: all by default, each card naming its project; the filter shows one.
     await expect.poll(() => column('Ready').innerText()).toContain('Handbook rewrite')
-    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? idle · 2 tasks ready\. A ready task starts when the lead runs it/)
+    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? idle · 2 tasks ready\. A ready task starts when you press Start on its card or the lead runs it/)
     await page.getByLabel('Show').selectOption('p2')
     await expect.poll(() => column('Ready').innerText()).not.toContain('Write the release notes')
     expect(await column('Ready').innerText()).toContain('Outline the chapters')
@@ -319,4 +319,124 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await expect.poll(() => page.locator('main').innerText()).toContain('closed (stopped)')
     expect(await page.getByRole('button', { name: 'Close p1' }).count()).toBe(0)
   }, 60_000)
+
+  it('starts a ready task\'s run for the operator\'s token only, as the lead does: what would run said first, bound to the task revision and template shown; a task naming no template refused (T116)', async () => {
+    const booted = await boot()
+    const { ctx, call, client, workers } = booted
+    await activeProject(ctx)
+    const task = await readyTask(ctx, 'Write the release notes', { template: 'solo' })
+    const bare = await readyTask(ctx, 'Draft the pricing page copy')
+    const card = ((await listed(booted)).tasks as Array<Record<string, any>>).find((t) => t.taskId === task.taskId)
+    expect(card).toMatchObject({ state: 'ready', template: 'solo', revision: task.revision, attempts: { count: 0, max: task.attempts.max } })
+
+    expect((await call(`tasks/${task.taskId}/start`, undefined, client)).status).toBe(401)
+    expect((await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' }, client)).status).toBe(401)
+    const preview = await call(`tasks/${task.taskId}/start`)
+    expect(preview.status, JSON.stringify(preview.value)).toBe(200)
+    expect(preview.value).toEqual({ task: { taskId: task.taskId, title: 'Write the release notes', revision: task.revision, template: 'solo', attempts: task.attempts }, steps: [{ nodeId: 'solo', objective: 'Do solo', capabilities: ['reason'], tier: 'standard' }] })
+    const none = await call(`tasks/${bare.taskId}/start`)
+    expect([none.status, none.value.error]).toEqual([409, expect.stringMatching(/names no template, so it cannot start from here: the lead starts it/)])
+    expect((await call(`tasks/${bare.taskId}/start`, { revision: bare.revision, template: 'solo' })).status).toBe(409)
+    expect((await call('tasks/nope/start')).status).toBe(404)
+    expect((await call(`tasks/${task.taskId}/start`, { template: 'solo' })).status).toBe(400)
+    expect((await call(`tasks/${task.taskId}/start`, { revision: task.revision + 1, template: 'solo' })).status).toBe(409)
+    expect((await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'chain' })).status).toBe(409)
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
+    expect(await ctx.board.task(bare.taskId)).toMatchObject({ state: 'ready' })
+
+    workers.reply = () => 'hold'
+    const started = await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' })
+    expect(started.status, JSON.stringify(started.value)).toBe(200)
+    const run = started.value.run as { runId: string; template: string; task: { taskId: string } }
+    expect(run).toMatchObject({ template: 'solo', task: { taskId: task.taskId } })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'running', run: { runId: run.runId } })
+    // The run's input is the task's own words; a second press finds the task no longer ready and starts nothing.
+    expect(ctx.workflow.get(run.runId)!.nodes).toHaveLength(1)
+    const again = await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' })
+    expect([again.status, again.value.error]).toEqual([409, expect.stringMatching(/is running, not ready: nothing was started/)])
+    expect(ctx.workflow.usage(10).filter((r) => r.runId !== run.runId && (r as { task?: { taskId: string } }).task?.taskId === task.taskId)).toEqual([])
+  })
+
+  it.runIf(canRunBrowser)('starts a ready task from its Board card in a real browser after a confirmation that says what runs on which kind of Worker; the card moves to Working, and a task naming no template is refused with why (T116)', async () => {
+    const booted = await boot()
+    const { ctx, workers } = booted
+    await activeProject(ctx)
+    await readyTask(ctx, 'Write the release notes', { template: 'solo' })
+    await readyTask(ctx, 'Draft the pricing page copy')
+    workers.reply = () => 'hold'
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    const column = (name: string) => page.getByRole('region', { name, exact: true })
+    const notes = column('Ready').getByRole('article', { name: 'Write the release notes' })
+    await expect.poll(() => notes.count()).toBe(1)
+    expect(await notes.innerText()).toContain('Ready to start: a solo run')
+
+    // No template: refused with why, and nothing moves.
+    const pricing = column('Ready').getByRole('article', { name: 'Draft the pricing page copy' })
+    expect(await pricing.innerText()).toContain('Ready; it names no template, so the lead starts it')
+    await page.getByRole('button', { name: 'Start Draft the pricing page copy' }).click()
+    const refused = page.getByRole('alert', { name: 'Cannot start Draft the pricing page copy' })
+    await expect.poll(() => refused.count()).toBe(1)
+    expect(await refused.innerText()).toMatch(/names no template, so it cannot start from here/)
+    await refused.getByRole('button', { name: 'Cancel' }).click()
+
+    await page.getByRole('button', { name: 'Start Write the release notes' }).click()
+    const confirming = page.getByRole('group', { name: 'Confirm start of Write the release notes' })
+    await expect.poll(() => confirming.count()).toBe(1)
+    const said = await confirming.innerText()
+    expect(said).toContain('It runs the solo template for this task, its attempt 1 of')
+    expect(said).toContain('Do solo: a Worker of standard tier or above that can reason.')
+    expect(said).toContain('Nothing runs until you confirm')
+    expect((await ctx.board.tasks({ projectId: 'p1', states: ['ready'] })).length).toBe(2)
+    await confirming.getByRole('button', { name: 'Confirm start' }).click()
+    const outcome = page.locator('#outcome')
+    await expect.poll(() => outcome.innerText()).toContain('Started: Write the release notes')
+    expect(await outcome.innerText()).toMatch(/Run run_\w+ of the solo template claimed the task/)
+    await expect.poll(() => column('Working').getByRole('article', { name: 'Write the release notes' }).count()).toBe(1)
+    expect(await column('Ready').getByRole('article', { name: 'Write the release notes' }).count()).toBe(0)
+    await outcome.getByRole('link', { name: /^run_/ }).click()
+    await expect.poll(() => page.getByRole('heading', { name: /^Run run_/ }).count()).toBe(1)
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('lays every page out at 600 px in a real browser: no page wider than the screen, the Kanban columns stacked with readable cards, and the navigation wrapping whole links (T116)', async () => {
+    const booted = await boot()
+    const { ctx, workers } = booted
+    await activeProject(ctx)
+    await readyTask(ctx, 'Write the release notes for the relaunch of the studio website', { template: 'solo' })
+    await reviewed(ctx, 'Fix the slow image build')
+    const done = await ctx.workflow.start({ template: 'chain', input: 'Summarise the hosting options', classification: 'public' })
+    await vi.waitFor(() => expect(ctx.workflow.get(done.runId)?.status).toBe('completed'), { timeout: 30_000 })
+    workers.reply = () => 'hold'
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 600, height: 900 } })
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    for (const path of ['/ui/', '/ui/?view=board', '/ui/?view=workers', '/ui/?view=policy', `/ui/?run=${done.runId}`]) {
+      await page.goto(origin + path)
+      await expect.poll(() => page.locator('#status').innerText(), { message: path }).toContain('updated')
+      expect(await page.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(600)
+      // Each navigation link stays on one line; the links wrap as a whole.
+      for (const name of ['Home', 'Board', 'Workers', 'Autonomy policy']) {
+        const box = (await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name }).boundingBox())!
+        expect(box.height, `${path} ${name}`).toBeLessThan(30)
+        expect(box.x + box.width, `${path} ${name}`).toBeLessThanOrEqual(600)
+      }
+    }
+    await page.goto(`${origin}/ui/?view=board`)
+    const columns = page.locator('.kanban > .column')
+    await expect.poll(() => columns.count()).toBe(5)
+    const boxes = await columns.evaluateAll((list) => list.map((c) => c.getBoundingClientRect()).map((r) => ({ x: r.x, y: r.y, width: r.width })))
+    for (const [i, box] of boxes.entries()) {
+      expect(box.x, `column ${i}`).toBe(boxes[0]!.x)
+      expect(box.width, `column ${i}`).toBeGreaterThan(500)
+      if (i) expect(box.y, `column ${i}`).toBeGreaterThan(boxes[i - 1]!.y)
+    }
+    const card = page.getByRole('article', { name: 'Write the release notes for the relaunch of the studio website' })
+    expect((await card.boundingBox())!.width).toBeGreaterThan(500)
+    expect((await card.getByRole('button', { name: /^Start / }).boundingBox())!.width).toBeGreaterThan(400)
+  }, 90_000)
 })

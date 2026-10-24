@@ -123,6 +123,23 @@ export interface TaskClaim {
   generation?: number | undefined
 }
 
+/**
+ * One step of a template as a person reads it before a start (`templateSteps`): what it does and
+ * the Worker it needs. `team` for a team step (its kind and members, each on a different provider
+ * family), `source` for a step the engine runs itself, `plans` for a planner whose steps are added
+ * once it answers.
+ */
+export interface TemplateStep {
+  nodeId: string
+  objective: string
+  capabilities: string[]
+  tier: Tier
+  kind?: string
+  team?: { kind: 'brainstorm' | 'review'; members: number }
+  source?: true
+  plans?: true
+}
+
 /** A start for a board task: admission is asynchronous, since the board takes the task first. */
 export interface TaskStartInput extends StartInput {
   task: TaskClaim

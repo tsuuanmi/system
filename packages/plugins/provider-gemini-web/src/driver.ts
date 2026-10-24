@@ -110,6 +110,8 @@ const PAGE_IDLE_WAIT_MS = 3000
 
 export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly provider = 'gemini-web'
+  /** The site's name for people: its Workers' display name starts with it (the roster). */
+  readonly title = 'Gemini'
   readonly capabilities = ['reason', 'persistent-conversation'] as const
   /** Account features, each proven on the account by `probeFeatures` (REQ-PRV-7). */
   readonly features = ['deep-research'] as const
