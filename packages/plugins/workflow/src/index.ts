@@ -69,7 +69,7 @@ export class Workflow extends Service {
       prompt: z.string().required(),
       capabilities: z.array(z.string()).required(),
       tier: z.union(['economy', 'standard', 'frontier']).required(),
-      kind: z.string().description('The kind of work the step is (ADR-0056), such as code or docs: a Worker the operator gives kinds takes it only when it lists this one; checked by preflight'),
+      kind: z.string().description('The kind of work the step is (ADR-0057), such as code or docs: a Worker the operator gives kinds takes it only when it lists this one; checked by preflight'),
       callerTier: z.boolean(),
       conversation: z.union(['temporary', 'persistent', 'caller', 'own']).required(),
       acceptance: z.string().required(),

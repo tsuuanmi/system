@@ -44,7 +44,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   (a writer never reviews), `family` is set, and `worktreePerRun` is off.
   Optional: `kinds`, the kinds of work the operator gives it (1 to 16 labels such
   as `code` or `docs`; [work kinds](../../../docs/design/routing.md#work-kinds),
-  [ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)): it is then
+  [ADR-0057](../../../docs/decisions/adr/0057-route-work-by-kind.md)): it is then
   described at `capability-descriptor@1.6` with them and takes only steps that
   name one of them, never a step that names none; unset, it takes any work. A
   malformed or repeated kind, an empty list, or kinds on a review member (whose

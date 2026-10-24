@@ -265,7 +265,7 @@ export class Engine {
    * tier and where that came from; its acceptance contract. A review team member's step
    * (proposal, ballot, debate) names its kind of work, `scope: review-member` (`@1.1`), so offers
    * scoped to it count (ADR-0049); its capabilities stay the same. A step that names its kind of
-   * work carries it (`kind`, `@1.2`; ADR-0056), from the admitted spec only.
+   * work carries it (`kind`, `@1.2`; ADR-0057), from the admitted spec only.
    */
   requirementOf(node: ResolvedNode, persistent: boolean, classification: Classification | undefined): WorkRequirement {
     const member = node.team?.kind === 'review' && node.team.member !== undefined

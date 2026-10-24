@@ -46,7 +46,7 @@ export interface AgentRoleConfig {
   quotaClass?: QuotaClass | undefined
   worktreePerRun?: boolean | undefined
   reviewMember?: boolean | undefined
-  /** The kinds of work its Workers take (ADR-0056); unset, any work. */
+  /** The kinds of work its Workers take (ADR-0057); unset, any work. */
   kinds?: string[] | undefined
   /** What differs per runtime, by runtime kind. */
   runtimes?: Record<string, AgentRoleRuntime> | undefined
@@ -126,7 +126,7 @@ export function checkProviders(providers: readonly AgentProviderConfig[]): void 
 export const MAX_KINDS = 16
 
 /**
- * What is wrong with a Worker's or role's `kinds` (ADR-0056), or undefined when nothing is: at least
+ * What is wrong with a Worker's or role's `kinds` (ADR-0057), or undefined when nothing is: at least
  * one, at most {@link MAX_KINDS}, each a kind label once; never on a review member, whose steps name
  * no kind, so it would take none of them.
  */

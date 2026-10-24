@@ -116,7 +116,7 @@ export interface AgentWorkerConfig {
    */
   reviewMember?: boolean
   /**
-   * The kinds of work the operator gives it (ADR-0056), such as `code` or `docs`: it takes only work
+   * The kinds of work the operator gives it (ADR-0057), such as `code` or `docs`: it takes only work
    * whose step names one of them, never work that names none. Unset: it takes any work. Never with
    * `reviewMember` (a member's steps name no kind).
    */
@@ -282,7 +282,7 @@ const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...
 /**
  * The row's Workers as its configuration names them (hand-named, or derived as account × role), and
  * its runtimes' account settings, checked as the load checks them: a malformed Worker or role, a
- * review member that is not read-only or names no family, malformed `kinds` (ADR-0056), Workers of
+ * review member that is not read-only or names no family, malformed `kinds` (ADR-0057), Workers of
  * one workspace that disagree on `worktreePerRun`. Throws `config_error`, naming the first problem.
  */
 function configuredWorkers(config: Partial<Config>): { derived: boolean; workers: Map<string, WorkerSpec>; accounts: Map<string, AccountSetting> } {
@@ -362,7 +362,7 @@ export class AgentWorkers extends Service {
       family: z.string().min(1).max(128).description('Its provider family (ADR-0027; default: the runtime): the same as other Workers\' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
       // Not z.array: an omitted array would come back as [], a Worker given no kind at all; checked at load.
-      kinds: z.any().description('The kinds of work it takes (ADR-0056), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member'),
+      kinds: z.any().description('The kinds of work it takes (ADR-0057), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member'),
     })).default([]).description('Hand-named agent-runtime Workers (the shape before Workers are account × role): they run as before until system account migrate --apply, then are refused; never with roles or assignments. Each policy comes from here only (INV-6)'),
     roles: z.array(z.object({
       id: z.string().pattern(/^[a-z][a-z0-9-]{0,31}$/).required().description('Role id: its Workers are agent:<accountId>/<role>'),
@@ -373,7 +373,7 @@ export class AgentWorkers extends Service {
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace, as a hand-named Worker\'s'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family'),
       // Not z.array, as a hand-named Worker's.
-      kinds: z.any().description('The kinds of work its Workers take (ADR-0056), as a hand-named Worker\'s; unset, any work. Not for a review member'),
+      kinds: z.any().description('The kinds of work its Workers take (ADR-0057), as a hand-named Worker\'s; unset, any work. Not for a review member'),
       runtimes: z.dict(z.object({
         tools: z.array(z.string()),
         model: z.string(),
@@ -648,7 +648,7 @@ export class AgentWorkers extends Service {
       const state = !ready ? 'unavailable' : pool === 'ready' && load && load.running >= load.slots ? 'busy' : pool
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
-        // the operator gives it, so it takes no other (ADR-0056).
+        // the operator gives it, so it takes no other (ADR-0057).
         schema: worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state, observedAt,

@@ -282,7 +282,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     await expect(proven.ctx.workers.route(validate, { restrict: { workers: ['agent:reviewer'], reason: 'the reviewer only' } })).rejects.toThrow(/no Worker can take this work/)
   })
 
-  it('describes the kinds of work the operator gives a Worker, so each writer takes only its own kind and a reviewer given none takes any (REQ-WRK-11, ADR-0056)', async () => {
+  it('describes the kinds of work the operator gives a Worker, so each writer takes only its own kind and a reviewer given none takes any (REQ-WRK-11, ADR-0057)', async () => {
     const write = { sandbox: 'workspace-write' as const }
     const config = { workers: [worker(), worker({ id: 'coder', ...write, kinds: ['code'] }), worker({ id: 'documenter', ...write, kinds: ['docs', 'tests'] })] }
     const { ctx } = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], executes: true }), config)
@@ -307,7 +307,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     await expect(ctx.workers.route(kinded(undefined, ['develop', 'local-data']))).rejects.toThrow(/no Worker that proves develop, local-data takes work that names no kind/)
   })
 
-  it('refuses kinds of work that are malformed or on a review member, at load (ADR-0056)', async () => {
+  it('refuses kinds of work that are malformed or on a review member, at load (ADR-0057)', async () => {
     for (const kinds of [[], ['Docs'], ['docs', 'docs']]) {
       const { ctx } = await boot(new ScriptedAgent(), { workers: [worker({ kinds })] })
       expect(ctx.get('agentWorkers')).toBeUndefined()

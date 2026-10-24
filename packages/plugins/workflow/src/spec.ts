@@ -20,7 +20,7 @@ export interface NodeTemplate {
   /** Minimum tier (REQ-WRK-9). */
   tier: Tier
   /**
-   * The kind of work this step is (ADR-0056), such as `code` or `docs`: a Worker the operator gives
+   * The kind of work this step is (ADR-0057), such as `code` or `docs`: a Worker the operator gives
    * kinds takes it only when it lists this one; a Worker given none takes it as any work. An opaque
    * label, never a tool. Not on a team or a source step.
    */
@@ -338,7 +338,7 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
     if (node.snapshot && (node.team || node.grows || node.variants || node.differentFrom?.length || node.resultSchema)) {
       throw new TypeError(`node ${node.nodeId}: a source step has no team, grows, variants, differentFrom, or resultSchema`)
     }
-    // A kind is an opaque label of what the step is (ADR-0056); a team's members and a source step name none.
+    // A kind is an opaque label of what the step is (ADR-0057); a team's members and a source step name none.
     if (node.kind !== undefined) {
       if (typeof node.kind !== 'string' || !WORK_KIND.test(node.kind)) throw new TypeError(`node ${node.nodeId}: kind ${JSON.stringify(node.kind)} is not a kind of work (${WORK_KIND})`)
       if (node.team || node.snapshot) throw new TypeError(`node ${node.nodeId}: a ${node.team ? 'team' : 'source step'} has no kind`)

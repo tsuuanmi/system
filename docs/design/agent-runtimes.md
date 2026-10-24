@@ -435,7 +435,7 @@ the trusted envelope of account choice
   [work kinds](routing.md#work-kinds)) and, under `runtimes.<runtime>`, what differs per runtime
   (`tools`, `model`, `maxTurns`, `family`), never a routing input. So which runtime takes a kind
   of work is the assignments': a role `code` given `kinds: [code]` and assigned to one runtime's
-  accounts keeps source-code steps on them (ADR-0056).
+  accounts keeps source-code steps on them (ADR-0057).
 - **The Worker** of an account in a role is `agent:<accountId>/<role>`, derived (a pure function of
   the configuration: the same roles and assignments always give the same Workers). Its runtime is
   the account's provider, its family the role's `family` for that runtime or the runtime, its

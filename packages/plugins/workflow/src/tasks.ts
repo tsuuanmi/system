@@ -438,7 +438,7 @@ export class TaskRuns {
       const listed = (await workers.list()).filter((w) => bound.includes(w.worker))
       // An offer scoped to another kind of work (a review member's conversation, ADR-0049) never resumes a task's session.
       const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
-      // The steps that would continue it must be work its Worker takes (ADR-0056), or they could never route there.
+      // The steps that would continue it must be work its Worker takes (ADR-0057), or they could never route there.
       const continuing = prepared.spec.nodes.filter((n) => n.session.persist)
       const untaken = ready ? continuing.filter((n) => !takesKind(ready, n)) : []
       const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n

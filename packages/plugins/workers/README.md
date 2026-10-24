@@ -39,7 +39,7 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     (`does not prove reason (it proves reason only for review-member work)`);
   - it takes the work's kind: a Worker the operator gives `kinds` takes only work whose
     requirement names one of them (`capability`, [work kinds](../../../docs/design/routing.md#work-kinds),
-    [ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)), and says so (`takes code
+    [ADR-0057](../../../docs/decisions/adr/0057-route-work-by-kind.md)), and says so (`takes code
     work only; this work is docs work`); a Worker given none takes any work;
   - no usage limit is on a capability the work needs (`cooldown`, ADR-0034);
   - no other account of its group holds the work (`assignment`,

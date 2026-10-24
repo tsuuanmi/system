@@ -228,7 +228,7 @@ export class WorkerRouter extends Workers {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
       // A capability no Worker proves now is the plainest reason, for example website-only work in a composition without website Workers.
       const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
-      // Next plainest: Workers prove all of it, and the operator gives each of them other kinds of work (ADR-0056).
+      // Next plainest: Workers prove all of it, and the operator gives each of them other kinds of work (ADR-0057).
       const proving = workers.filter((w) => requirement.capabilities.every((c) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
       const untaken = !unproven.length && proving.length > 0 && !proving.some((w) => takesKind(w, requirement))
       const limitUntil = waitUntil(limited)
@@ -360,7 +360,7 @@ export class WorkerRouter extends Workers {
       const scoped = worker.capabilities.filter((c) => missing.includes(c.capability) && c.scope !== undefined).map((c) => `${c.capability} only for ${c.scope} work`)
       fail('capability', `does not prove ${missing.join(', ')}${scoped.length ? ` (it proves ${scoped.join(', ')})` : ''}`)
     }
-    // A Worker the operator gives kinds takes work of those kinds only (ADR-0056); equality only.
+    // A Worker the operator gives kinds takes work of those kinds only (ADR-0057); equality only.
     if (!takesKind(worker, requirement)) {
       fail('capability', `takes ${worker.kinds!.join(', ')} work only; this work ${requirement.kind === undefined ? 'names no kind' : `is ${requirement.kind} work`}`)
     }

@@ -50,7 +50,7 @@
       "additionalProperties": false
     },
     "kinds": {
-      "description": "@1.6: the kinds of work the operator gives this Worker (ADR-0056): it takes only work whose requirement names one of them, never work of another kind or of none. Absent: it takes work of any kind, or of none.",
+      "description": "@1.6: the kinds of work the operator gives this Worker (ADR-0057): it takes only work whose requirement names one of them, never work of another kind or of none. Absent: it takes work of any kind, or of none.",
       "type": "array",
       "minItems": 1,
       "maxItems": 16,

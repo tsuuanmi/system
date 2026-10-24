@@ -53,7 +53,7 @@ describe('workflow specs', () => {
     expect(() => preflight([node('a', { variants: { Deep: {} } })])).toThrow(/variant name "Deep"/)
   })
 
-  it('keeps a step\'s kind of work, lets a variant change it, and refuses a kind that is no label or sits on a team or a source step (REQ-WRK-11, ADR-0056)', () => {
+  it('keeps a step\'s kind of work, lets a variant change it, and refuses a kind that is no label or sits on a team or a source step (REQ-WRK-11, ADR-0057)', () => {
     const nodes = [node('a', { kind: 'code', variants: { docs: { kind: 'docs' } } }), node('b', { dependsOn: ['a'] })]
     const plain = resolve('t', nodes, {})
     const docs = resolve('t', nodes, { variant: 'docs' })

@@ -27,7 +27,7 @@ holds no engine code and no rules of its own.
     measures the subject the task leaves after any fix, and that report is the
     run's result: what the task keeps, what its digest cites, and what the next
     attempt reads.
-  - **Kinds of work** ([ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)):
+  - **Kinds of work** ([ADR-0057](../../../docs/decisions/adr/0057-route-work-by-kind.md)):
     the writing steps name what they are, never who takes them. A Worker the
     operator gives kinds takes only steps of those kinds, so giving one writer
     `code` and another `docs` and `tests` routes each step by what it changes

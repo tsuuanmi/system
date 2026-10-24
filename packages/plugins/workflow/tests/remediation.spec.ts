@@ -40,7 +40,7 @@ const TEMPLATES: Record<string, NodeTemplate[]> = {
   // The review reads the developer's answer too: a re-review reads the fix's in its place.
   bound: [step('develop', { prompt: 'Develop: {{input}}' }), step('review', { prompt: 'Review: {{input}}\n<change>{{node:develop}}</change>', capabilities: ['review'], dependsOn: ['develop'] })],
   read: [step('answer', { capabilities: ['reason'] })],
-  // Each step names its kind of work (ADR-0056): a fix is the change's kind, a re-review the review's.
+  // Each step names its kind of work (ADR-0057): a fix is the change's kind, a re-review the review's.
   kinded: [step('develop', { prompt: 'Develop: {{input}}', kind: 'code' }), step('review', { prompt: 'Review: {{input}}', capabilities: ['review'], kind: 'review', dependsOn: ['develop'] })],
 }
 
@@ -252,7 +252,7 @@ describe('remediation on the approval queue', () => {
     ])
   })
 
-  it('routes a fix as the kind of work of the change it fixes, and a re-review as the review\'s (REQ-WRK-11, ADR-0056)', async () => {
+  it('routes a fix as the kind of work of the change it fixes, and a re-review as the review\'s (REQ-WRK-11, ADR-0057)', async () => {
     const { ctx, workers } = await boot()
     // The only Worker given code work comes first by id among the writers, so a kinded step lands on it.
     workers.extra.push(worker('w:coder', { schema: 'capability-descriptor@1.6', kinds: ['code'], tier: 'standard', proves: ['develop'] }))

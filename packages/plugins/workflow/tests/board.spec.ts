@@ -1159,7 +1159,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     await until(() => workers.started.length === 2, 'the wake once it can tell', 10_000)
   })
 
-  it('resumes a task\'s session only on a Worker that takes the kind of work of the steps that would continue it (ADR-0056)', async () => {
+  it('resumes a task\'s session only on a Worker that takes the kind of work of the steps that would continue it (ADR-0057)', async () => {
     const docs = [{ nodeId: 'kept', objective: 'Do kept', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer', kind: 'docs' }]
     const { ctx, workers } = await boot({ workflow: { templates: { docs } } })
     // The same Worker, keeping conversations, given no kinds, then given code work only.

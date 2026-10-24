@@ -22,7 +22,7 @@ second execution path (INV-1).
     variant may change it), which its requirement carries (`work-requirement@1.2`),
     so a Worker the operator gives kinds takes it only when it lists that kind
     ([work kinds](../../../docs/design/routing.md#work-kinds),
-    [ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)). A remediation
+    [ADR-0057](../../../docs/decisions/adr/0057-route-work-by-kind.md)). A remediation
     fix has the kind of the step whose change it fixes, its re-review the review's;
     a planner's step has none.
   - **Different provider families.** A node with `differentFrom: [nodeId…]`

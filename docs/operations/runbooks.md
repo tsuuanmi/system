@@ -360,7 +360,7 @@ characters) fails the same way, and so does an Antigravity turn over its
 
 Give each writing agent Worker the **kinds of work** it takes, and each step goes to a Worker of its
 kind ([work kinds](../design/routing.md#work-kinds),
-[ADR-0056](../decisions/adr/0056-route-work-by-kind.md), proposed). This is configuration: which
+[ADR-0057](../decisions/adr/0057-route-work-by-kind.md), proposed). This is configuration: which
 runtime takes which kind is the Worker list's, never a template's.
 
 What names a kind today ([templates](../reference/workflow-templates.md#algorithm-development)):

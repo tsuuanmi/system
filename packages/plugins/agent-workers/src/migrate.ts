@@ -233,7 +233,7 @@ export const CUTOVER_MIGRATION = {
   CREATE TABLE agent_cutover_moves (kind TEXT NOT NULL, key TEXT NOT NULL, old_worker TEXT NOT NULL, new_worker TEXT NOT NULL, PRIMARY KEY (kind, key));`,
 }
 
-/** Version 2: rows that differ in `kinds` (ADR-0056) are different roles, and a role keeps its rows' kinds. */
+/** Version 2: rows that differ in `kinds` (ADR-0057) are different roles, and a role keeps its rows' kinds. */
 const DECIDER = { type: 'rule' as const, id: 'agent-workers.migration', version: '2' }
 const PRODUCER = { producer: { type: 'system' as const, ref: 'agent-workers' } }
 const now = (): string => new Date().toISOString()

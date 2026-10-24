@@ -64,7 +64,7 @@ A template node may declare named variants:
 
 ### Kinds of work
 
-A node may name the `kind` of work it is (`code`, `docs`, …; [ADR-0056](../decisions/adr/0056-route-work-by-kind.md)).
+A node may name the `kind` of work it is (`code`, `docs`, …; [ADR-0057](../decisions/adr/0057-route-work-by-kind.md)).
 Its requirement carries it (`work-requirement@1.2`), set from the admitted spec only (INV-6), and
 routing gives it only to a Worker that takes it ([work kinds](routing.md#work-kinds)). Preflight
 refuses a kind that is no label, and one on a team or a source step. A remediation fix has the

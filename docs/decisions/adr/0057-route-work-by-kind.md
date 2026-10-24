@@ -1,4 +1,4 @@
-# ADR-0056: A step names its kind of work; a Worker the operator gives kinds takes only those
+# ADR-0057: A step names its kind of work; a Worker the operator gives kinds takes only those
 
 - **Status:** Proposed (the operator decides; from D35 and D36, 2026-10-24)
 - **Date:** 2026-10-24

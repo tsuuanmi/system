@@ -126,7 +126,7 @@
 - **REQ-WRK-11** The operator can route work by its kind: a workflow step names the kind of work
   it is, and a Worker the operator gives kinds takes only work of those kinds. Kinds are
   configuration labels, never tool names, compared for equality only; admission fails closed when
-  no Worker takes the kind ([ADR-0056](../decisions/adr/0056-route-work-by-kind.md)).
+  no Worker takes the kind ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)).
 - **REQ-WRK-16** A run is declared dead only when its holder and its runtime are both
   positively gone and no activity was seen within a bound; a failed probe, a failed lease
   renewal, or a signal never reported is not death

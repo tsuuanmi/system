@@ -183,7 +183,7 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(() => deriveWorkers([ROLE('a', { worktreePerRun: true }), ROLE('b')], [], [])).toThrow(/share the workspace/)
   })
 
-  it('gives a role\'s Workers its kinds of work, and refuses kinds that are malformed, repeated, empty, or on a review member (REQ-WRK-11, ADR-0056)', () => {
+  it('gives a role\'s Workers its kinds of work, and refuses kinds that are malformed, repeated, empty, or on a review member (REQ-WRK-11, ADR-0057)', () => {
     const [code, docs, review] = deriveWorkers([ROLE('code', { kinds: ['code'] }), ROLE('docs', { kinds: ['docs', 'tests'] }), ROLE('review')], [{ account: ACC1, roles: ['code', 'docs', 'review'] }], [])
     expect([code!.kinds, docs!.kinds, review!.kinds]).toEqual([['code'], ['docs', 'tests'], undefined])
     expect(() => deriveWorkers([ROLE('code', { kinds: [] })], [], [])).toThrow(/kinds must list 1 to 16/)
@@ -192,7 +192,7 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(() => deriveWorkers([ROLE('member', { reviewMember: true, kinds: ['code'] })], [], [])).toThrow(/not for a review member/)
   })
 
-  it('checks a row as its load does, before a host starts on it (system check): the operations examples pass, a disagreement on worktreePerRun or a bad kind does not (D36, ADR-0056)', () => {
+  it('checks a row as its load does, before a host starts on it (system check): the operations examples pass, a disagreement on worktreePerRun or a bad kind does not (D36, ADR-0057)', () => {
     const rowOf = (file: string): Record<string, unknown> => {
       const rows = parseYaml(readFileSync(fileURLToPath(new URL(`../../../../docs/operations/examples/${file}`, import.meta.url)), 'utf8')) as Array<{ id: string; config: Record<string, unknown> }>
       return rows.find((r) => r.id === 'agent-workers')!.config
@@ -528,7 +528,7 @@ describe('system account migrate (PROP-0012 phase F: migration from hand-named r
     expect(mixed.blockers).toEqual([expect.stringMatching(/draw on different pools/), expect.stringMatching(/map limit windows differently/)])
   })
 
-  it('keeps the kinds of work of the rows: rows of other kinds are other roles, and rows of one kind, in any order, one role (ADR-0056)', () => {
+  it('keeps the kinds of work of the rows: rows of other kinds are other roles, and rows of one kind, in any order, one role (ADR-0057)', () => {
     const accounts = [A, B].map((provider, i) => ({
       schema: 'agent-account@1.0' as const, provider, slot: 1, home: `/h/${provider}`, status: 'ready' as const, accountId: `${provider}:${String(i).padStart(16, '0')}`, revision: 1, updatedAt: 'x',
     }))

@@ -125,7 +125,7 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     untouched(pilot)
   })
 
-  it('routes by kind of work when the operator gives the writers kinds: code and its fix on the code writer, the tests on the other, the review on the reviewer given none; the docs variant writes on the docs writer (REQ-WRK-11, ADR-0056)', async () => {
+  it('routes by kind of work when the operator gives the writers kinds: code and its fix on the code writer, the tests on the other, the review on the reviewer given none; the docs variant writes on the docs writer (REQ-WRK-11, ADR-0057)', async () => {
     const pilot = await boot({ changes: 1, kinds: true })
     const { ctx } = pilot
     await charter(ctx, 'p1')

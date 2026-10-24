@@ -220,7 +220,7 @@ guesses.
 - `work-requirement@1.2` adds the optional `kind`: the kind of work this is, a `workKind` label
   (`^[a-z][a-z0-9-]{0,31}$`, such as `code` or `docs`), for Workers given `kinds`
   ([work kinds](../design/routing.md#work-kinds),
-  [ADR-0056](../decisions/adr/0056-route-work-by-kind.md)). The workflow engine sets it from the
+  [ADR-0057](../decisions/adr/0057-route-work-by-kind.md)). The workflow engine sets it from the
   admitted spec (the step's `kind`, or its variant's), never from model text (INV-6). A record
   carrying it below `@1.2` is refused. Readers accept 1.0 to 1.2. Example:
   [`work-requirement.kind.json`](../../schemas/examples/work-requirement.kind.json).
@@ -333,7 +333,7 @@ guesses.
 - `capability-descriptor@1.6` adds the optional `kinds`: the kinds of work the operator gives the
   Worker (1 to 16 `workKind` labels), as its source sets them from configuration
   ([work kinds](../design/routing.md#work-kinds),
-  [ADR-0056](../decisions/adr/0056-route-work-by-kind.md)). Such a Worker takes only work whose
+  [ADR-0057](../decisions/adr/0057-route-work-by-kind.md)). Such a Worker takes only work whose
   requirement names one of them (`work-requirement@1.2` `kind`), never work that names none;
   without `kinds` it takes any work. Routing compares kinds for equality only (admission check
   `capability`). A record carrying it below `@1.6` is refused. Readers accept 1.0 to 1.6. Example:

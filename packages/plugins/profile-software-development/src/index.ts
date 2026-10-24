@@ -90,7 +90,7 @@ const VALIDATE_PROMPT = [
  * Its measurements are evidence, not a check the engine reports: under a policy that requires tests,
  * the board holds the result for the operator.
  *
- * Each writing step names its kind of work (ADR-0056): `develop:1` is `code` work, or `docs` or
+ * Each writing step names its kind of work (ADR-0057): `develop:1` is `code` work, or `docs` or
  * `tests` work in the variant of that name, and `validate:1` is `tests` work. A Worker the operator
  * gives kinds takes only steps of those kinds; one given none takes them all, as before. The review
  * names no kind, so any reviewer the operator gives none takes it.

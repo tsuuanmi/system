@@ -141,7 +141,7 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('routes work by its kind: a Worker given kinds takes only work of those kinds, a Worker given none takes any, and a refusal says so (REQ-WRK-11, ADR-0056)', async () => {
+    it('routes work by its kind: a Worker given kinds takes only work of those kinds, a Worker given none takes any, and a refusal says so (REQ-WRK-11, ADR-0057)', async () => {
       const code = worker('w:code', { schema: 'capability-descriptor@1.6', kinds: ['code'], proves: ['develop'] })
       const docs = worker('w:docs', { schema: 'capability-descriptor@1.6', kinds: ['docs', 'tests'], proves: ['develop', 'validate'] })
       const kinded = (kind: string): WorkRequirement => requirement({ schema: 'work-requirement@1.2', kind, capabilities: ['develop'] })
@@ -176,7 +176,7 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('refuses kinds below the schema version that carries them: a descriptor below @1.6, a requirement below @1.2 (ADR-0056)', async () => {
+    it('refuses kinds below the schema version that carries them: a descriptor below @1.6, a requirement below @1.2 (ADR-0057)', async () => {
       await withWorkers([worker('w:early', { schema: 'capability-descriptor@1.5', kinds: ['code'] })], async (ctx) => {
         await expect(ctx.workers.route(requirement())).rejects.toThrow(/capability-descriptor@1\.5/)
       })

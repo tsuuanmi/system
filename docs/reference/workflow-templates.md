@@ -156,7 +156,7 @@ Worker, in the run's own git worktree when the Workers set `worktreePerRun`.
 | `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | none | temporary | `acceptance.answer` |
 | `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `tests` | temporary | `acceptance.answer` |
 
-- **Kinds of work** ([ADR-0056](../decisions/adr/0056-route-work-by-kind.md)). With no Worker given
+- **Kinds of work** ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)). With no Worker given
   kinds, every step routes as it always did. Once the operator gives writers kinds
   ([route work by kind](../operations/runbooks.md#route-work-by-kind)), `develop:1` and its fix run
   on a writer given `code` (or, in the `docs` and `tests` variants, `docs` or `tests`), and

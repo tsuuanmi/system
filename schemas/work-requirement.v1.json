@@ -18,7 +18,7 @@
       "enum": ["work-requirement@1.0", "work-requirement@1.1", "work-requirement@1.2"]
     },
     "kind": {
-      "description": "@1.2: the kind of work this is, for Workers the operator gives kinds (ADR-0056): such a Worker takes it only when it lists this kind, and takes no work that names none. Set by the workflow engine from the admitted spec (a template step, or the variant the caller chose), never from model text (INV-6).",
+      "description": "@1.2: the kind of work this is, for Workers the operator gives kinds (ADR-0057): such a Worker takes it only when it lists this kind, and takes no work that names none. Set by the workflow engine from the admitted spec (a template step, or the variant the caller chose), never from model text (INV-6).",
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workKind"
     },
     "scope": {

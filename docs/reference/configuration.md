@@ -54,7 +54,7 @@
 | `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down |
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
-| `workers[].kinds` | any |  | The kinds of work it takes (ADR-0056), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member |
+| `workers[].kinds` | any |  | The kinds of work it takes (ADR-0057), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member |
 | `roles` | object[] | `[]` | Role templates (PROP-0012 phase F), each defined once: what the work needs, whatever account serves it |
 | `roles[].id` (required) | string |  | Role id: its Workers are agent:<accountId>/<role> |
 | `roles[].workspace` (required) | string |  | Absolute workspace root its work is done in |
@@ -63,7 +63,7 @@
 | `roles[].quotaClass` | "subscription-chat" \| "agent-plan" \| "metered" \| "local" | `"agent-plan"` |  |
 | `roles[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace, as a hand-named Worker's |
 | `roles[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family |
-| `roles[].kinds` | any |  | The kinds of work its Workers take (ADR-0056), as a hand-named Worker's; unset, any work. Not for a review member |
+| `roles[].kinds` | any |  | The kinds of work its Workers take (ADR-0057), as a hand-named Worker's; unset, any work. Not for a review member |
 | `roles[].runtimes` | Record<string, object> | `{}` | What differs per runtime, by runtime kind: tools, model, maxTurns, family; never a routing input |
 | `assignments` | object[] | `[]` | Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker |
 | `assignments[].account` (required) | string |  | An enrolled agent account, by the id system account list shows |

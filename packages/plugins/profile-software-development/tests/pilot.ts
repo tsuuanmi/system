@@ -67,7 +67,7 @@ export interface Script {
   /** Whether the runtime proves its commands confined (default true): without it, no Worker proves `validate`. */
   executes?: boolean
   /**
-   * Route by kind of work (ADR-0056), as docs/operations/examples/work-kinds.patch.yml does: the
+   * Route by kind of work (ADR-0057), as docs/operations/examples/work-kinds.patch.yml does: the
    * developer is given `code` work, and a second writer, `tester`, `docs` and `tests` work; the
    * reviewer and the digest Worker are given none.
    */

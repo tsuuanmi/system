@@ -56,14 +56,14 @@ export const provesFor = (offer: CapabilityOffer, requirement: Pick<WorkRequirem
   offer.scope === undefined || offer.scope === requirement.scope
 
 /**
- * A kind of work the operator routes by (ADR-0056; `schemas/common.v1.json` `workKind`): an opaque
+ * A kind of work the operator routes by (ADR-0057; `schemas/common.v1.json` `workKind`): an opaque
  * label a workflow step names (`WorkRequirement.kind`) and the operator's Worker configuration lists
  * (`CapabilityDescriptor.kinds`), such as `code` or `docs`. Never a tool, model, or vendor name (INV-11).
  */
 export const WORK_KIND = /^[a-z][a-z0-9-]{0,31}$/
 
 /**
- * Whether a Worker takes this work by its kind (ADR-0056): a Worker that lists no kinds takes work of
+ * Whether a Worker takes this work by its kind (ADR-0057): a Worker that lists no kinds takes work of
  * any kind, or of none; one that lists kinds takes only work that names one of them. Equality only.
  */
 export const takesKind = (worker: Pick<CapabilityDescriptor, 'kinds'>, requirement: Pick<WorkRequirement, 'kind'>): boolean =>
@@ -120,7 +120,7 @@ export interface CapabilityDescriptor {
    */
   account?: WorkerAccount
   /**
-   * The kinds of work the operator gives it (`@1.6`; ADR-0056): it takes only work whose requirement
+   * The kinds of work the operator gives it (`@1.6`; ADR-0057): it takes only work whose requirement
    * names one of them ({@link takesKind}; check `capability`). Absent: work of any kind, or of none.
    */
   kinds?: string[]
@@ -143,7 +143,7 @@ export interface WorkRequirement {
    */
   scope?: WorkScope
   /**
-   * The kind of work this is (`@1.2`; ADR-0056), for Workers the operator gives kinds: such a Worker
+   * The kind of work this is (`@1.2`; ADR-0057), for Workers the operator gives kinds: such a Worker
    * takes it only when it lists this kind. Set by the workflow engine from the admitted spec (a
    * template step, or the variant the caller chose), never from model text (INV-6).
    */
