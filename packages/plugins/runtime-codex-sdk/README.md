@@ -1,6 +1,6 @@
 # @tsuuanmi/system-runtime-codex-sdk
 
-Agent runtime `codex-sdk`: **Codex as a Worker** (REQ-WRK-5)
+Agent runtime `codex-sdk` (title `Codex`, shown in the roster's display names): **Codex as a Worker** (REQ-WRK-5)
 ([agent runtimes](../../../docs/design/agent-runtimes.md)). It runs the
 operator's installed `codex` through the official Codex TypeScript SDK.
 

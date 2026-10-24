@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`, `confinement`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`, `confinement`; `AgentRuntimeProvider` (`probe`, `run`, optional `title`, `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunObserver`, `observe`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES`; `titleOf`, `MAX_TITLE` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -48,6 +48,11 @@ Capability **seam definition** for agent runtimes
   `askToolGate(gate, call, signal, ms)` asks it as a gating provider must:
   bounded (`TOOL_GATE_MS`, 30 s, by default), and a throw, an undefined verdict
   (`isToolVerdict`), or no answer in time is a `deny`.
+- **A title for people** (optional `AgentRuntimeProvider.title`, T103): the runtime's name as
+  people know it (`Claude Code`), plain text on one line of at most `MAX_TITLE` (64) characters;
+  `titleOf(provider)` gives it only when it is that, else none. The roster's display names and the
+  account listing show it; nothing routes on it (INV-11). The provider suite checks one that is
+  given.
 - **Agent accounts** ([ADR-0051](../../docs/decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md),
   [design](../../docs/design/agent-runtimes.md#agent-accounts)), all optional:
   - `RunSpec.home` and `probe({ home })`: one account's home. A provider that runs

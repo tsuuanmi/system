@@ -1,6 +1,7 @@
 # @tsuuanmi/system-runtime-claude-agent-sdk
 
-Agent runtime provider **`claude-agent-sdk`**: Claude Code as a Worker, through
+Agent runtime provider **`claude-agent-sdk`** (title `Claude Code`, shown in
+the roster's display names): Claude Code as a Worker, through
 the official Claude Agent SDK. It runs the operator's installed `claude`
 (config `executable`, or found on PATH). The SDK's bundled builds are not
 installed.
@@ -43,7 +44,13 @@ installed.
     accounts adopts.
   - **Who is signed in** (`identity(home, key)`, reader `claude-state-file`, on
     `VERIFIED_IDENTITY_VERSIONS`, Claude Code 2.1.308; any other version is
-    `unverified`): `claude auth status` in that home, confined and with none of
+    `unverified`, its reason naming the version found, the executable, and the
+    versions admitted, `found Claude Code 2.1.310 (<executable>); its identity
+    reader admits only 2.1.308`, which the account's quarantine carries as its
+    detail; a configured executable that is no longer there, which Claude
+    Code's updater does to old versions under `~/.local/share/claude/versions`,
+    is named as such, here and in the probe, with where to keep a checked copy:
+    [runbook](../../../docs/operations/runbooks.md#keep-claude-codes-pinned-version)): `claude auth status` in that home, confined and with none of
     the forwarded variables, must say `"loggedIn": true` (false or failing:
     `missing`; unreadable: `ambiguous`); the home must keep that sign-in in its
     own `.credentials.json` (only its existence is checked; a sign-in kept
@@ -148,7 +155,9 @@ installed.
     it is reported as window `*`, which no configuration maps, so the ledger
     closes every window of the pool. Overage fields are not read.
 - **Config:** `executable` (default: `claude` on PATH; keep it outside the
-  hidden paths, `~/.claude/local` among them); `home`, the Workers' Claude Code
+  hidden paths, `~/.claude/local` among them; to pin a version its reader
+  admits, point it at a checked copy under `~/.dsh/system/tools/claude/<version>/`,
+  which the updater does not prune and every agent sees read-only); `home`, the Workers' Claude Code
   home (absolute; default `<DSH_HOME>/system/claude-home`); `forwardEnv`,
   daemon variables passed by name; `env`, explicit values, never a secret
   (`CLAUDE_CONFIG_DIR` there is ignored: the home wins).
