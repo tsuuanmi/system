@@ -1159,6 +1159,35 @@ WantedBy=timers.target
 Enable them: `systemctl --user enable --now system.service system-health.timer system-backup.timer`.
 Prune old backup directories yourself; each one is a full snapshot.
 
+**Automatic update of the live install.** A timer runs one pass of the [automatic
+update](#update-the-live-install-automatically) every 15 minutes, from the check checkout:
+
+```ini
+# ~/.config/systemd/user/system-auto-update.service
+[Unit]
+Description=system: one pass of the live install's automatic update
+# A pass that stops and pauses itself exits 1, once; a paused pass exits 0.
+OnFailure=<your notifier>.service
+
+[Service]
+Type=oneshot
+# gh and git; the script puts Node 24 and pnpm on PATH itself.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Options after the script: --settle <minutes>, --hours <HH-HH> (its section).
+ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh
+# The daemon an update starts again stays in this unit's group: when a pass ends, only its own
+# process is stopped, never the daemon. A pass with a drain and two builds takes its time.
+KillMode=process
+TimeoutStartSec=infinity
+
+# ~/.config/systemd/user/system-auto-update.timer
+[Timer]
+OnCalendar=*:0/15
+
+[Install]
+WantedBy=timers.target
+```
+
 ## Upgrade with drain
 
 1. `system backup <dir>`.
@@ -1287,7 +1316,8 @@ check` (37 rows, checked on a copy, 2026-10-23).
    (`~/system-backups/live-base.cordis.patch.yml`). Install Codex 0.164.0 and check agy's version.
 2. **Dry run**, from the target's checkout (never from `system-live`, whose files the update
    replaces while the script runs; it refuses): `~/workspaces/system-base/scripts/live-update.sh
-   <sha> --check-with ~/workspaces/system-base --patch ~/system-backups/live-base.cordis.patch.yml`.
+   <sha> --check-with ~/workspaces/system-base --patch ~/system-backups/live-base.cordis.patch.yml`
+   (and `--from <the live commit>` once it is no longer e218ae7).
    It changes nothing. It checks the tools, the live checkout (clean, at e218ae7), the target (a
    descendant), the vault key, free space, and the candidate patch against the target's code
    (`system check` on a scratch copy of the profile); reads how the daemon was started from its
@@ -1320,7 +1350,10 @@ check` (37 rows, checked on a copy, 2026-10-23).
   [backup and restore](#backup-and-restore)), verified by a restore preview; and the profile's files.
   Login profiles are not state, and Base pins the same Chrome, so they are not copied.
 - The build: `pnpm install --frozen-lockfile`, `pnpm build`, every package of the bundle built, and
-  `packages/cli/lib/index.js` holding `hostPlugins`, which e218ae7 has not.
+  the build stamp `packages/cli/lib/build-commit` naming the target ([build
+  stamp](../../packages/cli/README.md)). A target whose build writes no stamp is refused: update to it
+  with the script of its own checkout. The `--check-with` checkout's stamp must name its own commit.
+  The stamp replaces `--marker`, which the script no longer takes (a command with it exits 2).
 - Before the start: `system check` of the profile as it will start.
 - After the start: `/healthz`, then the [upgrade suite's](../../packages/cli/tests/upgrade/upgrade.e2e.ts)
   expectations, on the live store: every run explains and answers `result` as before (one running at
@@ -1331,9 +1364,10 @@ check` (37 rows, checked on a copy, 2026-10-23).
   prints the client token's header. A profile already down before the update (a check other than
   its Workers) is no baseline: the capture refuses it, and nothing stops.
 - A failure after the stop rolls back: the updated daemon stopped, the profile's files and link put
-  back, e218ae7 checked out, installed, and built (its lib without `hostPlugins`), `system restore
-  <dir>/store --yes` once Base has started on the store, and the daemon started as before. What Base
-  did in its minutes is lost with its store.
+  back, e218ae7 checked out, installed, and built (its lib stamped with its commit, or with no stamp
+  for code from before the stamp, as e218ae7), `system restore <dir>/store --yes` once Base has
+  started on the store, and the daemon started as before. What Base did in its minutes is lost with
+  its store.
 
 **By hand**, with the daemon stopped (`system shutdown`):
 
@@ -1351,6 +1385,66 @@ a profile linked from another checkout. A start that failed rolled back to e218a
 the profile's link restored; an update interrupted mid-build was taken up again; and updates with a
 changed patch, and with the fragment's runtime rows and three reviewer Workers (none signed in
 there, so each reported), completed, the seven old runs explaining as before.
+
+## Update the live install automatically
+
+[`scripts/live-auto-update.sh`](../../scripts/live-auto-update.sh) keeps the live install on `main`:
+each pass decides whether to start an update, and the update itself is [`live-update.sh`'s](#update-the-live-install-from-e218ae7-to-the-base-release),
+with its backup, upgrade checks, and rollback. A systemd user timer runs a pass every 15 minutes
+([units](#run-as-a-service)). One pass:
+
+1. Does nothing while `~/.dsh/system/auto-update.paused` exists, while another pass or a live update
+   runs (their locks under `~/system-backups`), or while an update that stopped the daemon is
+   unfinished (it pauses itself then: take that update up by hand, with the command its notes name).
+2. `git fetch origin main` in the check checkout. Nothing to do when it is the live checkout's HEAD.
+3. Refuses, and pauses itself, unless `main` descends from the live commit (a fast-forward).
+4. Waits `--settle` minutes (default 30) after the pass first saw the commit, so a quick revert can
+   land first; and, with `--hours 02-06`, for 02:00 to 05:59 local time (`22-04` wraps midnight;
+   default any time).
+5. Asks GitHub (`gh api`, signed in as `gh auth status` shows) for the commit's check runs and
+   statuses. Every one must have completed with success. One still running, none yet, or no usable
+   `gh` is a wait; a failed one is a refusal until `main` moves on. Neither pauses.
+6. Builds the target in the check checkout (`~/workspaces/system-live-check`, a worktree of the
+   live repository, never `system-live`): `git checkout --detach`, `pnpm install
+   --frozen-lockfile`, `pnpm build`.
+7. Runs that checkout's `scripts/live-update.sh <main> --from <live HEAD> --check-with
+   ~/workspaces/system-live-check`: the dry run, then `--apply`. The [build
+   stamp](../../packages/cli/README.md) tells the builds apart. A dry run that refuses (the live
+   patch fails the target's `system check`, say), an update that stops or rolls back, or a target
+   that does not build, pauses the timer.
+
+Each pass appends one line to `~/system-backups/auto-update/log`: `current`, `wait`, `refused`,
+`busy`, `paused`, `stopped` (it paused itself), or `updated`. A pass that built and ran the update
+writes its output next to it (`<time>-<sha>.out`); the update's own notes are in its
+`~/system-backups/<date>-before-base*/` directory.
+
+**What it never does.** It never changes the profile's patch (`--patch` is never passed: a target
+that needs a new patch stops at the dry run, and you update to it [by
+hand](#update-the-live-install-from-e218ae7-to-the-base-release)). It never updates to a commit
+that is not a fast-forward of the live one, on a red or pending CI, or while paused. It never stops
+the daemon but by `live-update.sh`'s drained `system shutdown`, and never kills it.
+
+**Enable it:**
+
+1. `git -C ~/workspaces/system-live fetch origin main && git -C ~/workspaces/system-live worktree add
+   --detach ~/workspaces/system-live-check origin/main`.
+2. `gh auth status` says signed in.
+3. Write the two units ([Run as a service](#run-as-a-service)), then `systemctl --user daemon-reload
+   && systemctl --user enable --now system-auto-update.timer` (and `loginctl enable-linger`).
+4. Run a pass now and read its line: `systemctl --user start system-auto-update.service; tail -n 1
+   ~/system-backups/auto-update/log`.
+
+A daemon the pass starts again has the unit's environment, as one started by hand has its shell's:
+give the unit, with `Environment=` or `EnvironmentFile=`, any variable the daemon reads (an
+`apiKeyEnv` its patch names, say). A Worker that loses one fails the upgrade checks and the update
+rolls back, but the previous code then starts with the same environment: set it before enabling.
+
+**Pause, and resume.** Pause by hand with `echo 'paused by hand' > ~/.dsh/system/auto-update.paused`;
+stop the timer altogether with `systemctl --user disable --now system-auto-update.timer`. A pass
+that pauses itself writes the reason on the file's first line, with the live and target commits and
+its output. Read them, act (fix the live patch and update by hand, take up the unfinished update,
+recover from `LOOK FIRST` as that section says), then `rm ~/.dsh/system/auto-update.paused`: the
+next pass starts again from step 1.
 
 ## Rotate a control token
 

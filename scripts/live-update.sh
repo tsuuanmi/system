@@ -9,8 +9,8 @@
 #   2. `system shutdown --deadline <s>`, then wait until the daemon has exited (it is never killed);
 #   3. back up the store and the vault (`system backup`, verified by a restore preview) and the
 #      profile's files, into <backups>/<date>-before-base/;
-#   4. check out the target, install with the frozen lockfile, build, and find in the built lib a
-#      marker that only the target's code has;
+#   4. check out the target, install with the frozen lockfile, build, and read in the built lib the
+#      commit it was built from (packages/cli/lib/build-commit): the target's;
 #   5. link the profile's bundle from the live installation (`system init`, when it links another
 #      checkout), put the candidate profile patch in place (--patch), and `system check` the profile;
 #   6. start the daemon as it was started, and wait for /healthz;
@@ -29,13 +29,13 @@ usage() {
 usage: scripts/live-update.sh <target sha> [--apply] [--check-with <built checkout of the target>]
          [--patch <candidate cordis.patch.yml>] [--from <sha>] [--live <checkout>] [--dsh-home <dir>]
          [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--deadline <seconds>]
-         [--marker <lib file>:<text>] [--new-workers <prefix,...>]
+         [--new-workers <prefix,...>]
 
 A dry run unless --apply. --apply needs --check-with: the profile is checked against the target's
 code before anything is stopped. The defaults are this host's live install: --from e218ae7,
 --live ~/workspaces/system-live, --dsh-home $DSH_HOME or ~/.dsh, --node-dir Node 24's bin,
 --pnpm-dir Node 22's bin (appended to PATH, for pnpm only), --backups ~/system-backups,
---deadline 600, --marker packages/cli/lib/index.js:hostPlugins, --new-workers agent:.
+--deadline 600, --new-workers agent:.
 Exit status: 0 done (or nothing to do), 1 stopped or rolled back, 2 usage, or a state to look at.
 EOF
 }
@@ -50,7 +50,6 @@ NODE_DIR=$HOME/.nvm/versions/node/v24.21.0/bin
 PNPM_DIR=$HOME/.nvm/versions/node/v22.23.2/bin
 BACKUPS=$HOME/system-backups
 DEADLINE=600
-MARKER_SPEC=packages/cli/lib/index.js:hostPlugins
 NEW_WORKERS=agent:
 CHECK_WITH=''
 PATCH_CANDIDATE=''
@@ -58,7 +57,7 @@ PATCH_CANDIDATE=''
 while (($#)); do
   case $1 in
     --apply) APPLY=1 ;;
-    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --deadline | --marker | --new-workers)
+    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --deadline | --new-workers)
       if (($# < 2)); then usage >&2; exit 2; fi
       case $1 in
         --check-with) CHECK_WITH=$2 ;;
@@ -70,7 +69,6 @@ while (($#)); do
         --pnpm-dir) PNPM_DIR=$2 ;;
         --backups) BACKUPS=$2 ;;
         --deadline) DEADLINE=$2 ;;
-        --marker) MARKER_SPEC=$2 ;;
         --new-workers) NEW_WORKERS=$2 ;;
       esac
       shift ;;
@@ -82,7 +80,7 @@ while (($#)); do
   esac
   shift
 done
-if [[ -z $TARGET_REF || ! $DEADLINE =~ ^[0-9]+$ || $MARKER_SPEC != *:?* ]]; then usage >&2; exit 2; fi
+if [[ -z $TARGET_REF || ! $DEADLINE =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi
 
 # --- output and failure -------------------------------------------------------------------------
 
@@ -164,10 +162,8 @@ LIVE_PATCH=$PROFILE_DIR/cordis.patch.yml
 HOME_PATCH=$DSH_HOME_DIR/cordis.patch.yml
 STATE_DIR=$DSH_HOME_DIR/system
 DISCOVERY=$STATE_DIR/mcp.json
-MARKER_FILE=${MARKER_SPEC%%:*}
-MARKER=${MARKER_SPEC#*:}
-MARKER_SOURCE=${MARKER_FILE/\/lib\//\/src\/}
-MARKER_SOURCE=${MARKER_SOURCE%.js}.ts
+# The commit a build was made from, written by the CLI's build (packages/cli/README.md, "Build stamp").
+STAMP_FILE=packages/cli/lib/build-commit
 FROM=''
 TARGET=''
 HEAD_AT=''
@@ -427,8 +423,19 @@ same_patch() {
 
 # --- steps --------------------------------------------------------------------------------------
 
-# The built lib of the live checkout holds the marker (the target's code) or not (the previous one).
-marker_built() { grep -q -F -e "$MARKER" "$LIVE/$MARKER_FILE"; }
+# The commit a checkout's lib was built from, or nothing when its build wrote no stamp.
+stamp_of() {
+  local line=''
+  [[ -f $1/$STAMP_FILE ]] || return 0
+  IFS= read -r line <"$1/$STAMP_FILE" || true
+  printf '%s' "$line"
+}
+# What a build of a commit stamps: the commit, or nothing for code from before the stamp was written.
+stamp_for() {
+  if git -C "$LIVE" show "$1:packages/cli/package.json" 2>/dev/null | grep -q -F -e "> lib/build-commit"; then printf '%s' "$1"; fi
+}
+# The live checkout's lib is a build of this commit.
+built_at() { [[ $(stamp_of "$LIVE") == "$(stamp_for "$1")" ]]; }
 
 # Every package the system bundle composes resolves to a built entry file, and so does the CLI.
 bundle_built() {
@@ -461,6 +468,8 @@ checkout() {
 # Install and build the checked-out commit. A purge of node_modules that pnpm would ask about
 # (settings changed between the commits) goes ahead: the daemon is stopped, and this is the install.
 build() {
+  # A stamp left from another commit's build never vouches for this one.
+  rm -f -- "$LIVE/$STAMP_FILE"
   log "pnpm install --frozen-lockfile, then pnpm build, in $LIVE"
   pnpm_live install --frozen-lockfile --prefer-offline --config.confirm-modules-purge=false 2>&1 | tee -a "$LOG_FILE" >&2 || return 1
   pnpm_live build 2>&1 | tail -n 20 | tee -a "$LOG_FILE" >&2 || return 1
@@ -597,10 +606,10 @@ rollback() {
   log "ROLLING BACK to ${FROM:0:12} (the update reached '$from_phase'): $reason"
   if daemon_running; then stop_daemon "$LIVE" || fail "the updated daemon did not stop"; fi
   restore_profile || fail "the profile's files could not be put back"
-  if [[ $(git -C "$LIVE" rev-parse HEAD) != "$FROM" || -n $(git -C "$LIVE" status --porcelain --untracked-files=no) ]] || marker_built; then
+  if [[ $(git -C "$LIVE" rev-parse HEAD) != "$FROM" || -n $(git -C "$LIVE" status --porcelain --untracked-files=no) ]] || ! built_at "$FROM"; then
     checkout "$FROM" || fail "git checkout of ${FROM:0:12} failed"
     build || fail "the previous code did not install or build"
-    if marker_built; then fail "the rebuilt $MARKER_FILE still holds '$MARKER'"; fi
+    built_at "$FROM" || fail "the rebuilt $STAMP_FILE names '$(stamp_of "$LIVE")', not ${FROM:0:12}'s build"
   fi
   if (($(phase_index "$from_phase") >= $(phase_index starting))); then
     log "system restore $ATTEMPT/store --yes (the updated code ran on the store)"
@@ -649,10 +658,7 @@ preflight() {
   fi
   untracked=$(git -C "$LIVE" status --porcelain | grep -c '^??' || true)
   if ((untracked)); then log "note: $LIVE has $untracked untracked file(s); a checkout that would overwrite one fails"; fi
-  if git -C "$LIVE" grep -q -F -e "$MARKER" "$FROM" -- "$MARKER_SOURCE"; then
-    die "'$MARKER' is in $MARKER_SOURCE at ${FROM:0:12} already: it cannot tell the two builds apart (--marker)"
-  fi
-  git -C "$LIVE" grep -q -F -e "$MARKER" "$TARGET" -- "$MARKER_SOURCE" || die "'$MARKER' is not in $MARKER_SOURCE at ${TARGET:0:12} (--marker)"
+  [[ -n $(stamp_for "$TARGET") ]] || die "${TARGET:0:12}'s build writes no $STAMP_FILE: update to it with the script of its own checkout"
   log "live checkout $LIVE: at the $([[ $HEAD_AT == from ]] && echo previous || echo target) commit; previous ${FROM:0:12}, target ${TARGET:0:12} ($(git -C "$LIVE" rev-list --count "$FROM..$TARGET") commits)"
 
   [[ -f $LIVE_PATCH && -f $PROFILE_DIR/package.json && -f $PROFILE_DIR/cordis.yml ]] || die "no system profile in $PROFILE_DIR"
@@ -687,8 +693,8 @@ preflight() {
       die "--check-with $CHECK_WITH is not at the target's code (its packages/ or pnpm-lock.yaml differ from ${TARGET:0:12})"
     fi
     [[ -z $(git -C "$CHECK_WITH" status --porcelain --untracked-files=no -- packages pnpm-lock.yaml) ]] || die "--check-with $CHECK_WITH has uncommitted changes under packages/"
-    if [[ ! -f $CHECK_WITH/packages/cli/lib/bin.js ]] || ! grep -q -F -e "$MARKER" "$CHECK_WITH/$MARKER_FILE"; then
-      die "--check-with $CHECK_WITH is not built (pnpm install --frozen-lockfile && pnpm build there)"
+    if [[ ! -f $CHECK_WITH/packages/cli/lib/bin.js || $(stamp_of "$CHECK_WITH") != "$(git -C "$CHECK_WITH" rev-parse HEAD)" ]]; then
+      die "--check-with $CHECK_WITH is not built at its commit (pnpm install --frozen-lockfile && pnpm build there)"
     fi
     log "system check: the profile$([[ -n $PATCH_CANDIDATE ]] && echo ', with the patch candidate,') against the target's code ($CHECK_WITH)"
     check_profile_with "$CHECK_WITH" "${PATCH_CANDIDATE:-$LIVE_PATCH}" || die "the profile does not pass the target's checks: fix the patch, then check again"
@@ -731,7 +737,7 @@ Plan for --apply (this dry run changed nothing):
      $PROFILE_DIR -> <that directory>/profiles
   4. git -C $LIVE checkout --detach $TARGET
      pnpm install --frozen-lockfile && pnpm build (Node 24 first on PATH; pnpm from $PNPM_DIR)
-     $MARKER_FILE must hold '$MARKER'; every package of the bundle built
+     $STAMP_FILE must name ${TARGET:0:12}; every package of the bundle built
   5. $(if profile_linked; then echo 'the profile links its bundle from the live checkout already;'; else echo "system init: the profile links its bundle from $LIVE;"; fi)
      $(if [[ -n $PATCH_CANDIDATE ]]; then echo "the patch candidate replaces $LIVE_PATCH;"; else echo 'the live patch stays;'; fi) system check must say ok
   6. start as it was started; /healthz within 3 minutes
@@ -764,7 +770,8 @@ fi
 if [[ -z $ATTEMPT ]] && ! find_attempt; then
   if [[ $HEAD_AT == target ]]; then
     [[ -n $DAEMON_PID ]] || die "$LIVE is at the target, the daemon is not running, and no unfinished update is recorded: look before going on"
-    if (($(started_at "$DAEMON_PID") < $(stat -c %Y "$LIVE/$MARKER_FILE"))); then
+    built_at "$TARGET" || die "$LIVE is at the target, but its lib is not the target's build ($STAMP_FILE: '$(stamp_of "$LIVE")'): look before going on"
+    if (($(started_at "$DAEMON_PID") < $(stat -c %Y "$LIVE/$STAMP_FILE"))); then
       die "the daemon was started before $LIVE was built: it may run the previous code; restart it, or update by hand"
     fi
     log "the live install already runs ${TARGET:0:12}: nothing to update"
@@ -826,7 +833,7 @@ fi
 
 if ! reached built; then
   build || fail "the target did not install or build"
-  marker_built || fail "the built $MARKER_FILE does not hold '$MARKER': not the target's code"
+  built_at "$TARGET" || fail "the built $STAMP_FILE names '$(stamp_of "$LIVE")': not the target's build"
   set_phase built
 fi
 

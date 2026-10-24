@@ -49,6 +49,10 @@ the others) act for the operator, so they authenticate with the operator token. 
 client helpers hand out narrower scopes
 ([scopes](../plugins/mcp-server/README.md#scopes)).
 
+**Build stamp.** `pnpm build` writes `lib/build-commit`, the commit it built (`git rev-parse
+HEAD`; a build outside a git checkout fails). The [live update](../../docs/operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)
+reads it to tell which commit a checkout's built code is.
+
 The e2e tests boot the real profile and assert its exact row set:
 [`tests/profile.e2e.ts`](tests/profile.e2e.ts) the default composition, with the
 scope matrix, and [`tests/api-first.e2e.ts`](tests/api-first.e2e.ts) the

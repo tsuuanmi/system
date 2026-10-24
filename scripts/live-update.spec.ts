@@ -15,7 +15,10 @@ const SCRIPT = fileURLToPath(new URL('./live-update.sh', import.meta.url))
 
 interface Fixture { root: string; live: string; home: string; backups: string; bin: string; from: string; target: string; git: (...args: string[]) => string }
 
-/** A repository whose second commit adds the marker, checked out at the first; a profile; a stand-in pnpm. */
+/**
+ * A repository whose second commit's build writes the build stamp (the first is code from before it),
+ * checked out at the first; a profile; a stand-in pnpm.
+ */
 function fixture(): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'live-update-'))
   const live = join(root, 'live')
@@ -24,10 +27,11 @@ function fixture(): Fixture {
   const git = (...args: string[]): string => execFileSync('git', ['-C', live, '-c', 'user.name=test', '-c', 'user.email=test@localhost', ...args], { encoding: 'utf8' }).trim()
   writeFileSync(join(live, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
   writeFileSync(join(live, 'packages', 'cli', 'src', 'index.ts'), 'export const previous = 1\n')
+  writeFileSync(join(live, 'packages', 'cli', 'package.json'), `${JSON.stringify({ scripts: { build: 'tsc' } })}\n`)
   git('add', '-A')
   git('commit', '-q', '-m', 'previous')
   const from = git('rev-parse', 'HEAD')
-  writeFileSync(join(live, 'packages', 'cli', 'src', 'index.ts'), 'export const previous = 1\nexport function hostPlugins(): void {}\n')
+  writeFileSync(join(live, 'packages', 'cli', 'package.json'), `${JSON.stringify({ scripts: { build: 'tsc && git rev-parse HEAD > lib/build-commit' } })}\n`)
   git('commit', '-q', '-am', 'target')
   const target = git('rev-parse', 'HEAD')
   git('checkout', '-q', '--detach', from)
@@ -48,13 +52,13 @@ function fixture(): Fixture {
   return { root, live, home, backups, bin, from, target, git }
 }
 
-/** A checkout of the target, "built": its lib holds the marker, and its `system check` passes. */
+/** A checkout of the target, "built": its lib's stamp names the target, and its `system check` passes. */
 function builtTarget(f: Fixture): string {
   const dir = join(f.root, 'target')
   execFileSync('git', ['clone', '-q', f.live, dir], { stdio: 'pipe' })
   execFileSync('git', ['-C', dir, 'checkout', '-q', '--detach', f.target], { stdio: 'pipe' })
   mkdirSync(join(dir, 'packages', 'cli', 'lib'))
-  writeFileSync(join(dir, 'packages', 'cli', 'lib', 'index.js'), 'export function hostPlugins() {}\n')
+  writeFileSync(join(dir, 'packages', 'cli', 'lib', 'build-commit'), `${f.target}\n`)
   writeFileSync(join(dir, 'packages', 'cli', 'lib', 'bin.js'), "console.log(`ok: 0 row(s) of the profile pass this code's checks (${process.argv[2]})`)\n")
   return dir
 }
@@ -153,11 +157,31 @@ describe('live-update.sh', () => {
     expect(output).toContain('not a forward update')
   })
 
-  it('refuses a marker that cannot tell the two builds apart', () => {
+  it('refuses a target whose build writes no stamp of its commit', () => {
     const f = fixture()
-    const { status, output } = run(f, f.target, '--marker', 'packages/cli/lib/index.js:previous')
+    writeFileSync(join(f.live, 'other.txt'), 'other\n')
+    f.git('add', 'other.txt')
+    f.git('commit', '-q', '-m', 'other, from before the stamp')
+    const other = f.git('rev-parse', 'HEAD')
+    f.git('checkout', '-q', '--detach', f.from)
+    const { status, output } = run(f, other)
     expect(status).toBe(1)
-    expect(output).toContain('cannot tell the two builds apart')
+    expect(output).toContain('writes no packages/cli/lib/build-commit')
+  })
+
+  it('refuses to check the profile with a checkout whose lib was built at another commit', () => {
+    const f = fixture()
+    const target = builtTarget(f)
+    writeFileSync(join(target, 'packages', 'cli', 'lib', 'build-commit'), `${f.from}\n`)
+    const { status, output } = run(f, f.target, '--check-with', target)
+    expect(status).toBe(1)
+    expect(output).toContain('is not built at its commit')
+  })
+
+  it("reads the stamp the CLI's build writes", () => {
+    const build = (JSON.parse(readFileSync(fileURLToPath(new URL('../packages/cli/package.json', import.meta.url)), 'utf8')) as { scripts: { build: string } }).scripts.build
+    expect(build).toMatch(/&& git rev-parse HEAD > lib\/build-commit$/)
+    expect(readFileSync(SCRIPT, 'utf8')).toContain('STAMP_FILE=packages/cli/lib/build-commit\n')
   })
 
   it('a dry run checks the profile, with the patch candidate, by the target\'s code', () => {
