@@ -11,6 +11,7 @@
   "scripts": { "build": "tsc -p tsconfig.build.json" },
   "dependencies": {
     "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-resources-core": "workspace:*",

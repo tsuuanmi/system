@@ -31,6 +31,9 @@ export const WORKER_CLASSES: Readonly<Record<string, Classification[]>> = {
   // Not local-private by default: `locality: local` is one catalog field nothing checks against
   // the route's address, so private data needs a second, explicit act (INV-12).
   'model-local': ['public', 'operator-shared'],
+  // An operator's notification webhook (the notify plugin): nothing leaves for it until the operator
+  // lists what may, in this row's own configuration (INV-12, docs/design/notifications.md).
+  webhook: [],
 }
 
 export interface DenyPattern {
@@ -45,7 +48,8 @@ export interface Config {
    * an agent runtime Worker: it runs here, but its model is remote; widen it only for an agent
    * whose model runs on this machine. `model` is an API model; `model-local` is a model the
    * catalog says runs on this machine: widen it for local-private only once its route's address
-   * is this machine's (nothing checks that for you).
+   * is this machine's (nothing checks that for you). `webhook` is the notify plugin's webhook,
+   * which receives nothing until it lists `operator-shared`.
    */
   workerClasses?: Record<string, Classification[]>
   /** Classification of content whose caller states none (default operator-shared). */

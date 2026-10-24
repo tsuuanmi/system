@@ -73,4 +73,14 @@ describe('ctx.egress (INV-12)', () => {
     const verdict = await ctx.egress.check({ payload: 'x', classification: 'public', workerClass: 'satellite' })
     expect(verdict.allowed).toBe(false)
   })
+
+  it('lets nothing leave for a notification webhook until the operator lists what may (docs/design/notifications.md)', async () => {
+    const closed = await boot()
+    for (const classification of ['public', 'operator-shared', 'local-private'] as const) {
+      expect(await closed.egress.check({ payload: 'Approval needed', classification, workerClass: 'webhook' })).toMatchObject({ allowed: false })
+    }
+    const declared = await boot({ workerClasses: { webhook: ['operator-shared'] } })
+    expect(await declared.egress.check({ payload: 'Approval needed', classification: 'operator-shared', workerClass: 'webhook' })).toMatchObject({ allowed: true })
+    expect(await declared.egress.check({ payload: 'Approval needed', classification: 'local-private', workerClass: 'webhook' })).toMatchObject({ allowed: false })
+  })
 })

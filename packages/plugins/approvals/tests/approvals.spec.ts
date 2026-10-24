@@ -368,6 +368,39 @@ describe('batches', () => {
   })
 })
 
+describe('events', () => {
+  it('appends approvals.requested and approvals.resolved with the change that names them, ids and the class only, never the summary (docs/design/notifications.md, REQ-HOST-8)', async () => {
+    const { ctx } = await boot({ eventLog: true })
+    const merged = await asked(ctx, { class: 'deploy', projectId: 'p1' }, 'm1')
+    const lapsed = await asked(ctx, { class: 'command' }, 'c1')
+    const requested = ctx.eventLog.query({ type: 'approvals.requested' })
+    expect(requested.map((e) => e.data)).toEqual([
+      { requestId: merged.requestId, actionClass: 'deploy', expiresAt: merged.expiresAt, component: 'board', projectId: 'p1' },
+      { requestId: lapsed.requestId, actionClass: 'command', expiresAt: lapsed.expiresAt, component: 'board' },
+    ])
+    expect(JSON.stringify(requested)).not.toContain('do m1')
+    await ctx.approvals.decide([{ requestId: merged.requestId, subject: merged.subject, verdict: 'approved' }], after(5))
+    await ctx.approvals.sweep(new Date(Date.parse(lapsed.expiresAt) + 1000))
+    const resolved = ctx.eventLog.query({ type: 'approvals.resolved' })
+    expect(resolved.map((e) => e.data)).toEqual([
+      { requestId: merged.requestId, state: 'approved', cause: 'verdict', option: 'approved' },
+      { requestId: lapsed.requestId, state: 'rejected', cause: 'expired', option: 'denied:expired' },
+    ])
+    // Each names the request's own approval decision.
+    expect(resolved.map((e) => e.decision)).toEqual([(await ctx.approvals.get(merged.requestId))!.resolution!.decision, (await ctx.approvals.get(lapsed.requestId))!.resolution!.decision])
+  })
+
+  it('makes the change all the same when the event cannot be appended, and logs it', async () => {
+    const { ctx } = await boot({ eventLog: true })
+    const warnings = logged(ctx, 'warn')
+    const append = vi.spyOn(ctx.eventLog, 'append').mockImplementation(() => { throw new Error('store busy') })
+    const request = await asked(ctx, { class: 'merge' }, 'm1')
+    expect((await ctx.approvals.get(request.requestId))?.state).toBe('open')
+    append.mockRestore()
+    expect(warnings.some((w) => w.includes('approvals.requested') && w.includes('store busy'))).toBe(true)
+  })
+})
+
 describe('guards', () => {
   it('queues a request only on a recorded autonomy decision that says ask, of the policy the verdict names (INV-2, INV-13)', async () => {
     const { ctx } = await boot()

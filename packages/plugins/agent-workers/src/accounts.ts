@@ -310,7 +310,24 @@ export class AgentAccounts {
     const decision = this.decide(current, draft, { option: draft.status, why, ...(reason ? { reason } : {}), ...(reading ? { reading } : {}) })
     const next: AgentAccount = reason ? { ...draft, quarantine: { reason, since: current.quarantine?.reason === reason ? current.quarantine.since : at, decision } } : draft
     this.write(next, decision, 'update')
+    if (next.status === 'quarantined' && (current.status !== 'quarantined' || current.quarantine?.reason !== reason)) this.quarantined(next, decision)
     return next
+  }
+
+  /**
+   * One `agent-workers.account.quarantined` event for a slot newly quarantined, or quarantined for
+   * another reason: the slot, its account id, the reason, and the Workers that now take no work,
+   * never the principal or its hint. The event log is optional; a failed append is logged only.
+   */
+  private quarantined(account: AgentAccount, decision: ContentId): void {
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: 'agent-workers.account.quarantined', decision,
+        data: { provider: account.provider, slot: account.slot, ...(account.accountId ? { accountId: account.accountId } : {}), reason: account.quarantine!.reason, workers: this.workersIn(account).slice(0, 32) },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the quarantine event of slot ${account.slot} of ${account.provider} was not appended: ${(error as Error).message}`)
+    }
   }
 
   /** The `enrollment` decision of one change to a slot (decision@1.8): the slot's earlier decision its input, never the principal. */

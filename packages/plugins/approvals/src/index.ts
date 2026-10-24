@@ -358,6 +358,11 @@ export class StoreApprovals extends Approvals {
       // Its exact shape, if the queue could ever propose a change for it, in the same transaction.
       const shape = this.shapeOf(request, projectId)
       if (shape !== undefined) this.ctx.store.db.prepare('INSERT INTO request_shapes (request_id, shape, created_ms) VALUES (?, ?, ?)').run(created.requestId, shape, when.getTime())
+      // Ids, the class, and the expiry only: never the summary, consequences, or command (a surface reads it).
+      this.announce('approvals.requested', {
+        requestId: created.requestId, actionClass: created.action.class, expiresAt: created.expiresAt, component: created.requester.component,
+        ...(projectId !== undefined ? { projectId } : {}), ...(created.requester.policyChangeId !== undefined ? { policyChangeId: created.requester.policyChangeId } : {}),
+      })
       return structuredClone(created)
     })
   }
@@ -964,7 +969,20 @@ export class StoreApprovals extends Approvals {
     // The queue's own policy-change request settles its change in the same transaction.
     const change = this.changeOf(request)
     if (change) this.settle(change, next, at)
+    this.announce('approvals.resolved', { requestId: request.requestId, state: next.state, cause, option }, decision.id as ArtifactRef)
     return next
+  }
+
+  /**
+   * Append one event of the queue inside the caller's transaction, so it commits with the change it
+   * names. The event log is optional, and an append that fails is logged: it never fails the change.
+   */
+  private announce(type: 'approvals.requested' | 'approvals.resolved', data: Record<string, unknown>, decision?: ArtifactRef): void {
+    try {
+      this.ctx.get('eventLog')?.append({ type, ...(decision ? { decision } : {}), data })
+    } catch (error) {
+      this.ctx.logger.warn(`approvals: the ${type} event of ${String(data.requestId)} was not appended: ${(error as Error).message}`)
+    }
   }
 
   /** Write a request's next revision, revision-checked; it must stay a valid record. */

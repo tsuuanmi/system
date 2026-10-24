@@ -923,6 +923,9 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })
     expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
     expect(ctx.eventLog.query({ runId: run.runId, limit: 100 }).map((e) => e.type)).toEqual(expect.arrayContaining(['workflow.node.failed', 'workflow.task.question', 'workflow.run.failed', 'workflow.task.reported']))
+    // Each failure event says its disposition, as a notification reads it (docs/design/notifications.md).
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.node.failed' })[0]).toMatchObject({ nodeId: 'a', data: { kind: 'question', disposition: 'USER_ACTION' } })
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.run.failed' })[0]).toMatchObject({ data: { template: 'chain', kind: 'question', disposition: 'USER_ACTION' } })
     expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions: ['Which band width?', 'Keep the old API?'] }, attempts: { count: 1 } })
 
     // The lead answers every question: the next attempt goes through the gate (read: auto) and is briefed with the answers.
