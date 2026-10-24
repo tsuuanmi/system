@@ -138,11 +138,18 @@ Served always; each service it reads that is not mounted reads as unknown with w
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET roster` | — | the roster, an `mcp-roster@1.0` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+| `GET roster` | — | the roster, an `mcp-roster@1.1` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
 
-- Any other method is `405`. The page (`?view=roster`) shows one row per Worker: its id, provider,
-  family, and role; its account and the account's record; tier, quota class, and locality; its
-  availability; the steps it runs now (each run a link to its page) with their board tasks; its
-  load; and its account's pools, each window's used share and reset. A fact that is unknown shows
-  as `unknown (why)`; a Worker source that was silent or failed in its last read is named above
-  the table, its Workers not listed.
+- Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
+  (working, idle, at a limit with when the first is back, unavailable, and quarantined when any),
+  then one card per Worker, grouped by status (working, idle, at a limit, unavailable,
+  quarantined). Each card gives the Worker's id; what it is for (its `description`, else its
+  `derived` line, marked *derived*, with *no description is configured*); its status and why in
+  plain words (*Working: 1 of 2 slot(s) in use*, *At a limit: back in 2 h (11:40)*, *Unavailable:
+  its account is signed out*); what it does now (each step's `summary`, with a link to its run);
+  its account (the operator's label, id, kind, and state); what it serves (tier, quota class,
+  locality, provider, family, role); its limits (held-off capabilities, its account's return, each
+  pool and window with its used share and reset); and its load. Times read relative first, the
+  clock time beside. A fact that is unknown shows as `unknown (why)`; a Worker source that was
+  silent or failed in its last read is named above the cards, its Workers not listed. The tab
+  refreshes every 5 seconds like the rest of the page.

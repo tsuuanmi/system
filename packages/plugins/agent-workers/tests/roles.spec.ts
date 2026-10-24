@@ -167,6 +167,16 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(first.find((w) => w.id === `${ACC3}/review`)).not.toHaveProperty('pool')
   })
 
+  it('gives every Worker of a role the role\'s description, and refuses one that is not plain text on one line of at most 200 characters (T85)', () => {
+    const roles = [ROLE('review', { description: 'Reviews the studio\'s diffs before they merge' }), ROLE('research')]
+    const derived = deriveWorkers(roles, [{ account: ACC1, roles: ['review', 'research'] }, { account: ACC3, roles: ['review'] }], [])
+    expect(derived.filter((w) => w.derived.role === 'review').map((w) => w.description)).toEqual(['Reviews the studio\'s diffs before they merge', 'Reviews the studio\'s diffs before they merge'])
+    expect(derived.find((w) => w.derived.role === 'research')).not.toHaveProperty('description')
+    for (const bad of ['', 'two\nlines', 'x'.repeat(201), 42]) {
+      expect(() => deriveWorkers([ROLE('review', { description: bad })], [], []), String(bad)).toThrow(/roles\[0\] \(review\)\.description must be plain text on one line, 1 to 200 characters/)
+    }
+  })
+
   it('refuses a malformed, repeated, or unknown role or account, and a review member with no family on its runtime', () => {
     const ok = [ROLE('review')]
     expect(() => deriveWorkers(ok, [{ account: 'claude-1', roles: ['review'] }], [])).toThrow(/not an agent account id/)
@@ -179,6 +189,22 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(() => deriveWorkers([ROLE('review', { reviewMember: true })], [{ account: ACC1, roles: ['review'] }], [])).toThrow(/names the family of fake-a/)
     expect(() => deriveWorkers([ROLE('review', { reviewMember: true, sandbox: 'workspace-write' })], [], [])).toThrow(/read-only/)
     expect(() => deriveWorkers([ROLE('a', { worktreePerRun: true }), ROLE('b')], [], [])).toThrow(/share the workspace/)
+  })
+
+  it('describes a hand-named Worker with its description (capability-descriptor@1.6), one without as before, and refuses a bad one at load (T85)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-described-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    mkdirSync(join(dir, 'ws'), { recursive: true })
+    const row = (id: string, extra: Partial<AgentWorkerConfig> = {}): AgentWorkerConfig => ({ id, runtime: A, workspace: join(dir, 'ws'), sandbox: 'read-only', tier: 'standard', ...extra })
+    const b = await boot({ workers: [row('reviewer', { description: 'Reads the diffs and reports what it finds' }), row('plain')] }, { dir })
+    const workers = await described(b)
+    expect(workers.get('agent:reviewer')).toMatchObject({ schema: 'capability-descriptor@1.6', description: 'Reads the diffs and reports what it finds' })
+    expect(workers.get('agent:plain')).toMatchObject({ schema: 'capability-descriptor@1.5' })
+    expect(workers.get('agent:plain')).not.toHaveProperty('description')
+    for (const descriptor of workers.values()) schemas.assertRecord(descriptor)
+    await b.stop()
+    const refused = await boot({ workers: [row('reviewer', { description: 'line one\nline two' })] }, { dir })
+    expect(refused.ctx.get('agentWorkers')).toBeUndefined()
   })
 
   it('refuses both shapes in one row, and per-account settings beside hand-named Workers, at load', async () => {

@@ -10,6 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-gateway-core'
+import { DESCRIPTION, MAX_DESCRIPTION } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import { type CatalogEntry, DEFAULT_IDLE_TIMEOUT_MS, LlmModels } from './llm.ts'
 import { DEFAULT_CALL_TIMEOUT_MS, ModelWorkers } from './workers.ts'
@@ -51,6 +52,7 @@ export const Config: z<Config> = z.object({
     locality: z.union(['remote', 'local']).default('remote').description('local: the model runs on this machine (egress class model-local)'),
     maxTokens: z.natural().min(1).max(200_000).default(4096).description('Output bound of every call (INV-9)'),
     family: z.string().description('Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one'),
+    description: z.string().max(MAX_DESCRIPTION).pattern(DESCRIPTION).description('What the model Worker is for, in your words: plain text on one line, at most 200 characters; shown on the roster, never a routing input'),
     maxSessionTurns: z.natural().min(1).max(10_000).description('This model\'s session turns, at most (default: the row\'s maxSessionTurns)'),
     maxHistoryChars: z.natural().min(1).max(2_000_000).description('Characters of history this model replays, at most (default: the row\'s maxHistoryChars); fit it to the context window'),
     maxInputChars: z.natural().min(1).max(2_000_000).description('Characters of prompt this model takes, at most, declared to admission (ADR-0032; default: none declared); its history is bounded by maxHistoryChars'),
@@ -68,6 +70,7 @@ export function apply(ctx: Context, config: Config): void {
   const ids = new Set<string>()
   for (const entry of config.models ?? []) {
     if (!ID.test(entry.id)) throw new Error(`model id ${entry.id} must match ${ID}`)
+    if (entry.description !== undefined && (typeof entry.description !== 'string' || !DESCRIPTION.test(entry.description))) throw new Error(`model ${entry.id}: description must be plain text on one line, 1 to ${MAX_DESCRIPTION} characters`)
     if (ids.has(entry.id)) throw new Error(`duplicate model ${entry.id}`)
     ids.add(entry.id)
   }

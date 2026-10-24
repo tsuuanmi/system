@@ -16,7 +16,7 @@ const DECISION = `sha256:${'d'.repeat(64)}`
 
 /** A composition's services, each replaceable: two agent accounts, one website account, a pool, a run. */
 function services(over: Partial<RosterServices> = {}, workers: RosterDescriptor[] = [
-  descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE), load: { running: 1, queued: 1, pending: 0, slots: 2 } }),
+  descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE), description: 'Reviews the studio\'s diffs before they merge', load: { running: 1, queued: 1, pending: 0, slots: 2 } }),
   descriptor(`agent:${CLAUDE}/develop`, { account: agentAccount(CLAUDE), load: { running: 1, queued: 1, pending: 0, slots: 2 } }),
   descriptor(`agent:${CODEX}/review`, { provider: 'codex-sdk', family: 'codex-sdk', account: agentAccount(CODEX), state: 'unavailable', load: { running: 0, queued: 0, pending: 0, slots: 1 } }),
   descriptor('worker:plus/standard', { provider: 'chatgpt-web', family: 'chatgpt-web', quotaClass: 'subscription-chat', locality: 'remote', account: { id: 'plus', group: 'chatgpt-web', mode: 'assigned', limitUntil: '2026-10-24T11:00:00Z' }, state: 'quota-exhausted', load: { running: 0, queued: 0, pending: 0, slots: 2 } }),
@@ -40,7 +40,11 @@ function services(over: Partial<RosterServices> = {}, workers: RosterDescriptor[
     accounts: { list: async () => [{ id: 'plus', label: 'Studio Plus', status: 'ready' }], duplicateIdentities: async () => [] },
     agentWorkers: { agentAccounts: { list: () => agents, workersIn: (a: { accountId?: string }) => workers.filter((w) => w.account?.id === a.accountId).map((w) => w.worker) } },
     resources: { pools: async () => [pool], usage: async () => ({ records: [] }) },
-    eventLog: { query: ({ afterSeq }) => (afterSeq === 0 ? [unknownEntry] : []) },
+    eventLog: {
+      query: ({ type, afterSeq, runId, nodeId }) => type === 'workflow.node.started'
+        ? (runId === 'run_2' && nodeId === 'review:1' ? [{ seq: 2, at: '2026-10-24T09:20:00.000Z', data: { attempt: 0 } }, { seq: 3, at: '2026-10-24T09:26:00.000Z', data: { attempt: 1 } }] : [])
+        : afterSeq === 0 ? [unknownEntry] : [],
+    },
     workflow: { usage: () => runs },
     board: { task: async (taskId) => (taskId === 'task-42' ? { taskId, projectId: 'studio', title: 'Review the parser change', state: 'running' } : undefined) },
     ...over,
@@ -53,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.0', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.1', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -83,6 +87,36 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, 'worker:plus/standard')).toMatchObject({ role: { value: null }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } }, pools: { value: [] } })
     expect(roster.counts).toEqual({ ready: 0, busy: 2, resting: 1, unavailable: 0, quarantined: 1 })
     expect(value(roster.sources).map((s) => s.source)).toEqual(['agents', 'website'])
+  })
+
+  it('says what each Worker is for, in the operator\'s words or as a line marked derived, and what it does now in one sentence, since its step started (T85)', async () => {
+    const roster = await readRoster(services(), { scope: 'operator', now: NOW })
+    valid(roster)
+    const review = entry(roster, `agent:${CLAUDE}/review`)
+    expect(review.description).toEqual({ value: 'Reviews the studio\'s diffs before they merge' })
+    expect(review.derived).toBe('claude-agent-sdk Worker, role review, standard tier, agent-plan, local')
+    // No description configured: unknown, never a default; the derived line is there for a reader to show, marked.
+    expect(entry(roster, 'worker:plus/standard')).toMatchObject({ description: { unknown: 'no description is configured for it' }, derived: 'chatgpt-web Worker, standard tier, subscription-chat, remote' })
+    // The step's start is its current attempt's workflow.node.started, never an earlier attempt's.
+    const [work] = value(review.work).items
+    expect(work).toMatchObject({ since: { value: '2026-10-24T09:26:00.000Z' }, summary: 'Working on "Review the parser change" (task task-42, project studio): agent-review run run_2, step review:1, for 4 min' })
+    // Without the event log, the start is unknown and the sentence says so.
+    const blind = await readRoster(services({ eventLog: undefined }), { scope: 'operator', now: NOW })
+    valid(blind)
+    expect(value(entry(blind, `agent:${CLAUDE}/review`).work).items[0]).toMatchObject({
+      since: { unknown: 'the event log (ctx.eventLog) is not mounted' },
+      summary: 'Working on "Review the parser change" (task task-42, project studio): agent-review run run_2, step review:1, since an unknown time',
+    })
+    // A step past the bound has its start unknown, never a guess.
+    const on = [`agent:${CLAUDE}/review`, `agent:${CLAUDE}/develop`, 'worker:plus/standard']
+    const many: RosterRun[] = Array.from({ length: ROSTER_BOUNDS.starts + 1 }, (_, i) => ({ runId: `run_${String(i).padStart(3, '0')}`, template: 'ask', status: 'running', nodes: [{ nodeId: 'answer', state: 'RUNNING', attempt: 1, worker: on[i % 3]! }] }))
+    const busy = await readRoster(services({ workflow: { usage: () => many } }), { scope: 'operator', now: NOW })
+    const items = on.flatMap((w) => value(entry(busy, w).work).items)
+    expect(items.find((i) => i.runId === `run_0${ROSTER_BOUNDS.starts}`)!.since).toEqual({ unknown: `more than ${ROSTER_BOUNDS.starts} steps run now; this one's start was not read` })
+    expect(items.find((i) => i.runId === 'run_000')).toMatchObject({
+      since: { unknown: 'the event log holds no workflow.node.started of attempt 1 (its retention may have dropped it)' },
+      summary: 'Running ask run run_000, step answer, since an unknown time',
+    })
   })
 
   it('tells each availability apart: ready, busy N of M, resting until its reset, unavailable with why, quarantined', async () => {
@@ -262,12 +296,14 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(text).toContain(`agent:${CLAUDE}/review  busy 1 of 2`)
     expect(text).toContain('worker:plus/standard  resting at a limit until 2026-10-24T11:00:00Z')
     expect(text).toContain(`agent:${CODEX}/review  quarantined: changed, since 2026-10-24T08:00:00Z`)
-    expect(text).toContain('run_2 (agent-review) step review:1 attempt 1, task task-42 (the board (ctx.board) is not mounted)')
+    expect(text).toContain('Working on task task-42: agent-review run run_2, step review:1, for 4 min')
+    expect(text).toContain('  is         Reviews the studio\'s diffs before they merge')
+    expect(text).toContain('  is         chatgpt-web Worker, standard tier, subscription-chat, remote (derived: no description is configured)')
     expect(text).toContain('    window   weekly: unknown, used unknown (no reading yet), resets unknown (no reading yet)')
     expect(text).toContain('unknown usage 1 run(s)')
   })
 
-  it('the example validates against mcp-roster@1.0, and a record that is not one is refused', async () => {
+  it('the example validates against mcp-roster@1.1, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)

@@ -4,14 +4,17 @@
  * account's pools. A projection computed on read from the seams that already hold each fact, never
  * stored: the same reads give the same roster. Each field a source could not give is
  * `{ unknown: why }`, never a default (INV-2), and every read is bounded (INV-9, {@link ROSTER_BOUNDS}).
- * The surfaces (MCP `roster`, `system roster`, the `/ui` Roster page) share it. It holds no secret
+ * The surfaces (MCP `roster`, `system roster`, the `/ui` Workers tab) share it. It holds no secret
  * (INV-8): an account's id, state, and the operator's label only.
  * @module
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.0`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.0'
+/** The schema of the roster (`mcp-roster@1.1`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.1'
+
+/** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
+export const NODE_STARTED = 'workflow.node.started'
 
 /** What one roster reads at most (INV-9). */
 export const ROSTER_BOUNDS = {
@@ -30,6 +33,10 @@ export const ROSTER_BOUNDS = {
   sources: 64,
   /** Board tasks read for the steps listed; a task past them is `unknown`. */
   tasks: 64,
+  /** Steps listed whose start is read from the event log, by run and node id; a step past them has its `since` unknown. */
+  starts: 64,
+  /** `workflow.node.started` entries read for one step: its attempts' starts. */
+  startsPerStep: 100,
   /** `usage.unknown` entries read for the pools' unknown usage. */
   unknownEntries: MAX_UNKNOWN_ENTRIES,
 } as const
@@ -39,7 +46,7 @@ export type Known<T> = { value: T } | { unknown: string }
 
 const known = <T>(value: T): Known<T> => ({ value })
 const unknown = <T>(why: string): Known<T> => ({ unknown: clip(why) })
-const clip = (text: string): string => ([...text].length > 300 ? `${[...text].slice(0, 299).join('')}…` : text)
+const clip = (text: string, max = 300): string => ([...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text)
 const isKnown = <T>(k: Known<T>): k is { value: T } => 'value' in k
 
 // What the roster reads, by shape only: each surface passes the services it has mounted.
@@ -49,6 +56,8 @@ export interface RosterDescriptor {
   worker: string
   provider: string
   family?: string | undefined
+  /** `@1.6`: what it is for, in the operator's words. */
+  description?: string | undefined
   account?: { id: string; group: string; mode: 'assigned' | 'pooled'; limitUntil?: string | undefined } | undefined
   load?: { running: number; queued: number; pending: number; slots: number } | undefined
   cooldowns?: Array<{ capability: string; until: string }> | undefined
@@ -101,7 +110,7 @@ export interface RosterServices {
   accounts?: { list(): Promise<RosterWebsiteAccount[]>; duplicateIdentities(): Promise<string[][]> } | undefined
   agentWorkers?: { agentAccounts?: { list(): RosterAgentAccount[]; workersIn(account: never): string[] } } | undefined
   resources?: { pools(): Promise<RosterPool[]>; usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }> } | undefined
-  eventLog?: { query(filter: { type: string; since: string; afterSeq: number; limit: number }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
+  eventLog?: { query(filter: { type: string; since?: string; afterSeq: number; limit: number; runId?: string; nodeId?: string }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
   workflow?: { usage(limit: number): RosterRun[] } | undefined
   board?: { task(taskId: string): Promise<RosterTask | undefined> } | undefined
 }
@@ -123,7 +132,12 @@ export interface RosterInput {
   runs: Known<{ runs: RosterRun[]; full: boolean }>
   /** Each board task a listed step serves, by id. */
   tasks: ReadonlyMap<string, Known<RosterTask>>
+  /** When each listed step's current attempt started, by {@link stepKey}; a step not in it has its start unknown (not read). */
+  starts?: ReadonlyMap<string, Known<string>>
 }
+
+/** The key of one step's start in {@link RosterInput}.starts. */
+export const stepKey = (runId: string, nodeId: string): string => `${runId}\u0000${nodeId}`
 
 // The record.
 
@@ -146,12 +160,26 @@ export interface RosterAccountRecord {
   sameAs?: string[]
 }
 export interface RosterAccount { id: string; group: string; mode: 'assigned' | 'pooled'; limitUntil?: string; record: Known<RosterAccountRecord> }
-export interface RosterWork { runId: string; template: string; nodeId: string; attempt: number; task?: { taskId: string; board: Known<{ projectId: string; title: string; state: string }> } }
+export interface RosterWork {
+  runId: string
+  template: string
+  nodeId: string
+  attempt: number
+  task?: { taskId: string; board: Known<{ projectId: string; title: string; state: string }> }
+  /** When its current attempt started. */
+  since: Known<string>
+  /** The step in one sentence: its task, the run, the step, and for how long. */
+  summary: string
+}
 export interface RosterWindow { id: string; kind: string; seconds?: number; state: 'ok' | 'limited' | 'unknown'; used: Known<number>; resets: Known<string>; observedAt?: string; source?: string }
 export interface RosterPoolView { pool: string; kind: string; available: boolean; until?: string; windows: RosterWindow[]; unknownUsage: Known<{ runs: number; kinds: Partial<Record<UsageUnknownKind, number>> }> }
 export interface RosterEntry {
   worker: string
   provider: string
+  /** What it is for, in the operator's words; unknown when none is configured. */
+  description: Known<string>
+  /** A line made from its provider, role, and tier, which a reader shows, marked as derived, when there is no description. */
+  derived: string
   family: Known<string>
   account: Known<RosterAccount>
   /** The role the Worker serves on its account, `null` for a Worker that is no role's (a website account's tier, a model, a hand-named agent Worker). */
@@ -298,7 +326,26 @@ function poolsOf(input: RosterInput, d: RosterDescriptor): Known<RosterPoolView[
   }))
 }
 
-function workOf(input: RosterInput, worker: string): Known<{ items: RosterWork[]; more: number; unread?: string }> {
+/** How long from `since` to `now`, in words: "less than a minute", "4 min", "2 h 5 min", "3 days". */
+export function spanText(since: string, now: Date): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - Date.parse(since)) / 60_000))
+  if (minutes < 1) return 'less than a minute'
+  if (minutes < 60) return `${minutes} min`
+  if (minutes < 48 * 60) return `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ''}`
+  return `${Math.floor(minutes / 1440)} days`
+}
+
+/** A step in one sentence, as every surface shows it: the task it serves, the run, the step, and for how long. */
+function summaryOf(work: Omit<RosterWork, 'summary'>, now: Date): string {
+  const step = `${work.template} run ${work.runId}, step ${work.nodeId}${work.attempt > 1 ? ` (attempt ${work.attempt})` : ''}`
+  const how = isKnown(work.since) ? `for ${spanText(work.since.value, now)}` : 'since an unknown time'
+  if (!work.task) return clip(`Running ${step}, ${how}`)
+  const board = work.task.board
+  const task = isKnown(board) ? `"${board.value.title}" (task ${work.task.taskId}, project ${board.value.projectId})` : `task ${work.task.taskId}`
+  return clip(`Working on ${task}: ${step}, ${how}`, 800)
+}
+
+function workOf(input: RosterInput, worker: string, now: Date): Known<{ items: RosterWork[]; more: number; unread?: string }> {
   if (!isKnown(input.runs)) return unknown(input.runs.unknown)
   const items: RosterWork[] = []
   for (const run of input.runs.value.runs) {
@@ -307,7 +354,9 @@ function workOf(input: RosterInput, worker: string): Known<{ items: RosterWork[]
       if (node.state !== 'RUNNING' || node.worker !== worker) continue
       const task = run.task ? input.tasks.get(run.task.taskId) ?? unknown<RosterTask>('the board task was not read') : undefined
       const board = task && (isKnown(task) ? known({ projectId: task.value.projectId, title: task.value.title, state: task.value.state }) : unknown<{ projectId: string; title: string; state: string }>(task.unknown))
-      items.push({ runId: run.runId, template: run.template, nodeId: node.nodeId, attempt: node.attempt, ...(run.task && board ? { task: { taskId: run.task.taskId, board } } : {}) })
+      const since = input.starts?.get(stepKey(run.runId, node.nodeId)) ?? unknown<string>('its start was not read')
+      const work = { runId: run.runId, template: run.template, nodeId: node.nodeId, attempt: node.attempt, ...(run.task && board ? { task: { taskId: run.task.taskId, board } } : {}), since }
+      items.push({ ...work, summary: summaryOf(work, now) })
     }
   }
   items.sort((a, b) => cmp(a.runId, b.runId) || cmp(a.nodeId, b.nodeId))
@@ -347,15 +396,18 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
       const availability = availabilityOf(d, record, pools)
       counts[availability.state] += 1
       const siblings = input.siblings.get(d.worker) ?? unknown<string[]>('its siblings were not read')
+      const role = roleOf(input, d, record, agent)
       return {
         worker: d.worker, provider: d.provider,
+        description: d.description !== undefined ? known(d.description) : unknown('no description is configured for it'),
+        derived: derivedOf(d, role),
         family: d.family !== undefined ? known(d.family) : unknown('its Worker source declares no provider family'),
-        account, role: roleOf(input, d, record, agent), tier: d.tier, quotaClass: d.quotaClass, locality: d.locality, state: d.state, observedAt: d.observedAt,
+        account, role, tier: d.tier, quotaClass: d.quotaClass, locality: d.locality, state: d.state, observedAt: d.observedAt,
         availability,
         load: d.load ? known({ running: d.load.running, queued: d.load.queued, pending: d.load.pending, slots: d.load.slots }) : unknown('its Worker source reports no load'),
         limits: [...(d.cooldowns ?? [])].map((c) => ({ capability: c.capability, until: c.until })).sort((a, b) => cmp(a.capability, b.capability)),
         siblings: siblingsOf(siblings, d.worker),
-        work: workOf(input, d.worker),
+        work: workOf(input, d.worker, options.now),
         pools,
       }
     }))
@@ -367,6 +419,11 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
       : isKnown(input.sources) ? known([...input.sources.value].sort((a, b) => cmp(a.source, b.source)).map((s) => ({ source: s.source, state: s.state, at: s.at, workers: s.workers, ...(s.detail ? { detail: clip(s.detail) } : {}) }))) : input.sources,
     unknownUsage: isKnown(usage) ? known({ unreadable: usage.value.unreadable, unconfigured: usage.value.unconfigured }) : unknown(usage.unknown),
   }
+}
+
+/** A Worker's line made from what its source says: provider, role, tier, quota class, and locality (shown, marked as derived, when it has no description). */
+function derivedOf(d: RosterDescriptor, role: Known<string | null>): string {
+  return clip(`${d.provider} Worker${isKnown(role) && role.value ? `, role ${role.value}` : ''}, ${d.tier} tier, ${d.quotaClass}, ${d.locality}`)
 }
 
 /**
@@ -441,7 +498,21 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
           }))
     }
   }
-  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, pools, unknownUsage, runs, tasks }, { scope: options.scope, now })
+  // When each listed step's current attempt started: its latest `workflow.node.started` event of that attempt, at most ROSTER_BOUNDS.starts steps.
+  const starts = new Map<string, Known<string>>()
+  if (isKnown(runs) && isKnown(listed)) {
+    const shown = new Set(siblings.keys())
+    const steps = runs.value.runs.filter((r) => r.status === 'running').flatMap((r) => r.nodes.filter((n) => n.state === 'RUNNING' && n.worker !== undefined && shown.has(n.worker)).map((n) => ({ runId: r.runId, node: n })))
+      .sort((a, b) => cmp(a.runId, b.runId) || cmp(a.node.nodeId, b.node.nodeId))
+    for (const [i, { runId, node }] of steps.entries()) {
+      starts.set(stepKey(runId, node.nodeId), i >= ROSTER_BOUNDS.starts ? unknown(`more than ${ROSTER_BOUNDS.starts} steps run now; this one's start was not read`)
+        : !eventLog ? unknown('the event log (ctx.eventLog) is not mounted')
+          : await read(undefined, () => eventLog.query({ type: NODE_STARTED, runId, nodeId: node.nodeId, afterSeq: 0, limit: ROSTER_BOUNDS.startsPerStep })
+            .filter((e) => (e.data as { attempt?: unknown } | undefined)?.attempt === node.attempt).at(-1)?.at)
+            .then((at): Known<string> => !isKnown(at) ? at : at.value !== undefined ? known(at.value) : unknown(`the event log holds no ${NODE_STARTED} of attempt ${node.attempt} (its retention may have dropped it)`)))
+    }
+  }
+  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, pools, unknownUsage, runs, tasks, starts }, { scope: options.scope, now })
   schemas().assertDef(ROSTER_SCHEMA, 'roster-output', roster)
   return roster
 }
@@ -457,11 +528,12 @@ export function formatRoster(roster: Roster): string {
     lines.push(`Roster as of ${roster.asOf}: ${roster.workers.value.length} Worker(s): ${STATES.map((s) => `${c[s]} ${s}`).join(', ')}${roster.unlisted ? `; ${roster.unlisted} more not listed` : ''}`)
     for (const w of roster.workers.value) {
       lines.push('', `${w.worker}  ${w.availability.summary}`)
+      lines.push(`  is         ${isKnown(w.description) ? w.description.value : `${w.derived} (derived: no description is configured)`}`)
       lines.push(`  serves     ${w.tier}, ${w.quotaClass}, ${w.locality}; provider ${w.provider}, family ${text(w.family)}; role ${text(w.role, (r) => r ?? 'none')}`)
       lines.push(`  account    ${text(w.account, (a) => `${a.id} (${a.group}, ${a.mode}): ${text(a.record, (r) => `${r.kind} ${r.status}${r.label ? `, ${text(r.label, (l) => JSON.stringify(l))}` : ''}${r.slot !== undefined ? `, slot ${r.slot}` : ''}${r.quarantine ? `, quarantined ${r.quarantine.reason} since ${r.quarantine.since} (${r.quarantine.decision})` : ''}${r.sameAs ? `, same person as ${r.sameAs.join(', ')}` : ''}`)}`)}`)
       lines.push(`  load       ${text(w.load, (l) => `${l.running} running of ${l.slots}, ${l.queued} queued, ${l.pending} pending`)}${w.limits.length ? `; limited: ${w.limits.map((l) => `${l.capability} until ${l.until}`).join(', ')}` : ''}`)
       lines.push(`  work       ${text(w.work, (work) => [
-        ...(work.items.length ? work.items.map((i) => `${i.runId} (${i.template}) step ${i.nodeId} attempt ${i.attempt}${i.task ? `, task ${i.task.taskId}${isKnown(i.task.board) ? ` "${i.task.board.value.title}" (${i.task.board.value.projectId}, ${i.task.board.value.state})` : ` (${i.task.board.unknown})`}` : ''}`) : ['none now']),
+        ...(work.items.length ? work.items.map((i) => i.summary) : ['none now']),
         ...(work.more ? [`${work.more} more`] : []), ...(work.unread ? [work.unread] : []),
       ].join('; '))}`)
       if (!isKnown(w.pools)) lines.push(`  pools      unknown (${w.pools.unknown})`)

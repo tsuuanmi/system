@@ -78,7 +78,7 @@ export interface WorkerAccount {
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -87,6 +87,12 @@ export interface CapabilityDescriptor {
    * Routing only compares it for inequality (`RouteOptions.exclude`), and never names or ranks one.
    */
   family?: string
+  /**
+   * What the Worker is for, in the operator's words (`@1.6`): the `description` of the
+   * configuration row that defines it, at most `MAX_DESCRIPTION` characters (`libs`; a website
+   * Worker's carries its tier as well). For people only: routing never reads it.
+   */
+  description?: string
   /**
    * The longest input this Worker takes, in characters (code points) of what it is sent, when its
    * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.

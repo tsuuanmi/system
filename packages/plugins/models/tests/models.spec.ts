@@ -191,7 +191,7 @@ describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', 
 // --- the `models` Worker source ---
 
 const CATALOG_W: ModelEntry[] = [
-  { id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
+  { id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64, description: 'Quick answers for the lead' },
   { id: 'gone', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
   { id: 'private', tier: 'standard', quotaClass: 'local', locality: 'local', maxTokens: 32 },
   { id: 'strong', tier: 'frontier', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
@@ -242,6 +242,16 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(workers['model:private']).toMatchObject({ quotaClass: 'local', locality: 'local', state: 'ready' })
     expect(workers['model:private']!.capabilities.map((c) => c.capability)).toEqual(['reason', 'persistent-conversation'])
     expect(workers['model:gone']).toMatchObject({ state: 'unavailable', capabilities: [] })
+    // The operator's description of an entry is its Worker's (capability-descriptor@1.6); an entry without one is described as before (T85).
+    expect(workers['model:fast']).toMatchObject({ schema: 'capability-descriptor@1.6', description: 'Quick answers for the lead' })
+    expect(workers['model:private']).not.toHaveProperty('description')
+  })
+
+  it('refuses a model entry whose description is not plain text on one line of at most 200 characters (T85)', () => {
+    const entry = { id: 'fast', route: 'fake', model: 'm1', tier: 'standard' as const, quotaClass: 'metered' as const, locality: 'remote' as const, maxTokens: 64 }
+    for (const description of ['', 'one\ntwo', 'x'.repeat(201)]) {
+      expect(() => Models.apply(new Context(), { models: [{ ...entry, description }] }), JSON.stringify(description)).toThrow(/model fast: description must be plain text on one line, 1 to 200 characters/)
+    }
   })
 
   it('answers an ask end to end: routed, egress-checked, stored as model-answer, tokens in the usage report (REQ-WRK-10)', async () => {

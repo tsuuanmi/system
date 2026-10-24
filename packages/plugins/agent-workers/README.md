@@ -113,6 +113,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     the refusal, and records `rolled-back` (its input the cutover's decision).
     Records already written (results, usage, decisions) keep the ids they were
     written with; the `workerSessions` records of team members are not moved.
+- **Description** (`capability-descriptor@1.6`): a hand-named Worker's `description`, or its
+  role's for a derived Worker, is carried on its descriptor for the roster; plain text on one
+  line, at most 200 characters (refused at load otherwise); never a routing input.
 - **Accounts** (`providers`, ADR-0052): a hand-named Worker runs on its
   runtime's one home, so every hand-named Worker of a runtime names the account
   `{ id: <runtime>, group: <runtime> }` (`capability-descriptor@1.5`); a derived

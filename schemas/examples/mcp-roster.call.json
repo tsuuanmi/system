@@ -8,6 +8,8 @@
         {
           "worker": "agent:claude-agent-sdk:1f0c2b7e9a5d3c41/review",
           "provider": "claude-agent-sdk",
+          "description": { "value": "Reviews the studio's diffs before they merge" },
+          "derived": "claude-agent-sdk Worker, role review, standard tier, agent-plan, local",
           "family": { "value": "claude-agent-sdk" },
           "account": {
             "value": {
@@ -35,7 +37,9 @@
                   "template": "agent-review",
                   "nodeId": "review:1",
                   "attempt": 1,
-                  "task": { "taskId": "task-42", "board": { "value": { "projectId": "studio", "title": "Review the parser change", "state": "running" } } }
+                  "task": { "taskId": "task-42", "board": { "value": { "projectId": "studio", "title": "Review the parser change", "state": "running" } } },
+                  "since": { "value": "2026-10-24T09:26:00.000Z" },
+                  "summary": "Working on \"Review the parser change\" (task task-42, project studio): agent-review run run_7Hc2, step review:1, for 4 min"
                 }
               ],
               "more": 0
@@ -75,6 +79,8 @@
         {
           "worker": "agent:codex-sdk:04aa5c1e9b7d3f20/review",
           "provider": "codex-sdk",
+          "description": { "unknown": "no description is configured for it" },
+          "derived": "codex-sdk Worker, role review, standard tier, agent-plan, local",
           "family": { "value": "codex-sdk" },
           "account": {
             "value": {
@@ -108,6 +114,8 @@
         {
           "worker": "worker:chatgpt-plus/standard",
           "provider": "chatgpt-web",
+          "description": { "value": "The studio's chat subscription for quick questions (standard tier)" },
+          "derived": "chatgpt-web Worker, standard tier, subscription-chat, remote",
           "family": { "value": "chatgpt-web" },
           "account": {
             "value": {

@@ -29,7 +29,9 @@ class StubWorkflow extends Service {
   constructor(ctx: Context) {
     super(ctx, 'workflow')
   }
-  usage() { return [RUN] }
+  /** Runs listed after RUN: the roster suites' running step. */
+  extra: unknown[] = []
+  usage() { return [RUN, ...this.extra] }
   get(id: string) { return id === RUN.runId ? RUN : undefined }
   explain(id: string) { return id === RUN.runId ? { runId: id, nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', decisions: [{ id: 'sha256:22', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason'] }] }] } : undefined }
   approve(id: string, input: unknown) { this.calls.push(['approve', id, input]); return RUN }
@@ -72,6 +74,8 @@ class StubApprovals extends Service {
 }
 
 const AT = '2026-10-24T09:29:58.000Z'
+/** A run whose step runs on worker:plus/standard now. */
+const STEP = { runId: 'run_xyz', template: 'review', status: 'running', specHash: 'sha256:00', createdAt: AT, updatedAt: AT, nodes: [{ nodeId: 'review:m1:propose', state: 'RUNNING', minTier: 'standard', attempt: 1, worker: 'worker:plus/standard' }] }
 /** A stand-in router for the roster: a website account's two tiers, one busy, one resting at its limit. */
 class StubRouter extends Service {
   constructor(ctx: Context) {
@@ -80,7 +84,7 @@ class StubRouter extends Service {
   async list() {
     const account = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' }
     return [
-      { worker: 'worker:plus/standard', provider: 'chatgpt-web', family: 'chatgpt-web', account, load: { running: 1, queued: 0, pending: 0, slots: 2 }, tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote', state: 'ready', observedAt: AT },
+      { worker: 'worker:plus/standard', provider: 'chatgpt-web', family: 'chatgpt-web', description: 'The studio\'s chat subscription for quick questions (standard tier)', account, load: { running: 1, queued: 0, pending: 0, slots: 2 }, tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote', state: 'ready', observedAt: AT },
       { worker: 'worker:plus/frontier', provider: 'chatgpt-web', family: 'chatgpt-web', account: { ...account, limitUntil: '2026-10-24T11:00:00.000Z' }, tier: 'frontier', quotaClass: 'subscription-chat', locality: 'remote', state: 'quota-exhausted', observedAt: AT },
     ]
   }
@@ -105,6 +109,7 @@ async function boot(options: { approvals?: boolean; roster?: boolean } = {}) {
   const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
   cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
+  if (options.roster) (ctx as unknown as { workflow: StubWorkflow }).workflow.extra = [STEP]
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
   return { ctx, origin, token, workflow: (ctx as unknown as { workflow: StubWorkflow }).workflow, approvals: () => (ctx as unknown as { approvals: StubApprovals }).approvals }
 }
@@ -244,7 +249,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await fetch(`${origin}/ui/api/runs`, { headers: auth })).status).toBe(200)
   })
 
-  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.0, and what it could not read as unknown (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.1, and what it could not read as unknown (REQ-HOST-8)', async () => {
     const { origin, token } = await boot({ roster: true })
     const auth = { authorization: `Bearer ${token}` }
     const response = await fetch(`${origin}/ui/api/roster`, { headers: auth })
@@ -252,13 +257,14 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
     const roster = await response.json() as Record<string, unknown>
-    new SchemaRegistry().assertDef('mcp-roster@1.0', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.1', 'roster-output', roster)
     expect(roster).toMatchObject({
       counts: { busy: 1, resting: 1 },
       workers: { value: [
         { worker: 'worker:plus/frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
         // The stand-in engine's run is not running this Worker now; no ledger, so its pools are unknown.
-        { worker: 'worker:plus/standard', availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } }, work: { value: { items: [], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' } },
+        { worker: 'worker:plus/standard', description: { value: 'The studio\'s chat subscription for quick questions (standard tier)' }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } },
+          work: { value: { items: [{ runId: 'run_xyz', nodeId: 'review:m1:propose', since: { unknown: 'the event log (ctx.eventLog) is not mounted' }, summary: 'Running review run run_xyz, step review:m1:propose, since an unknown time' }], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' } },
       ] },
     })
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
@@ -270,21 +276,29 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(none).toMatchObject({ workers: { unknown: 'the Worker registry (ctx.workers) is not mounted' } })
   })
 
-  it.runIf(canRunBrowser)('renders the roster page in a real browser: each Worker\'s availability, account, work, and what is unknown', async () => {
+  it.runIf(canRunBrowser)('renders the Workers tab in a real browser: counts, one card per Worker by status, what it is for (or a derived line, marked), what it does now, its account and limits (T85)', async () => {
     const { origin, token } = await boot({ roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     cleanups.push(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.getByRole('link', { name: 'Roster' }).click()
-    const roster = page.getByRole('region', { name: 'Roster' })
-    await expect.poll(() => roster.getByText('worker:plus/standard', { exact: true }).count()).toBe(1)
-    for (const text of ['busy 1 of 2', 'resting at a limit until 2026-10-24T11:00:00.000Z', 'Studio Plus']) {
-      expect(await roster.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
-    }
-    expect(await roster.locator('td', { hasText: 'website ready' }).count()).toBe(2)
-    expect(await roster.getByText('unknown (the resource ledger (ctx.resources) is not mounted)', { exact: true }).count()).toBe(2)
-    expect(new URL(page.url()).search).toBe('?view=roster')
+    await page.getByRole('link', { name: 'Workers' }).click()
+    await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
+    expect(new URL(page.url()).search).toBe('?view=workers')
+    expect(await page.getByLabel('Worker counts').innerText()).toMatch(/^1 working · 0 idle · 1 at a limit \(the first back .+\) · 0 unavailable$/)
+    const working = page.getByRole('region', { name: 'Working' })
+    const busy = working.getByRole('article', { name: 'worker:plus/standard' })
+    const card = await busy.innerText()
+    for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
+      'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote']) expect(card, said).toContain(said)
+    const resting = page.getByRole('region', { name: 'At a limit' }).getByRole('article', { name: 'worker:plus/frontier' })
+    const rest = await resting.innerText()
+    expect(rest).toContain('derived')
+    expect(rest).toContain('chatgpt-web Worker, frontier tier, subscription-chat, remote (no description is configured)')
+    expect(rest).toMatch(/At a limit: back (in|.* ago)/)
+    expect(rest).toContain('unknown (the resource ledger (ctx.resources) is not mounted)')
+    // The run link opens its page.
+    await busy.getByRole('link', { name: 'Open run run_xyz' }).focus()
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 

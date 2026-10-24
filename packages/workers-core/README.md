@@ -8,9 +8,10 @@ Routing **seam definition**
 |---|---|---|
 | `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, optional `sources()` (how each source answered its last read, `WorkerSourceRead`), `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033; `account`, ADR-0052), `WorkerAccount`, `AccountMode`, `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`), `WorkScope`, `provesFor(offer, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure` (with `limitUntil`, ADR-0052), `AdmissionCheck`, `ADMISSION_CHECKS`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
-- The types mirror `capability-descriptor@1.5` (its optional `family`, an opaque
+- The types mirror `capability-descriptor@1.6` (its optional `family`, an opaque
   provider family; `maxInputChars`, the longest input the Worker takes; `load` and `cooldowns`;
-  a capability offer's `scope`; and the `account` it runs on, `{ id, group, mode, limitUntil? }`)
+  a capability offer's `scope`; the `account` it runs on, `{ id, group, mode, limitUntil? }`; and
+  the operator's `description`, for people only, never a routing input)
   and `work-requirement@1.1` (its optional `scope`). A scoped
   offer proves its capability only for work whose requirement names that scope (`provesFor`,
   [scoped offers](../../docs/design/routing.md#scoped-offers),

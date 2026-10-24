@@ -1,4 +1,5 @@
 export { canonicalJson, contentId, sha256, type ContentId } from './canonical.ts'
+export { DESCRIPTION, MAX_DESCRIPTION } from './descriptions.ts'
 export { type AccountMode, type AccountSetting, accountSettings, ASSIGNED, type PooledTerms, pooledTermsDecision, type ProviderAccounts } from './accounts.ts'
 export {
   type ArtifactLookup, type Brief, type BriefBudgetLine, type BriefClassification, BriefError, type BriefFile, BRIEF_FILE_PATH, type BriefPointer, type BriefRole, type BriefSandbox, type BriefSegment, BRIEF_LIMITS,

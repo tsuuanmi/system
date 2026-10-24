@@ -102,7 +102,7 @@ const USAGE = `Usage: system <command>
   tools [--markdown]        list the MCP tools the running profile serves (--markdown: the reference page)
   ui                        print the web UI link: the approval queue (approve or deny one request or a batch),
                             reviews of board tasks (accept or reject), runs (approve, vote, stop, continue),
-                            the Board page's projects (pause, resume, close), the Roster page (every Worker),
+                            the Board page's projects (pause, resume, close), the Workers tab (the roster),
                             and the Autonomy policy page (propose a change, which the queue asks for)
   mcp-token --scope model   print the model gateways' token (for a model client's environment variable;
                             needs a gateway row)

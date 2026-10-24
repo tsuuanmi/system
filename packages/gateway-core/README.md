@@ -67,23 +67,25 @@ Tests: `tests/guard.spec.ts`.
 `roster.ts` holds the one read model of every Worker
 ([roster](../../docs/design/roster.md), REQ-HOST-8), which MCP `roster` (in
 [`mcp-server`](../plugins/mcp-server/README.md)), `system roster`, and the
-[web UI](../plugins/web-ui/README.md)'s Roster page serve:
+[web UI](../plugins/web-ui/README.md)'s Workers tab serve:
 
 - **`readRoster(services, { scope, now? })`** reads each service it is given
   once, bounded (`ROSTER_BOUNDS`): the Worker registry (`list`, `sources`,
   `siblings`), the agent accounts (`agentAccounts.list`, `workersIn`), the
   website accounts (`list`, `duplicateIdentities`), the resource ledger
   (`pools`, `usage`), the event log (`usage.unknown`, counted by
-  `countUnknownUsage` in [`libs`](../libs/README.md)), the workflow engine
+  `countUnknownUsage` in [`libs`](../libs/README.md); each listed step's
+  `workflow.node.started`, `NODE_STARTED`), the workflow engine
   (`usage`), and the board (`task`). A service not given, or whose read
   throws, makes only its own fields `{ unknown: why }`. The record is checked
-  against `mcp-roster@1.0` before it is returned; one its schema refuses
+  against `mcp-roster@1.1` before it is returned; one its schema refuses
   throws (a defect).
 - **`projectRoster(input, { scope, now })`** is the pure projection of what was
-  read: Workers in id order, each with its account and the account's record,
-  role, availability (`ready`, `busy` N of M, `resting` until its reset,
+  read: Workers in id order, each with its description (or `unknown`) and a
+  `derived` line, its account and the account's record, role, availability (`ready`, `busy` N of M, `resting` until its reset,
   `unavailable` with why, `quarantined`), load, limits, siblings, current
-  work, and pools with their windows. The same input and time give the same
+  work (each step with `since` and its one-sentence `summary`, `spanText` for
+  how long), and pools with their windows. The same input and time give the same
   record. A `client` scope gets no account label.
 - **`formatRoster(roster)`**: the record for a terminal, one block per Worker,
   then the sources that did not answer and the usage entries no pool counts.

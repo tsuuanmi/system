@@ -16,7 +16,7 @@ each field, which a schema cannot fully express, is documented in
 | [artifact-envelope.v1.json](artifact-envelope.v1.json) | immutable envelope of every artifact |
 | [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle`; 1.6 adds `policy-change`; 1.7 adds `registration` and `verdict`; 1.8 adds `enrollment` and the `recovery` outcome `wait` |
 | [work-requirement.v1.json](work-requirement.v1.json) | input to routing |
-| [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities; 1.5 adds the `account` it runs on and its provider's `assigned` or `pooled` mode |
+| [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities; 1.5 adds the `account` it runs on and its provider's `assigned` or `pooled` mode; 1.6 adds the operator's `description` |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node; 1.1 adds `RETIRED`; 1.2 adds the brief its execution was started with |
 | [provider-turn-receipt.v1.json](provider-turn-receipt.v1.json) | body of a provider turn `receipt` artifact |
 | [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |

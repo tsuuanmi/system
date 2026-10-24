@@ -40,15 +40,17 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   cancelled and released, which approval requests are withdrawn, or why a close is refused), and
   moves nothing until **Confirm**; **Cancel** closes it. The page does not refresh while a
   confirmation is open. Without the board the projects routes answer `503`;
-- the **Roster** page (`?view=roster`, REQ-HOST-8): every Worker in one row, read through
-  `readRoster` in [`gateway-core`](../../gateway-core/README.md#the-roster) from the services
-  mounted (`workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`): its
-  provider, family, and role; its account, with the account's label and its enrolled, ready,
-  signed-out, or quarantined state; tier and quota class; its availability (ready, busy N of M,
-  resting until its reset, unavailable with why, quarantined); the steps it runs now, each a link
-  to its run, with their board tasks; its load; and its account's pools, each window's used share
-  and reset ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
-  `unknown (why)`, and a Worker source that did not answer is named above the table.
+- the **Workers** tab (`?view=workers`, next to Board; REQ-HOST-8): the counts (working, idle, at a
+  limit and when the first is back, unavailable), then one card per Worker grouped by status, read
+  through `readRoster` in [`gateway-core`](../../gateway-core/README.md#the-roster) from the services
+  mounted (`workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`):
+  what it is for (the operator's `description`, else its derived line, marked *derived*); its
+  status and why in plain words; what it does now, one sentence per step with for how long, each
+  a link to its run; its account, with the account's label and its enrolled, ready, signed-out, or
+  quarantined state; what it serves (tier, quota class, locality, provider, family, role); its
+  limits, with each reset relative and on the clock; and its load
+  ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
+  `unknown (why)`, and a Worker source that did not answer is named above the cards.
 
 The routes are in the [web UI API](../../../docs/reference/web-ui.md).
 
@@ -113,10 +115,11 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), the roster route (operator only, valid against
-`mcp-roster@1.0`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
+`mcp-roster@1.1`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
 the queue (labels by effect, a batch verdict, a refused one as an alert), a press a refresh lands
 on that still counts, a verdict not recorded that stays as an alert through refreshes until
-dismissed, and the Roster page.
+dismissed, and the Workers tab (counts, cards by status, a description or a derived line marked,
+the step in one sentence).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
