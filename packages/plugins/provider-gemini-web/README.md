@@ -154,7 +154,10 @@ driver, its operations are data: a UI map,
   - So is a notice of updated terms over the input (`site.terms-notice`: "Keep in
     mind", with its own "Got it", seen live on 2026-10-16, 2026-10-17, and twice
     on 2026-10-24), which covers the textbox and the mode switcher: it is never
-    clicked, and the operator acknowledges it in the login profile. It is looked
+    clicked, and the operator acknowledges it in the login profile; its message
+    is that step of the [runbook](../../../docs/operations/runbooks.md#account-re-auth),
+    the same from an action's guard (the map's error rule) and from the sign-in
+    check (`TERMS_NOTICE_MESSAGE`). It is looked
     for before the account, so a notice that shows while the account does not
     resolve (live 2026-10-16) is the operator's at once, never drift after 60 s.
     One that appears mid-session (on a kept page, or under a turn that failed

@@ -4,7 +4,8 @@ import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import { GeminiWebDriver } from '../src/index.ts'
 import { fakeSite, PRESETS, showTermsNotice, TIMEOUTS } from './site.ts'
 
-const NOTICE = { kind: 'challenge', disposition: 'USER_ACTION', message: 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save' }
+/** The operator's step, as the runbook gives it (Account re-auth): never drift, never clicked. */
+const NOTICE = { kind: 'challenge', disposition: 'USER_ACTION', message: 'gemini-web: a notice of updated terms ("Keep in mind") covers the input; system never acknowledges it: press the notice\'s own button in the login profile (system account login), then Save' }
 
 describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site: sign-in, challenges, and the site\'s own pages', { timeout: 60_000 }, () => {
   const { open } = fakeSite()

@@ -379,5 +379,5 @@ states:
 
 errors:
   - { when: { state: auth.challenge }, kind: challenge, message: 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save' }
-  - { when: { state: site.terms-notice }, kind: challenge, message: 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save' }
+  - { when: { state: site.terms-notice }, kind: challenge, message: "gemini-web: a notice of updated terms (\"Keep in mind\") covers the input; system never acknowledges it: press the notice's own button in the login profile (system account login), then Save" }
   - { when: { state: auth.signed-out }, kind: reauth_required, message: 'gemini-web: signed out' }

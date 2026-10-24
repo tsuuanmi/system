@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
+import { showTermsNotice } from '../../provider-gemini-web/tests/site.ts'
 import { phase } from '../src/index.ts'
 import { ask, turnsStack } from './stack.ts'
 
@@ -152,11 +153,14 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
       expect(fake.pageLoads.slice(loads)).toEqual([expect.stringMatching(/^\/app\/[0-9a-f]{16}$/)])
     }, 180_000)
 
+    /** The operator's step for a terms notice, as the runbook gives it (Account re-auth). */
+    const notice = 'gemini-web: a notice of updated terms ("Keep in mind") covers the input; system never acknowledges it: press the notice\'s own button in the login profile (system account login), then Save'
+
     it('fails a turn once at a terms notice over the input, with nothing sent: the account waits for the operator, and Save is refused while the notice shows (live 2026-10-17)', async () => {
       const { ctx, fake } = await bootBound()
       // Shown after Save, as the site showed it live.
       fake.options.termsNotice = true
-      const message = 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save'
+      const message = notice
       const loads = fake.pageLoads.length
       const done = await ctx.turns.wait((await ask(ctx, { prompt: 'hello' })).turnId, 60_000)
       expect(done).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'challenge', disposition: 'USER_ACTION', message } })
@@ -165,6 +169,21 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
       expect(fake.pageLoads.length - loads).toBe(1)
       expect((await ctx.accounts.get('gemini-main')).status).toBe('challenge')
       await expect(ctx.login.save('gemini-main')).rejects.toMatchObject({ kind: 'challenge', message })
+    }, 180_000)
+
+    it('fails a session\'s turn at a terms notice that shows mid-session on its kept tab as the operator\'s challenge, never drift, with nothing more sent (T125)', async () => {
+      const { ctx, fake } = await bootBound()
+      const id = session()
+      expect(await turn(ctx, 'one', id)).toMatchObject({ status: 'completed' })
+      // The site shows its notice on the page the session keeps, the account's button hidden with it (live 2026-10-16).
+      await showTermsNotice(keptPage(ctx, id), { hideAccount: true })
+      const loads = fake.pageLoads.length
+      expect(await turn(ctx, 'two', id)).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'challenge', disposition: 'USER_ACTION', message: notice } })
+      expect(fake.sent).toHaveLength(1)
+      expect(fake.pageLoads.length).toBe(loads)
+      expect((await ctx.accounts.get('gemini-main')).status).toBe('challenge')
+      expect(ctx.eventLog.query({ type: 'account.challenged' })).toEqual([expect.objectContaining({ data: { account: 'gemini-main', reason: notice } })])
+      expect(ctx.eventLog.query({ type: 'ui.drift' })).toEqual([])
     }, 180_000)
 
     it('never loads a site for a background probe or sign-in check that waited while its account was challenged', async () => {

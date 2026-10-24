@@ -911,6 +911,11 @@ A turn that fails with `reauth_required` or `challenge` (disposition
   - A notice of updated terms over the input (Gemini) is handled the same way: `system` never
     acknowledges it. In the login browser, open a new chat, press the notice's own button (not a
     link in it) until the notice is gone, then press Save. Save is refused while it still shows.
+    Gemini titles it "Keep in mind", its button "Got it" (live 2026-10-16 to 2026-10-24). It can
+    come back after you acknowledged it (twice on 2026-10-24), and it can show mid-session, on a
+    page a session keeps or under a turn that failed there: either way the turn fails as
+    `challenge` with this step in its message (`a notice of updated terms ("Keep in mind") covers
+    the input; …`), nothing more is sent, and it is never reported as `ui_drift`.
 
 - **A session-bound account** (Gemini and ChatGPT;
   [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) works in

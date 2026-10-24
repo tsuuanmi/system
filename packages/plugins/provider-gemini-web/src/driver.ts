@@ -750,11 +750,15 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 
 /**
  * A notice of updated terms over the input: only the operator acknowledges it, in the login
- * profile, so the account waits for them as for a challenge (it is never clicked here).
+ * profile, so the account waits for them as for a challenge (it is never clicked here). The
+ * message is the runbook's step, and the map's error rule for the notice says the same.
  */
 function termsNotice(shown: boolean): void {
-  if (shown) throw new ProviderError('challenge', 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save')
+  if (shown) throw new ProviderError('challenge', TERMS_NOTICE_MESSAGE)
 }
+
+/** What the operator does about a terms notice ("Account re-auth" in the runbook). */
+export const TERMS_NOTICE_MESSAGE = 'gemini-web: a notice of updated terms ("Keep in mind") covers the input; system never acknowledges it: press the notice\'s own button in the login profile (system account login), then Save'
 
 /** Rethrow anything but UI drift, which the caller then refuses with its own reason. */
 function driftOnly(error: unknown): void {
