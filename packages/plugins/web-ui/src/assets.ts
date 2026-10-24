@@ -64,7 +64,7 @@ textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320p
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
 pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
-input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { min-width: 12em; } details.advanced { margin: 8px 0; }
+code.exact { display: block; overflow-wrap: anywhere; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { min-width: 12em; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
 
@@ -116,6 +116,14 @@ export const APP_JS = `'use strict'
     return out
   }
   const subjectText = (s) => s.type + ' ' + s.ref + (s.version ? ' @ ' + s.version : '')
+  // A text as a person reads it first: the proposed set for a policy set's hash, a hash in
+  // parentheses left out, any other long hash cut to its first 8 characters. The exact text stays folded beside it.
+  const LONG_HASH = /(?:sha256:)?[0-9a-f]{16,}/
+  const plainly = (text) => text
+    .replace(/the set (?:sha256:)?[0-9a-f]{16,}/g, 'the proposed set')
+    .replace(/\\s*\\((?:at )?(?:sha256:)?[0-9a-f]{16,}\\)/g, '')
+    .replace(/(?:sha256:)?[0-9a-f]{16,}/g, (hash) => hash.replace(/^sha256:/, '').slice(0, 8) + '…')
+  const folded = (text, summary) => LONG_HASH.test(text) ? [plainly(text), el('details', {}, el('summary', {}, summary), el('code', { class: 'exact' }, text))] : [text]
   const pretty = (value) => value === undefined ? '' : JSON.stringify(value, null, 2)
   const diffView = (before, after) => el('pre', { class: 'diff' }, lineDiff(pretty(before), pretty(after)).map(([kind, line]) =>
     el('span', kind === 'same' ? {} : { class: kind }, (kind === 'add' ? '+ ' : kind === 'del' ? '- ' : '  ') + line + '\\n')))
@@ -131,7 +139,7 @@ export const APP_JS = `'use strict'
     // A change the queue proposed itself says so, and why: never the operator's own proposal (INV-6).
     change.origin ? el('p', {}, el('strong', {}, 'Proposed by the queue, not by you: '), 'you approved ', el('code', {}, change.origin.shape.command),
       ' ' + change.origin.approved + ' times among the requests of the last ' + windowText(change.origin.windowSeconds) + ', and rejected none; decision ', el('code', {}, change.origin.decision)) : null,
-    el('p', { class: 'muted' }, 'Set ', el('code', {}, change.hash), ', proposed on ', el('code', {}, change.baseHash)),
+    el('details', {}, el('summary', {}, 'Hashes of both sets'), el('p', { class: 'muted' }, 'Set ', el('code', {}, change.hash), ', proposed on ', el('code', {}, change.baseHash))),
     effectView(change.effect),
     diffView(change.previous, change.policy))
   // replaceChildren turns null into the text "null": absent sections are dropped first. A render
@@ -278,7 +286,7 @@ export const APP_JS = `'use strict'
       d = { title: 'Allow a tool call: ' + r.action.summary, subject: 'the exact ' + call[2] + ' call of agent run ' + call[1], yes: 'Approve: allow this call', no: 'Deny: refuse this call',
         next: 'The agent run gets your answer the next time it asks.' }
     } else if (r.action.class === 'policy-change') {
-      d = { title: r.action.summary, subject: 'the policy set with hash ' + (r.subject.version || ''),
+      d = { title: r.action.summary, subject: 'the policy set this change would put in force',
         approve: 'The proposed policy set comes into force at once; open requests are judged again under it.', deny: 'Nothing changes: the policy in force stays.',
         yes: 'Approve: put the change in force', no: 'Deny: keep the policy in force', next: 'See the Autonomy policy page.' }
     } else if (r.action.class === 'merge' && r.requester.component === 'workflow') {
@@ -373,9 +381,9 @@ export const APP_JS = `'use strict'
         el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.action.class), ' Asked by ' + d.by + ' · request ' + r.requestId + ' · ',
           el('span', { class: soon ? 'soon' : '' }, (Date.parse(r.expiresAt) > Date.now() ? 'expires ' : 'expired ') + relative(r.expiresAt) + ' — ' + absolute(r.expiresAt)), '; unanswered by then, it counts as denied.'),
         el('dl', {},
-          d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, r.action.summary)],
+          d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
           el('dt', {}, 'About'), el('dd', {}, d.subject, el('details', {}, el('summary', {}, 'Exact subject'), el('code', {}, subjectText(r.subject)))),
-          r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, r.action.consequences)]
+          r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
             : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
             : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
           r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null),

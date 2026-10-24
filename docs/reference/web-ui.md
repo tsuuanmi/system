@@ -155,7 +155,11 @@ project …* or *Amend the charter of …*, a board task's step, a tool call, a 
 a policy change, an accepted result's merge, with its branch and both heads), who asked (the board for a task or project, an agent run, a run's step, the
 queue), the request's own text, what it is about with the exact subject behind **Exact
 subject**, what approving and what denying change, and when it expires, relative and absolute
-(unanswered by then, it counts as denied). The consequences a requester gave are shown as given;
+(unanswered by then, it counts as denied). The consequences a requester gave are shown as given,
+read first in words: a policy set's hash reads *the proposed set*, a hash in parentheses is left
+out, and any other long hash is cut to its first 8 characters, with the exact text behind
+**details** (a policy change's subject reads *the policy set this change would put in force*, its
+hash behind **Exact subject**);
 for a board charter or task request without them the page says what the board does with each
 verdict ([board](../design/board.md)), counting the project's proposed and open tasks from
 `GET projects` when the board runs. Each button names its effect (*Approve: activate project p1*,

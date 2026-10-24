@@ -18,7 +18,8 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - when `ctx.approvals` is present, the **approval queue**
   ([approvals](../../../docs/design/approvals.md)) above the runs: open requests by batch, each
   in plain words (what is asked, who asked, what approving and denying change, when it expires,
-  the exact subject behind **Exact subject**), and the operator's **Approve / Deny**, labelled by
+  the exact subject behind **Exact subject**, and what a verdict does in words, its long hashes
+  folded behind **details**), and the operator's **Approve / Deny**, labelled by
   their effect, for one request or a whole batch, each with an optional note. What a verdict did
   (recorded, with its ids and what happens next, or not recorded and why) stays above the page
   until dismissed ([the page](../../../docs/reference/web-ui.md#approval-queue)); a `policy-change`

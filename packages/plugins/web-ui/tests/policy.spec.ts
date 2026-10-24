@@ -233,7 +233,7 @@ describe('web UI: the policy page in a real browser', () => {
     await expect.poll(() => queue.getByText('studio: merge').count()).toBeGreaterThan(0)
     expect(await queue.innerText()).toContain('ask → forbid')
     const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
-    expect(await entry.innerText()).toContain('If approved: the set')
+    expect(await entry.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
     await entry.getByRole('button', { name: 'Approve: put the change in force' }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('Recorded as your verdict on request ' + request!.requestId)
@@ -256,7 +256,12 @@ describe('web UI: the policy page in a real browser', () => {
     expect(await page.locator('main').innerText()).toContain('ask: it waits for your approval on Home')
     expect(await page.locator('details', { hasText: 'Exact set' }).getAttribute('open')).toBeNull()
     const card = waiting.locator('article', { hasText: `request ${request.requestId}` })
-    expect(await card.innerText()).toContain('If approved: the set')
+    expect(await card.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
+    // The set's hashes are folded behind details and Exact subject: the card reads in words (T116).
+    expect(await card.innerText()).not.toContain(change.hash)
+    expect(await card.innerText()).toContain('the policy set this change would put in force')
+    await card.getByText('details', { exact: true }).click()
+    expect(await card.innerText()).toContain(change.hash)
     // The history row says it waits, and its link takes the focus to that card.
     await page.getByRole('link', { name: 'waiting for your verdict' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
