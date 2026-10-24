@@ -253,6 +253,43 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(await ctx.approvals.list()).toEqual([])
   })
 
+  // PROP-0013: no automated input to a session blocked on an approval. The state is derived when read.
+  it('holds a session whose latest run stopped on a deferred call while its request is open, and frees it once the request is answered (PROP-0013, ADR-0054)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm run lint')], [{ tool: 'Read', input: { file_path: 'a' } }]])
+    const { ctx, run } = await boot(agent)
+    expect(await ctx.workers.held('ses_dev'), 'a session this source does not hold yet').toBeUndefined()
+    const first = await run()
+    const [rejected] = await ctx.approvals.list()
+    expect(ctx.store.db.prepare('SELECT deferred_request FROM agent_runs WHERE run_id = ?').get(first.runId)).toEqual({ deferred_request: rejected!.requestId })
+    expect(await ctx.workers.held('ses_dev')).toBe(`its latest run ${first.runId} stopped on a tool call that waits for approval request ${rejected!.requestId}, still open: the session takes no input but that request's resolution`)
+    expect(await ctx.workers.held('ses_other'), 'another session').toBeUndefined()
+    await ctx.approvals.decide([{ requestId: rejected!.requestId, subject: rejected!.subject, verdict: 'rejected' }])
+    expect(await ctx.workers.held('ses_dev'), 'rejected: free again').toBeUndefined()
+    await run()
+    const [open] = await ctx.approvals.list({ states: ['open'] })
+    expect(await ctx.workers.held('ses_dev')).toContain(`approval request ${open!.requestId}, still open`)
+    await ctx.approvals.decide([{ requestId: open!.requestId, subject: open!.subject, verdict: 'approved' }])
+    expect(await ctx.workers.held('ses_dev'), 'approved: its resolution is the input, and the session is free').toBeUndefined()
+    // A run that finished frees it too; a queue that cannot be read never shows a blocked one free.
+    expect((await run()).status).toBe('completed')
+    expect(await ctx.workers.held('ses_dev')).toBeUndefined()
+  })
+
+  it('cannot show a session free while the queue cannot tell whether its request is still open, nor while its latest run has not finished (PROP-0013, INV-2)', async () => {
+    const agent = new GatedAgent([[bash('npm test')]])
+    const { ctx, run } = await boot(agent)
+    const first = await run()
+    const [request] = await ctx.approvals.list()
+    const get = vi.spyOn(ctx.get('approvals')!, 'get').mockRejectedValueOnce(new Error('database is locked'))
+    expect(await ctx.workers.held('ses_dev')).toBe(`its latest run ${first.runId} stopped on a tool call that waits for approval request ${request!.requestId}, which cannot be read now (database is locked)`)
+    get.mockResolvedValueOnce(undefined)
+    expect(await ctx.workers.held('ses_dev')).toContain('which the approval queue does not hold')
+    get.mockRestore()
+    // A run of the session not finished yet holds it, whatever came before.
+    ctx.store.db.prepare("UPDATE agent_runs SET status = 'running' WHERE run_id = ?").run(first.runId)
+    expect(await ctx.workers.held('ses_dev')).toBe(`its latest run ${first.runId} has not finished (running), and one native session is driven by one run at a time`)
+  })
+
   it('checks a stored request in full before its approval is used: one whose ref, session, or requester is not this call\'s is denied, and never asked again (INV-5)', async () => {
     const agent = new GatedAgent([[bash('npm test')], [bash('npm test')], [bash('npm test')], [bash('npm test')]])
     const { ctx, run } = await boot(agent)
