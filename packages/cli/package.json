@@ -19,7 +19,7 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && chmod +x lib/bin.js"
+    "build": "tsc -p tsconfig.build.json && chmod +x lib/bin.js && git rev-parse HEAD > lib/build-commit"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.1-alpha.2",

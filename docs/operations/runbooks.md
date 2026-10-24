@@ -1181,7 +1181,8 @@ check` (37 rows, checked on a copy, 2026-10-23).
    (`~/system-backups/live-base.cordis.patch.yml`). Install Codex 0.164.0 and check agy's version.
 2. **Dry run**, from the target's checkout (never from `system-live`, whose files the update
    replaces while the script runs; it refuses): `~/workspaces/system-base/scripts/live-update.sh
-   <sha> --check-with ~/workspaces/system-base --patch ~/system-backups/live-base.cordis.patch.yml`.
+   <sha> --check-with ~/workspaces/system-base --patch ~/system-backups/live-base.cordis.patch.yml`
+   (and `--from <the live commit>` once it is no longer e218ae7).
    It changes nothing. It checks the tools, the live checkout (clean, at e218ae7), the target (a
    descendant), the vault key, free space, and the candidate patch against the target's code
    (`system check` on a scratch copy of the profile); reads how the daemon was started from its
@@ -1214,7 +1215,10 @@ check` (37 rows, checked on a copy, 2026-10-23).
   [backup and restore](#backup-and-restore)), verified by a restore preview; and the profile's files.
   Login profiles are not state, and Base pins the same Chrome, so they are not copied.
 - The build: `pnpm install --frozen-lockfile`, `pnpm build`, every package of the bundle built, and
-  `packages/cli/lib/index.js` holding `hostPlugins`, which e218ae7 has not.
+  the build stamp `packages/cli/lib/build-commit` naming the target ([build
+  stamp](../../packages/cli/README.md)). A target whose build writes no stamp is refused: update to it
+  with the script of its own checkout. The `--check-with` checkout's stamp must name its own commit.
+  The stamp replaces `--marker`, which the script no longer takes (a command with it exits 2).
 - Before the start: `system check` of the profile as it will start.
 - After the start: `/healthz`, then the [upgrade suite's](../../packages/cli/tests/upgrade/upgrade.e2e.ts)
   expectations, on the live store: every run explains and answers `result` as before (one running at
@@ -1225,9 +1229,10 @@ check` (37 rows, checked on a copy, 2026-10-23).
   prints the client token's header. A profile already down before the update (a check other than
   its Workers) is no baseline: the capture refuses it, and nothing stops.
 - A failure after the stop rolls back: the updated daemon stopped, the profile's files and link put
-  back, e218ae7 checked out, installed, and built (its lib without `hostPlugins`), `system restore
-  <dir>/store --yes` once Base has started on the store, and the daemon started as before. What Base
-  did in its minutes is lost with its store.
+  back, e218ae7 checked out, installed, and built (its lib stamped with its commit, or with no stamp
+  for code from before the stamp, as e218ae7), `system restore <dir>/store --yes` once Base has
+  started on the store, and the daemon started as before. What Base did in its minutes is lost with
+  its store.
 
 **By hand**, with the daemon stopped (`system shutdown`):
 
