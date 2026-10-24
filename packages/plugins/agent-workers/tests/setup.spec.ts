@@ -143,7 +143,7 @@ const setupDecision = (ctx: Context, done: WorkerExecution): Gate => {
 
 describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, () => {
   describe.skipIf(!CONFINES)('under the real bubblewrap', () => {
-    it('sets a new worktree up before the agent starts, confined, offline, from a private view of a store; the agent\'s tests then run there, and a later run reuses it', async () => {
+    it('sets a new worktree up before the agent starts, confined, offline, from a private view of a store; the agent\'s tests then run there, and a later run reuses it (REQ-WRK-6, INV-12, INV-13)', async () => {
       const repo = repository()
       const host = store()
       const outside = join(VISIBLE, `outside-${process.pid}`)
@@ -186,7 +186,7 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
       expect(ctx.eventLog.query({ type: 'agent-workers.worktree.setup' }).map((e) => (e.data as { outcome: string }).outcome)).toEqual(['ran'])
     })
 
-    it('fails the run at start when a setup command fails: unsent, the command, its exit code, and its output named; the agent never runs', async () => {
+    it('fails the run at start when a setup command fails: unsent, the command, its exit code, and its output named; the agent never runs (INV-2)', async () => {
       const repo = repository()
       const lines = ['node check.mjs']
       const agent = new TestingAgent()
@@ -203,7 +203,7 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
       expect(agent.runs).toEqual([])
     })
 
-    it('stops a setup at its deadline', async () => {
+    it('stops a setup at its deadline (INV-9)', async () => {
       const repo = repository()
       const lines = ['sleep 30']
       const agent = new TestingAgent()
@@ -214,7 +214,7 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
       expect(agent.runs).toEqual([])
     })
 
-    it('asks the operator about a command the policy does not list, bound to the worktree and the setup\'s hash; runs it once approved; a changed setup asks again', async () => {
+    it('asks the operator about a command the policy does not list, bound to the worktree and the setup\'s hash; runs it once approved; a changed setup asks again (INV-5)', async () => {
       const repo = repository()
       const host = store()
       const lines = ['mkdir -p node_modules/dep', `cp ${join(host, 'files', 'dep', 'index.js')} node_modules/dep/`]
@@ -257,7 +257,7 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
     })
   })
 
-  it('fails the run at start, unsent, when the policy forbids a setup command, when its request was rejected, and when no approval queue is loaded', async () => {
+  it('fails the run at start, unsent, when the policy forbids a setup command, when its request was rejected, and when no approval queue is loaded (INV-2)', async () => {
     const repo = repository()
     const lines = ['true']
     const agent = new TestingAgent()
@@ -278,7 +278,7 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
     expect(agent.runs).toEqual([])
   })
 
-  it('refuses a view of a path hidden from agents before anything runs', async () => {
+  it('refuses a view of a path hidden from agents before anything runs (REQ-WRK-6, INV-8)', async () => {
     const repo = repository()
     const lines = ['true']
     const hidden = temp('system-setup-hidden-')

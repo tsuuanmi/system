@@ -104,6 +104,10 @@
     {
       "key": "worktreeRetentionHours",
       "sensitive": false
+    },
+    {
+      "key": "worktreeSetup",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED",
