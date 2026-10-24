@@ -12,7 +12,7 @@
  * nothing is forced: a worktree that cannot be committed or removed stays where it is, and the
  * next sweep tries again.
  *
- * Landing (ADR-0059): once a result made in a worktree is accepted, the workflow engine asks for it
+ * Landing (ADR-0060): once a result made in a worktree is accepted, the workflow engine asks for it
  * to be committed on the worktree's branch, only while the worktree is still the accepted tree, and,
  * on the operator's `merge` approval, for that branch to be merged into the repository's checked-out
  * branch, only while both are still where the approval saw them. A conflict is aborted, so the
@@ -580,7 +580,7 @@ export class Worktrees {
 
   /**
    * One step of landing an accepted result made in the worktree `step.workspace` of workflow run
-   * `step.runId` (ADR-0059); undefined when no worktree of this source is that one. One change at a
+   * `step.runId` (ADR-0060); undefined when no worktree of this source is that one. One change at a
    * time per repository, as every worktree change. Each step checks first that its own work is not
    * done already, so a step repeated after a restart says so instead of doing it twice (INV-4).
    */

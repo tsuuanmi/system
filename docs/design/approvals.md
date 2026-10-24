@@ -389,7 +389,7 @@ policy.
 
 The workflow engine [lands](workflow-engine.md#landing-an-accepted-result) a board task's accepted
 result made in a run's worktree
-([ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md),
+([ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md),
 proposed): once the result is committed on the run's branch, it judges `merge` with `check` for the
 task's project.
 

@@ -2430,7 +2430,7 @@ sooner; nothing is ever discarded.
 When the board has a task `done` on a result in its run's worktree (you accepted it on `/ui`, or the
 engine did), the system lands it in the repository the Workers work in
 ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result),
-[ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)):
+[ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)):
 
 1. **It commits it on the run's branch**, within `approvalPollSeconds` (15 s) of the acceptance: one
    commit by `system <system@localhost>` on `system/run/<runId>`, its message naming the task, the

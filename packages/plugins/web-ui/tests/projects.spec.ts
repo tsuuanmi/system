@@ -228,7 +228,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.locator(`#request-${waiting}`).innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge as "Accepted — waiting to merge" with a link to its merge request, under Waiting for you (ADR-0059)', async () => {
+  it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge as "Accepted — waiting to merge" with a link to its merge request, under Waiting for you (ADR-0060)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -236,7 +236,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const run = await ctx.workflow.start({ template: 'solo', input: 'band it', classification: 'public', task: { taskId: task.taskId } })
     await vi.waitFor(() => expect(ctx.workflow.get(run.runId)?.task?.phase).toBe('reported'), { timeout: 30_000 })
     expect((await ctx.board.task(task.taskId))!.state).toBe('done')
-    // The merge request the engine asks once the result is committed on the run's branch (ADR-0059), and the landing that waits on it.
+    // The merge request the engine asks once the result is committed on the run's branch (ADR-0060), and the landing that waits on it.
     const branch = `system/run/${run.runId}`
     const [base, head] = ['a'.repeat(40), 'b'.repeat(40)]
     const verdict = await ctx.approvals.check({ class: 'merge', projectId: 'p1' })

@@ -276,7 +276,7 @@ export interface LivenessQuery {
 }
 
 /**
- * One step of landing an accepted result (ADR-0059, PROP-0013 W5): what the source that owns a
+ * One step of landing an accepted result (ADR-0060, PROP-0013 W5): what the source that owns a
  * workflow run's worktree does with it, on the workflow engine's ask.
  * - `commit`: commit the worktree's changes on its branch, only while the worktree is still exactly
  *   `subject` (the tree the result was accepted on), with `message`;
@@ -292,7 +292,7 @@ export type LandStep =
 export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved' | 'dirty' | 'conflict' | 'failed'
 
 /**
- * What a landing step did (ADR-0059):
+ * What a landing step did (ADR-0060):
  * - `committed`: the branch's `head` holds the accepted change (`committed` false when it already
  *   did, such as after a restart); `base` is the repository's checked-out branch now, `contained`
  *   whether it already holds `head` (nothing to merge), `stat` the change against it (`git diff
@@ -358,7 +358,7 @@ export interface WorkerSource {
   liveness?(query?: LivenessQuery): Promise<LivenessReport>
   /**
    * One step of landing an accepted result whose working tree is `step.workspace`, the worktree of
-   * workflow run `step.runId` (ADR-0059). Undefined when this source holds no such worktree. A
+   * workflow run `step.runId` (ADR-0060). Undefined when this source holds no such worktree. A
    * step repeated after a restart finds its own work done and says so (INV-4).
    */
   land?(step: LandStep): Promise<Landed | undefined>
@@ -528,7 +528,7 @@ export abstract class Workers extends Service {
   /**
    * One step of landing an accepted result, by the source that holds its worktree
    * (`WorkerSource.land`), with that source's name; undefined when none holds it. A source that
-   * throws is a refusal (`failed`), never read as not holding it (ADR-0059). Optional: a caller
+   * throws is a refusal (`failed`), never read as not holding it (ADR-0060). Optional: a caller
    * that finds no `land` lands nothing.
    */
   abstract land?(step: LandStep): Promise<(Landed & { source: string }) | undefined>

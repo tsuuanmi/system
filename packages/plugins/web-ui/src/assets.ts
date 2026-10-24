@@ -674,7 +674,7 @@ export const APP_JS = `'use strict'
       'approval-needed': 'waits for your approval', 'budget-spent': 'its budget is spent: waits for your funding verdict', 'reconciliation-failed': 'its run could not be settled: waits for your verdict',
       'retries-spent': 'used all its attempts: waits for input', question: 'asked a question: waits for an answer', rejected: 'was rejected: waits for input', 'review-expired': 'its review expired', 'operator-review': 'waits for your review',
     }
-    // Where a done task's accepted result stands on its way into the repository (ADR-0059).
+    // Where a done task's accepted result stands on its way into the repository (ADR-0060).
     const landingLine = (l) => l.state === 'asked' && l.requestId ? el('div', {}, 'Accepted — waiting to merge into ' + (l.base || 'its base') + ': ', decideLink(l.requestId, 'approve'))
       : l.state === 'merged' ? el('div', {}, 'Accepted and merged into ' + (l.base || 'its base') + (l.commit ? ' as ' : ''), l.commit ? el('code', {}, l.commit.slice(0, 12)) : null, el('span', { class: 'muted' }, ' · not pushed'))
         : l.state === 'refused' ? el('div', {}, 'Accepted — not merged: ' + (l.reason || 'refused'))
@@ -695,7 +695,7 @@ export const APP_JS = `'use strict'
         t.landing ? landingLine(t.landing) : null,
         t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'open its run')) : null)
     }
-    // A done task whose merge waits for the operator is also shown where the operator looks for what waits (ADR-0059).
+    // A done task whose merge waits for the operator is also shown where the operator looks for what waits (ADR-0060).
     const waitsToMerge = (t) => t.state === 'done' && t.landing && t.landing.state === 'asked'
     const tasksIn = (states) => shownProjects.flatMap((p) => (p.tasks || []).filter((t) => states.includes(t.state) || (states.includes('waiting-for-approval') && waitsToMerge(t))).map((t) => [p, t]))
     const moreIn = (states) => shownProjects.reduce((n, p) => n + states.reduce((m, s) => m + ((p.more || {})[s] || 0), 0), 0)

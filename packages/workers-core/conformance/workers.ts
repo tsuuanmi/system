@@ -256,7 +256,7 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
-    it('lands through the source that holds the worktree, with its name; none holding it is undefined, and a source that throws is a refusal, never read as not holding it (ADR-0059, INV-2)', async () => {
+    it('lands through the source that holds the worktree, with its name; none holding it is undefined, and a source that throws is a refusal, never read as not holding it (ADR-0060, INV-2)', async () => {
       const { ctx, dispose } = await boot()
       try {
         // Optional on the seam; a provider that offers it holds to the rule.

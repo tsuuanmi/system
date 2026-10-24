@@ -53,7 +53,7 @@ async function pilotWeek(): Promise<Pilot> {
   await reported(ctx, one.runId)
   await digested(first.taskId)
   expect((await operatorAccepts(ctx, first.taskId)).state).toBe('done')
-  // The accepted result is committed on its run's branch and its merge asked in the queue (ADR-0059), left open.
+  // The accepted result is committed on its run's branch and its merge asked in the queue (ADR-0060), left open.
   await until(() => ctx.workflow.get(one.runId)?.task?.landing?.state === 'asked', 'the merge of the accepted result to be asked')
   const second = await propose(pilot, 'p1', 'keep add() fast')
   await reported(ctx, (await attempt(ctx, second.taskId, 'Keep add() fast')).runId)

@@ -127,7 +127,7 @@ export class Workflow extends Service {
       daily.unref()
       // The requests deferred tool calls wait on: an approved one continues its session, once. Then
       // the sessions whose mail waited because they took no input are looked at again, and the
-      // landings of accepted results move on (ADR-0059).
+      // landings of accepted results move on (ADR-0060).
       const deferrals = setInterval(() => void sweepDeferrals(engine).finally(() => {
         retryHeldWakes(engine)
         void engine.tasks.landings.sweep()
@@ -212,7 +212,7 @@ export class Workflow extends Service {
   }
 
   /**
-   * The landing of a board task run's accepted result (ADR-0059): whether it is committed, asked to
+   * The landing of a board task run's accepted result (ADR-0060): whether it is committed, asked to
    * merge (its request), merged (the commit), or refused and why; undefined when the run serves no
    * task or its result is on no working tree.
    */

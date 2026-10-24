@@ -149,7 +149,7 @@ export interface TaskView {
 }
 
 /**
- * Where the landing of a task's accepted result stands (ADR-0059): `watch` until the board has the
+ * Where the landing of a task's accepted result stands (ADR-0060): `watch` until the board has the
  * task done on it; `commit` while its worktree is committed on its branch; `committed`, then `asked`
  * while the `merge` request waits for the operator; `merging` on the approval; then `merged`, or
  * `refused` (a step changed nothing, `cause` and `reason` say why), `rejected` (the request was not

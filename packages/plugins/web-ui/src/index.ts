@@ -139,7 +139,7 @@ export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) 
 }
 
 /**
- * Where a done task's accepted result stands on its way into the repository (ADR-0059), as its card
+ * Where a done task's accepted result stands on its way into the repository (ADR-0060), as its card
  * shows it: the merge request it waits on, the merge commit, or why it was not merged. Nothing when
  * there is nothing to land.
  */

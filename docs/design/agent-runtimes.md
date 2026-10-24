@@ -337,7 +337,7 @@ of waiting, every one or one workflow run's:
 
 ### Landing a worktree
 
-> Decision: [ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)
+> Decision: [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)
 > (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/worktrees.ts`); the engine asks ([landing an accepted result](workflow-engine.md#landing-an-accepted-result)).
 

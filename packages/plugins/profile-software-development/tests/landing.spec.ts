@@ -7,7 +7,7 @@ import type { TaskLanding } from '@tsuuanmi/system-workflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { attempt, bootPilot, charter, decide, FIXED, operatorAccepts, type Pilot, reported, until } from './pilot.ts'
 
-// Landing an accepted result (ADR-0059): the pilot in miniature, over a scratch repository, with
+// Landing an accepted result (ADR-0060): the pilot in miniature, over a scratch repository, with
 // the real engine, board, approval queue, and agents source with a worktree per run.
 vi.setConfig({ testTimeout: 120_000 })
 
@@ -64,7 +64,7 @@ const commitOn = (pilot: Pilot, dir: string, file: string, text: string, message
   return pilot.git(dir, 'rev-parse', 'HEAD')
 }
 
-describe('landing an accepted result (ADR-0059)', () => {
+describe('landing an accepted result (ADR-0060)', () => {
   it('T99a: an accepted result is no longer left uncommitted in its run\'s worktree: the system commits it on the run\'s branch, asks the operator to merge it, and merges it on the approval (REQ-WF-13, INV-5, INV-13)', async () => {
     const pilot = await boot()
     const { ctx } = pilot

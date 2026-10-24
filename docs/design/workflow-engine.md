@@ -844,7 +844,7 @@ stateDiagram-v2
 
 ### Landing an accepted result
 
-> Decision: [ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)
+> Decision: [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)
 > (proposed), [PROP-0013](../proposals/0013-feedback-from-work.md#landing-merge-or-apply) W5 in part:
 > `merge` only, asked by the engine; `apply` and MCP `land` are not built.
 

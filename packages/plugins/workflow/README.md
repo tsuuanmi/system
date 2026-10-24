@@ -406,7 +406,7 @@ second execution path (INV-1).
     asks once and goes on waiting
     ([a digest of a task's result](../../../docs/design/workflow-engine.md#a-digest-of-a-tasks-result)).
   - **Landing** ([design](../../../docs/design/workflow-engine.md#landing-an-accepted-result),
-    ADR-0059 proposed): a result reported on a working tree (a result artifact of an agent run
+    ADR-0060 proposed): a result reported on a working tree (a result artifact of an agent run
     naming its `workspace` and git `subject`, on the result's subject when that is a tree) is
     watched (`landing` on its `workflow_tasks` row, migration 18; runs reported before it land
     nothing). Once the board has the task `done` on it, `ctx.workers.land` (optional) has the source

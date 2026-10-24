@@ -1,5 +1,5 @@
 /**
- * Landing an accepted result (docs/design/workflow-engine.md#landing-an-accepted-result, ADR-0059,
+ * Landing an accepted result (docs/design/workflow-engine.md#landing-an-accepted-result, ADR-0060,
  * PROP-0013 W5): a board task whose run's result is on a working tree a Worker source holds as the
  * run's own worktree is not done with by its acceptance. Once the board has the task `done` on that
  * run's result, the engine has the source commit the tree on the worktree's branch, then asks the

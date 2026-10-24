@@ -344,7 +344,7 @@
   unavailable, and only read-only Workers prove `review`. The confinement is only
   as strong as each runtime's sandbox and bubblewrap.
 
-  **Landing** ([ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)):
+  **Landing** ([ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)):
   what a Worker wrote reaches the operator's checkout of the repository only by a
   merge of its run's branch the operator approved (or a policy set `merge` to
   `auto`), at the exact SHAs and with the `git diff --stat` the request showed.

@@ -1,4 +1,4 @@
-# ADR-0059: An accepted result lands in its repository on the operator's merge approval
+# ADR-0060: An accepted result lands in its repository on the operator's merge approval
 
 - **Status:** Proposed
 - **Date:** 2026-10-24

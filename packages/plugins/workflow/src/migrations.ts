@@ -99,9 +99,9 @@ export const MIGRATIONS = [{
   ALTER TABLE workflow_nodes ADD COLUMN assignment TEXT;
   ALTER TABLE workflow_nodes ADD COLUMN limit_wait_since TEXT;`,
 }, {
-  // Landing an accepted result (docs/design/workflow-engine.md#landing-an-accepted-result, ADR-0059):
+  // Landing an accepted result (docs/design/workflow-engine.md#landing-an-accepted-result, ADR-0060):
   // where it stands, as JSON `TaskLanding`. A run reported before landing existed lands nothing.
   version: 18,
   sql: `ALTER TABLE workflow_tasks ADD COLUMN landing TEXT;
-  UPDATE workflow_tasks SET landing = json_object('state', 'none', 'reason', 'reported before landing existed (ADR-0059): merge its branch by hand', 'at', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE phase = 'reported';`,
+  UPDATE workflow_tasks SET landing = json_object('state', 'none', 'reason', 'reported before landing existed (ADR-0060): merge its branch by hand', 'at', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE phase = 'reported';`,
 }]

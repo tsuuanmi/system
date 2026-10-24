@@ -370,7 +370,7 @@ The **`agents` Worker source**: agent runtimes as Workers
     committed or removed (locked, say) stays in place, with the reason logged
     once and kept on its row, and the next sweep tries again; at most 50 a
     sweep. A worktree removed by hand is forgotten once git no longer lists it.
-- **Landing** (`land` on the `workers` seam, [ADR-0059](../../../docs/decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)
+- **Landing** (`land` on the `workers` seam, [ADR-0060](../../../docs/decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md)
   proposed, [design](../../../docs/design/agent-runtimes.md#landing-a-worktree)): for a worktree it
   holds (by workflow run and path; any other is undefined), one step at a time per repository:
   - `commit`: refused `busy` while an agent run of the workflow run is unfinished or not known to be

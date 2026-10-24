@@ -20,7 +20,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type TaskLanding } from '../src/index.ts'
 
-// The engine's landing of an accepted result (ADR-0059) over the store-backed board and approval
+// The engine's landing of an accepted result (ADR-0060) over the store-backed board and approval
 // queue; the source that holds the tree is scripted, so each step's answer is the test's.
 vi.setConfig({ testTimeout: 60_000 })
 
@@ -135,7 +135,7 @@ const until = (ctx: Context, runId: string, ...states: Array<TaskLanding['state'
 const optionsOf = (ctx: Context, landing: TaskLanding): string[] => (landing.decisions ?? []).map((d) => (ctx.artifacts.get(d)!.body as { outcome: { option: string } }).outcome.option)
 const merges = async (ctx: Context) => (await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.action.class === 'merge')
 
-describe('ctx.workflow lands an accepted result through the source that holds its tree (ADR-0059)', () => {
+describe('ctx.workflow lands an accepted result through the source that holds its tree (ADR-0060)', () => {
   it('asks to merge once the task is done, adopts the request it asked before a restart instead of asking twice, and merges on the approval (REQ-WF-13, INV-4, INV-5)', async () => {
     const lander = new Lander()
     const { ctx, workspace, subject, taskId, runId, restart } = await boot('ask', lander)

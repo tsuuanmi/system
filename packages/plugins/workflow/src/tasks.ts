@@ -1386,7 +1386,7 @@ export class TaskRuns {
     const due = this.e.ctx.store.transaction((db) => {
       db.prepare("UPDATE workflow_tasks SET phase = 'reported', outcome = ?, updated_at = ? WHERE run_id = ?").run(JSON.stringify(outcome), now(), row.run_id)
       this.e.ctx.eventLog.append({ type: 'workflow.task.reported', runId: row.run_id, ...(outcome.decision ? { decision: outcome.decision } : {}), data: { taskId: row.task_id, ...outcome } })
-      // A result on a working tree is watched for its acceptance, then landed (ADR-0059).
+      // A result on a working tree is watched for its acceptance, then landed (ADR-0060).
       this.landings.due(row, outcome.status)
       return this.digests.due(row, outcome.status)
     })

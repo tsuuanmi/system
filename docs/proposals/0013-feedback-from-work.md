@@ -688,7 +688,7 @@ The state of each phase is in the [roadmap](roadmap.md#feedback-from-work-prop-0
     never declared dead, its session and worktree held;
   - `agent-workers.run.stalled` is reported once per stall;
   - the crash suite's agent case: a dead verdict, and an `unknown` one when no process was reported.
-- **W5 in part** (2026-10-24, T105), [ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md),
+- **W5 in part** (2026-10-24, T105), [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md),
   proposed: `merge` only. The engine asks by itself once the board has a task `done` on a result
   in its run's worktree (no MCP `land` yet), after the worktree's source committed it on the run's
   branch; the request and the merge bind to the base and head SHAs as designed above. Differs from

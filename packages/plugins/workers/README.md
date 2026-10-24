@@ -13,7 +13,7 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   PROP-0013: every source that tells it is asked, the runs merged latest first,
   at most 64, the counts summed, and a source that throws named in `unread`,
   never read as having none), and lands an accepted result made in a worktree it
-  holds (`land`, ADR-0059: asked of each source in turn, the first that holds the
+  holds (`land`, ADR-0060: asked of each source in turn, the first that holds the
   worktree answers, with its name; one that throws is a `failed` refusal, never
   read as not holding it). The router
   returns the admitted Worker with its source's name; `source(name)` finds the
