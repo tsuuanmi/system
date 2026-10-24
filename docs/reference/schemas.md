@@ -345,6 +345,14 @@ guesses.
   and never a routing input. A record carrying it below `@1.7` is refused. Readers accept 1.0 to
   1.7. Example:
   [`capability-descriptor.description.json`](../../schemas/examples/capability-descriptor.description.json).
+- `capability-descriptor@1.8` adds the optional `title`: the Worker's name for people, plain text
+  on one line of at most 64 characters, as its source gives it: a website provider's own (its
+  driver's `title`, which a provider plugin names), or a model's from the operator's `models[]`
+  entry. The [roster's display name](../design/roster.md#display-names) starts with it; routing
+  never reads it, and no shared code names a vendor in it
+  ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)). A record carrying it below
+  `@1.8` is refused. Readers accept 1.0 to 1.8. Example:
+  [`capability-descriptor.title.json`](../../schemas/examples/capability-descriptor.title.json).
 
 ### `plan`
 

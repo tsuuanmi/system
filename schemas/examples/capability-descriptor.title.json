@@ -1,0 +1,22 @@
+{
+  "schema": "capability-descriptor@1.8",
+  "worker": "model:fast",
+  "provider": "models",
+  "family": "provider-a",
+  "title": "Provider A API",
+  "description": "Quick answers over the studio's metered key",
+  "tier": "standard",
+  "quotaClass": "metered",
+  "locality": "remote",
+  "capabilities": [
+    {
+      "capability": "reason",
+      "evidence": {
+        "kind": "conformance",
+        "at": "2026-10-24T00:00:00Z"
+      }
+    }
+  ],
+  "state": "ready",
+  "observedAt": "2026-10-24T17:40:00Z"
+}

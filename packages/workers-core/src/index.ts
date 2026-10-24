@@ -92,7 +92,7 @@ export interface WorkerAccount {
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -107,6 +107,13 @@ export interface CapabilityDescriptor {
    * Worker's carries its tier as well). For people only: routing never reads it.
    */
   description?: string
+  /**
+   * Its name for people (`@1.8`), as its source gives it: a website provider's own title (its
+   * driver's), a model's from the operator's catalog entry; plain text on one line, at most
+   * `MAX_LABEL` characters (`libs`). The roster's display name starts with it. For people only:
+   * routing never reads it, and only a provider plugin or the operator names a tool in it (INV-11).
+   */
+  title?: string
   /**
    * The longest input this Worker takes, in characters (code points) of what it is sent, when its
    * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.
