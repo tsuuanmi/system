@@ -157,7 +157,8 @@ describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', 
     expect(stalled).toMatchObject({ failure: 'timeout' })
     expect(stalled.message).toMatch(/^echo: TIMEOUT: no progress for 1000 ms \(idleTimeoutMs\) after \d+ stream event\(s\) and 0 characters of answer; the stream was stopped$/)
     expect(server.requests).toHaveLength(4)
-  })
+    // Three stalls of a second each, by design: the default 5 s left too little for the rest on a loaded host.
+  }, 15_000)
 
   it('never stops a slow answer that keeps streaming, however long it takes in all', async () => {
     const { ctx, server } = await boot(0, undefined, 1_000)
@@ -165,7 +166,8 @@ describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', 
     server.script.push({ drip: ['one ', 'two ', 'three ', 'four ', 'five ', 'six ', 'seven ', 'eight ', 'nine ', 'ten'], everyMs: 350 })
     expect(await ctx.models.complete({ model: 'echo', prompt: 'slow' })).toMatchObject({ text: 'one two three four five six seven eight nine ten', finish: 'stop', attempts: 1 })
     expect(server.requests).toHaveLength(1)
-  })
+    // The 3.5 s of the answer itself, by design: the default 5 s left too little for the rest on a loaded host.
+  }, 15_000)
 
   it('stops a stalled stream at the caller\'s abort as aborted, not as a stall', async () => {
     const { ctx, server } = await boot(2, undefined, 5_000)
