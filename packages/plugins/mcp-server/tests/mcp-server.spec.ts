@@ -227,6 +227,60 @@ describe('system MCP server on ctx.webServer', () => {
     expect(later.workers).toEqual({ name: 'workers', state: 'ok', detail: '13 available' })
   })
 
+  it('names in status each review the board holds for the operator, with when it expires, from every open project (T99 D6)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const expiresAt = new Date(Date.now() + 3 * 3600_000 + 30_000).toISOString()
+    class Board extends Service {
+      constructor(c: Context) {
+        super(c, 'board')
+      }
+      async projects() {
+        return [{ projectId: 'system', state: 'active' }, { projectId: 'old', state: 'closed' }]
+      }
+      async tasks(filter: { projectId: string; states?: string[] }) {
+        expect(filter).toEqual({ projectId: 'system', states: ['review'] })
+        return [
+          { taskId: 'task-6b16', projectId: 'system', state: 'review', waiting: { reason: 'operator-review', since: expiresAt, expiresAt, pendingChecks: ['tests', 'lint'] } },
+          // A review its reviewer still holds is no review held for the operator.
+          { taskId: 'task-7c27', projectId: 'system', state: 'review' },
+        ]
+      }
+    }
+    const fiber = ctx.plugin(Board)
+    await fiber
+    onTestFinished(() => fiber.dispose())
+    const status = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }).health
+    const operator = await status(tokens.operator)
+    expect(operator.checks.find((c) => c.name === 'reviews')).toEqual({
+      name: 'reviews', state: 'ok', detail: expect.stringMatching(new RegExp(`^1 review\\(s\\) held for you: task-6b16 of system expires in (3 h|2 h 5[0-9] min) \\(at ${expiresAt.replaceAll('.', '\\.')}\\)\\. Accept or Reject each on /ui`)),
+    })
+    // A client sees that the check is there and ok, never which task.
+    expect((await status(tokens.client)).checks.find((c) => c.name === 'reviews')).toEqual({ name: 'reviews', state: 'ok' })
+  })
+
+  it('reads the tasks of at most 64 open projects for the reviews check, and says how many it did not read (INV-9)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const read: string[] = []
+    class Board extends Service {
+      constructor(c: Context) {
+        super(c, 'board')
+      }
+      async projects() {
+        return Array.from({ length: 65 }, (_, i) => ({ projectId: `p${i}`, state: i % 2 ? 'paused' : 'active' }))
+      }
+      async tasks(filter: { projectId: string }) {
+        read.push(filter.projectId)
+        return []
+      }
+    }
+    const fiber = ctx.plugin(Board)
+    await fiber
+    onTestFinished(() => fiber.dispose())
+    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail?: string }> } }).health
+    expect(health.checks.find((c) => c.name === 'reviews')).toEqual({ name: 'reviews', state: 'ok', detail: 'no review is held for you (the first 64 of 65 open projects read)' })
+    expect(read).toHaveLength(64)
+  })
+
   it('reads each Worker source\'s last read into health, after listing the Workers: a silent one is named, never ok (INV-2)', async () => {
     const { url, tokens, ctx } = await boot()
     const at = '2026-10-23T09:41:07.000Z'

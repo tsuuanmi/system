@@ -270,6 +270,7 @@ export class McpEndpoint extends McpTools {
     const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }>; browserCap?: () => number } | undefined
     const host = this.ctx.get('pluginHost')
     const resources = this.ctx.get('resources')
+    const board = this.ctx.get('board' as never) as BoardReads | undefined
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
       ...(host ? { manifests: () => host.list().filter((p) => p.rows.length).map((p) => ({ name: p.name, mounted: p.mounted, state: p.manifestState, ...(p.reason ? { reason: p.reason } : {}), findings: (p.findings ?? []).map((f) => f.reason) })) } : {}),
@@ -297,6 +298,8 @@ export class McpEndpoint extends McpTools {
       } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(workers?.sources ? { workerSources: () => workers.sources!() } : {}),
+      // The reviews the board holds for the operator, each with when it expires unseen (T99 D6).
+      ...(board ? { reviews: () => heldReviews(board) } : {}),
       ...(liveness ? { liveness: () => liveness } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       // The notifier's outcomes, recorded as events: the surface reads them, never the plugin (docs/design/notifications.md#health).
@@ -407,7 +410,7 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'client',
-        description: 'Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check\'s detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).',
+        description: 'Health of the system harness: each check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, reviews held for the operator, run liveness, UI drift, usage the ledger could not count) and the worst of them, and the kernel services and providers. The operator also gets each check\'s detail and what to do, the runs whose liveness needs a look, and the plugins that need a look (with `plugins`, every plugin with its manifest and lifecycle).',
         inputSchema: { plugins: zod.boolean().optional().describe('Operator: list every plugin, not only those that need a look') },
       },
       handler: async (args, { scope }) => {
@@ -473,6 +476,29 @@ export default McpEndpoint
 
 /** Runs `status` lists by name at most; the rest are counted (`runsOmitted`), and `system explain` reads any one. */
 export const STATUS_LIVENESS_RUNS = 16
+
+/** What the `reviews` check reads of the board (`ctx.board`, optional), by shape: its projects, and a project's tasks in review. */
+interface BoardReads {
+  projects(): Promise<Array<{ projectId: string; state: string }>>
+  tasks(filter: { projectId: string; states?: Array<'review'> }): Promise<Array<{ taskId: string; projectId: string; state: string; waiting?: { reason: string; expiresAt: string } }>>
+}
+/** Projects the `reviews` check reads the tasks of at most (INV-9), in the board's order; the rest are said to be unread. */
+const REVIEW_PROJECTS = 64
+
+/**
+ * The reviews the board holds for the operator (`operator-review`), from the projects that may hold
+ * one: every project but a closed one, which the board closes only with no task in review.
+ */
+async function heldReviews(board: BoardReads): Promise<{ held: Array<{ taskId: string; projectId: string; expiresAt: string }>; more?: string }> {
+  const open = (await board.projects()).filter((p) => p.state !== 'closed')
+  const held: Array<{ taskId: string; projectId: string; expiresAt: string }> = []
+  for (const project of open.slice(0, REVIEW_PROJECTS)) {
+    for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
+      if (task.state === 'review' && task.waiting?.reason === 'operator-review') held.push({ taskId: task.taskId, projectId: task.projectId, expiresAt: task.waiting.expiresAt })
+    }
+  }
+  return { held, ...(open.length > REVIEW_PROJECTS ? { more: `the first ${REVIEW_PROJECTS} of ${open.length} open projects read` } : {}) }
+}
 
 const livenessTotal = (told: LivenessRead): number => told.counts.unknown + told.counts.looking + told.counts.stalled
 

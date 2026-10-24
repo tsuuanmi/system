@@ -65,6 +65,11 @@ export interface HealthSources {
    * a page of them since a time, in `seq` order, after `afterSeq`, at most `limit`.
    */
   deliveries?: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; data?: Record<string, unknown> | undefined }>
+  /**
+   * The board tasks whose review is held for the operator (`operator-review`), each with when the
+   * hold expires unseen (T99 D6); `more` when the board held more than were read.
+   */
+  reviews?: () => Promise<{ held: Array<{ taskId: string; projectId: string; expiresAt: string }>; more?: string }>
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
   undeleted?: () => Array<{ account: string; binding: string; reason?: string }>
   /** Login profiles the browser holds, reserves for a login, or cannot free (ADR-0030). */
@@ -86,6 +91,21 @@ export interface LivenessRead {
 
 /** Runs one state's line of the `liveness` check names; the rest are counted. */
 const LIVENESS_NAMED = 5
+/** Held reviews the `reviews` check names, the soonest to expire first; the rest are counted. */
+const REVIEWS_NAMED = 5
+
+/** Seconds in words, by the largest unit and the next one when it is not zero: `45 s`, `12 min`, `3 h 2 min`, `2 d`. */
+const inWords = (seconds: number): string => {
+  const units = [['d', 86_400], ['h', 3600], ['min', 60], ['s', 1]] as const
+  const s = Math.max(0, Math.round(seconds))
+  const i = units.findIndex(([, size]) => s >= size)
+  if (i < 0) return '0 s'
+  const [unit, size] = units[i]!
+  const n = Math.floor(s / size)
+  const next = units[i + 1]
+  const m = next ? Math.floor((s - n * size) / next[1]) : 0
+  return m ? `${n} ${unit} ${m} ${next![0]}` : `${n} ${unit}`
+}
 
 const RANK: Record<HealthState, number> = { ok: 0, degraded: 1, down: 2 }
 
@@ -243,6 +263,24 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         return { name: 'workers', state: 'degraded', detail: [...(waiting.length ? [`cannot take work: ${cannot} (system explain shows why)`] : [`${workers.length} available${sofar}`]), ...(unheard.length ? [unheardNote] : [])].join('; ') }
       }
       return ok('workers', `${workers.length} available`)
+    }))
+  }
+
+  // A review held for the operator expires unseen, and its task then waits for input that nothing
+  // revives (T99 D6): advice, never an alarm, as for the vault key; it names each with when it expires.
+  const reviews = sources.reviews
+  if (reviews) {
+    checks.push(await guarded('reviews', async () => {
+      const { held, more } = await reviews()
+      if (!held.length) return ok('reviews', `no review is held for you${more ? ` (${more})` : ''}`)
+      const now = sources.now?.() ?? Date.now()
+      const sorted = [...held].sort((a, b) => Date.parse(a.expiresAt) - Date.parse(b.expiresAt) || (a.taskId < b.taskId ? -1 : 1))
+      const named = sorted.slice(0, REVIEWS_NAMED).map((r) => {
+        const left = Math.round((Date.parse(r.expiresAt) - now) / 1000)
+        return `${r.taskId} of ${r.projectId} ${left > 0 ? `expires in ${inWords(left)}` : 'expired'} (at ${r.expiresAt})`
+      })
+      const rest = sorted.length - named.length
+      return ok('reviews', `${sorted.length} review(s) held for you: ${named.join('; ')}${rest > 0 ? ` and ${rest} more` : ''}${more ? ` (${more})` : ''}. Accept or Reject each on /ui (Reviews) before it expires; unanswered, its task waits for input (docs/operations/runbooks.md#accept-or-reject-a-review)`)
     }))
   }
 

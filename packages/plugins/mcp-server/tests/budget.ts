@@ -30,18 +30,25 @@ export const BUDGET = {
    * mcp-stdio`). A Worker holds at most the `model` token, which `/mcp` refuses: it lists nothing.
    */
   toolsList: {
-    /** Trimmed from 46,975 B (T108); its 10 % (49,000) would be over the ceiling, which stays. */
-    operator: { measured: 44_521, ceiling: 47_200 },
-    /** Trimmed from 28,013 B (T108). */
-    client: { measured: 26_352, ceiling: 29_000 },
+    /**
+     * Trimmed from 46,975 B to 44,521 (T108); its 10 % (49,000) would be over the ceiling, which
+     * stays. `status` and `report` saying they show the reviews held for the operator add 61 B (T107).
+     */
+    operator: { measured: 44_582, ceiling: 47_200 },
+    /** Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107). */
+    client: { measured: 26_413, ceiling: 29_000 },
   },
   /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling (`board_charter`). */
   tool: { measured: 4_085, ceiling: 4_500 },
   /** Canonical replies (the whole JSON-RPC response of a `tools/call`). */
   replies: {
-    /** `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead; both ceilings stay (their 10 % would be over them). */
-    statusOperator: { measured: 1_951, ceiling: 2_100 },
-    statusClient: { measured: 847, ceiling: 900 },
+    /**
+     * `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead;
+     * both ceilings stay (their 10 % would be over them). The `reviews` check (none held) adds 69 B
+     * and 32 B (T107), from 1,951 and 847.
+     */
+    statusOperator: { measured: 2_020, ceiling: 2_100 },
+    statusClient: { measured: 879, ceiling: 900 },
     /** `result` of a failed run on the shipped profile (an `ask` with no account: reauth_required). */
     resultFailed: { measured: 1_363, ceiling: 1_500 },
     /** `usage` on the shipped profile holding that one run. */
