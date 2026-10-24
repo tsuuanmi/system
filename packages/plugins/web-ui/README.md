@@ -26,6 +26,9 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   next version, or a new project's policy), sees its diff, and proposes it. The proposal is asked
   in the queue as a `policy-change` request on the exact hash of the set it makes, and applies only
   when the operator approves it there ([a policy change](../../../docs/design/approvals.md#a-policy-change)).
+  An asked change's card, with its **Approve** and **Deny**, is at the top of the page, and its
+  history row links to it; every other pending decision (a charter or a task's approval on the
+  Board, a run's fix) links to its card on Home (`?request=<id>`).
   A queue at contract 1.0 takes no proposal (`501`);
 - when `ctx.board` is present, the **reviews**: every board task in review, those the board
   holds for the operator first ([board](../../../docs/design/board.md#required-checks-bind-at-acceptance)),

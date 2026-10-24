@@ -157,6 +157,30 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await outcome.innerText()).toBe('')
   }, 60_000)
 
+  it.runIf(canRunBrowser)('links each pending decision on the Board to its card: a charter, and a task waiting for approval (T97)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    const merge = await ctx.board.propose({ projectId: 'p1', title: 'Merge the login fix', goal: 'merge the branch', acceptance: [{ id: 'a1', statement: 'merged' }], actionClass: 'merge' })
+    await ctx.board.sweep(new Date())
+    const waiting = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+    const { approvalRequest } = await ctx.board.charter({ projectId: 'docs', title: 'Handbook rewrite', charter: CHARTER })
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    await expect.poll(() => page.locator('main').innerText()).toContain('Its charter waits for your verdict')
+    expect(await page.locator('main').innerText()).toContain('1 task(s) wait for your approval')
+    await page.getByRole('link', { name: 'decide it' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${approvalRequest}`)
+    expect(new URL(page.url()).search).toBe(`?request=${approvalRequest}`)
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    await expect.poll(() => page.locator('main').innerText()).toContain('wait for your approval')
+    await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${waiting}`)
+  }, 60_000)
+
   it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
     const booted = await boot()
     const { ctx } = booted

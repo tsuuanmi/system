@@ -107,6 +107,12 @@ call is in flight its buttons are disabled. The page refreshes every 5 seconds, 
 an element of it has focus or a pointer or key is pressed: a render that lands during a press
 waits for its release, so a press is never lost to a refresh.
 
+Every pending decision on another page links to its card: a project's charter or amendment and a
+task's approval on the Board, a run's fix on the run's page, and an asked policy change in the
+policy page's history. The link is `/ui/?request=<requestId>`: Home, scrolled to that card, which
+takes the focus; a request that no longer waits says so in the report above the page. The policy
+page shows an asked change's own card, with **Approve** and **Deny**, at its top.
+
 ## Autonomy policy
 
 Served when `ctx.approvals` is present; without it, both routes answer `503`

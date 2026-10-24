@@ -232,4 +232,28 @@ describe('web UI: the policy page in a real browser', () => {
     await page.getByRole('link', { name: 'Autonomy policy' }).click()
     await expect.poll(() => page.locator('main').innerText()).toContain('the operator approved')
   }, 60_000)
+
+  it.runIf(canRunBrowser)('decides an asked change on the policy page itself: its card, with Approve and Deny, above the policy, and its history row linking to it (T95, T97)', async () => {
+    const booted = await boot()
+    const { change, request } = await propose(booted, merging('forbid'), 'no merges for now')
+    const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
+    const waiting = page.getByRole('region', { name: 'Changes waiting for your verdict' })
+    await expect.poll(() => waiting.innerText()).toContain('A change waits for your verdict')
+    const card = waiting.locator('article', { hasText: `request ${request.requestId}` })
+    expect(await card.innerText()).toContain('If approved: the set')
+    // The history row says it waits, and its link takes the focus to that card.
+    await page.getByRole('link', { name: 'waiting for your verdict' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
+    await card.getByRole('button', { name: 'Approve: put the change in force' }).click()
+    await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
+    expect((await booted.ctx.approvals.policy()).set?.changeId).toBe(change.changeId)
+    await expect.poll(() => page.locator('#outcome').innerText()).toContain('Recorded as your verdict on request ' + request.requestId)
+    // Re-rendered: nothing waits any more, and the change is in force.
+    await expect.poll(() => page.locator('main').innerText()).toContain('the operator approved')
+    expect(await waiting.count()).toBe(0)
+  }, 60_000)
 })
