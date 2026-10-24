@@ -13,7 +13,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { outline, reply } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
   type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type Reservation, type ReservationRequest, Resources, ResourcesError,
@@ -226,7 +226,7 @@ export class StoreResources extends Resources {
       CREATE INDEX resource_holds_project ON resource_holds (project_id, pool, unit);`,
     }])
     ctx.inject(['mcp'], (c) => {
-      const json = (value: object) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: { ...value } })
+      const json = (value: object) => reply(value, outline(value))
       const failed = (error: unknown) => {
         if (error instanceof ResourcesError) return { isError: true, content: [{ type: 'text' as const, text: `${error.failure}: ${error.message}` }] }
         throw error

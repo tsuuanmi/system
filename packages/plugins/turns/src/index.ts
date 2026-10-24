@@ -15,7 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import type { AccountStatus } from '@tsuuanmi/system-accounts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { reply } from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
@@ -355,7 +355,7 @@ export class Turns extends Service {
         inputSchema: { state: zod.enum(['live', 'due', 'deleted', 'kept', 'failed']).optional(), sessionId: zod.string().max(200).optional() },
       }, async (args) => {
         const conversations = this.conversations({ ...(args.state ? { state: args.state as LedgerState } : {}), ...(args.sessionId ? { sessionId: String(args.sessionId) } : {}) })
-        return { content: [{ type: 'text' as const, text: JSON.stringify(conversations) }], structuredContent: { conversations } }
+        return reply({ conversations }, `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`)
       })
       c.mcp.tool('conversation_inspect', {
         description: 'Outline a recorded website conversation\'s page and its own menu, choosing nothing (read-only evidence for its deletion; local-private, read with evidence).',
@@ -373,7 +373,7 @@ export class Turns extends Service {
         inputSchema: { account: zod.string().max(100).optional() },
       }, async (args) => {
         const cooldowns = this.cooldowns(args.account === undefined ? undefined : String(args.account))
-        return { content: [{ type: 'text' as const, text: JSON.stringify(cooldowns) }], structuredContent: { cooldowns } }
+        return reply({ cooldowns }, `${cooldowns.length} usage limit${cooldowns.length === 1 ? '' : 's'} in force`)
       })
       c.mcp.tool('account_clear_cooldown', {
         description: 'End an account\'s usage limit early (ADR-0034): one feature, or every one when none is named. A feature probe never ends one.',
