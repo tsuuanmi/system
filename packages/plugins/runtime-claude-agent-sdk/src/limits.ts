@@ -63,10 +63,11 @@ const notWindow = (value: unknown): boolean => Array.isArray(value) || typeof va
  * The limit observations a `get_usage` answer gives, read at `observedAt` (ms), or why it cannot be
  * read. Only an answer whose `rate_limits_available` is true with `rate_limits` an object is read:
  * `false` (an API key, a third-party provider, a sign-in without the profile scope) has no plan
- * windows. In it, a null entry, `extra_usage`, and one that is not a window by its shape are skipped; each other is a
- * window `{ utilization, resets_at }` (further fields ignored), or the whole answer is unreadable
- * (something changed, so nothing in it is believed): an entry that is a number, a `utilization` that
- * is not a number or null, or is negative; a `resets_at` missing, or not a string or null. Each window
+ * windows. In it, a null entry, `extra_usage`, and one that is not a window by its shape are
+ * skipped; each other is a window `{ utilization, resets_at }` (further fields ignored), or the
+ * whole answer is unreadable (something changed, so nothing in it is believed): an entry that is a
+ * number, a `utilization` that is not a number or null, or is negative; a `resets_at` missing, or
+ * not a string or null. Each window
  * whose `utilization` is a number is one observation of its name (`five_hour`, `seven_day`, …, the
  * names a `rate_limit_event` uses): `usedPercentage` its utilization (at most 100), `rejected` when
  * it is 100 or more (nothing left), else `allowed`, with `resetsAt` when `resets_at` is an ISO time
