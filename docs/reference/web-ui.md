@@ -122,11 +122,15 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
 - `change`: `{value: {changes, unread}}` from `ctx.workers.changes(runId)`, each worktree's change
   of the run (`WorkChange`: its repository, worktree, branch, `base {branch, sha}` it is read
   against, `head`, and `files`, each with `path`, `status`, `added`, `removed`, and its `diff`, or
-  `binary` or a `note` why it is not shown, within `CHANGE_BOUNDS`) with its `source`, and each
-  source that could not read its own; `{unknown}` with why when no registry or no `changes` is
-  mounted ([a run's change](../design/agent-runtimes.md#a-runs-change-for-the-operators-review));
-- `assessments`: the run's `assessment@1.0` artifacts, at most 20: each reviewer's `verdict` and
-  `findings`, with its step and Worker;
+  `binary` or a `note` why it is not shown, within `CHANGE_BOUNDS`; a file the bounds left unread
+  has no `added` or `diff`, and `truncated`) with its `source`, and each source that could not read
+  its own; `{unknown}` with why when no registry or no `changes` is mounted, or when no source read a
+  change (and none failed) while the run's result is an agent's (`agent-result`) that names the
+  workspace it worked in: a change no source read is never an empty one
+  ([a run's change](../design/agent-runtimes.md#a-runs-change-for-the-operators-review));
+- `assessments`: the run's `assessment@1.0` artifacts, the newest 20 first: each reviewer's
+  `verdict` and `findings`, with its step and Worker; `more`, how many older ones are not listed,
+  counted among the newest 100 (`moreAtLeast: true` when there may be more);
 - `report`: the run's answer (its last step's, such as a validation's report), at most 32,000
   characters, `truncated` past them;
 - `landing`: where its accepted result stands, as a card gives it (with the committed `head`).
@@ -138,8 +142,10 @@ marked added and removed, the first 200 lines with **Show all N lines**); *What 
 (the report in the step's own words, a line that says a criterion was not met or not measured
 marked); and the checks the policy requires that nothing ran, in warning colour: *Checks not run:
 tests, lint. Accepting counts them as passed — run them first.* A change that could not be read
-says so (*Do not accept what you could not see*), never an empty change. The page reads it once
-per run and result. After **Accept**, the result is listed under *Accepted, on their way in* with
+says so (*Do not accept what you could not see*), never an empty change; a file the bounds left
+unread says *not read*. Past the newest 20 verdicts, *The newest 20 verdicts are shown; N older ones
+are not.* The page reads it once per run and result, a read that failed included: the 5-second
+refresh never reads it again, and **Read it again** beside the failure does. After **Accept**, the result is listed under *Accepted, on their way in* with
 where it stands (*Accepted and committed on system/run/<id> as <head>; its merge request comes
 next*, *Accepted — waiting to merge into main: approve*, linked to its request) until it is merged
 or refused. A run's page shows its change, its reviewers' verdicts, and where its result stands

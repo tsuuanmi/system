@@ -371,17 +371,28 @@ removes it; it is clean then, and its branch always stays.
 The `agents` source also answers `changes(runId)` on the `workers` seam (T122): each worktree it
 holds of that workflow run, read only, so the operator sees what a result changed before the
 verdict ([web UI API](../reference/web-ui.md#reviews)). The change is read against the commit the
-worktree forked from on the repository's checked-out branch (their merge base), committed and not
-yet committed: each file's status, lines added and removed, and unified diff (`-M`, no colour, no
-external diff or text conversion), and each untracked file the repository does not ignore as
-added lines (`.system/` is ignored). git runs with `--no-optional-locks` (no index write), no
-hooks, through the worktree's own administrative directory, after the same check as a landing that
-the worktree is intact and on its branch. An untracked file is read only when it and its directory
-are under the worktree by their real paths, through one descriptor that follows no link; a link or
-a special file is named, not read. A retired worktree's change is read from its branch (committed
-changes only). Bounded (`CHANGE_BOUNDS`): 200 files, 64,000 characters of one file's diff, 512,000
-in all; past them the rest is cut or counted. A worktree that cannot be read throws, and the
-registry names its source as unread, never as no change (INV-2).
+worktree forked from on the repository's checked-out branch (their merge base, so a base merged
+into the branch is not counted as the run's change), committed and not yet committed. Once the
+branch is in the base (a landed run, whose merge base is its own head), it is read against the
+commit the worktree was cut at, recorded when the worktree is made (a carried one: the base it was
+cut at), so a landed run still shows what it changed; a worktree made before that was recorded,
+whose head the base has moved past, cannot tell its change from what was merged and throws. Each
+file's status, lines added and removed, and unified diff (`-M`, no colour, no external diff or text
+conversion, `a/` and `b/` prefixes and quoted paths whatever the repository's configuration says),
+each diff given to its file by its own `diff --git` line, never by its place; and each untracked file
+the repository does not ignore as added lines (`.system/` is ignored). git runs with
+`--no-optional-locks` (no index write), no hooks, through the worktree's own administrative
+directory, after the same check as a landing that the worktree is intact and on its branch. An
+untracked file is opened one directory at a time from the worktree's own descriptor, each step
+relative to the directory opened before it and never through a link (`O_NOFOLLOW`), so no path is
+looked up again after a check; a link or a special file is named, not read. A retired worktree's
+change is read from its branch (committed changes only). Bounded (`CHANGE_BOUNDS`, INV-9): 200
+files, 64,000 characters of one file's diff, 512,000 in all, kept as git's output is read: every
+changed file is counted, only the first 200 are kept, a diff past its bound is passed over unkept (a
+patch of any size reads as cut, never as unreadable), the patch is read no further once the shown
+diffs fill the bound, and an untracked file is read, asynchronously, only while room is left (past
+it, it is listed as cut and not read). A worktree that cannot be read throws, and the registry names
+its source as unread, never as no change (INV-2).
 
 ### Carrying an earlier run's work
 

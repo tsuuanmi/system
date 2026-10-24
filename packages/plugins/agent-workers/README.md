@@ -396,11 +396,18 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **A run's change** (`changes` on the `workers` seam, T122,
   [design](../../../docs/design/agent-runtimes.md#a-runs-change-for-the-operators-review)): for each
   worktree it holds of a workflow run, read only, what it holds against the commit it forked from
-  on the repository's checked-out branch, committed or not: each file's status, lines, and diff,
-  untracked files as added (read only through a descriptor that follows no link, under the
-  worktree by real path), within `CHANGE_BOUNDS`; a retired worktree's from its branch. git runs
-  through the worktree's own administrative directory with `--no-optional-locks`, after the
-  landing's check that the worktree is intact; one that is not throws.
+  on the repository's checked-out branch (where its head meets it), committed or not; once its
+  branch is in the base (landed), against the commit the worktree was cut at (`forked_at`,
+  migration 16; a worktree made before, whose head the base has moved past, throws: its change
+  cannot be told from what was merged). Each file's status, lines, and diff, paired with its file by
+  its own `diff --git` line; untracked files as added; within `CHANGE_BOUNDS`, as it reads: git's
+  output is streamed, only what the bounds show is kept and the rest counted or passed over (a patch
+  of any size reads as cut, never as unreadable), and an untracked file is read only while the
+  bounds leave room for it, asynchronously, through descriptors opened one directory at a time from
+  the worktree's own, each `O_NOFOLLOW` (a link is named, never followed). A retired worktree's from
+  its branch. git runs through the worktree's own administrative directory with
+  `--no-optional-locks`, after the landing's check that the worktree is intact; one that is not
+  throws.
 - **Carrying** (`carry` on the `workers` seam, [ADR-0061](../../../docs/decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
   proposed, [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
   workflow engine asks it before the first step of a board task's next attempt, for the earlier
