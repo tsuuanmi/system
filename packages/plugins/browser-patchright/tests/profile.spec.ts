@@ -239,10 +239,11 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     it('spaces the page opens of one account by the gap, and captures a held profile in place', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
+      // The gap counts from the moment the first open was granted, which is after this read and before it returns.
+      const asked = Date.now()
       const first = await pool(ctx).openTurn('acct', { profile: { dir, gapMs: 1500 } })
-      const opened = Date.now()
       const second = await pool(ctx).openTurn('acct', { profile: { dir, gapMs: 1500 } })
-      expect(Date.now() - opened).toBeGreaterThanOrEqual(1400)
+      expect(Date.now() - asked).toBeGreaterThanOrEqual(1500)
       await Promise.all([first.close(), second.close()])
       expect((await capture(ctx, dir)).result).toBe('signed in')
       // Used in place: the profile stays held for the account's next turn.
@@ -255,11 +256,11 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       // Both profiles launched first, so what is timed below is the spacing, not a browser start.
       for (const [account, dir] of [['acct-a', a], ['acct-b', b]] as const) await (await pool(ctx).openTurn(account, { profile: { dir, gapMs: 0 } })).close()
       const pace = { key: 'site-1', gapMs: 1500 }
+      const asked = Date.now()
       const first = await pool(ctx).openTurn('acct-a', { profile: { dir: a, gapMs: 0, pace } })
-      const opened = Date.now()
       // Another account of the same site waits the group's gap, though its own gap is 0.
       const second = await pool(ctx).openTurn('acct-b', { profile: { dir: b, gapMs: 0, pace } })
-      expect(Date.now() - opened).toBeGreaterThanOrEqual(1400)
+      expect(Date.now() - asked).toBeGreaterThanOrEqual(1500)
       await Promise.all([first.close(), second.close()])
     }, 120_000)
 
