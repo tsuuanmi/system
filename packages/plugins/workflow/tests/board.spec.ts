@@ -22,7 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
-import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
+import { activeProject, CONFIG, KEEPER, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type Config, type RunView, WorkflowFailure } from '../src/index.ts'
 
 // End to end over the store-backed board and approval queue and the engine, on one durable store;
@@ -1034,6 +1034,45 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     // Its step needs a conversation for any work, which no Worker keeps now: it fails closed, unsent.
     expect(second.status).toBe('failed')
     expect(workers.started).toHaveLength(1)
+  })
+
+  // PROP-0013: no automated input to a session blocked on an approval; its mail waits, durable and unread.
+  it('keeps a held session\'s mail unread, wakes it on no delivery while its source holds it, and wakes it once freed (PROP-0013, REQ-SES-5, REQ-SES-7)', async () => {
+    const { ctx, workers } = await boot({ workflow: { approvalPollSeconds: 1 } })
+    workers.extra = [KEEPER]
+    const formation = ctx.artifacts.put({ kind: 'evidence', bodySchema: 'limit-state@1.0', classification: 'public', producer: { type: 'system', ref: 'test' },
+      body: { schema: 'limit-state@1.0', pool: 'p', account: 'a', window: { id: 'w', kind: 'rolling' }, state: 'ok', source: 'status-line', observedAt: '2026-10-24T09:00:00Z' } }).id
+    ctx.workerSessions.group('held-group')
+    ctx.workerSessions.join('held-group', { sessionId: 'ses_held', role: 'm1', runtime: 'local-tool', worker: 'w:keeper', formation })
+    // A first turn gives the session its native conversation.
+    expect(await settled(ctx, ctx.workflow.start({ template: 'kept', input: 'first', classification: 'public', sessionId: 'ses_held' }).runId)).toMatchObject({ status: 'completed' })
+    workers.heldSessions.set('ses_held', 'its latest run stopped on a tool call that waits for approval request apr-9, still open')
+    ctx.workerSessions.send({ from: 'operator', messageId: 'held-1', to: { session: 'ses_held' }, body: 'any news?' })
+    // Delivered, and looked at again at each poll: still held, so nothing is sent and the mail stays.
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    expect(workers.started).toHaveLength(1)
+    expect(ctx.workerSessions.inbox('ses_held').map((m) => m.message.body)).toEqual(['any news?'])
+    // Its request answered, the source frees it: the next poll wakes it on the mail it kept.
+    workers.heldSessions.clear()
+    await until(() => workers.started.length === 2, 'the held session\'s wake', 10_000)
+    expect(workers.started[1]).toMatchObject({ sessionId: 'ses_held', prompt: expect.stringContaining('any news?') })
+  })
+
+  it('gives no automated input to a session when the Workers provider cannot tell whether it takes any (INV-2)', async () => {
+    const { ctx, workers } = await boot({ workflow: { approvalPollSeconds: 1 } })
+    workers.extra = [KEEPER]
+    const formation = ctx.artifacts.put({ kind: 'evidence', bodySchema: 'limit-state@1.0', classification: 'public', producer: { type: 'system', ref: 'test' },
+      body: { schema: 'limit-state@1.0', pool: 'p', account: 'a', window: { id: 'w', kind: 'rolling' }, state: 'ok', source: 'status-line', observedAt: '2026-10-24T09:00:00Z' } }).id
+    ctx.workerSessions.group('unknown-group')
+    ctx.workerSessions.join('unknown-group', { sessionId: 'ses_unknown', role: 'm1', runtime: 'local-tool', worker: 'w:keeper', formation })
+    expect(await settled(ctx, ctx.workflow.start({ template: 'kept', input: 'first', classification: 'public', sessionId: 'ses_unknown' }).runId)).toMatchObject({ status: 'completed' })
+    const held = vi.spyOn(ctx.workers, 'held').mockRejectedValue(new Error('the store failed'))
+    ctx.workerSessions.send({ from: 'operator', messageId: 'unknown-1', to: { session: 'ses_unknown' }, body: 'hello?' })
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(workers.started).toHaveLength(1)
+    expect(ctx.workerSessions.inbox('ses_unknown')).toHaveLength(1)
+    held.mockRestore()
+    await until(() => workers.started.length === 2, 'the wake once it can tell', 10_000)
   })
 
   it('refuses a template other than the task\'s, a classification laxer than its project\'s, and a run for a task with no board loaded', async () => {

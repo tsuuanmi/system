@@ -24,7 +24,7 @@ import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
 import { pollMs } from './queue.ts'
 import { deleteRun, purge } from './retention.ts'
-import { wake, wakeSafely } from './sessions.ts'
+import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
@@ -123,8 +123,9 @@ export class Workflow extends Service {
       })
       const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
-      // The requests deferred tool calls wait on: an approved one continues its session, once.
-      const deferrals = setInterval(() => void sweepDeferrals(engine), pollMs(engine))
+      // The requests deferred tool calls wait on: an approved one continues its session, once. Then
+      // the sessions whose mail waited because they took no input are looked at again.
+      const deferrals = setInterval(() => void sweepDeferrals(engine).finally(() => retryHeldWakes(engine)), pollMs(engine))
       deferrals.unref()
       return async () => {
         clearInterval(daily)
@@ -229,7 +230,9 @@ export class Workflow extends Service {
    * takes one turn on them, on its own session and Worker (Model A), as an `ask` run. Its reply
    * goes back to the peers who wrote; the operator reads it as the run's answer. A session in a
    * running team is not woken: its rounds read the inbox. One wake per session at a time, and
-   * one per (session, last message), so a repeated delivery starts nothing new.
+   * one per (session, last message), so a repeated delivery starts nothing new. This is the
+   * caller's own, direct wake; every automated one (a delivery, a settled turn, a restart) first
+   * asks whether the session takes input now (`ctx.workers.held`, PROP-0013).
    */
   wake(sessionId: string): RunView | undefined {
     return wake(this.engine, sessionId)

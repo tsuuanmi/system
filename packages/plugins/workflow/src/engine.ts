@@ -62,6 +62,10 @@ export class Engine {
   private readonly routing = new Map<string, Promise<void>>()
   /** Nodes whose `execute` is in flight (`runId\0nodeId`): a node that must differ waits only on these. */
   private readonly executing = new Set<string>()
+  /** Sessions with mail that were not woken because they take no input now, with why (PROP-0013); looked at again at each queue poll. */
+  readonly heldWakes = new Map<string, string>()
+  /** Wakes whose held check is in flight: a stop waits for them. */
+  readonly wakeChecks = new Set<Promise<void>>()
 
   constructor(readonly ctx: Context, readonly config: Config) {
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
@@ -83,6 +87,7 @@ export class Engine {
   async close(): Promise<void> {
     this.stopped.abort()
     for (const timer of this.retries) clearTimeout(timer)
+    await Promise.allSettled(this.wakeChecks)
     await Promise.allSettled(this.running.values())
     await this.tasks.close()
     for (const set of this.waiters.values()) for (const wake of set) wake()

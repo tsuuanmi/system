@@ -70,6 +70,8 @@ export class ScriptedWorkers {
   keepsHandles = true
   /** Since 1.5: sets of Workers this runtime names as siblings of one another (one account each); others name none. */
   accounts: string[][] = []
+  /** Since 1.6: the sessions this runtime says take no input now, with why (`WorkerSource.held`); others are free. */
+  readonly heldSessions = new Map<string, string>()
   private readonly sessions = new Map<string, { worker: string; handle?: string }>()
   /** Executions cancelled while they ran. */
   readonly cancelled: string[] = []
@@ -113,6 +115,7 @@ export class ScriptedWorkers {
       },
       handle: (sessionId) => this.sessions.get(sessionId)?.handle,
       siblings: (worker) => this.accounts.find((account) => account.includes(worker)),
+      held: async (sessionId) => this.heldSessions.get(sessionId),
     }
   }
 
@@ -456,8 +459,10 @@ export const workflowSuite = defineSuite<Boot>({
   // 1.5: under assigned accounts, a node refused only for their limits waits for the reset (recovery
   // `wait`), and an unsent failure never moves to another account of its group (ADR-0052); a team
   // member avoids every Worker on an account another member holds (its siblings), and is refused
-  // when that account cannot be told apart (REQ-TEAM-4).
-  contract: '1.5',
+  // when that account cannot be told apart (REQ-TEAM-4). 1.6: a task's next attempt never resumes a
+  // session its Worker source holds (`held`: blocked on an approval, or its latest run not finished
+  // or not known to be gone), and starts fresh, saying why (ADR-0054).
+  contract: '1.6',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -890,6 +895,36 @@ export const workflowSuite = defineSuite<Boot>({
       expect(fresh.candidates.find((c) => c.option === 'fresh')!.reasons.join(' ')).toMatch(/no native session/)
       expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('resume')
     }, {}, '1.3'),
+
+    scenario('task-resume-held', 'never resumes, for a board task\'s next attempt, a session its Worker source says takes no input now (its latest run stopped on a tool call whose approval request is still open, say): the attempt starts fresh, given its brief, and the decision says why; once the source frees it, a later attempt resumes it (PROP-0013, REQ-SES-7, INV-13)', async ({ ctx, workers }) => {
+      workers.extra = [KEEPER]
+      await activeProject(ctx)
+      const attempt = async (task: BoardTask): Promise<RunView> => {
+        const run = await ctx.workflow.start({ template: 'kept', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+        await settled(ctx, run.runId)
+        return reported(ctx, run.runId)
+      }
+      const sessionDecision = (runId: string) => decisionsOf(ctx, runId, 'admission').find((d) => d.decider.id === 'workflow.task-session')
+      workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: true })
+      const task = await readyTask(ctx, 'blocked', { maxAttempts: 3 })
+      const first = await attempt(task)
+      const blocked = first.sessionId!
+      workers.heldSessions.set(blocked, 'its latest run stopped on a tool call that waits for approval request apr-1, still open')
+      await ctx.board.sweep(new Date())
+      const second = await attempt((await ctx.board.task(task.taskId))!)
+      expect(second.sessionId).not.toBe(blocked)
+      const fresh = sessionDecision(second.runId)!
+      expect(fresh).toMatchObject({ outcome: { option: 'fresh', detail: { from: first.runId, sessionId: blocked } } })
+      expect(fresh.candidates.find((c) => c.option === 'fresh')!.reasons.join(' ')).toContain(`session ${blocked} of attempt 1's run ${first.runId} takes no input now: its latest run stopped on a tool call that waits for approval request apr-1, still open`)
+      expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('resume')
+      expect(workers.started.filter((s) => s.sessionId === blocked)).toHaveLength(1)
+      // Freed (its request answered), the next attempt's session is resumed again when it can be.
+      workers.heldSessions.clear()
+      await ctx.board.sweep(new Date())
+      workers.reply = () => ({ text: 'done' })
+      const third = await attempt((await ctx.board.task(task.taskId))!)
+      expect(sessionDecision(third.runId)).toMatchObject({ outcome: { option: 'resume', detail: { sessionId: second.sessionId } } })
+    }, {}, '1.6'),
 
     scenario('task-budget', 'holds a board task that declares a budget to its lines on the resource ledger: refuses it before taking it when the ledger cannot hold them, reserves before each step of its run (the ledger\'s budget decision on the run\'s row before the step starts), and once a step spent a line starts no further step, takes the steps in flight, and blocks the task with a funding request on lines computed from the ledger\'s count; funded, the next attempt reserves within the raised lines and is pointed at the steps the stopped one completed (ADR-0047, ADR-0044, INV-2, INV-9, INV-13)', async ({ ctx, workers }) => {
       await activeProject(ctx)

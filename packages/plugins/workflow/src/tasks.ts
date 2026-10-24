@@ -31,6 +31,7 @@ import type { TaskFrame } from './briefs.ts'
 import { TaskDigests } from './digests.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
+import { heldWhy } from './sessions.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
   newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
@@ -417,7 +418,11 @@ export class TaskRuns {
       // An offer scoped to another kind of work (a review member's conversation, ADR-0049) never resumes a task's session.
       const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
       const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
+      // A session blocked on an approval, or whose latest run is not finished or known to be gone,
+      // takes no input but that request's resolution (PROP-0013, ADR-0054): never resumed by an attempt.
+      const held = handle ? await heldWhy(this.e, previous.sessionId) : undefined
       if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
+      else if (held) fresh = `session ${previous.sessionId} of ${what} takes no input now: ${held}`
       else if (!ready) fresh = `the Worker of session ${previous.sessionId} cannot resume it now (${listed.length ? listed.map((w) => `${w.worker} is ${w.state}`).join(', ') : `${bound.join(', ') || 'no Worker'} is not listed`})`
       else if (served >= max) fresh = `session ${previous.sessionId} has served ${served} runs (limit ${max}, workflow.maxSessionRuns; INV-9)`
     }
