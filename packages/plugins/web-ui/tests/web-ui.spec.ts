@@ -246,7 +246,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await fetch(`${origin}/ui/api/runs`, { headers: auth })).status).toBe(200)
   })
 
-  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.2, and what it could not read as unknown (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.3, and what it could not read as unknown (REQ-HOST-8)', async () => {
     const { origin, token } = await boot({ roster: true })
     const auth = { authorization: `Bearer ${token}` }
     const response = await fetch(`${origin}/ui/api/roster`, { headers: auth })
@@ -254,7 +254,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
     const roster = await response.json() as Record<string, unknown>
-    new SchemaRegistry().assertDef('mcp-roster@1.2', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.3', 'roster-output', roster)
     expect(roster).toMatchObject({
       counts: { busy: 1, resting: 1 },
       workers: { value: [
@@ -265,7 +265,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
           liveness: { value: [{ execution: 'arun_00000000000000a2', state: 'unknown', since: AT, runId: 'run_old', summary: expect.stringContaining('ended without being known to be gone, holding session ses_9') }] } },
       ] },
     })
-    new SchemaRegistry().assertDef('mcp-roster@1.2', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.3', 'roster-output', roster)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { ...auth, origin: 'https://evil.example' } })).status).toBe(403)
     expect((await fetch(`${origin}/ui/api/roster`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{}' })).status).toBe(405)

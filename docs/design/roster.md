@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.2`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.3`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -47,7 +47,7 @@ manifest names each one it consumes (optional): the roster works with any subset
 |---|---|---|
 | `worker`, `provider`, `tier`, `quotaClass`, `locality`, `state`, `observedAt` | its descriptor | never: a listed Worker has them |
 | `description` | its descriptor's `description` (`@1.7`): the operator's words from the configuration row that defines it (agent-workers `workers[]` or `roles[]`, models `models[]`; a website Worker's is its accounts `accounts[]` entry's, with its tier), plain text on one line, at most 200 characters | no description is configured for it |
-| `name` | `<provider> · <account> · <role or tier>`: its provider's first word capitalised (a model's, its family's); its account's label (**operator scope only**), else its account's id or slot, else the rest of its own id; its role, else its tier. For people only, never an id to route by | never |
+| `name` | `@1.3`: `<provider> · <account> · <role or tier>`: its provider's first word capitalised (a model's, its family's); its account's label (**operator scope only**), else its account's id or slot, else the rest of its own id; its role, else its tier. For people only, never an id to route by | never |
 | `derived` | its provider, role, tier, quota class, and locality, as one line; a surface shows it, marked as derived, when `description` is unknown | never |
 | `family` | its descriptor | its source declares none |
 | `account` | its descriptor's `account` (`@1.5`): `id`, `group`, `mode`, `limitUntil` | its source names no account |
@@ -76,8 +76,8 @@ One of five states, each with a one-line `summary` the CLI and the page show:
 | `quarantined` | its account is an enrolled agent account in quarantine (`changed`, `ambiguous`, `duplicate`, `unverified`), and the Worker takes no work | the reason, since when, and the `enrollment` decision that quarantined it |
 | `resting` | its source describes it `quota-exhausted` | `until`: the account's `limitUntil`, else the latest `until` of its account's closed pools when every one of them names one (the account is back only once each is), else `unknown` (no reset is known) |
 | `unavailable` | `unavailable` or `reauth-required` | `reason`: from its account (signed out, enrolled and not verified, must sign in again, a site challenge, disabled, never signed in, signed in as the same person as another account), else `unknown`: its source gives no reason (`system explain` on a run it was refused for shows the route's) |
-| `busy` | `busy`, or any run in its slots (`load.running > 0`) | `running` of `slots`: "busy N of M". A Worker below its slots still takes work; routing orders it after a less busy one ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). With no load, how many is unknown |
-| `ready` | `ready` and nothing running | — |
+| `busy` | `busy`, or any run in its slots (`load.running > 0`), or a step the engine runs on it (its `work`), whatever load its source reports (`mcp-roster@1.3`) | `running` of `slots`: "busy N of M". A Worker below its slots still takes work; routing orders it after a less busy one ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). With no load, how many is unknown |
+| `ready` | `ready`, nothing running, and no step running on it | — |
 
 A hand-named agent Worker whose runtime has no verified identity reader runs while its slot is
 quarantined `unverified` ([enrollment](agent-runtimes.md#enrollment-and-quarantine)): it reads as
@@ -101,13 +101,13 @@ Every read and every list is bounded
 | Worker sources | 64 | `sources` is `unknown` |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.2`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.3`](../reference/schemas.md#mcp-tool-roster)).
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.2` before it is sent (a record its schema
+  content is the record, validated against `mcp-roster@1.3` before it is sent (a record its schema
   refuses is a defect, reported as an error); its text content is the rendering for a terminal.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
   record.

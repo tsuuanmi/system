@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.2', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.3', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -357,7 +357,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(text).toContain('unknown usage 1 run(s)')
   })
 
-  it('the example validates against mcp-roster@1.2, and a record that is not one is refused', async () => {
+  it('the example validates against mcp-roster@1.3, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)

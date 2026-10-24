@@ -10,8 +10,8 @@
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.2`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.2'
+/** The schema of the roster (`mcp-roster@1.3`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.3'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
