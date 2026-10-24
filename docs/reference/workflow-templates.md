@@ -141,7 +141,7 @@ Provided by
 (row off by default, like `agent-review`). One attempt of a board task that tests one hypothesis
 (PROP-0010 B8): a lead starts it with MCP `run` and `task`, and the project's charter and
 milestones are the board's ([pilot](../operations/pilot.md)). Every step runs on a local agent
-Worker, in the run's own git worktree when the Workers set `worktreePerRun`.
+Worker, in the run's own git worktree when the Workers (or their role) set `worktreePerRun`.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|

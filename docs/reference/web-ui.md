@@ -25,7 +25,7 @@ A refused action is `400` (a malformed body) or `409` (the engine refused it).
 
 ## Reviews
 
-Served when `ctx.board` is present; without it, both routes answer `503`
+Served when `ctx.board` and `ctx.artifacts` are present; without either, both routes answer `503`
 ([board](../design/board.md#required-checks-bind-at-acceptance)).
 
 | Route | Body | Answer |
@@ -40,7 +40,8 @@ Served when `ctx.board` is present; without it, both routes answer `503`
   artifact (and the digest) among its inputs and the note as its rationale; then
   `ctx.board.accept` applies it. This is the operator's channel for it (INV-6): no MCP tool
   accepts a review.
-- A refusal by the board is `409`, with its failure (`invalid`, `invalid-transition`, …).
+- A malformed body is `400`, an unknown task `404`. A refusal by the board is `409`, with its
+  failure (`invalid`, `invalid-transition`, …).
 
 ## Projects
 

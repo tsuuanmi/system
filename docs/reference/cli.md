@@ -1,8 +1,8 @@
 # CLI
 
-> Hand-written from the `USAGE` text in
-> [`packages/cli/src/bin.ts`](../../packages/cli/src/bin.ts) (`system --help` prints it); no
-> generator checks it. Update it with any command change. Most commands talk to the running
+> Hand-written from the `USAGE` text and the command handlers in
+> [`packages/cli/src/bin.ts`](../../packages/cli/src/bin.ts) (`system --help` prints the usage);
+> no generator checks it. Update it with any command change. Most commands talk to the running
 > profile through its MCP endpoint, so the profile must be running (`system start`).
 
 ## Setup
@@ -30,7 +30,7 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 | `system run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] [--task <taskId> [--holder <owner> --generation <n>]] (<input…> \| -)` | start any [workflow template](workflow-templates.md), or one of its variants (a team: `brainstorm`, `review`). With `--task`, the run serves one attempt of that [board task](../design/workflow-engine.md#board-tasks), as MCP `run`'s `task` does: it claims the ready task, or takes the claim `board_claim` gave `--holder` at `--generation` (both or neither); a task not ready, or a stale claim, refuses it with nothing started |
 | `system approve <runId> [--plan <id>] [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan (name it with `--plan` when several wait) |
 | `system vote <runId> --decision <id> <option\|inconclusive> <rationale…>` | break a team's tie: the deciding vote, bound to that exact tie decision ([teams](../design/teams.md#tie)) |
-| `system result <runId>` | wait for a run and print its answer; when it waits on a plan or a tie, print the `approve` or `vote` command to run and return |
+| `system result <runId>` | wait for a run and print its answer; when it waits on a plan or a tie, print the `approve` or `vote` command to run and return (for a plan put to the approval queue, where to decide it: `system ui` or MCP `approvals_decide`) |
 | `system watch <runId>` | the same as `result` |
 | `system stop <runId> [reason]` | stop a run: running work is cancelled, nothing is resent |
 | `system continue <runId> [nodeId]` | reopen a failed run's failed node as a new attempt |
@@ -38,7 +38,7 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 | `system supersede <runId> <nodeId> (<text…> \| -)` | replace a completed step's result; everything downstream runs again, and a planner downstream plans again (a planner's replacement must be a valid plan; what an old plan grew is retired) |
 | `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class used, a model Worker's tokens, and `usage unknown (<why>)` for a step whose usage the resource ledger could not count, which a cap counts as 0 ([resources](../design/resources.md#usage-the-ledger-cannot-count)) |
 | `system report [--project <id>] [--since <time> \| --days <n>] [--until <time>] [--json]` | the baseline report, from recorded data only, of one project or every one: progress on the board, results and their reviews, what asked for you and how long you took, usage per pool, and cost per accepted result. The period is `--since` (inclusive) or the `--days` (default 7) before `--until` (exclusive, default now), at most 366 days: with no flag, the weekly investor report. `--json` prints the report itself ([reports](../design/reports.md), MCP `report`) |
-| `system explain [--json] <runId\|artifact>` | the decision chain behind a run (egress, tier, route, acceptance), every attempt's in order, so a rejected answer and its escalation stay visible; each acceptance names the `result` it judged |
+| `system explain [--json] <runId\|artifact>` | the decision chain behind a run (egress, tier, route, acceptance), every attempt's in order, so a rejected answer and its escalation stay visible; each acceptance names the `result` it judged. For any other artifact, its input tree (`--json`: the tool's answer as it is) |
 | `system artifact [--json] [--offset <n>] [--max <n>] <id>` | an artifact's header (kind, schema, classification, run, node, inputs) and a window of its body: an answer's text, else its JSON ([reading](../design/artifacts.md#reading)). One no longer stored prints as `expired` or `unknown` and exits 1 (operator; may be local-private) |
 | `system evidence <id>` | the page outline a `ui.drift` event names: structure, never text (operator; local-private) |
 
@@ -52,13 +52,13 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 
 | Command | What it does |
 |---|---|
-| `system account list` | list provider accounts and their status; agent accounts beside them (`kind: agent`: id, runtime, slot, status and why, masked hint, home, the Workers that run there) |
+| `system account list` | list provider accounts and their status; agent accounts beside them (`kind: agent`: id, runtime, slot, status and why, masked hint, home, the reader and runtime version that verified it, the Workers that run there) |
 | `system account login <id>` | open a remote login desktop (noVNC over `ssh -L`); Save stores the account |
 | `system account login <runtime> [--slot <n>]` | enroll an agent account ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)): take the runtime's lowest free slot (or that one; a taken slot is signed in again), run the runtime's own sign-in in the slot's home in this terminal without D-Bus, then verify who signed in; exit 0 when the account is `ready`. A slot 1 that just adopted the runtime's existing home is verified as it is ([runbook](../operations/runbooks.md#enroll-an-agent-account)) |
 | `system account login <accountId>` | sign an agent account in again in its own home; a different principal quarantines it (`changed`) |
 | `system account verify <accountId \| runtime --slot <n>> [--accept]` | read who is signed in to an agent account's home again and record it; `--accept` takes a `changed` slot's new principal as a new account (exit 0 when `ready`) |
 | `system account remove <accountId \| runtime --slot <n>>` | free an agent account's slot; its home and the sign-in in it are kept |
-| `system account migrate [--apply \| --rollback] [--stop <runtime>]…` | the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F, MCP `account_migrate`): print what each becomes, what stops the move (exit 1), and the new `agent-workers` row (and `resources` templates) as YAML; nothing changes. `--apply` applies it, refused while it is stopped or a run of a hand-named Worker is queued or running: an `enrollment` decision per Worker and for the cutover, each Worker's sessions and runs moved to its new id, and from then on the hand-named rows are refused at load. `--rollback` undoes it. `--stop <runtime>`: that runtime's Workers stop at the cutover, its account not ready ([runbook](../operations/runbooks.md#migrate-agent-workers-to-accounts--roles)) |
+| `system account migrate [--apply \| --rollback] [--stop <runtime>]…` | the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F, MCP `account_migrate`): print what each becomes, what stops the move (exit 1), and the new `agent-workers` row (and `resources` templates) as YAML; nothing changes. `--apply` applies it, refused while something stops the move or a run of a hand-named Worker is queued or running: an `enrollment` decision per Worker and for the cutover, each Worker's sessions and runs moved to its new id, and from then on the hand-named rows are refused at load. `--rollback` undoes it, refused while a run of a Worker it moved to is queued or running. `--stop <runtime>` (not with `--rollback`): that runtime's Workers stop at the cutover, its account not ready ([runbook](../operations/runbooks.md#migrate-agent-workers-to-accounts--roles)) |
 | `system account credentials <id>` | store login credentials from stdin as JSON `{"email","password","totpSecret"?}` |
 | `system account relogin <id>` | sign in again with the stored credentials (TOTP computed locally) |
 | `system account code <id> <code>` | supply a one-time code a running sign-in is waiting for |
@@ -76,12 +76,12 @@ planned; website accounts are configuration ([`accounts`](configuration.md#accou
 | Command | What it does |
 |---|---|
 | `system backup <dir> [--include-key]` | snapshot the store and the encrypted vault into an empty directory (the key only with `--include-key`) |
-| `system restore <dir> [--yes]` | preview, then restore a backup (the profile must be stopped; a manifest naming any file but the store and the vault is refused) |
+| `system restore <dir> [--yes] [--key <path>]` | preview, then restore a backup (the profile must be stopped; a manifest naming any file but the store and the vault is refused). A backup without the vault key needs one on this host: in the state directory, or at `--key` when the credentials row keeps it outside |
 | `system drain [--deadline <s>]` | admit no new runs and wait for running ones (default 600 s) |
 | `system resume` | admit new runs again after a drain |
 | `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start); with no workflow engine running, stop it directly once `/proc` proves it is this home's host |
 | `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem. A plugin the install ships that cannot be resolved or loaded is a problem; only a row whose package the install does not ship (DSH's own, a third party's) is passed over |
-| `system health [--json]` | each health check (plugins, manifests, runtime, store, disk, vault key, accounts, Workers, UI drift, usage the resource ledger could not count) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
+| `system health [--json]` | each health check (plugins, manifests, configured templates, runtime, store, disk, vault key, website and agent accounts, Workers and the sources that describe them, usage the resource ledger could not count, website conversations not deleted, login profiles, UI drift, retention) and what to do; exit 0 healthy, 1 degraded, 2 down or not running |
 | `system plugins [--json]` | every plugin of the composition: its recorded lifecycle state (`default`, `candidate`, `retired`), whether a row runs it, its version and class, its rows, why its manifest is absent or refused, and each finding of the manifest check with the decision that recorded it ([plugin host](../design/plugin-host.md#the-manifest-check)) |
 | `system ui` | print the web UI link, with the operator token in its fragment ([web UI API](web-ui.md)). The page: the approval queue (approve or deny one request or a whole batch; a `policy-change` request shows its diff), the reviews of board tasks (accept or reject the result shown), and the runs, their steps, and decision chains (approve or reject a plan, vote on a tie, stop, continue); the Board page's projects (pause, resume, or close one, each after a confirmation); and the Autonomy policy page (the set in force, the effective modes, and a proposed change, which applies only once approved in the queue) |
 
