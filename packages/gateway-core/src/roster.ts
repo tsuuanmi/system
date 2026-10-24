@@ -10,8 +10,8 @@
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.1`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.1'
+/** The schema of the roster (`mcp-roster@1.2`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.2'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -58,6 +58,8 @@ export interface RosterDescriptor {
   family?: string | undefined
   /** `@1.7`: what it is for, in the operator's words. */
   description?: string | undefined
+  /** `@1.6`: the kinds of work the operator gives it. */
+  kinds?: string[] | undefined
   account?: { id: string; group: string; mode: 'assigned' | 'pooled'; limitUntil?: string | undefined } | undefined
   load?: { running: number; queued: number; pending: number; slots: number } | undefined
   cooldowns?: Array<{ capability: string; until: string }> | undefined
@@ -75,7 +77,8 @@ export interface RosterAgentAccount {
   provider: string
   slot: number
   status: 'enrolled' | 'ready' | 'signed-out' | 'quarantined'
-  quarantine?: { reason: 'changed' | 'ambiguous' | 'duplicate' | 'unverified'; since: string; decision: string } | undefined
+  /** `detail` (`agent-account@1.1`): what the reading that quarantined it found. */
+  quarantine?: { reason: 'changed' | 'ambiguous' | 'duplicate' | 'unverified'; since: string; decision: string; detail?: string | undefined } | undefined
   hint?: string | undefined
 }
 /** A website account's secret-free view (`ctx.accounts`). */
@@ -108,7 +111,16 @@ export interface RosterTask { taskId: string; projectId: string; title: string; 
 export interface RosterServices {
   workers?: { list(): Promise<RosterDescriptor[]>; sources?(): RosterSourceRead[]; siblings(worker: string): string[] } | undefined
   accounts?: { list(): Promise<RosterWebsiteAccount[]>; duplicateIdentities(): Promise<string[][]> } | undefined
-  agentWorkers?: { agentAccounts?: { list(): RosterAgentAccount[]; workersIn(account: never): string[] } } | undefined
+  agentWorkers?: {
+    agentAccounts?: {
+      list(): RosterAgentAccount[]
+      workersIn(account: never): string[]
+      /** The operator's display label of a slot's account, when one is configured. */
+      labelOf?(account: never): string | undefined
+      /** Each agent runtime, with its title for people when its provider gives one. */
+      providers?(): Array<{ provider: string; title?: string | undefined }>
+    }
+  } | undefined
   resources?: { pools(): Promise<RosterPool[]>; usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }> } | undefined
   eventLog?: { query(filter: { type: string; since?: string; afterSeq: number; limit: number; runId?: string; nodeId?: string }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
   workflow?: { usage(limit: number): RosterRun[] } | undefined
@@ -124,8 +136,10 @@ export interface RosterInput {
   websiteAccounts: Known<RosterWebsiteAccount[]>
   /** Groups of website accounts signed in as one person. */
   duplicates: Known<string[][]>
-  /** Each enrolled agent account with the Workers that run on it. */
-  agentAccounts: Known<Array<{ account: RosterAgentAccount; workers: string[] }>>
+  /** Each enrolled agent account with the Workers that run on it, and the operator's label when configured. */
+  agentAccounts: Known<Array<{ account: RosterAgentAccount; workers: string[]; label?: string | undefined }>>
+  /** Each agent runtime's title for people, by its kind, as its provider gives it; a Worker of a runtime not in it is named by its provider. */
+  titles?: ReadonlyMap<string, string>
   pools: Known<RosterPool[]>
   unknownUsage: Known<UnknownUsageCount>
   /** The newest runs, and whether the bound cut the read. */
@@ -147,7 +161,7 @@ export type Availability =
   | { state: 'busy'; summary: string; running?: number; slots?: number }
   | { state: 'resting'; summary: string; until: Known<string> }
   | { state: 'unavailable'; summary: string; reason: Known<string> }
-  | { state: 'quarantined'; summary: string; reason: 'changed' | 'ambiguous' | 'duplicate' | 'unverified'; since: string; decision: string }
+  | { state: 'quarantined'; summary: string; reason: 'changed' | 'ambiguous' | 'duplicate' | 'unverified'; since: string; decision: string; detail?: string }
 
 export interface RosterAccountRecord {
   kind: 'agent' | 'website'
@@ -155,7 +169,7 @@ export interface RosterAccountRecord {
   label?: Known<string>
   status: string
   slot?: number
-  quarantine?: { reason: string; since: string; decision: string }
+  quarantine?: { reason: string; since: string; decision: string; detail?: string }
   /** The other website accounts signed in as the same person (none of them takes work). */
   sameAs?: string[]
 }
@@ -180,6 +194,12 @@ export interface RosterEntry {
   description: Known<string>
   /** A line made from its provider, role, and tier, which a reader shows, marked as derived, when there is no description. */
   derived: string
+  /**
+   * Its display name, `<runtime> · <account> · <role or tier> [<kinds>]`, for example
+   * `Claude Code · science · develop [code]`: the runtime's title, the account's label for the
+   * operator (else its masked hint and slot, or its id), never a routing input; the id stays the key.
+   */
+  name: string
   family: Known<string>
   account: Known<RosterAccount>
   /** The role the Worker serves on its account, `null` for a Worker that is no role's (a website account's tier, a model, a hand-named agent Worker). */
@@ -219,8 +239,11 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 const later = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined ? a : Date.parse(b) > Date.parse(a) ? b : a)
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+/** An enrolled agent account as the roster read it: the slot's record, its Workers, and the operator's label when configured. */
+type AgentEntry = { account: RosterAgentAccount; workers: string[]; label?: string | undefined }
+
 /** The account record a Worker runs on: the enrolled agent account of its id (or that lists it), else the website account of its id. */
-function recordOf(input: RosterInput, d: RosterDescriptor, scope: RosterScope): { record: Known<RosterAccountRecord>; agent?: { account: RosterAgentAccount; workers: string[] } } {
+function recordOf(input: RosterInput, d: RosterDescriptor, scope: RosterScope): { record: Known<RosterAccountRecord>; agent?: AgentEntry; site?: RosterWebsiteAccount } {
   const id = d.account!.id
   const agents = input.agentAccounts
   const agent = isKnown(agents) ? agents.value.find((a) => a.account.accountId === id) ?? agents.value.find((a) => a.workers.includes(d.worker)) : undefined
@@ -231,7 +254,7 @@ function recordOf(input: RosterInput, d: RosterDescriptor, scope: RosterScope): 
       agent,
       record: known({
         kind: 'agent', ...(scope === 'operator' ? { label } : {}), status: a.status, slot: a.slot,
-        ...(a.quarantine ? { quarantine: { reason: a.quarantine.reason, since: a.quarantine.since, decision: a.quarantine.decision } } : {}),
+        ...(a.quarantine ? { quarantine: { reason: a.quarantine.reason, since: a.quarantine.since, decision: a.quarantine.decision, ...(a.quarantine.detail ? { detail: clip(a.quarantine.detail) } : {}) } } : {}),
       }),
     }
   }
@@ -240,7 +263,7 @@ function recordOf(input: RosterInput, d: RosterDescriptor, scope: RosterScope): 
   if (site) {
     const label = site.label ? known(site.label) : unknown<string>('the account catalog gives it no label')
     const sameAs = isKnown(input.duplicates) ? (input.duplicates.value.find((group) => group.includes(id)) ?? []).filter((other) => other !== id).sort(cmp) : undefined
-    return { record: known({ kind: 'website', ...(scope === 'operator' ? { label } : {}), status: site.status, ...(sameAs?.length ? { sameAs } : {}) }) }
+    return { site, record: known({ kind: 'website', ...(scope === 'operator' ? { label } : {}), status: site.status, ...(sameAs?.length ? { sameAs } : {}) }) }
   }
   const unread = [...(isKnown(agents) ? [] : [`the agent accounts (${agents.unknown})`]), ...(isKnown(sites) ? [] : [`the website accounts (${sites.unknown})`])]
   return { record: unknown(unread.length ? `no account record read names ${id}, and ${unread.join(' and ')} could not be read` : `no enrolled agent account and no website account has the id ${id}`) }
@@ -252,8 +275,11 @@ function availabilityOf(d: RosterDescriptor, record: Known<RosterAccountRecord>,
   // A quarantined account's Workers take no work; a hand-named Worker that still does (its runtime
   // has no verified reader, `unverified`) reads as its source describes it, the account record saying why.
   if (rec?.status === 'quarantined' && rec.quarantine && d.state !== 'ready' && d.state !== 'busy') {
-    const q = rec.quarantine as { reason: 'changed' | 'ambiguous' | 'duplicate' | 'unverified'; since: string; decision: string }
-    return { state: 'quarantined', summary: `quarantined: ${q.reason}, since ${q.since}`, reason: q.reason, since: q.since, decision: q.decision }
+    const q = rec.quarantine as { reason: 'changed' | 'ambiguous' | 'duplicate' | 'unverified'; since: string; decision: string; detail?: string }
+    return {
+      state: 'quarantined', summary: `quarantined: ${q.reason}${q.detail ? ` (${q.detail})` : ''}, since ${q.since}`, reason: q.reason, since: q.since, decision: q.decision,
+      ...(q.detail ? { detail: q.detail } : {}),
+    }
   }
   if (d.state === 'quota-exhausted') {
     // Back only once every closed pool is: the latest of their resets, none when one names none.
@@ -388,7 +414,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
     const listed = all.slice(0, ROSTER_BOUNDS.workers)
     unlisted = all.length - listed.length
     workers = known(listed.map((d): RosterEntry => {
-      const { record, agent } = d.account ? recordOf(input, d, options.scope) : { record: unknown<RosterAccountRecord>('its Worker source names no account') }
+      const { record, agent, site } = d.account ? recordOf(input, d, options.scope) : { record: unknown<RosterAccountRecord>('its Worker source names no account') }
       const account: Known<RosterAccount> = d.account
         ? known({ id: d.account.id, group: d.account.group, mode: d.account.mode, ...(d.account.limitUntil ? { limitUntil: d.account.limitUntil } : {}), record })
         : unknown('its Worker source names no account (a descriptor below capability-descriptor@1.5, or a Worker of none)')
@@ -401,6 +427,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         worker: d.worker, provider: d.provider,
         description: d.description !== undefined ? known(d.description) : unknown('no description is configured for it'),
         derived: derivedOf(d, role),
+        name: nameOf(input, d, role, options.scope, agent, site),
         family: d.family !== undefined ? known(d.family) : unknown('its Worker source declares no provider family'),
         account, role, tier: d.tier, quotaClass: d.quotaClass, locality: d.locality, state: d.state, observedAt: d.observedAt,
         availability,
@@ -424,6 +451,26 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
 /** A Worker's line made from what its source says: provider, role, tier, quota class, and locality (shown, marked as derived, when it has no description). */
 function derivedOf(d: RosterDescriptor, role: Known<string | null>): string {
   return clip(`${d.provider} Worker${isKnown(role) && role.value ? `, role ${role.value}` : ''}, ${d.tier} tier, ${d.quotaClass}, ${d.locality}`)
+}
+
+/**
+ * A Worker's display name, `<runtime> · <account> · <role or tier> [<kinds>]`, made from what was read
+ * (docs/design/roster.md#display-names): the runtime's title, else its provider kind; for the operator
+ * the account's configured label, else an agent account's masked hint and slot, or a website
+ * account's catalog label; for a client (who gets no label) an agent account's slot, or the account
+ * id; then its role, else its tier, with the kinds of work it takes. For people only: never a routing
+ * input, and never a key (the Worker id is).
+ */
+function nameOf(input: RosterInput, d: RosterDescriptor, role: Known<string | null>, scope: RosterScope, agent: AgentEntry | undefined, site: RosterWebsiteAccount | undefined): string {
+  const runtime = input.titles?.get(d.provider) ?? d.provider
+  const slot = agent ? `slot ${agent.account.slot}` : undefined
+  const account = agent
+    ? (scope === 'operator' ? agent.label ?? (agent.account.hint ? `${agent.account.hint}, ${slot}` : slot) : slot)
+    : site
+      ? (scope === 'operator' && site.label ? site.label : site.id)
+      : d.account?.id
+  const work = `${isKnown(role) && role.value ? role.value : d.tier}${d.kinds?.length ? ` [${d.kinds.join(', ')}]` : ''}`
+  return clip([runtime, account, work].filter((part): part is string => !!part).join(' · '))
 }
 
 /**
@@ -472,7 +519,17 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
   const websiteAccounts = await read(accounts ? undefined : 'the website accounts (ctx.accounts) are not mounted', () => accounts!.list())
   const duplicates = await read(accounts ? undefined : 'the website accounts (ctx.accounts) are not mounted', () => accounts!.duplicateIdentities())
   const slots = agentWorkers?.agentAccounts
-  const agentAccounts = await read(slots ? undefined : 'the agent accounts (ctx.agentWorkers) are not mounted', () => slots!.list().map((account) => ({ account, workers: slots!.workersIn(account as never) })))
+  const agentAccounts = await read(slots ? undefined : 'the agent accounts (ctx.agentWorkers) are not mounted', () => slots!.list().map((account) => {
+    const label = slots!.labelOf?.(account as never)
+    return { account, workers: slots!.workersIn(account as never), ...(label !== undefined ? { label } : {}) }
+  }))
+  // The agent runtimes' titles: a name for people only, so a read that fails names the Workers by their provider.
+  const titles = new Map<string, string>()
+  try {
+    for (const p of slots?.providers?.() ?? []) if (p.title) titles.set(p.provider, p.title)
+  } catch {
+    titles.clear()
+  }
   const pools = await read(resources ? undefined : 'the resource ledger (ctx.resources) is not mounted', () => resources!.pools())
   const unknownUsage = await read(!resources ? 'the resource ledger (ctx.resources) is not mounted' : !eventLog ? 'the event log (ctx.eventLog) is not mounted' : undefined, () => countUnknownUsage({
     pools: async () => (isKnown(pools) ? pools.value : await resources!.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
@@ -512,7 +569,7 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
             .then((at): Known<string> => !isKnown(at) ? at : at.value !== undefined ? known(at.value) : unknown(`the event log holds no ${NODE_STARTED} of attempt ${node.attempt} (its retention may have dropped it)`)))
     }
   }
-  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, pools, unknownUsage, runs, tasks, starts }, { scope: options.scope, now })
+  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, titles, pools, unknownUsage, runs, tasks, starts }, { scope: options.scope, now })
   schemas().assertDef(ROSTER_SCHEMA, 'roster-output', roster)
   return roster
 }
@@ -528,6 +585,7 @@ export function formatRoster(roster: Roster): string {
     lines.push(`Roster as of ${roster.asOf}: ${roster.workers.value.length} Worker(s): ${STATES.map((s) => `${c[s]} ${s}`).join(', ')}${roster.unlisted ? `; ${roster.unlisted} more not listed` : ''}`)
     for (const w of roster.workers.value) {
       lines.push('', `${w.worker}  ${w.availability.summary}`)
+      lines.push(`  name       ${w.name}`)
       lines.push(`  is         ${isKnown(w.description) ? w.description.value : `${w.derived} (derived: no description is configured)`}`)
       lines.push(`  serves     ${w.tier}, ${w.quotaClass}, ${w.locality}; provider ${w.provider}, family ${text(w.family)}; role ${text(w.role, (r) => r ?? 'none')}`)
       lines.push(`  account    ${text(w.account, (a) => `${a.id} (${a.group}, ${a.mode}): ${text(a.record, (r) => `${r.kind} ${r.status}${r.label ? `, ${text(r.label, (l) => JSON.stringify(l))}` : ''}${r.slot !== undefined ? `, slot ${r.slot}` : ''}${r.quarantine ? `, quarantined ${r.quarantine.reason} since ${r.quarantine.since} (${r.quarantine.decision})` : ''}${r.sameAs ? `, same person as ${r.sameAs.join(', ')}` : ''}`)}`)}`)

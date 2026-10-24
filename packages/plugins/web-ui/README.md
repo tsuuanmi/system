@@ -44,8 +44,10 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   limit and when the first is back, unavailable), then one card per Worker grouped by status, read
   through `readRoster` in [`gateway-core`](../../gateway-core/README.md#the-roster) from the services
   mounted (`workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`):
-  what it is for (the operator's `description`, else its derived line, marked *derived*); its
-  status and why in plain words; what it does now, one sentence per step with for how long, each
+  headed by its display name (`Claude Code · science · develop [code]`,
+  [display names](../../../docs/design/roster.md#display-names)), its id under it and in its
+  accessible name; what it is for (the operator's `description`, else its derived line, marked
+  *derived*); its status and why in plain words (a quarantine with what its reading found); what it does now, one sentence per step with for how long, each
   a link to its run; its account, with the account's label and its enrolled, ready, signed-out, or
   quarantined state; what it serves (tier, quota class, locality, provider, family, role); its
   limits, with each reset relative and on the clock; and its load
@@ -115,11 +117,11 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), the roster route (operator only, valid against
-`mcp-roster@1.1`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
+`mcp-roster@1.2`, labels shown, display names, unknown without a Worker registry), and, with a browser, the runs,
 the queue (labels by effect, a batch verdict, a refused one as an alert), a press a refresh lands
 on that still counts, a verdict not recorded that stays as an alert through refreshes until
-dismissed, and the Workers tab (counts, cards by status, a description or a derived line marked,
-the step in one sentence).
+dismissed, and the Workers tab (counts, cards by status headed by the display name with the id
+under it, a description or a derived line marked, the step in one sentence).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its

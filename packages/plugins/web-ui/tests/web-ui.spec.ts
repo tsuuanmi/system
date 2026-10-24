@@ -239,7 +239,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await fetch(`${origin}/ui/api/runs`, { headers: auth })).status).toBe(200)
   })
 
-  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.1, and what it could not read as unknown (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.2, and what it could not read as unknown (REQ-HOST-8)', async () => {
     const { origin, token } = await boot({ roster: true })
     const auth = { authorization: `Bearer ${token}` }
     const response = await fetch(`${origin}/ui/api/roster`, { headers: auth })
@@ -247,13 +247,13 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
     const roster = await response.json() as Record<string, unknown>
-    new SchemaRegistry().assertDef('mcp-roster@1.1', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.2', 'roster-output', roster)
     expect(roster).toMatchObject({
       counts: { busy: 1, resting: 1 },
       workers: { value: [
-        { worker: 'worker:plus/frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
+        { worker: 'worker:plus/frontier', name: 'chatgpt-web · Studio Plus · frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
         // The stand-in engine's run is not running this Worker now; no ledger, so its pools are unknown.
-        { worker: 'worker:plus/standard', description: { value: 'The studio\'s chat subscription for quick questions (standard tier)' }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } },
+        { worker: 'worker:plus/standard', name: 'chatgpt-web · Studio Plus · standard', description: { value: 'The studio\'s chat subscription for quick questions (standard tier)' }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } },
           work: { value: { items: [{ runId: 'run_xyz', nodeId: 'review:m1:propose', since: { unknown: 'the event log (ctx.eventLog) is not mounted' }, summary: 'Running review run run_xyz, step review:m1:propose, since an unknown time' }], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' } },
       ] },
     })
@@ -279,7 +279,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const working = page.getByRole('region', { name: 'Working' })
     const busy = working.getByRole('article', { name: 'worker:plus/standard' })
     const card = await busy.innerText()
-    for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
+    // Its display name heads the card, its id under it (mcp-roster 1.2).
+    expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('chatgpt-web · Studio Plus · standard')
+    for (const said of ['worker:plus/standard', 'The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
       'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote']) expect(card, said).toContain(said)
     const resting = page.getByRole('region', { name: 'At a limit' }).getByRole('article', { name: 'worker:plus/frontier' })
     const rest = await resting.innerText()

@@ -443,7 +443,7 @@ async function main(argv: string[]): Promise<number> {
         })
         // Agent accounts beside them, when the agents source is loaded (ADR-0051).
         const agents = await callTool('account_agents', {}).catch(() => undefined)
-        const enrolled = agents && !agents.isError ? ((agents.structured as { accounts?: Array<{ account: Record<string, unknown>; workers: string[] }> } | undefined)?.accounts ?? []) : []
+        const enrolled = agents && !agents.isError ? ((agents.structured as { accounts?: Array<{ account: Record<string, unknown>; workers: string[]; label?: string }> } | undefined)?.accounts ?? []) : []
         console.log(JSON.stringify([...accounts, ...enrolled.map(agentAccountLine)], null, 2))
         return 0
       }

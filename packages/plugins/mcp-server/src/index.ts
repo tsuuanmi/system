@@ -255,7 +255,7 @@ export class McpEndpoint extends McpTools {
     const eventLog = this.ctx.get('eventLog')
     const workflow = this.ctx.get('workflow' as never) as { refusedTemplates?: () => Array<{ name: string; reason: string }> } | undefined
     const turns = this.ctx.get('turns' as never) as { conversations?: (filter: { state: 'failed' }) => Array<{ account: string; binding: string; reason?: string }> } | undefined
-    const agents = this.ctx.get('agentWorkers' as never) as { agentAccounts?: { list(): Array<{ provider: string; slot: number; accountId?: string; status: string; quarantine?: { reason: string } }> } } | undefined
+    const agents = this.ctx.get('agentWorkers' as never) as { agentAccounts?: { list(): Array<{ provider: string; slot: number; accountId?: string; status: string; quarantine?: { reason: string; detail?: string } }> } } | undefined
     const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }>; browserCap?: () => number } | undefined
     const host = this.ctx.get('pluginHost')
     const resources = this.ctx.get('resources')
@@ -278,8 +278,12 @@ export class McpEndpoint extends McpTools {
       ...(store ? { storeCheck: () => this.cachedStoreCheck(() => String(Object.values(store.db.prepare('PRAGMA quick_check(1)').get() ?? {})[0])) } : {}),
       ...(credentials?.custody ? { keyCustody: () => credentials.custody!() } : {}),
       ...(accounts ? { accounts: async () => (await accounts.list()).map((a: { id: string; status: string }) => ({ id: a.id, status: a.status })), duplicateAccounts: () => accounts.duplicateIdentities() } : {}),
-      // Agent accounts in their slots (ADR-0051): every one not ready is named.
-      ...(agents?.agentAccounts ? { agentAccounts: () => agents.agentAccounts!.list().map((a) => ({ provider: a.provider, slot: a.slot, accountId: a.accountId, status: a.status, reason: a.quarantine?.reason })) } : {}),
+      // Agent accounts in their slots (ADR-0051): every one not ready is named, a quarantine with what its reading found (agent-account@1.1).
+      ...(agents?.agentAccounts ? {
+        agentAccounts: () => agents.agentAccounts!.list().map((a) => ({
+          provider: a.provider, slot: a.slot, accountId: a.accountId, status: a.status, reason: a.quarantine && (a.quarantine.detail ? `${a.quarantine.reason}: ${a.quarantine.detail}` : a.quarantine.reason),
+        })),
+      } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(workers?.sources ? { workerSources: () => workers.sources!() } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),

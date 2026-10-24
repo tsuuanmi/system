@@ -487,12 +487,16 @@ export function accountTarget(args: readonly string[], agentProviders: readonly 
   return { kind: 'website', id: name }
 }
 
-/** One agent account as `system account list` shows it, beside the website accounts: never its hash, and the hint only masked. */
-export function agentAccountLine(entry: { account: Record<string, unknown>; workers: string[] }): Record<string, unknown> {
-  const a = entry.account as { accountId?: string; provider: string; slot: number; home: string; status: string; quarantine?: { reason: string; since: string }; hint?: string; identity?: { reader: string; runtimeVersion: string; verifiedAt: string } }
+/**
+ * One agent account as `system account list` shows it, beside the website accounts: never its hash,
+ * and the hint only masked; the operator's label when its assignment gives one, and a quarantine's
+ * detail, what its reading found.
+ */
+export function agentAccountLine(entry: { account: Record<string, unknown>; workers: string[]; label?: string }): Record<string, unknown> {
+  const a = entry.account as { accountId?: string; provider: string; slot: number; home: string; status: string; quarantine?: { reason: string; since: string; detail?: string }; hint?: string; identity?: { reader: string; runtimeVersion: string; verifiedAt: string } }
   return {
-    kind: 'agent', ...(a.accountId ? { id: a.accountId } : {}), provider: a.provider, slot: a.slot, status: a.status,
-    ...(a.quarantine ? { reason: a.quarantine.reason, since: a.quarantine.since } : {}), ...(a.hint ? { hint: a.hint } : {}), home: a.home,
+    kind: 'agent', ...(a.accountId ? { id: a.accountId } : {}), ...(entry.label ? { label: entry.label } : {}), provider: a.provider, slot: a.slot, status: a.status,
+    ...(a.quarantine ? { reason: a.quarantine.reason, ...(a.quarantine.detail ? { detail: a.quarantine.detail } : {}), since: a.quarantine.since } : {}), ...(a.hint ? { hint: a.hint } : {}), home: a.home,
     ...(a.identity ? { reader: a.identity.reader, runtimeVersion: a.identity.runtimeVersion, verifiedAt: a.identity.verifiedAt } : {}), workers: entry.workers,
   }
 }

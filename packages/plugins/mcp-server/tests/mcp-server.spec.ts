@@ -116,7 +116,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
   })
 
-  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.1 (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.2 (REQ-HOST-8)', async () => {
     const { url, tokens, ctx } = await boot()
     const at = '2026-10-24T09:29:58.000Z'
     const plus = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' as const }
@@ -157,21 +157,22 @@ describe('system MCP server on ctx.webServer', () => {
     const roster = async (token: string) => (await connect(url, token)).callTool({ name: 'roster', arguments: {} })
     const operator = await roster(tokens.operator)
     const schemas = new SchemaRegistry()
-    schemas.assertDef('mcp-roster@1.1', 'roster-output', operator.structuredContent)
+    schemas.assertDef('mcp-roster@1.2', 'roster-output', operator.structuredContent)
     expect(operator.structuredContent).toMatchObject({
       counts: { ready: 0, busy: 1, resting: 1, unavailable: 0, quarantined: 0 },
       workers: { value: [
         { worker: 'worker:plus/frontier', availability: { state: 'resting', until: { value: '2026-10-24T11:00:00.000Z' } }, siblings: { value: ['worker:plus/standard'] } },
-        { worker: 'worker:plus/standard', role: { value: null }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } },
+        { worker: 'worker:plus/standard', name: 'chatgpt-web · Studio Plus · standard', role: { value: null }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } },
           pools: { value: [{ pool: 'plus.chat', available: false, windows: [{ id: 'three-hour', state: 'unknown', used: { unknown: 'no reading yet' } }], unknownUsage: { value: { runs: 0, kinds: {} } } }] },
           work: { unknown: 'the workflow engine (ctx.workflow) is not mounted' } },
       ] },
     })
     expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/^Roster as of .*: 2 Worker\(s\): 0 ready, 1 busy, 1 resting, 0 unavailable, 0 quarantined\n/)
     const client = await roster(tokens.client)
-    schemas.assertDef('mcp-roster@1.1', 'roster-output', client.structuredContent)
+    schemas.assertDef('mcp-roster@1.2', 'roster-output', client.structuredContent)
     expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
-    expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 } })
+    // A client's names carry the account id, never the operator's label.
+    expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 }, workers: { value: [{ name: 'chatgpt-web · plus · frontier' }, { name: 'chatgpt-web · plus · standard' }] } })
     // The model token reaches no MCP tool.
     const model = await fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'roster', arguments: {} } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${tokens.model}` } })
     expect(model.status).toBe(401)
