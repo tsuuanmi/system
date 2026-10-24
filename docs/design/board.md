@@ -353,6 +353,12 @@ when the result is accepted:
 - A class the policy asks about needs no check here: the operator approved the attempt before it
   started.
 
+A `done` task is terminal here. What happens to its result outside the board is the run owner's:
+the workflow engine lands a result made in a run's worktree, committing it on the run's branch and
+asking a `merge` request of its own on the queue
+([landing an accepted result](workflow-engine.md#landing-an-accepted-result)); the board moves
+nothing for it, and a task-level `merge` action class still gates a task's attempt, not a landing.
+
 ## Fail-closed rules
 
 1. No task starts outside an active project with an approved charter.

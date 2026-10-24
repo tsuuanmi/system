@@ -299,8 +299,8 @@ The **`agents` Worker source**: agent runtimes as Workers
     repository; the mapping is stored, so a restart reuses it. The run's
     `RunSpec`, its captured subject, and the result's `workspace` are the
     worktree. A worktree path that holds anything else is never taken over;
-  - the repository's checked-out branch and main working tree are never written,
-    and git always runs with `-C <path>`, fixed arguments, no shell, no hooks,
+  - the repository's checked-out branch and main working tree are never written
+    but by a landing's merge (below), and git always runs with `-C <path>`, fixed arguments, no shell, no hooks,
     no system or global configuration, and a 60 s bound;
   - **a brief's files** (`brief@1.2` `files`, the board's `TASKS.md` for a board
     task's run): resolved at start like the prompt, checked at egress with it
@@ -370,6 +370,25 @@ The **`agents` Worker source**: agent runtimes as Workers
     committed or removed (locked, say) stays in place, with the reason logged
     once and kept on its row, and the next sweep tries again; at most 50 a
     sweep. A worktree removed by hand is forgotten once git no longer lists it.
+- **Landing** (`land` on the `workers` seam, [ADR-0059](../../../docs/decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)
+  proposed, [design](../../../docs/design/agent-runtimes.md#landing-a-worktree)): for a worktree it
+  holds (by workflow run and path; any other is undefined), one step at a time per repository:
+  - `commit`: refused `busy` while an agent run of the workflow run is unfinished or not known to be
+    gone, `gone` once the worktree was retired, `failed` when it is not intact or on its branch;
+    `.system/` removed as the retention removes it; then, only while `captureGitSubject` gives the
+    accepted subject, `git add --all` and one commit by the system with the engine's message and a
+    `System-Subject: git:<head>:<version>` trailer (`committed`); a clean worktree whose HEAD is
+    that commit on top of the accepted HEAD is `committed` with `committed: false`; anything else
+    is `moved`. It answers the base (the repository's checked-out branch and head; a detached HEAD
+    or a `system/run/` branch is refused `base-moved`), whether the base holds the head, and the
+    `git diff --stat` against it (1,500 characters at most);
+  - `merge`: `head-moved` unless the branch is at the approved head; `base-moved` unless the
+    repository has the approved branch checked out at the approved head (a base that holds the head
+    already is `merged`, `already: true`); `dirty` while its tracked files hold changes; then
+    `git merge --no-ff --no-edit` with the engine's message (`merged`, the new head). A conflict is
+    aborted (`git merge --abort`), its files named, and the repository checked to be as it was
+    (`conflict`); a merge git refuses before starting changes nothing (`failed`). Never a force, a
+    reset, a branch deletion, or a push.
 - **Metering** ([resources](../../../docs/design/resources.md)), for a Worker
   with a `pool`, through `ctx.resources` (optional: read when present, never
   injected):

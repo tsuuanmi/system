@@ -24,7 +24,8 @@
 > ([below](#a-worktrees-setup)). The [workflow engine](workflow-engine.md) consumes it too: a
 > remediation fix's gate asks it ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)),
 > an approved deferred call's session is continued
-> ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), and a plain run that wrote
+> ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), an accepted result's merge is
+> asked as a `merge` request ([below](#a-landing)), and a plain run that wrote
 > records the checks still pending ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)).
 > Differs from target: with no queue loaded, remediation falls back to the operator's plan gate
 > (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a
@@ -383,6 +384,30 @@ policy.
   [propose that line itself](#the-queue-proposes-a-policy-change) after repeated approvals.
 - With no queue loaded, no setup command runs (fail-closed rule 5). The requests are kept with the
   gate's (`agent_tool_requests`, scope the worktree, tool `worktree-setup:<n>`, the setup's hash).
+
+## A landing
+
+The workflow engine [lands](workflow-engine.md#landing-an-accepted-result) a board task's accepted
+result made in a run's worktree
+([ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md),
+proposed): once the result is committed on the run's branch, it judges `merge` with `check` for the
+task's project.
+
+| Verdict | The merge | Recorded |
+|---|---|---|
+| `forbid` | refused; nothing is asked | the `autonomy` decision, the landing's `gate` decision (`refuse`) |
+| `auto`, `notify` | the branch is merged at once; a rule that requires checks refuses it, since a landing runs none | the `autonomy` decision, named by the landing's `gate` decision (`merge` or `refuse`) |
+| `ask` | one request; merged once it is approved | the `autonomy` decision, the request, the operator's `approval` decision, the `gate` decision (`merge`) |
+
+- **The request** binds to exactly that (INV-5): subject `{ type: git-head, ref: system/run/<runId>,
+  version: landing:merge:<base head>:<branch head> }`, class `merge`, requester `workflow` with the
+  run, its final step, the task, and the project; its summary names the task and the base branch,
+  its consequences the SHAs, what approving and denying do, and the `git diff --stat`.
+- **Approved**, the branch is merged only while both heads are still the version's; a base that
+  moved is refused and asked again on a new request. Rejected or expired: nothing is merged. Withdrawn
+  on a policy change: put to the policy in force again, as the board does.
+- The studio policy asks for `merge`. Whether `merge` joins `ALWAYS_ASK` is
+  [PROP-0013](../proposals/0013-feedback-from-work.md#open-questions)'s open question 5.
 
 ## A policy change
 

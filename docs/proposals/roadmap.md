@@ -70,7 +70,8 @@ produces PRs.
 | **C1** Evidence | accepted, not started | a supervised check that the pinned Claude Agent SDK honours a `Stop` hook's block | — |
 | **C2** Completion gate | accepted, not started | the required checks at a Worker's stop boundary, a failure fed back in the same session, bounded, failing closed | C1 |
 | **C3** Checks at acceptance | accepted, not started | completion evidence reported as checks on the result's exact subject, with its own ADR and the operator's decision | C2 |
-| **W1** to **W5** Code-host observer and landing | deferred until the pilot produces PRs | code-host observations briefing the next attempt; landing on an approval bound to the base and head SHAs | B8 |
+| **W1** to **W4** Code-host observer | deferred until the pilot produces PRs | code-host observations briefing the next attempt | B8 |
+| **W5** Landing | built in part (T105, after T99 left an accepted result uncommitted): once the board has a task `done` on a result in its run's worktree, the engine has the `agents` source commit it on `system/run/<runId>` and asks a `merge` request bound to the base and head SHAs, merged on the approval ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result), [ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md), proposed). Open: `apply`, MCP `land` and `system land`, and whether `merge` is always asked (PROP-0013 open question 5) | landing on an approval bound to the base and head SHAs | B8 |
 
 ## Done and open milestones
 

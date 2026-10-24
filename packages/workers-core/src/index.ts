@@ -276,6 +276,37 @@ export interface LivenessQuery {
 }
 
 /**
+ * One step of landing an accepted result (ADR-0059, PROP-0013 W5): what the source that owns a
+ * workflow run's worktree does with it, on the workflow engine's ask.
+ * - `commit`: commit the worktree's changes on its branch, only while the worktree is still exactly
+ *   `subject` (the tree the result was accepted on), with `message`;
+ * - `merge`: merge the branch, only while it is still at `head`, into the repository's checked-out
+ *   branch `base.branch`, only while that is still at `base.sha` and its working tree is clean, as one
+ *   merge commit with `message`. Never a force, a reset, or a push.
+ */
+export type LandStep =
+  | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
+  | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
+
+/** Why a landing step changed nothing: everything stays as it was. */
+export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved' | 'dirty' | 'conflict' | 'failed'
+
+/**
+ * What a landing step did (ADR-0059):
+ * - `committed`: the branch's `head` holds the accepted change (`committed` false when it already
+ *   did, such as after a restart); `base` is the repository's checked-out branch now, `contained`
+ *   whether it already holds `head` (nothing to merge), `stat` the change against it (`git diff
+ *   --stat`, bounded);
+ * - `merged`: `commit` is the base branch's new head, which holds `head` (`already` when it held it
+ *   before this step, such as after a restart);
+ * - `refused`: nothing changed, and why.
+ */
+export type Landed =
+  | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string }
+  | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean }
+  | { outcome: 'refused'; cause: LandRefusal; reason: string }
+
+/**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept
  * this work now, how is it invoked, what did it produce). `describe` is called on every
  * route, so states are current.
@@ -325,6 +356,12 @@ export interface WorkerSource {
    * when asked. A source that cannot tell throws, and is never read as having none (INV-2).
    */
   liveness?(query?: LivenessQuery): Promise<LivenessReport>
+  /**
+   * One step of landing an accepted result whose working tree is `step.workspace`, the worktree of
+   * workflow run `step.runId` (ADR-0059). Undefined when this source holds no such worktree. A
+   * step repeated after a restart finds its own work done and says so (INV-4).
+   */
+  land?(step: LandStep): Promise<Landed | undefined>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -487,6 +524,14 @@ export abstract class Workers extends Service {
    * cannot tell (PROP-0013).
    */
   abstract liveness?(query?: LivenessQuery): Promise<{ runs: Array<RunLiveness & { source: string }>; counts: Record<LivenessState, number>; unread: Array<{ source: string; detail: string }> }>
+
+  /**
+   * One step of landing an accepted result, by the source that holds its worktree
+   * (`WorkerSource.land`), with that source's name; undefined when none holds it. A source that
+   * throws is a refusal (`failed`), never read as not holding it (ADR-0059). Optional: a caller
+   * that finds no `land` lands nothing.
+   */
+  abstract land?(step: LandStep): Promise<(Landed & { source: string }) | undefined>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }

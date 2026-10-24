@@ -228,6 +228,45 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.locator(`#request-${waiting}`).innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
+  it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge as "Accepted — waiting to merge" with a link to its merge request, under Waiting for you (ADR-0059)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    const task = await readyTask(ctx, 'Band the inner loop')
+    const run = await ctx.workflow.start({ template: 'solo', input: 'band it', classification: 'public', task: { taskId: task.taskId } })
+    await vi.waitFor(() => expect(ctx.workflow.get(run.runId)?.task?.phase).toBe('reported'), { timeout: 30_000 })
+    expect((await ctx.board.task(task.taskId))!.state).toBe('done')
+    // The merge request the engine asks once the result is committed on the run's branch (ADR-0059), and the landing that waits on it.
+    const branch = `system/run/${run.runId}`
+    const [base, head] = ['a'.repeat(40), 'b'.repeat(40)]
+    const verdict = await ctx.approvals.check({ class: 'merge', projectId: 'p1' })
+    expect(verdict.mode).toBe('ask')
+    const request = await ctx.approvals.request({
+      subject: { type: 'git-head', ref: branch, version: `landing:merge:${base}:${head}` },
+      action: { class: 'merge', summary: 'Merge the accepted result of task "Band the inner loop" into main', consequences: 'Approved: system merges it.' },
+      requester: { component: 'workflow', runId: run.runId, taskId: task.taskId, projectId: 'p1' }, verdict, classification: 'public',
+    })
+    booted.ctx.store.db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify({
+      state: 'asked', branch, head, base: { branch: 'main', sha: base }, requestId: request.requestId, expiresAt: request.expiresAt, at: new Date().toISOString(),
+    }), run.runId)
+    const card = ((await listed(booted)).tasks as Array<Record<string, any>>).find((t) => t.taskId === task.taskId)
+    expect(card).toMatchObject({ state: 'done', landing: { state: 'asked', branch, base: 'main', requestId: request.requestId } })
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    const waiting = page.getByRole('region', { name: 'Waiting for you', exact: true }).getByRole('article', { name: 'Band the inner loop' })
+    await expect.poll(() => waiting.count()).toBe(1)
+    expect(await waiting.innerText()).toContain('Accepted — waiting to merge into main: approve')
+    await waiting.getByRole('link', { name: 'approve', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
+    expect(new URL(page.url()).search).toBe(`?request=${request.requestId}`)
+    const asked = page.locator(`#request-${request.requestId}`)
+    expect(await asked.innerText()).toContain('branch ' + branch + ' at bbbbbbbbbbbb, onto the base at aaaaaaaaaaaa')
+    expect(await asked.getByRole('button', { name: 'Approve: merge it' }).count()).toBe(1)
+  }, 60_000)
+
   it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
     const booted = await boot()
     const { ctx } = booted

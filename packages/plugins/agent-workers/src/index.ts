@@ -663,6 +663,8 @@ export class AgentWorkers extends Service {
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL, generation = generation + 1 WHERE session_id = ?').run(sessionId).changes) > 0,
       held: (sessionId) => this.held(sessionId),
       liveness: (query) => this.liveness(query),
+      // Landing an accepted result made in a workflow run's worktree (ADR-0059): its commit, then its merge.
+      land: (step) => this.worktrees.land(step),
     })
     // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => {

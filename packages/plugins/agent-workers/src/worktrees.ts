@@ -12,6 +12,12 @@
  * nothing is forced: a worktree that cannot be committed or removed stays where it is, and the
  * next sweep tries again.
  *
+ * Landing (ADR-0059): once a result made in a worktree is accepted, the workflow engine asks for it
+ * to be committed on the worktree's branch, only while the worktree is still the accepted tree, and,
+ * on the operator's `merge` approval, for that branch to be merged into the repository's checked-out
+ * branch, only while both are still where the approval saw them. A conflict is aborted, so the
+ * repository is as it was; nothing is ever forced, reset, or pushed.
+ *
  * git runs with fixed argument lists, always with `-C <path>`, no shell, no hooks, no system or
  * global configuration (as the subject capture, `captureGitSubject`), and bounded time. Inside a
  * worktree, git is pointed at the worktree's own administrative directory recorded at creation,
@@ -24,8 +30,9 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import { BRIEF_FILE_PATH, ensurePrivateDir } from '@tsuuanmi/system-libs'
+import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
+import type { Landed, LandStep } from '@tsuuanmi/system-workers-core'
 
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -35,6 +42,11 @@ export const WORKTREE_GIT_FLOOR = [2, 17] as const
 export const SWEEP_BATCH = 50
 /** Who commits a worktree's pending changes before it is removed. */
 export const SYSTEM_AUTHOR = { name: 'system', email: 'system@localhost' } as const
+
+/** The trailer a landing's commit carries: the exact subject it holds, so a commit repeated after a restart is found done (INV-4). */
+export const SUBJECT_TRAILER = 'System-Subject'
+/** Characters of a change's `git diff --stat` a landing reports at most (INV-9). */
+const STAT_CHARS = 1500
 
 const GIT_MS = 60_000
 const execFileAsync = promisify(execFile)
@@ -566,6 +578,129 @@ export class Worktrees {
     return done
   }
 
+  /**
+   * One step of landing an accepted result made in the worktree `step.workspace` of workflow run
+   * `step.runId` (ADR-0059); undefined when no worktree of this source is that one. One change at a
+   * time per repository, as every worktree change. Each step checks first that its own work is not
+   * done already, so a step repeated after a restart says so instead of doing it twice (INV-4).
+   */
+  async land(step: LandStep): Promise<Landed | undefined> {
+    const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(step.runId, step.workspace) as WorktreeRow | undefined
+    if (!row) return undefined
+    return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : this.merge(row, step)))
+  }
+
+  /** Commit the worktree's changes on its branch, while it is still exactly the accepted subject. */
+  private async commitAccepted(row: WorktreeRow, step: Extract<LandStep, { step: 'commit' }>): Promise<Landed> {
+    const accepted = subjectId({ type: 'git-head', ...step.subject })
+    if (row.removed_at !== null || !existsSync(row.path)) return { outcome: 'refused', cause: 'gone', reason: `the worktree ${row.path} was removed (its branch ${row.branch} keeps what the retention committed), so the accepted tree ${accepted} can no longer be checked` }
+    if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, null)) {
+      return { outcome: 'refused', cause: 'busy', reason: `an agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so it may still write ${row.path} (INV-15)` }
+    }
+    try {
+      await this.verify(row)
+    } catch (error) {
+      return { outcome: 'refused', cause: 'failed', reason: (error as Error).message }
+    }
+    const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
+    await this.clearSystem(row, inside)
+    const current = captureGitSubject(row.path)
+    if (!current) return { outcome: 'refused', cause: 'failed', reason: `${row.path} is no longer a git working tree` }
+    let committed = false
+    if (current.subject.ref === step.subject.ref && current.subject.version === step.subject.version) {
+      if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) {
+        await inside(['add', '--all'])
+        await inside(['commit', '--quiet', '--no-verify', '-m', `${step.message.trimEnd()}\n${SUBJECT_TRAILER}: ${accepted}`])
+        committed = true
+        // Nothing moves the tree while the commit is made (no run of it is left, and one change at a time per repository): what is left over is not the accepted change.
+        if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return { outcome: 'refused', cause: 'failed', reason: `${row.path} still holds changes after the commit on ${row.branch}; it is left for the operator` }
+      }
+    } else if (!(await this.landedCommit(row, inside, step.subject.ref, accepted))) {
+      return { outcome: 'refused', cause: 'moved', reason: `the worktree ${row.path} is now ${subjectId(current.subject)}, not the accepted ${accepted}: it changed after the acceptance, so nothing is committed` }
+    }
+    const head = (await inside(['rev-parse', 'HEAD'])).trim()
+    const base = await this.baseOf(row.repository)
+    if ('problem' in base) return { outcome: 'refused', cause: 'base-moved', reason: base.problem }
+    const contained = await this.contains(row.repository, base.sha, head)
+    const stat = contained ? '' : (await git(row.repository, ['diff', '--stat=100', '--no-color', '--no-ext-diff', '--no-textconv', `${base.sha}...${head}`])).trimEnd()
+    return { outcome: 'committed', repository: row.repository, branch: row.branch, head, committed, base, contained, stat: stat.length > STAT_CHARS ? `${stat.slice(0, STAT_CHARS)}\n…` : stat }
+  }
+
+  /** The worktree is clean, and its HEAD is the system's landing commit of `accepted` on top of `parent`: committed before a restart. */
+  private async landedCommit(row: WorktreeRow, inside: (args: string[]) => Promise<string>, parent: string, accepted: string): Promise<boolean> {
+    if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return false
+    const [first, author, ...message] = (await inside(['log', '-1', '--format=%P%n%an <%ae>%n%B', 'HEAD'])).split('\n')
+    return first === parent && author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` && message.some((line) => line === `${SUBJECT_TRAILER}: ${accepted}`)
+  }
+
+  /** Merge the run's branch into the repository's checked-out branch, while both are still where the approval saw them. */
+  private async merge(row: WorktreeRow, step: Extract<LandStep, { step: 'merge' }>): Promise<Landed> {
+    const repository = row.repository
+    const tip = (await git(repository, ['rev-parse', '--verify', '--quiet', `refs/heads/${row.branch}^{commit}`]).catch(() => '')).trim()
+    if (tip !== step.head) return { outcome: 'refused', cause: 'head-moved', reason: `${row.branch} is ${tip ? `at ${tip}` : 'gone'}, not at ${step.head} as approved` }
+    const base = await this.baseOf(repository)
+    if ('problem' in base) return { outcome: 'refused', cause: 'base-moved', reason: base.problem }
+    if (base.branch !== step.base.branch) return { outcome: 'refused', cause: 'base-moved', reason: `${repository} has ${base.branch} checked out now, not ${step.base.branch} as approved` }
+    // Done before a restart: the base already holds the head (INV-4).
+    if (await this.contains(repository, base.sha, step.head)) return { outcome: 'merged', repository, branch: row.branch, head: step.head, base: step.base, commit: base.sha, already: true }
+    if (base.sha !== step.base.sha) return { outcome: 'refused', cause: 'base-moved', reason: `${base.branch} is at ${base.sha} now, not at ${step.base.sha} as approved` }
+    const dirty = (await git(repository, ['status', '--porcelain', '--untracked-files=no'])).trim()
+    if (dirty) return { outcome: 'refused', cause: 'dirty', reason: `the working tree of ${repository} has uncommitted changes (${dirty.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')}): commit or stash them, and nothing of yours is touched` }
+    try {
+      await git(repository, ['merge', '--no-ff', '--no-edit', '--quiet', '-m', step.message.trimEnd(), `refs/heads/${row.branch}`])
+    } catch (error) {
+      const merging = await git(repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).then(() => true, () => false)
+      if (!merging) return { outcome: 'refused', cause: 'failed', reason: `git refused the merge, and changed nothing: ${(error as Error).message}` }
+      const conflicts = (await git(repository, ['diff', '--name-only', '--diff-filter=U']).catch(() => '')).trim().split('\n').filter(Boolean)
+      try {
+        await git(repository, ['merge', '--abort'])
+      } catch (abort) {
+        return { outcome: 'refused', cause: 'failed', reason: `the merge of ${row.branch} conflicted, and git could not abort it: ${repository} is left mid-merge (\`git -C ${repository} merge --abort\`): ${(abort as Error).message}` }
+      }
+      const after = (await git(repository, ['rev-parse', 'HEAD'])).trim()
+      const left = (await git(repository, ['status', '--porcelain', '--untracked-files=no'])).trim()
+      const asWas = after === step.base.sha && !left ? 'the merge was aborted, and the repository is as it was' : `the merge was aborted, and ${repository} is not as it was (HEAD ${after}${left ? ', with changes' : ''}): look at it`
+      return { outcome: 'refused', cause: 'conflict', reason: `${row.branch} conflicts with ${base.branch} at ${base.sha}${conflicts.length ? ` in ${conflicts.slice(0, 10).join(', ')}${conflicts.length > 10 ? ` and ${conflicts.length - 10} more` : ''}` : ''}: ${asWas}` }
+    }
+    const commit = (await git(repository, ['rev-parse', 'HEAD'])).trim()
+    if (!(await this.contains(repository, commit, step.head))) return { outcome: 'refused', cause: 'failed', reason: `${base.branch} is at ${commit} after the merge, which does not hold ${step.head}; look at ${repository}` }
+    return { outcome: 'merged', repository, branch: row.branch, head: step.head, base: step.base, commit, already: false }
+  }
+
+  /** The repository's checked-out branch and its head: where a landing merges into. */
+  private async baseOf(repository: string): Promise<{ branch: string; sha: string } | { problem: string }> {
+    const ref = (await git(repository, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim()
+    if (!ref.startsWith('refs/heads/')) return { problem: `${repository} has no branch checked out (a detached HEAD), so there is no base to merge into` }
+    const branch = ref.slice('refs/heads/'.length)
+    if (branch.startsWith('system/run/')) return { problem: `${repository} has the run branch ${branch} checked out, not a base branch` }
+    return { branch, sha: (await git(repository, ['rev-parse', 'HEAD'])).trim() }
+  }
+
+  /** Whether `commit` holds `ancestor`. */
+  private contains(repository: string, commit: string, ancestor: string): Promise<boolean> {
+    return git(repository, ['merge-base', '--is-ancestor', ancestor, commit]).then(() => true, () => false)
+  }
+
+  /**
+   * Remove system's own workspace files (`.system/`, see {@link place}) from a worktree: they are never
+   * part of the work, even if the agent changed their .gitignore. A `.system` the repository tracks is
+   * the repository's, and one that is not a plain directory is left to the commit. Emptied through its
+   * descriptor, as place writes it, then removed by name: rmdir takes only an empty directory, never a link.
+   */
+  private async clearSystem(row: WorktreeRow, inside: (args: string[]) => Promise<string>): Promise<void> {
+    const system = join(row.path, '.system')
+    const own = openDirectory(system)
+    if (typeof own !== 'object') return
+    try {
+      if (!(await inside(['ls-files', '-z', '--', '.system'])).length) {
+        for (const entry of readdirSync(own.at)) rmSync(join(own.at, entry), { recursive: true, force: true })
+        rmdirSync(system)
+      }
+    } finally {
+      closeSync(own.fd)
+    }
+  }
+
   /** The `retention` decision that retires a worktree (INV-13), recorded on its row. */
   private decide(row: WorktreeRow, retentionHours: number): string {
     const last = (this.ctx.store.db.prepare('SELECT MAX(updated_at) AS last FROM agent_runs WHERE workflow_run_id = ?').get(row.workflow_run_id) as { last: string | null }).last ?? row.created_at
@@ -595,22 +730,8 @@ export class Worktrees {
     }
     await this.verify(row)
     const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
-    // system's own workspace files (`.system/`, see place) are never part of the work: gone before the commit,
-    // even if the agent changed their .gitignore. A `.system` the repository tracks is the repository's,
-    // and one that is not a plain directory is left to the commit. Emptied through its descriptor, as
-    // place writes it, then removed by name: rmdir takes only an empty directory, never a link.
-    const system = join(row.path, '.system')
-    const own = openDirectory(system)
-    if (typeof own === 'object') {
-      try {
-        if (!(await inside(['ls-files', '-z', '--', '.system'])).length) {
-          for (const entry of readdirSync(own.at)) rmSync(join(own.at, entry), { recursive: true, force: true })
-          rmdirSync(system)
-        }
-      } finally {
-        closeSync(own.fd)
-      }
-    }
+    // system's own workspace files are never part of the work: gone before the commit.
+    await this.clearSystem(row, inside)
     let commit: string | undefined
     if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) {
       await inside(['add', '--all'])

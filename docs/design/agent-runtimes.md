@@ -335,6 +335,34 @@ of waiting, every one or one workflow run's:
 - **Its output is checked on its plan before anything is decided**: an output its schema refuses
   (a defect) decides and removes nothing.
 
+### Landing a worktree
+
+> Decision: [ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)
+> (proposed). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/worktrees.ts`); the engine asks ([landing an accepted result](workflow-engine.md#landing-an-accepted-result)).
+
+The `agents` source answers `land(step)` on the `workers` seam for the worktrees it holds, one change
+at a time per repository, as every worktree change:
+
+- **`commit`**: only while no agent run of the workflow run is unfinished or not known to be gone
+  (else it waits: INV-15), only while the worktree is intact and on its branch, and only while it is
+  still the accepted subject (`git:<HEAD>:<hash of every change on top>`, captured again after
+  `.system/` is removed as the retention removes it). Then `git add --all` and one commit by
+  `system <system@localhost>`, with the engine's message and a `System-Subject` trailer naming the
+  accepted subject. A tree that moved is refused, and nothing is committed. A clean worktree whose
+  HEAD is that commit, on top of the accepted HEAD, is found committed (a restart). The answer names
+  the branch's head, the repository's checked-out branch and its head (the base), whether the base
+  already holds the head, and the `git diff --stat` against it.
+- **`merge`**: only while the branch is at the approved head, the repository has the approved base
+  branch checked out at the approved base, and its tracked files are clean; then `git merge --no-ff`
+  of the branch, the system its author, hooks off as for every git call. A base that already holds
+  the head is found merged (a restart). A conflict is aborted (`git merge --abort`) and the
+  repository checked to be as it was. Nothing is forced, reset, deleted, or pushed.
+
+So the repository's main working tree is written only by a merge the operator approved, or the
+policy allowed, at the exact SHAs it was asked on. The worktree itself stays until the retention
+removes it; it is clean then, and its branch always stays.
+
 ## Credentials and egress
 
 - **Environment** ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)).

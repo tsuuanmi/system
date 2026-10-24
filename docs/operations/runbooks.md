@@ -425,8 +425,8 @@ the system repository with a worktree per run. The rows are in
    `profile-software-development`). What it sets:
    - `claude-code`: `sandbox: workspace-write`, `worktreePerRun: true`, `kinds: [code]`, on
      `/home/tan/workspaces/system` (D36). Each workflow run writes in its own worktree on the branch
-     `system/run/<runId>`, never in the checkout ([a run's worktree](#a-runs-worktree)); merging a
-     branch is yours.
+     `system/run/<runId>`, never in the checkout ([a run's worktree](#a-runs-worktree)); an accepted
+     task's branch is merged on your approval ([land an accepted result](#land-an-accepted-result)).
    - `codex-writer`: the same on Codex, `kinds: [docs, tests]`: it writes in the `docs` and `tests`
      variants and runs `validate:1`.
    - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
@@ -1946,8 +1946,9 @@ rejected by the engine as another attempt, also without you.
    is decided, and an alert at the top of the page says why; it stays until you dismiss it.
 4. What happens:
    - **Accept:** your `acceptance` decision is applied, and the task is `done` with
-     `result.acceptance` set. Tasks that depend on it become ready on the board's next sweep. Nothing
-     merges or commits the work: take it from the worktree or its branch yourself.
+     `result.acceptance` set. Tasks that depend on it become ready on the board's next sweep. When
+     the result is a run's worktree, the system commits it on the run's branch and asks you to merge
+     it, within `approvalPollSeconds` ([land an accepted result](#land-an-accepted-result)).
    - **Reject:** another attempt while `attempts.count` is under `max`, through the gate again:
      `ready` when the policy says `auto` or `notify` (nothing starts a ready task: the Lead
      starts it with `run` and `task`, which claims it, as a new run with a worktree of its own),
@@ -2354,7 +2355,8 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
 - **Where:** `<worktreeRoot>/<repository name>-<12 hex digits>/<workflow run id>`, by default
   `~/.dsh/system/worktrees` (owner-only), on the branch `system/run/<workflow run id>`, cut from the
   repository's HEAD when the run's first agent run starts. Every later agent run of that workflow
-  run, reviewers included, uses it; the repository's own working tree and branch are never written.
+  run, reviewers included, uses it; the repository's own working tree and branch are written only by
+  a landing you approved ([land an accepted result](#land-an-accepted-result)).
   Find it with `ls ~/.dsh/system/worktrees/*/<run id>`, `git -C <repository> worktree list`, or
   the daemon log line `run <id> works in <path> on <branch>`. A task's attempts are separate
   runs, so each has a worktree and a branch of its own (`run.runId` of `board_task`).
@@ -2375,8 +2377,9 @@ otherwise the Worker is `unavailable` (`system health`), with the reason in the 
   3. After retention the work is the branch's last commit: `git -C <repository> log
      system/run/<id>`. `git -C <repository> worktree add <path> system/run/<id>` opens it again; a
      run continued after its worktree was removed gets it again from that branch by itself.
-  4. Merging is yours: no board move or policy class merges a branch yet. Delete the branches you no
-     longer need.
+  4. An accepted result of a board task is committed and merged on your approval
+     ([land an accepted result](#land-an-accepted-result)); anything else is yours to merge. Delete
+     the branches you no longer need.
 - **A worktree that stays:** one that cannot be committed or removed (locked, say) stays, with the
   reason logged once, and the next hourly sweep tries again. Unlock it with `git -C <repository>
   worktree unlock <path>`. One removed by hand is forgotten once git no longer lists it:
@@ -2421,6 +2424,49 @@ sooner; nothing is ever discarded.
    which git refuses for one that is not: `git -C <repository> branch -d system/run/<runId>`
    (`git -C <repository> branch --merged main --list 'system/run/*'` lists them). A run continued
    after its worktree was removed gets it again from its branch.
+
+## Land an accepted result
+
+When the board has a task `done` on a result in its run's worktree (you accepted it on `/ui`, or the
+engine did), the system lands it in the repository the Workers work in
+([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result),
+[ADR-0059](../decisions/adr/0059-an-accepted-result-lands-on-the-operators-merge-approval.md)):
+
+1. **It commits it on the run's branch**, within `approvalPollSeconds` (15 s) of the acceptance: one
+   commit by `system <system@localhost>` on `system/run/<runId>`, its message naming the task, the
+   run, who reviewed that tree and how, and your acceptance decision (`git -C <repository> log -1
+   system/run/<runId>`). Only while the worktree is still the tree you accepted: a file changed
+   after the acceptance refuses it ("changed after the acceptance, so nothing is committed"), and
+   the worktree is left as it is.
+2. **It asks you to merge it**: one `merge` request in the queue on Home, "Merge the accepted result
+   of task "…" into main", with the branch, both SHAs, and the `git diff --stat`. The Board shows the
+   task under **Waiting for you** as **Accepted — waiting to merge into main: approve**, linked to
+   the request (`/ui/?request=<id>`). It waits the policy's wait for `merge` (a day in the studio
+   policy); unanswered, it counts as denied.
+3. **Approve: merge it.** Within `approvalPollSeconds` the branch is merged into the checked-out
+   branch of the repository as one merge commit by the system (`git -C <repository> log -1`), and
+   the card says **Accepted and merged into main as <commit>**. Nothing is pushed: push it yourself
+   when you want it on the remote (`git -C <repository> push origin main`). **Deny** merges nothing:
+   the branch keeps the commit, for you to take or delete.
+
+When it does not merge (the card says **Accepted — not merged:** and why; `system explain <runId>`
+has the `workflow.landing` decisions under the run's last step):
+
+- **The repository moved** (a commit on its branch since the request was asked) or **has
+  uncommitted changes** to tracked files: nothing is merged, and the merge is asked again on the
+  branch as it is now. Commit or stash your changes, then approve the new request.
+- **A conflict:** the merge is aborted and the repository is as it was. Merge by hand:
+  `git -C <repository> merge system/run/<runId>`, resolve, commit. Or reject the work and run the
+  task again on the new base.
+- **The repository has no branch checked out** (a detached HEAD), or another branch than the one
+  asked about: check out the branch to merge into, and merge by hand.
+- **A run of it may still write the worktree** (it ended without being known to be gone): the commit
+  waits; free the run ([a run's liveness is unknown](#a-runs-liveness-is-unknown)).
+- **The policy forbids `merge`**: refused at once, nothing asked; merge by hand.
+- A task reported before this landing existed lands nothing: merge its branch by hand, as before.
+
+The repository's checkout is written only here, by a merge you approved at the exact SHAs shown.
+Never a force, a reset, a branch deletion, or a push.
 
 ## A run's liveness is unknown
 

@@ -29,6 +29,7 @@ import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, 
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskDigests } from './digests.ts'
+import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
 import { heldWhy } from './sessions.ts'
@@ -87,9 +88,12 @@ export class TaskRuns {
   private readonly retries = new Map<string, { timer: NodeJS.Timeout; tries: number }>()
   /** The digests of the results the runs reported. */
   readonly digests: TaskDigests
+  /** The landings of the results the board accepted on a run's worktree. */
+  readonly landings: TaskLandings
 
   constructor(private readonly e: Engine) {
     this.digests = new TaskDigests(e)
+    this.landings = new TaskLandings(e)
   }
 
   row(runId: string): TaskRow | undefined {
@@ -116,6 +120,7 @@ export class TaskRuns {
       ...(row.digest ? { digest: this.digests.view(row)! } : {}),
       ...(row.budget ? { budget: budgetView(JSON.parse(row.budget) as TaskBudget) } : {}),
       ...(row.question ? { question: JSON.parse(row.question) as TaskQuestion } : {}),
+      ...(row.landing ? { landing: this.landings.view(row)! } : {}),
     }
   }
 
@@ -157,6 +162,7 @@ export class TaskRuns {
     this.retries.clear()
     await Promise.allSettled(this.reporting.values())
     await this.digests.close()
+    await this.landings.close()
   }
 
   // --- taking the task ---
@@ -1380,6 +1386,8 @@ export class TaskRuns {
     const due = this.e.ctx.store.transaction((db) => {
       db.prepare("UPDATE workflow_tasks SET phase = 'reported', outcome = ?, updated_at = ? WHERE run_id = ?").run(JSON.stringify(outcome), now(), row.run_id)
       this.e.ctx.eventLog.append({ type: 'workflow.task.reported', runId: row.run_id, ...(outcome.decision ? { decision: outcome.decision } : {}), data: { taskId: row.task_id, ...outcome } })
+      // A result on a working tree is watched for its acceptance, then landed (ADR-0059).
+      this.landings.due(row, outcome.status)
       return this.digests.due(row, outcome.status)
     })
     if (due) this.digests.drive(row.run_id)

@@ -144,6 +144,45 @@ export interface TaskView {
   budget?: TaskBudgetView
   /** The questions a step of the run asked instead of answering (docs/design/workflow-engine.md#a-question-from-a-run). */
   question?: TaskQuestion
+  /** The landing of the run's accepted result, when it is on a worktree a Worker source holds (docs/design/workflow-engine.md#landing-an-accepted-result). */
+  landing?: TaskLanding
+}
+
+/**
+ * Where the landing of a task's accepted result stands (ADR-0059): `watch` until the board has the
+ * task done on it; `commit` while its worktree is committed on its branch; `committed`, then `asked`
+ * while the `merge` request waits for the operator; `merging` on the approval; then `merged`, or
+ * `refused` (a step changed nothing, `cause` and `reason` say why), `rejected` (the request was not
+ * approved), or `none` (nothing to land: the task moved on, or no source holds the tree).
+ */
+export interface TaskLanding {
+  state: 'watch' | 'commit' | 'committed' | 'asked' | 'merging' | 'merged' | 'refused' | 'rejected' | 'none'
+  /** The working tree the result is on, and its exact subject there. */
+  workspace?: string
+  subject?: { ref: string; version: string }
+  /** The board's acceptance decision on the result. */
+  acceptance?: ArtifactRef
+  repository?: string
+  /** The run's branch, and the commit on it that holds the accepted change. */
+  branch?: string
+  head?: string
+  /** The repository's checked-out branch and its head, where it merges into. */
+  base?: { branch: string; sha: string }
+  /** The change against the base (`git diff --stat`, bounded). */
+  stat?: string
+  /** The `merge` request on the approval queue, and until when it waits. */
+  requestId?: string
+  expiresAt?: string
+  /** What lets it merge: the operator's `approval` decision, or the policy's `autonomy` decision. */
+  approval?: ArtifactRef
+  /** The base branch's head that holds the change, once merged. */
+  commit?: string
+  cause?: string
+  reason?: string
+  /** The landing's own `gate` decisions (rule `workflow.landing`), in order. */
+  decisions?: ArtifactRef[]
+  /** When it last changed or was looked at. */
+  at: string
 }
 
 /**
@@ -420,6 +459,8 @@ export interface TaskRow {
   budget?: string | null
   /** JSON {@link TaskQuestion}: the questions a step asked instead of answering. */
   question?: string | null
+  /** JSON {@link TaskLanding}: the landing of the run's accepted result, once it was reported on a working tree. */
+  landing?: string | null
   created_at: string
   updated_at: string
 }
