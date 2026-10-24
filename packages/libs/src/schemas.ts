@@ -20,16 +20,33 @@ export class SchemaError extends Error {
   }
 }
 
+/**
+ * The schemas of each directory, loaded into one Ajv per process on first use, with the validators
+ * compiled from it. The schemas are fixed files, so every registry over a directory shares them: a
+ * registry of its own per plugin instance or call built a new Ajv over every schema file (about
+ * 40 ms) and compiled each schema it then used again (tens of ms each), CPU that every boot paid
+ * and that grew with the host's load.
+ */
+const loaded = new Map<string, { ajv: Ajv2020; validators: Map<string, ValidateFunction> }>()
+
 /** Validates records against the canonical schemas in `@tsuuanmi/system-schemas` (ADR-0014). */
 export class SchemaRegistry {
-  readonly #ajv = new Ajv2020({ strict: true, allErrors: true })
-  readonly #cache = new Map<string, ValidateFunction>()
+  readonly #ajv: Ajv2020
+  readonly #cache: Map<string, ValidateFunction>
 
   constructor(dir: string = defaultSchemaDir()) {
-    addFormats(this.#ajv)
-    for (const file of readdirSync(dir).filter((f) => /\.v\d+\.json$/.test(f))) {
-      this.#ajv.addSchema(JSON.parse(readFileSync(join(dir, file), 'utf8')) as object)
+    let schemas = loaded.get(dir)
+    if (!schemas) {
+      const ajv = new Ajv2020({ strict: true, allErrors: true })
+      addFormats(ajv)
+      for (const file of readdirSync(dir).filter((f) => /\.v\d+\.json$/.test(f))) {
+        ajv.addSchema(JSON.parse(readFileSync(join(dir, file), 'utf8')) as object)
+      }
+      schemas = { ajv, validators: new Map() }
+      loaded.set(dir, schemas)
     }
+    this.#ajv = schemas.ajv
+    this.#cache = schemas.validators
   }
 
   /** Validate `value` against the schema named by `tag` (`<name>@<major>.<minor>`); throws {@link SchemaError}. */
