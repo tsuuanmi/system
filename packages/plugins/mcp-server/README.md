@@ -128,3 +128,25 @@ one scope another's rights).
   web-ui and the gateways register the token they read.
 - **Rotation:** delete the scope's token file and restart
   ([runbook](../../../docs/operations/runbooks.md#rotate-a-control-token)).
+
+## Token budget
+
+Every MCP client pays for `tools/list` (each tool's name, description, input schema, and
+`_meta`) once per session, and for every reply it reads, so the surface is bounded like any
+other payload (QA-12, INV-9).
+
+- **What is measured:** the bytes of the JSON-RPC response as this endpoint sends it (compact
+  JSON, UTF-8). Tokens are estimated as `ceil(bytes / 4)`. A client's tokenizer differs by some
+  tens of percent, so the bytes are what is bounded.
+- **Where:** [`cli/tests/surface.e2e.ts`](../../cli/tests/surface.e2e.ts) boots the shipped
+  profile through `dsh` and measures `tools/list` for the `operator` token and for the `client`
+  token (the lead's), every tool's entry, and the replies of `status` in both scopes, of
+  `result` for a failed `ask`, and of `usage` with that run. A Worker holds at most the `model`
+  token, which `/mcp` refuses, so it pays for no list.
+  [`workflow/tests/replies.spec.ts`](../workflow/tests/replies.spec.ts) measures `result` and
+  `usage` on fixture runs that completed.
+- **Ceilings:** in one place, [`tests/budget.ts`](tests/budget.ts), each beside the size it was
+  set from, with about 10 % headroom. A test fails when a measure is over its ceiling, and the
+  surface test then prints every tool's size. Raising a ceiling is a reviewed change that says
+  what grew and why it is worth every session's tokens. A change that shrinks the surface lowers
+  the ceiling with it.

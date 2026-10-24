@@ -636,6 +636,9 @@ second execution path (INV-1).
   sent, and a `{{…}}` in the caller's input or a result sent as written.
   The continuation of a deferred call runs end to end with a gating agent runtime
   in [`agent-workers`' gate tests](../agent-workers/tests/gate.spec.ts).
+  [`tests/replies.spec.ts`](tests/replies.spec.ts) holds the `result` and `usage` replies of
+  completed fixture runs to their ceilings
+  ([token budget](../mcp-server/README.md#token-budget)).
   [`tests/digests.spec.ts`](tests/digests.spec.ts) covers
   the digests of task results: asked after the report and set on the task, the next task's brief
   pointing at it, the hourly bound, no provider, a digest not written, a review held for the

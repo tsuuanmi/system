@@ -55,6 +55,11 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   real `dsh` launcher, once per preset. Each test asserts the exact row set, calls
   MCP with a token, and checks cleanup on SIGTERM; the `api-first` one also
   answers through a model Worker against a fake API server.
+- **MCP surface budget**
+  ([`packages/cli/tests/surface.e2e.ts`](../../packages/cli/tests/surface.e2e.ts), part of
+  `pnpm test:e2e`; QA-12). It boots the shipped profile the same way and fails when `tools/list`
+  per scope, a tool's entry, or a canonical reply is over its ceiling
+  ([token budget](../../packages/plugins/mcp-server/README.md#token-budget)).
 - **Upgrade suite**
   ([`packages/cli/tests/upgrade/`](../../packages/cli/tests/upgrade/upgrade.e2e.ts),
   part of `pnpm test:e2e`; REQ-HOST-2,

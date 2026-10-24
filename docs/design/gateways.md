@@ -154,6 +154,8 @@ engine operation (REQ-HOST-1):
 Separately from the gateways, the MCP server exposes `system` capabilities (ask, research,
 runs, operator controls, accounts, sessions) as native MCP tools to any MCP client
 ([MCP tools](../reference/mcp-tools.md)).
+Every client pays for the tool list each session, so the list and the most read replies have a
+[token budget](../../packages/plugins/mcp-server/README.md#token-budget) a test enforces.
 
 ## Target (not built)
 
