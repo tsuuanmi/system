@@ -553,7 +553,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   worktree is removed only while nothing else of that run is unfinished or
   held, and only when clean, or with `commitWorktree` once its changes are
   committed on its branch; the branch stays, and one that stays is the
-  retention's. A freed run may be freed again for its worktree only
+  retention's. A freed run may be freed again for its worktree only (refused
+  when none is left)
   ([freeing what a run holds](../../../docs/design/agent-runtimes.md#freeing-what-a-run-holds),
   [runbook](../../../docs/operations/runbooks.md#a-runs-liveness-is-unknown)).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs

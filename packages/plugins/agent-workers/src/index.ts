@@ -1245,6 +1245,8 @@ export class AgentWorkers extends Service {
     const commit = input.commitWorktree === true
     // What freeing does to its worktrees, read before anything is decided (git; bounded).
     const plans = worktrees ? await this.worktrees.plan(row.workflow_run_id!, commit, row.run_id) : []
+    // Freed already, it is asked again for its worktree only: with none left, nothing is decided.
+    if (row.liveness_freed && !plans.length) throw new ProviderError('invalid_input', `${row.run_id} was freed already (decision ${row.liveness_freed}), and no worktree of it is left; nothing was freed`)
     const lease = this.ctx.leases.acquire(`agent-run:${row.run_id}`, LEASE_TTL_MS)
     if (!lease) throw new ProviderError('invalid_input', `a process holds ${row.run_id} now; nothing was freed`)
     let decision: ContentId

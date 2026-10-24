@@ -941,4 +941,4 @@ operator's judgement (ADR-0056). The operator gives it with `agent_run_free` (op
   or, with `commitWorktree`, once its changes are committed on its branch as the retention commits
   them. The branch always stays, nothing is forced, and a worktree that stays is the retention's.
   The decision is stored on the worktree's record. A freed run may be freed again for its worktree
-  only, each time its own decision.
+  only, each time its own decision; with no worktree of it left, that is refused.

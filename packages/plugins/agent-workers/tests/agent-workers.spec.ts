@@ -1247,8 +1247,10 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
     const later = ctx.workers.source('agents')!.start({ key: 'k-later', worker: 'agent:reviewer', prompt: 'next', sessionId: session, requirement: requirement(), decisions: admitted.decisions })
     expect(await ctx.workers.source('agents')!.wait(later.id, 10_000)).toMatchObject({ status: 'completed' })
     expect(again.runs).toHaveLength(1)
-    // Freed again: for its worktree only (it has none), its own decision; a run that holds nothing is refused.
-    expect(await ctx.agentWorkers.free({ agentRun: id, agentGone: true })).toMatchObject({ again: true, freed: [] })
+    // Freed again: only for a worktree, and it has none, so nothing is decided; a run that holds nothing is refused.
+    const decided = ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' }).length
+    await expect(ctx.agentWorkers.free({ agentRun: id, agentGone: true })).rejects.toThrow(new RegExp(`was freed already \\(decision ${freed.decision}\\), and no worktree of it is left`))
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' })).toHaveLength(decided)
     await expect(ctx.agentWorkers.free({ agentRun: later.id, agentGone: true })).rejects.toThrow(/completed, so it holds nothing to free/)
     await expect(ctx.agentWorkers.free({ agentRun: 'arun_0000000000000000', agentGone: true })).rejects.toThrow(/no agent run/)
   }, 30_000)

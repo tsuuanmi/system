@@ -940,8 +940,9 @@ guesses.
   `freed`, what it held that is free now, in words (empty when `again`); and each worktree of its
   workflow run, `removed` (with the `commit` that kept its changes, if any) or `kept`, and `why`.
 - A refused call (`invalid_input`) changes nothing and records nothing: no such run, a run that holds
-  nothing, its liveness still being looked at, another started run of its session or worktree not
-  finished, its lease held, or its holder or agent process present on this host. Example:
+  nothing, a run freed already with no worktree of it left, its liveness still being looked at,
+  another started run of its session or worktree not finished, its lease held, or its holder or
+  agent process present on this host. Example:
   [`mcp-agent-runs.free.json`](../../schemas/examples/mcp-agent-runs.free.json).
 
 ### MCP tool: `report`
