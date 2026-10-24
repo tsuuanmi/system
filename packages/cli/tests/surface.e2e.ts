@@ -85,6 +85,8 @@ describe('MCP surface budget (e2e through dsh)', () => {
         }
         within(`tools/list as ${scope}`, bytes, BUDGET.toolsList[scope].ceiling)
         for (const tool of tools) within(`tool ${tool.name}`, bytesOf(tool), BUDGET.tool.ceiling)
+        // No boilerplate: no $schema, no execution, and the scope _meta only on an operator-only tool.
+        expect(listed.text).not.toMatch(/"\$schema"|"execution"|"system\/scope":"client"/)
       }
       // A Worker holds the model token at most: /mcp refuses it, so it pays for no tool list.
       expect((await rpc(url, tokenOf('model'), 'tools/list')).status).toBe(401)
@@ -101,6 +103,9 @@ describe('MCP surface budget (e2e through dsh)', () => {
       for (const [name, reply] of Object.entries(replies) as Array<[keyof typeof replies, { status: number; text: string }]>) {
         expect(reply.status).toBe(200)
         report.push(`reply ${name}: ${size(reply.text)} B, ~${tokens(size(reply.text))} tokens`)
+        // Said once: the text block summarizes the structured content, never repeats it.
+        const { content, structuredContent } = (JSON.parse(reply.text) as { result: { content: Array<{ text: string }>; structuredContent: unknown } }).result
+        expect(content.map((c) => c.text), name).not.toContain(JSON.stringify(structuredContent))
         within(`reply ${name}`, size(reply.text), BUDGET.replies[name].ceiling)
       }
       if (over) console.log(report.join('\n'))

@@ -27,24 +27,24 @@ export const BUDGET = {
    * mcp-stdio`). A Worker holds at most the `model` token, which `/mcp` refuses: it lists nothing.
    */
   toolsList: {
-    operator: { measured: 50_403, ceiling: 55_500 },
-    client: { measured: 30_983, ceiling: 34_100 },
+    operator: { measured: 42_854, ceiling: 47_200 },
+    client: { measured: 26_378, ceiling: 29_100 },
   },
   /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling. */
-  tool: { measured: 4_896, ceiling: 5_400 },
+  tool: { measured: 4_134, ceiling: 4_600 },
   /** Canonical replies (the whole JSON-RPC response of a `tools/call`). */
   replies: {
-    /** `status` on a fresh shipped profile, as the operator (with every plugin) and as the lead. */
-    statusOperator: { measured: 30_628, ceiling: 33_700 },
-    statusClient: { measured: 1_634, ceiling: 1_800 },
+    /** `status` on a fresh shipped profile, as the operator (no plugin needs a look) and as the lead. */
+    statusOperator: { measured: 1_860, ceiling: 2_100 },
+    statusClient: { measured: 814, ceiling: 900 },
     /** `result` of a failed run on the shipped profile (an `ask` with no account: reauth_required). */
-    resultFailed: { measured: 2_092, ceiling: 2_400 },
+    resultFailed: { measured: 1_363, ceiling: 1_500 },
     /** `usage` on the shipped profile holding that one run. */
-    usageOneRun: { measured: 2_116, ceiling: 2_400 },
-    /** On the workflow's fixtures: `result` of a completed ask (a 1,000-byte answer) and of a research run (six steps, a 4,000-byte answer). */
+    usageOneRun: { measured: 349, ceiling: 400 },
+    /** On the workflow's fixtures: `result` of a completed ask (a 1,000-byte answer) and of a research run (six steps, a 4,000-byte answer); a completed run's text is its answer. */
     resultAsk: { measured: 2_817, ceiling: 3_100 },
     resultResearch: { measured: 10_780, ceiling: 11_900 },
-    /** `usage` over those three runs (research, ask, a failed ask). */
-    usageThreeRuns: { measured: 18_504, ceiling: 20_400 },
+    /** `usage` over those three runs (research, ask, a failed ask): steps only, no answers. */
+    usageThreeRuns: { measured: 2_247, ceiling: 2_500 },
   },
 } as const
