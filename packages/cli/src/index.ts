@@ -5,7 +5,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants as fsConstants, copyFileSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir, constants as osConstants } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -307,18 +307,28 @@ export function configEnvNames(rows: readonly ProfileRow[]): { credentials: Map<
  * absolute paths. Problems and notes name variables, never a value.
  */
 export function checkEnvFile(path: string, rows: readonly ProfileRow[], uid: number | undefined = process.getuid?.()): { problems: string[]; notes: string[] } {
-  let stat
+  // The owner, mode and content are read through one descriptor, so they are of one file even if
+  // the path is replaced meanwhile. It is opened non-blocking, so a FIFO is refused, not waited on.
+  let fd: number
   try {
-    stat = statSync(path)
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOCTTY)
   } catch (error) {
     return { problems: [`the environment file ${path} cannot be read: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`], notes: [] }
   }
-  if (!stat.isFile()) return { problems: [`the environment file ${path} is not a regular file`], notes: [] }
+  let stat
+  let text: string
+  try {
+    stat = fstatSync(fd)
+    if (!stat.isFile()) return { problems: [`the environment file ${path} is not a regular file`], notes: [] }
+    text = readFileSync(fd, 'utf8')
+  } finally {
+    closeSync(fd)
+  }
   const problems: string[] = []
   const notes: string[] = []
   if (uid !== undefined && stat.uid !== uid) problems.push(`${path} is owned by uid ${stat.uid}, not by you (uid ${uid})`)
   if (stat.mode & 0o077) problems.push(`${path} is readable by others (mode ${(stat.mode & 0o777).toString(8)}): chmod 600 ${path}`)
-  const parsed = parseEnvFile(readFileSync(path, 'utf8'))
+  const parsed = parseEnvFile(text)
   problems.push(...parsed.problems)
   const { credentials, forwarded } = configEnvNames(rows)
   const seen = new Set<string>()
