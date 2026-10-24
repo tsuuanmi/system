@@ -296,6 +296,7 @@
 | `models[].maxTokens` | number (1…200000) | `4096` | Output bound of every call (INV-9) |
 | `models[].family` | string |  | Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one |
 | `models[].description` | string (…200) |  | What the model Worker is for, in your words: plain text on one line, at most 200 characters; shown on the roster, never a routing input |
+| `models[].title` | string (…64) |  | The model Worker's name for people, in your words, such as the product it reaches: plain text on one line, at most 64 characters; its display name on the roster is the title and its tier (default: its family's word and its id), never a routing input |
 | `models[].maxSessionTurns` | number (1…10000) |  | This model's session turns, at most (default: the row's maxSessionTurns) |
 | `models[].maxHistoryChars` | number (1…2000000) |  | Characters of history this model replays, at most (default: the row's maxHistoryChars); fit it to the context window |
 | `models[].maxInputChars` | number (1…2000000) |  | Characters of prompt this model takes, at most, declared to admission (ADR-0032; default: none declared); its history is bounded by maxHistoryChars |

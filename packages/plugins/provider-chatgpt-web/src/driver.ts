@@ -85,6 +85,8 @@ const PAGE_IDLE_WAIT_MS = 3000
 
 export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly provider = 'chatgpt-web'
+  /** The site's name for people: its Workers' display name starts with it (the roster). */
+  readonly title = 'ChatGPT'
   readonly capabilities = ['reason', 'persistent-conversation'] as const
   /** Account features, each proven on the account by `probeFeatures` (REQ-PRV-7). */
   readonly features = ['deep-research', 'web-search', 'image-generation'] as const

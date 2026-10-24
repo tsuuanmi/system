@@ -189,7 +189,7 @@ const CATALOG_W: ModelEntry[] = [
   { id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64, description: 'Quick answers for the lead' },
   { id: 'gone', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
   { id: 'private', tier: 'standard', quotaClass: 'local', locality: 'local', maxTokens: 32 },
-  { id: 'strong', tier: 'frontier', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
+  { id: 'strong', tier: 'frontier', quotaClass: 'metered', locality: 'remote', maxTokens: 64, title: 'Strong API' },
 ]
 
 async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; workflow?: Record<string, unknown>; leases?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
@@ -240,6 +240,16 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     // The operator's description of an entry is its Worker's (capability-descriptor@1.7); an entry without one is described as before (T85).
     expect(workers['model:fast']).toMatchObject({ schema: 'capability-descriptor@1.7', description: 'Quick answers for the lead' })
     expect(workers['model:private']).not.toHaveProperty('description')
+    // The operator's title of an entry is its Worker's name for people (capability-descriptor@1.8, T116).
+    expect(workers['model:strong']).toMatchObject({ schema: 'capability-descriptor@1.8', title: 'Strong API' })
+    expect(workers['model:fast']).not.toHaveProperty('title')
+  })
+
+  it('refuses a model entry whose title is not plain text on one line of at most 64 characters (T116)', () => {
+    const entry = { id: 'fast', route: 'fake', model: 'm1', tier: 'standard' as const, quotaClass: 'metered' as const, locality: 'remote' as const, maxTokens: 64 }
+    for (const title of ['', 'one\ntwo', 'x'.repeat(65)]) {
+      expect(() => Models.apply(new Context(), { models: [{ ...entry, title }] }), JSON.stringify(title)).toThrow(/model fast: title must be plain text on one line, 1 to 64 characters/)
+    }
   })
 
   it('refuses a model entry whose description is not plain text on one line of at most 200 characters (T85)', () => {

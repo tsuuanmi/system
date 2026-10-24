@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { contentId } from '@tsuuanmi/system-libs'
+import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type WorkRequirement } from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished } from 'vitest'
@@ -34,13 +34,15 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(admitted.worker.worker).toBe('worker:chatgpt-main/economy')
   }, 60_000)
 
-  it('describes each tier\'s Worker with its account\'s description and the tier (capability-descriptor@1.7), and an account without one as before (T85)', async () => {
+  it('describes each tier\'s Worker with its account\'s description and the tier (capability-descriptor@1.7), and its site\'s title from the driver (@1.8, T116)', async () => {
     const { ctx } = await boot({ accounts: [{ ...account('chatgpt-main', { economy: 'instant', frontier: 'high' }), description: 'The studio\'s chat subscription' }, account('chatgpt-2', { standard: 'medium' })] })
     const listed = new Map((await ctx.workers.list()).map((w) => [w.worker, w]))
-    expect(listed.get('worker:chatgpt-main/economy')).toMatchObject({ schema: 'capability-descriptor@1.7', description: 'The studio\'s chat subscription (economy tier)' })
+    expect(listed.get('worker:chatgpt-main/economy')).toMatchObject({ schema: 'capability-descriptor@1.8', title: 'ChatGPT', description: 'The studio\'s chat subscription (economy tier)' })
     expect(listed.get('worker:chatgpt-main/frontier')).toMatchObject({ description: 'The studio\'s chat subscription (frontier tier)' })
-    expect(listed.get('worker:chatgpt-2/standard')).toMatchObject({ schema: 'capability-descriptor@1.5' })
+    expect(listed.get('worker:chatgpt-2/standard')).toMatchObject({ schema: 'capability-descriptor@1.8', title: 'ChatGPT' })
     expect(listed.get('worker:chatgpt-2/standard')).not.toHaveProperty('description')
+    const schemas = new SchemaRegistry()
+    for (const w of listed.values()) schemas.assertRecord(w)
     expect((await ctx.accounts.get('chatgpt-main')).description).toBe('The studio\'s chat subscription')
   }, 60_000)
 

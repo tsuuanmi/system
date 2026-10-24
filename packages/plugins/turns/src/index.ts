@@ -19,7 +19,7 @@ import { reply } from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { type ContentId, contentId, pooledTermsDecision, sha256 } from '@tsuuanmi/system-libs'
+import { type ContentId, contentId, LABEL, pooledTermsDecision, sha256 } from '@tsuuanmi/system-libs'
 import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -782,11 +782,13 @@ export class Turns extends Service {
       // Its provider's accounts are compared by the provider, under its setting (ADR-0052); a limit on the whole account says until when.
       const whole = limits.find((c) => c.feature === '*')
       const mode = this.ctx.accounts.setting(account.provider).mode
+      // The site's name for people, as its driver gives it (`@1.8`); one that is not plain text on one line is left out.
+      const title = driver?.title !== undefined && LABEL.test(driver.title) ? driver.title : undefined
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         // The site is who serves the work, so the account's provider is the Worker's family (ADR-0027).
         // The operator's description of the account, with the tier this Worker serves (`@1.7`).
-        schema: account.description ? 'capability-descriptor@1.7' : 'capability-descriptor@1.5', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
-        ...(account.description ? { description: `${account.description} (${tier} tier)` } : {}),
+        schema: title ? 'capability-descriptor@1.8' : account.description ? 'capability-descriptor@1.7' : 'capability-descriptor@1.5', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
+        ...(title ? { title } : {}), ...(account.description ? { description: `${account.description} (${tier} tier)` } : {}),
         account: { id: account.id, group: account.provider, mode, ...(whole ? { limitUntil: whole.until } : {}) },
         ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), load, ...(cooldowns.length ? { cooldowns } : {}), tier,
         quotaClass: account.quotaClass, locality: 'remote',

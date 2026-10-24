@@ -78,18 +78,24 @@ masked hint and slot, and its kinds, `@1.4`):
 <runtime> · <account> · <role or tier> [<kinds>]
 Claude Code · science · develop [code]
 Codex · c…@example.com, slot 2 · develop-2 [docs, tests]
-Chatgpt · Studio Plus · standard
+ChatGPT · main · frontier
+Gemini API · standard
 Openai · fast · standard
 ```
 
-- **Runtime:** the agent runtime's title as its provider gives it (`title`,
-  [seam contract](agent-runtimes.md#seam-contract)), else its provider's first word, capitalised
-  (a model Worker's, its family's): a website or model Worker is named so.
+- **Runtime:** the Worker's own title (`capability-descriptor@1.8` `title`): a website Worker's is
+  its site's, as its driver gives it ([driver interface](provider-turns.md#driver-interface)), a
+  model Worker's the operator's `models[].title`; else the agent runtime's title as its provider
+  gives it (`title`, [seam contract](agent-runtimes.md#seam-contract)); else its provider's first
+  word, capitalised (a model Worker's, its family's). A title comes only from a provider plugin or
+  the operator's configuration: no shared code names a vendor
+  ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
 - **Account:** for the operator, the account's label: an agent account's
   `assignments[].label` in the agent-workers row, else its masked hint and slot (or the slot); a
   website account's catalog label, else its id. For a client (the lead), who gets no label, an
   agent account's slot, or the account id. With no account record read, its account's id; a
-  Worker that names no account (a model), the rest of its own id (`model:fast`, `fast`).
+  Worker that names no account (a model), the rest of its own id (`model:fast`, `fast`), or nothing
+  when it has its own title, which names that one Worker (`Gemini API · standard`).
 - **Work:** its role (account × role), else its tier, and the kinds of work it takes
   (`capability-descriptor@1.6`).
 

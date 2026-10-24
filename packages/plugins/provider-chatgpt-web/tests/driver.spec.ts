@@ -505,11 +505,12 @@ describe.runIf(canRunBrowser)('the driver as a provider plugin', () => {
     }
   }, 30_000)
 
-  it('registers itself on ctx.providers', async () => {
+  it('registers itself on ctx.providers, with its site\'s title for people (T116)', async () => {
     const ctx = new Context()
     await ctx.plugin(Providers)
     await ctx.plugin(ChatGptWebPlugin, { origin: 'http://127.0.0.1:9' })
     expect(ctx.providers.get('chatgpt-web')).toBeInstanceOf(ChatGptWebDriver)
+    expect(ctx.providers.get('chatgpt-web').title).toBe('ChatGPT')
   })
 })
 
