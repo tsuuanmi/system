@@ -124,13 +124,80 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(read.value).toEqual({
       runId: run.runId,
       change: { value: { changes: [{ ...changeOf(run.runId), source: 'worktrees' }], unread: [] } },
-      assessments: { value: [{ nodeId: 'review:1', createdAt: expect.any(String), verdict: 'approve', findings: [{ severity: 'warning', title: 'The header name is matched case-sensitively', file: 'src/limits.ts' }], reviewer: 'w:standard' }] },
+      assessments: { value: [{ nodeId: 'review:1', createdAt: expect.any(String), verdict: 'approve', findings: [{ severity: 'warning', title: 'The header name is matched case-sensitively', file: 'src/limits.ts' }], reviewer: 'w:standard' }], more: 0 },
       report: { nodeId: 'solo', text: run.answer },
     })
     // A source that cannot read its worktree is named, with why.
     ctx.workers.register({ name: 'failing', describe: async () => [], start: () => { throw new Error('none') }, get: () => undefined, wait: () => Promise.reject(new Error('none')), changes: async () => { throw new Error('git failed') } } as never)
     expect(((await call(`runs/${run.runId}/review`)).value.change as { value: { unread: unknown } }).value.unread).toEqual([{ source: 'failing', detail: 'git failed' }])
   })
+
+  it('says what changed is unknown when the run\'s result names the workspace an agent worked in and no source read a change there, never that it changed nothing (INV-2)', async () => {
+    const { ctx, call } = await boot()
+    await activeProject(ctx)
+    const { run } = await reviewed(ctx, 'kernel')
+    // A run whose result names no workspace changed nothing that a source holds.
+    expect((await call(`runs/${run.runId}/review`)).value.change).toEqual({ value: { changes: [], unread: [] } })
+    // Its result an agent's, which worked in a workspace: no source answering is not "no change".
+    const result = ctx.artifacts.put({
+      kind: 'report', bodySchema: 'agent-result@1.1', inputs: [], classification: 'public', producer: { type: 'worker', ref: 'agent:dev' }, runId: run.runId, nodeId: 'solo',
+      body: { schema: 'agent-result@1.1', worker: 'agent:dev', runtime: 'scripted', runId: 'x', nativeHandle: 'h', promptHash: `sha256:${'c'.repeat(64)}`, sandbox: 'workspace-write', workspace: '/worktrees/repo/run_x', turns: 1, text: 'done' },
+    } as never)
+    ctx.store.db.prepare('UPDATE workflow_runs SET result = ? WHERE run_id = ?').run(result.id, run.runId)
+    expect((await call(`runs/${run.runId}/review`)).value.change).toEqual({ unknown: 'no Worker source read the change in /worktrees/repo/run_x, the workspace the run\'s result names, so what it changed is not known' })
+    // A source that read it, or one that could not, answers as before.
+    changes(ctx, run.runId)
+    expect((await call(`runs/${run.runId}/review`)).value.change).toEqual({ value: { changes: [{ ...changeOf(run.runId), source: 'worktrees' }], unread: [] } })
+  })
+
+  it('lists the newest verdicts first, at most 20, and counts the older ones as more', async () => {
+    const { ctx, call } = await boot()
+    await activeProject(ctx)
+    const { run } = await reviewed(ctx, 'kernel')
+    const subject = { type: 'git-head' as const, ref: 'a'.repeat(40), version: 'b'.repeat(64) }
+    for (let i = 1; i <= 23; i++) {
+      ctx.artifacts.put({ kind: 'assessment', bodySchema: 'assessment@1.0', subject, inputs: [], classification: 'public', producer: { type: 'system', ref: 'workflow' }, runId: run.runId, nodeId: `review:${i}`,
+        body: { schema: 'assessment@1.0', subject, verdict: i === 23 ? 'approve' : 'changes-requested', findings: [{ severity: 'warning', title: `finding ${i}` }] } } as never)
+      // A later millisecond: stored later is newer.
+      await new Promise((resolve) => setTimeout(resolve, 3))
+    }
+    const { assessments } = (await call(`runs/${run.runId}/review`)).value as { assessments: { value: Array<{ nodeId: string; verdict: string }>; more: number; moreAtLeast?: true } }
+    expect(assessments.value.map((a) => a.nodeId)).toEqual(Array.from({ length: 20 }, (_, i) => `review:${23 - i}`))
+    expect(assessments.value[0]!.verdict).toBe('approve')
+    expect(assessments.more).toBe(3)
+    expect(assessments.moreAtLeast).toBeUndefined()
+  })
+
+  it.runIf(canRunBrowser)('reads a review that failed once per run and result: the 5-second refresh never reads it again, the operator\'s Read it again does (T128a)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    await reviewed(ctx, 'Keep the rate-limit header')
+    // The review read fails as a whole: the server cannot list the run's verdicts.
+    const artifacts = ctx.artifacts as unknown as { list: (filter?: { kind?: string }) => unknown[] }
+    const list = artifacts.list.bind(artifacts)
+    let reads = 0
+    artifacts.list = (filter) => {
+      if (filter?.kind !== 'assessment') return list(filter)
+      reads++
+      throw new Error('the ledger is busy')
+    }
+    onTestFinished(() => void (artifacts.list = list))
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article', { name: 'Keep the rate-limit header' })
+    await expect.poll(() => card.getByText(/What the run changed and what its steps said could not be read/).count(), { timeout: 15_000 }).toBe(1)
+    expect(reads).toBe(1)
+    // Two refreshes later, still read once.
+    await new Promise((resolve) => setTimeout(resolve, 11_000))
+    expect(reads).toBe(1)
+    expect(await card.getByText(/could not be read/).count()).toBe(1)
+    await card.getByRole('button', { name: 'Read it again' }).click()
+    await expect.poll(() => reads, { timeout: 15_000 }).toBe(2)
+  }, 90_000)
 
   it.runIf(canRunBrowser)('shows a review card with what changed (the stat, each file folded, a long one with show all), the reviewer\'s verdict, the run\'s report, and the checks not run in warning; after Accept, where the result stands on its way in (T122, ADR-0060)', async () => {
     const booted = await boot()

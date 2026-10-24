@@ -61,9 +61,11 @@ export const LIKELY_WORKERS = 8
 /** Accepted results on their way into the repository that the reviews list, the latest first. */
 export const ACCEPTED_SHOWN = 20
 const LANDING_OPEN: ReadonlySet<string> = new Set(['watch', 'commit', 'committed', 'asked', 'merging'])
-/** Reviewers' verdicts a run's review read lists at most, and the characters of its report. */
+/** Reviewers' verdicts a run's review read lists at most, newest first, and the characters of its report. */
 export const REVIEW_VERDICTS = 20
 export const REVIEW_REPORT_CHARS = 32_000
+/** Verdicts a run's review read counts at most: past them, `more` is at least what it says. */
+export const REVIEW_VERDICTS_COUNTED = 100
 /** Policy changes the page lists, newest first. */
 export const POLICY_HISTORY = 20
 /** Verdicts one call takes at most, as `approvals_decide` does (a batch holds at most 50). */
@@ -714,31 +716,49 @@ export function apply(ctx: Context, config: Config = {}): void {
    * What the operator reads before a review verdict (`GET runs/<runId>/review`, T122): the run's
    * change in its worktrees, read only through `ctx.workers.changes` (each file with its lines and its
    * diff, bounded, from the source that holds the worktree); each reviewer's verdict on it (its
-   * `assessment` artifacts); the run's report (its last step's answer, such as a validation's); and
-   * where its accepted result stands on its way into the repository. A part that cannot be read is
-   * `{unknown}` with why, never empty (INV-2).
+   * `assessment` artifacts, newest first, with how many more); the run's report (its last step's
+   * answer, such as a validation's); and where its accepted result stands on its way into the
+   * repository. A part that cannot be read is `{unknown}` with why, never empty (INV-2): a run whose
+   * result names the workspace an agent worked in, whose change no source read, is not a run that
+   * changed nothing.
    */
   const review = async (res: ServerResponse, runId: string): Promise<void> => {
     const run = ctx.workflow.get(runId)
     if (!run) return json(res, 404, { error: `unknown run ${runId}` })
+    const artifacts = ctx.get('artifacts')
     const workers = ctx.get('workers' as never) as { changes?: (runId: string) => Promise<{ changes: unknown[]; unread: Array<{ source: string; detail: string }> }> } | undefined
     let change: Record<string, unknown>
     if (!workers) change = { unknown: 'the Worker registry (ctx.workers) is not mounted' }
     else if (typeof workers.changes !== 'function') change = { unknown: 'the Worker registry cannot read a run\'s change' }
     else {
       try {
-        change = { value: await workers.changes(runId) }
+        const read = await workers.changes(runId)
+        if (read.changes.length || read.unread.length) change = { value: read }
+        else if (!artifacts) change = { unknown: 'no Worker source read a change of this run, and whether its result names a workspace cannot be read (ctx.artifacts is not mounted)' }
+        else {
+          // Each result of the run, its last and each step's, once: an agent's names the workspace it worked in.
+          const results = [...new Set([run.result, ...run.nodes.map((n) => n.result)].filter((r): r is NonNullable<typeof r> => r !== undefined))]
+          const workspace = results.map((r) => artifacts.get(r)?.body as { schema?: unknown; workspace?: unknown } | undefined)
+            .find((b) => typeof b?.schema === 'string' && b.schema.startsWith('agent-result@') && typeof b.workspace === 'string')?.workspace as string | undefined
+          change = workspace === undefined ? { value: read } : { unknown: `no Worker source read the change in ${workspace}, the workspace the run's result names, so what it changed is not known` }
+        }
       } catch (error) {
         change = { unknown: `the change could not be read: ${(error as Error).message.slice(0, 300)}` }
       }
     }
-    const artifacts = ctx.get('artifacts')
-    const assessments = artifacts
-      ? { value: artifacts.list({ kind: 'assessment', runId, limit: REVIEW_VERDICTS }).map((a) => {
-        const body = a.body as { verdict: string; findings: unknown[]; reviewer?: string }
-        return { nodeId: a.nodeId, createdAt: a.createdAt, verdict: body.verdict, findings: body.findings, ...(body.reviewer ? { reviewer: body.reviewer } : {}) }
-      }) }
-      : { unknown: 'the artifact store (ctx.artifacts) is not mounted' }
+    let assessments: Record<string, unknown>
+    if (!artifacts) assessments = { unknown: 'the artifact store (ctx.artifacts) is not mounted' }
+    else {
+      const listed = artifacts.list({ kind: 'assessment', runId, newest: true, limit: REVIEW_VERDICTS_COUNTED })
+      assessments = {
+        value: listed.slice(0, REVIEW_VERDICTS).map((a) => {
+          const body = a.body as { verdict: string; findings: unknown[]; reviewer?: string }
+          return { nodeId: a.nodeId, createdAt: a.createdAt, verdict: body.verdict, findings: body.findings, ...(body.reviewer ? { reviewer: body.reviewer } : {}) }
+        }),
+        more: Math.max(0, listed.length - REVIEW_VERDICTS),
+        ...(listed.length === REVIEW_VERDICTS_COUNTED ? { moreAtLeast: true } : {}),
+      }
+    }
     const last = [...run.nodes].reverse().find((n) => n.result)
     const text = run.answer
     const report = text !== undefined && last ? { nodeId: last.nodeId, text: text.slice(0, REVIEW_REPORT_CHARS), ...(text.length > REVIEW_REPORT_CHARS ? { truncated: true } : {}) } : undefined

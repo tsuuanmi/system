@@ -324,10 +324,13 @@ export interface ChangedFile {
   removed?: number
   /** Its unified diff, verbatim, within {@link CHANGE_BOUNDS}.fileChars; absent for a binary file or one past the bounds. */
   diff?: string
-  /** Its diff was cut at {@link CHANGE_BOUNDS}.fileChars, or left out past {@link CHANGE_BOUNDS}.totalChars. */
+  /**
+   * Its diff was cut at {@link CHANGE_BOUNDS}.fileChars, or left out past {@link CHANGE_BOUNDS}.totalChars
+   * (an untracked file past them is not read, so it has no lines either).
+   */
   truncated?: boolean
   binary?: true
-  /** Why its content is not shown when it is not a binary file: a link, or not a regular file under the worktree. */
+  /** Why its content is not shown when it is not a binary file: a link, not a regular file under the worktree, or no diff given for it. */
   note?: string
 }
 
@@ -340,7 +343,10 @@ export interface WorkChange {
   repository: string
   workspace: string
   branch: string
-  /** The repository's checked-out branch, and the commit the change is read against (where the run forked from it). */
+  /**
+   * The repository's checked-out branch, and the commit the change is read against: where the run
+   * forked from it, or, once the run's branch is in it, the commit its worktree was cut at.
+   */
   base: { branch: string; sha: string }
   /** The worktree's HEAD now. */
   head: string
@@ -451,7 +457,9 @@ export interface WorkerSource {
   land?(step: LandStep): Promise<Landed | undefined>
   /**
    * The change of workflow run `runId` in each worktree of it this source holds, read only (no
-   * index write, no hook), within {@link CHANGE_BOUNDS}; undefined when it holds none. It never
+   * index write, no hook), within {@link CHANGE_BOUNDS}, kept to them as it reads (INV-9: what lies
+   * past them is counted or passed over, never held, and reads as cut, never as unreadable);
+   * undefined when it holds none. It never
    * reads outside those worktrees and their repository, and throws when a worktree it holds cannot
    * be read, which is never read as no change (INV-2).
    */

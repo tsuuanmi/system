@@ -32,10 +32,12 @@
  * worktree, git is pointed at the worktree's own administrative directory recorded at creation,
  * never at whatever the worktree's `.git` file says later: an agent can write that file.
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeSync } from 'node:fs'
+import { type FileHandle, open } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
@@ -67,6 +69,14 @@ export const CARRY_MIGRATION = {
   version: 15,
   sql: `ALTER TABLE agent_worktrees ADD COLUMN carried_from TEXT;
   ALTER TABLE agent_worktrees ADD COLUMN carried_commit TEXT;`,
+}
+/**
+ * The commit a worktree was cut at (T128), so its change is read against it once its branch is merged
+ * into the base; absent for a worktree made before it was recorded.
+ */
+export const FORK_MIGRATION = {
+  version: 16,
+  sql: 'ALTER TABLE agent_worktrees ADD COLUMN forked_at TEXT;',
 }
 /** Characters of a change's `git diff --stat` a landing reports at most (INV-9). */
 const STAT_CHARS = 1500
@@ -104,17 +114,153 @@ export class WorktreeError extends Error {
   override readonly name = 'WorktreeError'
 }
 
+/** What a failed git said, as one line: its stderr without hints, else `fallback`. */
+const said = (stderr: string, fallback: string): string => stderr.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('hint:')).join(' ') || fallback
+
+/** The error of a git run in `dir` that failed: its subcommand, and why. */
+const failed = (dir: string, args: string[], why: string): WorktreeError => new WorktreeError(`git ${args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? ''} in ${dir}: ${why.slice(0, 300)}`)
+
 /** `git -C dir …`, bounded; rejects with what git said. */
 async function git(dir: string, args: string[]): Promise<string> {
   try {
     return (await execFileAsync('git', ['-C', dir, ...SAFE, ...args], { env: ENV, timeout: GIT_MS, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024 })).stdout
   } catch (error) {
     const e = error as NodeJS.ErrnoException & { stderr?: string; killed?: boolean }
-    const said = e.code === 'ENOENT' ? 'git is not installed'
-      : e.killed ? `it took longer than ${GIT_MS / 1000} s`
-        : (e.stderr ?? '').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('hint:')).join(' ') || e.message
-    throw new WorktreeError(`git ${args.find((a) => !a.startsWith('-')) ?? ''} in ${dir}: ${said.slice(0, 300)}`)
+    throw failed(dir, args, e.code === 'ENOENT' ? 'git is not installed' : e.killed ? `it took longer than ${GIT_MS / 1000} s` : said(e.stderr ?? '', e.message))
   }
+}
+
+/**
+ * `git -C dir …` read as its output comes, never held whole (INV-9): `take` gets each piece, decoded,
+ * and returns true once it has what it needs, which stops git there. Bounded in time as {@link git}.
+ * Resolves whether it was stopped; rejects with what git said when it failed before, or with what
+ * `take` threw.
+ */
+function gitRead(dir: string, args: string[], take: (text: string) => boolean): Promise<{ stopped: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-C', dir, ...SAFE, ...args], { env: ENV, stdio: ['ignore', 'pipe', 'pipe'] })
+    const decoder = new StringDecoder('utf8')
+    let stopped = false
+    let late = false
+    let thrown: unknown
+    let stderr = ''
+    const stop = (): void => {
+      stopped = true
+      child.kill('SIGKILL')
+    }
+    const timer = setTimeout(() => {
+      late = true
+      child.kill('SIGKILL')
+    }, GIT_MS)
+    const offer = (text: string): void => {
+      if (stopped || !text) return
+      try {
+        if (take(text)) stop()
+      } catch (error) {
+        thrown = error
+        stop()
+      }
+    }
+    child.stdout.on('data', (chunk: Buffer) => offer(decoder.write(chunk)))
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < 4096) stderr += chunk.toString('utf8')
+    })
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      clearTimeout(timer)
+      reject(failed(dir, args, error.code === 'ENOENT' ? 'git is not installed' : error.message))
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (thrown !== undefined) return reject(thrown)
+      if (stopped) return resolve({ stopped: true })
+      if (late) return reject(failed(dir, args, `it took longer than ${GIT_MS / 1000} s`))
+      if (code !== 0) return reject(failed(dir, args, said(stderr, `it exited with ${code}`)))
+      offer(decoder.end())
+      return thrown !== undefined ? reject(thrown) : resolve({ stopped })
+    })
+  })
+}
+
+/** Characters one NUL-separated field of git's output may have (a path, a status): longer is not git's listing. */
+const FIELD_CHARS = 64 * 1024
+
+/** A {@link gitRead} taker of NUL-separated output: each whole field goes to `field`, which returns true to stop. */
+function fields(field: (value: string) => boolean): (text: string) => boolean {
+  let rest = ''
+  return (text) => {
+    const parts = (rest + text).split('\0')
+    rest = parts.pop()!
+    if (rest.length > FIELD_CHARS) throw new WorktreeError(`git gave a field longer than ${FIELD_CHARS} characters, which is no path`)
+    for (const part of parts) if (field(part)) return true
+    return false
+  }
+}
+
+const DIFF_HEADER = 'diff --git '
+
+/**
+ * A {@link gitRead} taker of a patch: its `diff --git` blocks in order, each kept to `cap` characters
+ * and the rest of it passed over unkept, so a file of any size costs at most `cap`. Stops once `enough`
+ * says so (given the blocks complete so far). `end()` closes the last block.
+ */
+function patchBlocks(cap: number, enough: (blocks: readonly string[]) => boolean): { take: (text: string) => boolean; end: () => string[] } {
+  const blocks: string[] = []
+  let current: string | undefined
+  // The last characters seen, held back: a header may begin in them. And the character before them.
+  let held = ''
+  let before = '\n'
+  const keep = (text: string): void => {
+    if (current !== undefined && current.length < cap) current += text.slice(0, cap - current.length)
+  }
+  return {
+    take: (piece) => {
+      const text = held + piece
+      const end = Math.max(0, text.length - (DIFF_HEADER.length - 1))
+      let from = 0
+      for (let at = text.indexOf(DIFF_HEADER); at !== -1 && at < end; at = text.indexOf(DIFF_HEADER, at + 1)) {
+        if ((at ? text[at - 1] : before) !== '\n') continue
+        keep(text.slice(from, at))
+        from = at
+        if (current !== undefined) {
+          blocks.push(current)
+          if (enough(blocks)) return true
+        }
+        current = ''
+      }
+      keep(text.slice(from, end))
+      if (end) before = text[end - 1]!
+      held = text.slice(end)
+      return false
+    },
+    end: () => {
+      keep(held)
+      held = ''
+      if (current !== undefined) blocks.push(current)
+      current = undefined
+      return blocks
+    },
+  }
+}
+
+/**
+ * A path as git's diff header names it (`core.quotePath` on): in double quotes, C-escaped, when it
+ * holds a double quote, a backslash, a control character, or a byte past ASCII; else as it is.
+ */
+export function quotedPath(name: string): string {
+  const ESCAPES: Record<number, string> = { 7: 'a', 8: 'b', 9: 't', 10: 'n', 11: 'v', 12: 'f', 13: 'r', 34: '"', 92: '\\' }
+  let out = ''
+  let special = false
+  for (const byte of Buffer.from(name, 'utf8')) {
+    const escape = ESCAPES[byte]
+    if (escape) out += `\\${escape}`
+    else if (byte < 0x20 || byte >= 0x7f) out += `\\${byte.toString(8).padStart(3, '0')}`
+    else {
+      out += String.fromCharCode(byte)
+      continue
+    }
+    special = true
+  }
+  return special ? `"${out}"` : name
 }
 
 const real = (path: string): string | undefined => {
@@ -227,6 +373,8 @@ interface WorktreeRow {
   /** The workflow run whose work it was cut from (ADR-0061), and the commit it holds once that work is in it. */
   carried_from: string | null
   carried_commit: string | null
+  /** The commit its branch was made at, or its carry cut at; null for one made before it was recorded. */
+  forked_at: string | null
 }
 
 /**
@@ -379,12 +527,14 @@ export class Worktrees {
       const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
+      // A new branch was made at the HEAD just now (one change at a time per repository); one added again keeps where it forked.
+      const forkedAt = exists ? row?.forked_at ?? null : (await git(repository, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`])).trim()
       // Added again, it starts over: a later retirement is a decision of its own, and its setup runs again.
       // Its branch holds what it held (the retention committed it), so it is no longer a carried tree.
       this.ctx.store.transaction((db) => {
-        db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+        db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at, forked_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)
           ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
-          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = NULL, carried_commit = NULL`).run(repository, runId, path, branch, gitdir, new Date().toISOString())
+          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = NULL, carried_commit = NULL, forked_at = excluded.forked_at`).run(repository, runId, path, branch, gitdir, new Date().toISOString(), forkedAt)
       })
       this.ctx.logger.info(`agent Workers: run ${runId} works in ${path} on ${branch}, ${exists ? 'added again from that branch' : `branched from the HEAD of ${repository}`}`)
       return path
@@ -640,10 +790,14 @@ export class Worktrees {
   /**
    * The change of workflow run `runId` in each of its worktrees (T122), read only: what the worktree
    * holds against the commit it forked from on the repository's checked-out branch, committed or
-   * not, untracked files as added; a removed worktree's from its branch. git reads through the
-   * worktree's own administrative directory, with no optional lock, hook, or external diff; an
-   * untracked file is read only when it is a regular file under the worktree, never through a link.
-   * Undefined when this source holds no worktree of the run; a worktree that cannot be read throws.
+   * not, untracked files as added; a removed worktree's from its branch. Once its branch is merged
+   * into the base, against the commit it was cut at, as recorded. git reads through the worktree's
+   * own administrative directory, with no optional lock, hook, or external diff. Bounded as it reads
+   * (INV-9): git's output is read as it comes and only what {@link CHANGE_BOUNDS} shows is kept, the
+   * rest counted or passed over, and an untracked file is read only while the bounds leave room for
+   * it, asynchronously, through descriptors opened one directory at a time from the worktree's own,
+   * never through a link. Undefined when this source holds no worktree of the run; a worktree that
+   * cannot be read throws.
    */
   async changes(runId: string): Promise<WorkChange[] | undefined> {
     const rows = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? ORDER BY repository').all(runId) as unknown as WorktreeRow[]
@@ -660,85 +814,198 @@ export class Worktrees {
     const DIFF = ['-M', '--no-color', '--no-ext-diff', '--no-textconv']
     const live = row.removed_at === null && existsSync(row.path)
     let head: string
-    let run: (args: string[]) => Promise<string>
-    let against: string[]
+    let inside: string[]
+    let dir: string
     if (live) {
       await this.verify(row)
-      run = (args) => git(row.path, [...READ, `--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
-      head = (await run(['rev-parse', 'HEAD'])).trim()
-      against = [(await git(row.repository, [...READ, 'merge-base', base.sha, head])).trim()]
+      dir = row.path
+      inside = [...READ, `--git-dir=${row.gitdir}`, `--work-tree=${row.path}`]
+      head = (await git(dir, [...inside, 'rev-parse', 'HEAD'])).trim()
     } else {
-      run = (args) => git(row.repository, [...READ, ...args])
-      head = (await run(['rev-parse', '--verify', `refs/heads/${row.branch}^{commit}`])).trim()
-      const fork = (await run(['merge-base', base.sha, head])).trim()
-      against = [fork, head]
+      dir = row.repository
+      inside = READ
+      head = (await git(dir, [...inside, 'rev-parse', '--verify', `refs/heads/${row.branch}^{commit}`])).trim()
     }
-    const fork = against[0]!
-    // One diff queue, read three ways in the same order: name and status, lines, and the patch.
-    const statuses = (await run(['diff', ...DIFF, '--name-status', '-z', ...against])).split('\0').filter(Boolean)
-    const numbers = (await run(['diff', ...DIFF, '--numstat', '-z', ...against])).split('\0')
-    const patch = await run(['diff', ...DIFF, ...against])
-    const files: ChangedFile[] = []
-    for (let i = 0, n = 0; i < statuses.length && statuses[i];) {
-      const code = statuses[i++]!
-      const from = code.startsWith('R') || code.startsWith('C') ? statuses[i++] : undefined
-      const path = statuses[i++]!
-      // numstat -z: "added\tremoved\tpath" or, for a rename, "added\tremoved\t" then from and to.
-      const counts = (numbers[n++] ?? '').split('\t')
-      if (from !== undefined) n += 2
-      const binary = counts[0] === '-'
-      files.push({ path, status: code.startsWith('A') ? 'added' : code.startsWith('D') ? 'deleted' : from !== undefined ? 'renamed' : 'modified', ...(from !== undefined ? { from } : {}),
-        ...(binary ? { binary: true as const } : { added: Number(counts[0]) || 0, removed: Number(counts[1]) || 0 }) })
+    const fork = await this.forkOf(row, base, head)
+    const against = live ? [fork] : [fork, head]
+    // Paths named as the diff headers are matched against (quoted), whatever the repository's own configuration says.
+    const run = (args: string[], take: (text: string) => boolean): Promise<{ stopped: boolean }> => gitRead(dir, [...inside, '-c', 'core.quotePath=true', ...args], take)
+
+    // One diff queue, read three ways: name and status (every file counted, the first ones kept),
+    // lines (of the files kept), and the patch (the blocks of the files kept, each to its bound).
+    const tracked: Array<{ code: string; from?: string; path: string }> = []
+    let trackedCount = 0
+    let entry: string[] = []
+    await run(['diff', ...DIFF, '--name-status', '-z', ...against], fields((value) => {
+      if (!entry.length && !value) return false
+      entry.push(value)
+      if (entry.length === (/^[RC]/.test(entry[0]!) ? 3 : 2)) {
+        const [code, a, b] = entry as [string, string, string | undefined]
+        if (tracked.length < CHANGE_BOUNDS.files) tracked.push(b === undefined ? { code, path: a } : { code, from: a, path: b })
+        trackedCount++
+        entry = []
+      }
+      return false
+    }))
+    const key = (from: string | undefined, path: string): string => `${from ?? ''}\0${path}`
+    // numstat -z: "added\tremoved\tpath", or, for a rename, "added\tremoved\t" then from and to.
+    const counts = new Map<string, [string, string]>()
+    let pending: { counts: [string, string]; names: string[] } | undefined
+    if (tracked.length) {
+      await run(['diff', ...DIFF, '--numstat', '-z', ...against], fields((value) => {
+        if (pending) {
+          pending.names.push(value)
+          if (pending.names.length === 2) {
+            counts.set(key(pending.names[0], pending.names[1]!), pending.counts)
+            pending = undefined
+          }
+        } else if (value) {
+          const [added = '', removed = '', ...rest] = value.split('\t')
+          const path = rest.join('\t')
+          if (path) counts.set(key(undefined, path), [added, removed])
+          else pending = { counts: [added, removed], names: [] }
+        }
+        return counts.size >= tracked.length
+      }))
     }
-    const blocks = patch ? patch.split(/^(?=diff --git )/m).filter((b) => b.startsWith('diff --git ')) : []
-    // The patch's blocks are the queue's files in order; should git ever disagree with itself, no file gets another's diff.
-    const matched = blocks.length === files.length
+    // Enough of the patch once every kept file's block is in, or once the blocks kept fill what a page
+    // shows (`full`: the blocks after them lie past the bounds, and are not read).
+    let full = false
+    const blocks = patchBlocks(CHANGE_BOUNDS.fileChars + 1, (done) => done.length >= tracked.length
+      || (full = done.reduce((n, b) => n + Math.min(b.length, CHANGE_BOUNDS.fileChars), 0) >= CHANGE_BOUNDS.totalChars))
+    if (tracked.length) await run(['diff', ...DIFF, '--src-prefix=a/', '--dst-prefix=b/', ...against], blocks.take)
+    // Each block is its file's by its own `diff --git` line, never by its place in the patch.
+    const byHeader = new Map<string, string>()
+    for (const block of blocks.end()) {
+      const header = block.slice(0, block.indexOf('\n') === -1 ? block.length : block.indexOf('\n'))
+      if (!byHeader.has(header)) byHeader.set(header, block)
+    }
+
+    const untracked: string[] = []
+    let untrackedCount = 0
     if (live) {
-      for (const path of (await run(['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean).sort()) files.push(this.untracked(row.path, path))
+      await run(['ls-files', '--others', '--exclude-standard', '-z'], fields((path) => {
+        if (!path) return false
+        if (tracked.length + untracked.length < CHANGE_BOUNDS.files) untracked.push(path)
+        untrackedCount++
+        return false
+      }))
     }
+
     let total = 0
     let truncated = false
-    const shown = files.slice(0, CHANGE_BOUNDS.files).map((file, i) => {
-      const diff = file.diff ?? (matched && i < blocks.length && !file.binary ? blocks[i]!.trimEnd() : undefined)
-      if (diff === undefined) return file
-      const room = Math.min(CHANGE_BOUNDS.fileChars, CHANGE_BOUNDS.totalChars - total)
-      if (room <= 0) { truncated = true; const { diff: _, ...rest } = file; return { ...rest, truncated: true } }
-      const cut = diff.length > room
-      total += Math.min(diff.length, room)
-      if (cut) truncated = true
-      return { ...file, diff: cut ? diff.slice(0, room) : diff, ...(cut ? { truncated: true } : {}) }
-    })
-    const more = Math.max(0, files.length - CHANGE_BOUNDS.files)
-    return { repository: row.repository, workspace: row.path, branch: row.branch, base: { branch: base.branch, sha: fork }, head, files: shown, more, truncated: truncated || more > 0, ...(live ? {} : { fromBranch: true as const }) }
+    const room = (): number => Math.min(CHANGE_BOUNDS.fileChars, CHANGE_BOUNDS.totalChars - total)
+    // A diff within what is left: cut at it, and counted.
+    const fit = (file: ChangedFile, diff: string): ChangedFile => {
+      const left = room()
+      if (left <= 0) {
+        truncated = true
+        const { diff: _, ...rest } = file
+        return { ...rest, truncated: true }
+      }
+      const cut = diff.length > left
+      total += Math.min(diff.length, left)
+      if (cut || file.truncated) truncated = true
+      return { ...file, diff: cut ? diff.slice(0, left) : diff, ...(cut ? { truncated: true } : {}) }
+    }
+    const files: ChangedFile[] = []
+    for (const { code, from, path } of tracked) {
+      const numbers = counts.get(key(from, path))
+      const binary = numbers?.[0] === '-'
+      const file: ChangedFile = {
+        path, status: code.startsWith('A') ? 'added' : code.startsWith('D') ? 'deleted' : from !== undefined ? 'renamed' : 'modified', ...(from !== undefined ? { from } : {}),
+        ...(binary ? { binary: true as const } : numbers ? { added: Number(numbers[0]) || 0, removed: Number(numbers[1]) || 0 } : {}),
+      }
+      if (binary) {
+        files.push(file)
+        continue
+      }
+      const block = byHeader.get(`${DIFF_HEADER}${quotedPath(`a/${from ?? path}`)} ${quotedPath(`b/${path}`)}`)
+      // A block kept to its cap stays longer than a file's bound, so it reads as cut.
+      if (block !== undefined) files.push(fit(file, block.length > CHANGE_BOUNDS.fileChars ? block : block.trimEnd()))
+      // The patch was read only up to the bounds: this file's block lies past them.
+      else if (full) {
+        truncated = true
+        files.push({ ...file, truncated: true })
+      } else files.push({ ...file, note: 'git gave no diff for it' })
+    }
+    if (untracked.length) {
+      const root = openDirectory(row.path)
+      if (typeof root === 'string') throw new WorktreeError(`${row.path} is no longer a directory of its own; its untracked files are not read`)
+      try {
+        for (const path of untracked) {
+          if (room() <= 0) {
+            truncated = true
+            files.push({ path, status: 'added', truncated: true })
+            continue
+          }
+          const file = await this.untracked(root, path, room())
+          files.push(file.diff === undefined ? file : fit(file, file.diff))
+        }
+      } finally {
+        closeSync(root.fd)
+      }
+    }
+    const more = trackedCount + untrackedCount - files.length
+    return { repository: row.repository, workspace: row.path, branch: row.branch, base: { branch: base.branch, sha: fork }, head, files, more, truncated: truncated || more > 0, ...(live ? {} : { fromBranch: true as const }) }
   }
 
-  /** An untracked file of a worktree as an added file: a regular file read through one descriptor that follows no link, else said and not shown. */
-  private untracked(root: string, path: string): ChangedFile {
-    const full = resolve(root, path)
-    // Under the worktree by its real path, its directory too: a link that leads out is never read.
-    const top = real(root)
-    const dir = real(dirname(full))
-    if (!top || !dir || !under(full, root) || !under(dir, top) || path.split('/').includes('..')) return { path, status: 'added', note: 'outside the worktree, not read' }
-    let fd: number
+  /**
+   * The commit a run's change is read against: where its head meets the base branch, while its head is
+   * not in the base (so a base merged into the branch is not the run's change); once it is (its branch
+   * was merged), the commit the worktree was cut at, as recorded. A worktree made before that was
+   * recorded, whose head the base has moved past, cannot tell its change from what was merged: it throws,
+   * never reads as no change (INV-2).
+   */
+  private async forkOf(row: WorktreeRow, base: { branch: string; sha: string }, head: string): Promise<string> {
+    const meets = (await git(row.repository, ['--no-optional-locks', 'merge-base', base.sha, head])).trim()
+    if (meets !== head) return meets
+    if (row.forked_at) return row.forked_at
+    if (head === base.sha) return head
+    throw new WorktreeError(`${row.branch} is already in ${base.branch}, and the commit its worktree was cut at was not recorded (it was made before that was), so the change of run ${row.workflow_run_id} cannot be told from what ${base.branch} holds`)
+  }
+
+  /**
+   * An untracked file of a worktree as an added file, its first `room` characters at most: read
+   * asynchronously, through a descriptor opened relative to its directory's, each directory opened as
+   * itself relative to the one before it from the worktree's own (`root`), so nothing on its path is
+   * ever a link followed (O_NOFOLLOW at each step) or a name looked up again. A link, or anything that
+   * is not a regular file, is named and not read.
+   */
+  private async untracked(root: OpenedDirectory, path: string, room: number): Promise<ChangedFile> {
+    const names = path.split('/')
+    if (names.some((name) => !name || name === '.' || name === '..')) return { path, status: 'added', note: 'outside the worktree, not read' }
+    const opened: FileHandle[] = []
     try {
-      fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | constants.O_NOCTTY)
-    } catch {
-      return { path, status: 'added', note: 'a link or a file that cannot be opened, not read' }
-    }
-    try {
-      const stat = fstatSync(fd)
+      let at = root.at
+      for (const name of names.slice(0, -1)) {
+        try {
+          opened.push(await open(join(at, name), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW))
+        } catch {
+          return { path, status: 'added', note: 'in a directory that is a link or cannot be opened, not read' }
+        }
+        at = `/proc/self/fd/${opened.at(-1)!.fd}`
+      }
+      let file: FileHandle
+      try {
+        file = await open(join(at, names.at(-1)!), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | constants.O_NOCTTY)
+      } catch {
+        return { path, status: 'added', note: 'a link or a file that cannot be opened, not read' }
+      }
+      opened.push(file)
+      const stat = await file.stat()
       if (!stat.isFile()) return { path, status: 'added', note: 'not a regular file, not read' }
-      const size = Math.min(stat.size, CHANGE_BOUNDS.fileChars + 1)
+      const size = Math.min(stat.size, Math.min(room, CHANGE_BOUNDS.fileChars) + 1)
       const buffer = Buffer.alloc(size)
-      const read = size ? readSync(fd, buffer, 0, size, 0) : 0
+      const read = size ? (await file.read(buffer, 0, size, 0)).bytesRead : 0
       const bytes = buffer.subarray(0, read)
       if (bytes.includes(0)) return { path, status: 'added', binary: true }
       const lines = bytes.toString('utf8').split('\n')
       if (lines.at(-1) === '') lines.pop()
       return { path, status: 'added', added: lines.length, removed: 0,
-        diff: `new file ${path} (untracked)\n${lines.map((l) => `+${l}`).join('\n')}`, ...(stat.size > CHANGE_BOUNDS.fileChars ? { truncated: true } : {}) }
+        diff: `new file ${path} (untracked)\n${lines.map((l) => `+${l}`).join('\n')}`, ...(stat.size > read ? { truncated: true } : {}) }
     } finally {
-      closeSync(fd)
+      await Promise.all(opened.map((handle) => handle.close()))
     }
   }
 
@@ -846,9 +1113,9 @@ export class Worktrees {
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
       this.ctx.store.transaction((db) => {
-        db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at, carried_from, carried_commit) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, NULL)
+        db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at, carried_from, carried_commit, forked_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, NULL, ?)
           ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
-          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = excluded.carried_from, carried_commit = NULL`).run(repository, step.runId, path, branch, gitdir, new Date().toISOString(), from.workflow_run_id)
+          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = excluded.carried_from, carried_commit = NULL, forked_at = excluded.forked_at`).run(repository, step.runId, path, branch, gitdir, new Date().toISOString(), from.workflow_run_id, base)
       })
       cut = this.row(repository, step.runId)!
     }

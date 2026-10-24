@@ -304,7 +304,11 @@ export class Artifacts extends Service {
     return row ? (JSON.parse(row.envelope) as Envelope) : undefined
   }
 
-  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; limit?: number } = {}): Envelope[] {
+  /**
+   * The artifacts that match `filter`, in the order they were stored (oldest first; `newest`: newest
+   * first, contract 1.1), at most `limit` (100 by default, 1 to 1000).
+   */
+  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; limit?: number; newest?: boolean } = {}): Envelope[] {
     const clauses: string[] = []
     const params: string[] = []
     for (const [column, value] of [['a.kind', filter.kind], ['a.decision_type', filter.decisionType], ['r.run_id', filter.runId], ['r.node_id', filter.nodeId]] as const) {
@@ -316,7 +320,8 @@ export class Artifacts extends Service {
     const join = filter.runId !== undefined || filter.nodeId !== undefined ? 'JOIN artifact_runs r ON r.id = a.id' : ''
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     const limit = Math.min(Math.max(Number.isFinite(filter.limit) ? Math.floor(filter.limit as number) : 100, 1), 1000)
-    const rows = this.ctx.store.db.prepare(`SELECT DISTINCT a.envelope, a.created_at, a.id FROM artifacts a ${join} ${where} ORDER BY a.created_at, a.id LIMIT ${limit}`).all(...params) as { envelope: string }[]
+    const order = filter.newest === true ? 'DESC' : 'ASC'
+    const rows = this.ctx.store.db.prepare(`SELECT DISTINCT a.envelope, a.created_at, a.id FROM artifacts a ${join} ${where} ORDER BY a.created_at ${order}, a.id ${order} LIMIT ${limit}`).all(...params) as { envelope: string }[]
     return rows.map((row) => JSON.parse(row.envelope) as Envelope)
   }
 
