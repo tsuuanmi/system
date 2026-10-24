@@ -389,33 +389,48 @@ export const APP_JS = `'use strict'
       }))
   }
 
-  // The board's tasks in review: the operator's Accept or Reject names the exact result shown (INV-5). Absent when no board runs.
+  // The board's tasks in review, one card each: the operator's Accept or Reject names the exact
+  // result shown (INV-5). Absent when no board runs.
   async function reviews() {
     let listed
-    try { ({ reviews: listed } = await api('reviews')) } catch (error) { return error.status === 503 ? null : el('p', { class: 'state failed' }, 'Reviews: ' + error.message) }
-    const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note for a review verdict' })
-    const decide = (r, verdict) => async () => {
+    try { ({ reviews: listed } = await api('reviews')) } catch (error) {
+      return error.status === 503 ? null : el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
+    }
+    const decide = (r, verdict, buttons, clicked) => async () => {
+      const labels = buttons.map((b) => b.textContent)
+      buttons.forEach((b) => { b.disabled = true })
+      clicked.textContent = 'Recording…'
+      const key = 'review-' + r.taskId
       try {
-        const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: note.value })
-        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. Task ' + r.taskId + ' is now ' + task.state + '.'])
+        const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: (notes.get(key) || '').trim() })
+        notes.delete(key)
+        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep.' : '; it goes back for another attempt if it has one left.')])
       } catch (error) {
         report(false, 'Not recorded: your ' + (verdict === 'accept' ? 'acceptance' : 'rejection') + ' of ' + r.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was decided: the task is still in review.'])
       }
+      buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] })
       await refresh()
     }
-    return el('section', { 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
-      listed.length ? null : el('p', { class: 'muted' }, 'No task waits for your review.'),
-      listed.length ? table(['Task', 'Project', 'Subject', 'Result', 'Checks pending', 'Run', 'Until', 'Verdict'], listed.map((r) => el('tr', {},
-        el('td', {}, el('strong', {}, r.title), el('div', { class: 'muted' }, r.taskId + ' · ' + r.actionClass)),
-        el('td', {}, r.project.title || r.project.projectId),
-        el('td', {}, el('code', {}, subjectText(r.subject))),
-        el('td', {}, r.artifacts.map((a) => el('div', {}, el('code', {}, a)))),
-        el('td', {}, r.pendingChecks.length ? r.pendingChecks.join(', ') : '-'),
-        el('td', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, r.run.runId) : '-'),
-        el('td', { class: 'muted' }, (r.heldFor === 'operator' ? 'yours until ' : 'reviewer until ') + (r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '-')),
-        el('td', {}, el('button', { class: 'primary', onclick: decide(r, 'accept'), 'aria-label': 'Accept ' + r.taskId }, 'Accept'), el('button', { onclick: decide(r, 'reject'), 'aria-label': 'Reject ' + r.taskId }, 'Reject')),
-      )), 'queue') : null,
-      listed.length ? note : null)
+    const card = (r) => {
+      const yes = el('button', { class: 'primary', 'aria-describedby': 'review-title-' + r.taskId }, 'Accept: mark it done')
+      const no = el('button', { 'aria-describedby': 'review-title-' + r.taskId }, 'Reject: send it back')
+      yes.addEventListener('click', decide(r, 'accept', [yes, no], yes))
+      no.addEventListener('click', decide(r, 'reject', [yes, no], no))
+      const key = 'review-' + r.taskId
+      const input = el('input', { id: 'note-' + key, value: notes.get(key) || '', oninput: () => notes.set(key, input.value) })
+      return el('article', { class: 'panel request', 'aria-labelledby': 'review-title-' + r.taskId },
+        el('h3', { id: 'review-title-' + r.taskId }, r.title),
+        el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.actionClass), ' Project ' + (r.project.title || r.project.projectId) + ' · task ' + r.taskId + ' · ',
+          r.expiresAt ? (r.heldFor === 'operator' ? 'yours until ' : 'its reviewer\\'s until ') + relative(r.expiresAt) + ' (' + absolute(r.expiresAt) + ')' : 'no expiry known'),
+        el('dl', {},
+          r.goal ? [el('dt', {}, 'Asked'), el('dd', {}, r.goal)] : null,
+          el('dt', {}, 'Checks not run'), el('dd', {}, r.pendingChecks.length ? r.pendingChecks.join(', ') + ': nothing has run them. Your Accept counts them as passed, so run them on the result first.' : 'none: every required check passed'),
+          el('dt', {}, 'Result'), el('dd', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named',
+            el('details', {}, el('summary', {}, 'Exact result (' + r.artifacts.length + ' artifact(s))'), el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a)))))),
+        el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input), yes, no))
+    }
+    return el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
+      listed.length ? listed.map(card) : el('p', { class: 'muted' }, 'No task waits for your review.'))
   }
 
   // A run's steps in one line: how many completed, and the steps that failed, wait, or run, by name.
@@ -427,16 +442,55 @@ export const APP_JS = `'use strict'
     for (const [state, word] of [['FAILED', 'failed'], ['BLOCKED', 'waiting'], ['RUNNING', 'running']]) if (named(state).length) parts.push(word + ': ' + list(named(state)))
     return parts.join('; ')
   }
+  // What a failure asks of the operator, in words.
+  const DISPOSITION = { USER_ACTION: 'it needs you', BACKOFF: 'it is tried again later', CODE_FIX: 'it needs a fix in the code or configuration', NONE: 'nothing more happens' }
+  const failureText = (error) => error.message + (DISPOSITION[error.disposition] ? ' (' + DISPOSITION[error.disposition] + ')' : '')
+  const runLink = (run, text) => el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, text || run.runId)
+  // Why a run needs the operator's look, or nothing when it does not.
+  const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
+    : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
+  const RECENT = 15
 
+  // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
   async function list() {
     const { runs } = await api('runs')
-    show(pageHead('home'), await approvals(), await reviews(), el('h2', {}, 'Runs'), runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.map((run) => el('tr', {},
-      el('td', { class: 'nowrap' }, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
-      el('td', { class: 'nowrap' }, run.template),
-      el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
-      el('td', {}, stepsText(run)),
-      el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
-    ))) : el('p', { class: 'muted' }, 'No run yet.'))
+    const queued = await approvals()
+    const reviewed = await reviews()
+    let roster = null
+    try { roster = await api('roster') } catch {}
+    const asked = queued ? queued.querySelectorAll('article.request').length : 0
+    const toReview = reviewed ? reviewed.querySelectorAll('article.request').length : 0
+    const look = runs.filter(needsLook)
+    const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
+    const waiting = [
+      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
+      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review')) : null,
+      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look')) : null,
+    ].filter(Boolean)
+    const c = roster && roster.counts
+    show(pageHead('home'),
+      el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
+        waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now.')),
+      el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
+        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' idle · ' + c.resting + ' at a limit · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '') + ' ',
+          el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'see each Worker'))
+          : el('p', { class: 'muted' }, 'The Workers could not be read now.')),
+      queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
+      reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
+      look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs that need a look' }, el('h2', {}, 'Runs that need a look'),
+        look.map((run) => el('article', { class: 'panel request', 'aria-label': 'Run ' + run.runId },
+          el('h3', {}, run.template + ' run ', runLink(run)),
+          el('p', {}, 'Started ', ago(run.createdAt), ': ' + needsLook(run) + '.'),
+          el('p', {}, runLink(run, run.status === 'failed' ? 'Open it to continue it or let it be' : 'Open it to decide'))))) : null,
+      el('h2', {}, 'Recent runs'),
+      runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
+        el('td', { class: 'nowrap' }, runLink(run)),
+        el('td', { class: 'nowrap' }, run.template),
+        el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
+        el('td', {}, stepsText(run)),
+        el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
+      ))) : el('p', { class: 'muted' }, 'No run yet. A run starts when the lead or a client asks for one.'),
+      runs.length > RECENT ? el('p', { class: 'muted' }, (runs.length - RECENT) + ' older run(s) are not listed here; open one by its link, or ask with system status.') : null)
     if (focusRequest) {
       const id = focusRequest
       focusRequest = null

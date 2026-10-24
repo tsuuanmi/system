@@ -372,6 +372,27 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByRole('alert').count()).toBe(0)
   }, 60_000)
 
+  it.runIf(canRunBrowser)('opens on a dashboard: what waits for you, each linked to its section, the Workers at a glance, the runs that need a look with their action, and the recent runs (T97)', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const waiting = page.getByRole('region', { name: 'Waiting for you' })
+    await expect.poll(() => waiting.innerText()).toContain('3 requests wait for your verdict')
+    expect(await waiting.innerText()).toContain('1 run needs a look')
+    expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 idle · 1 at a limit · 0 unavailable')
+    // The blocked run is listed with why and where it is decided.
+    const look = page.getByRole('region', { name: 'Runs that need a look' })
+    expect(await look.innerText()).toContain('its plan waits for your approval')
+    await look.getByRole('link', { name: 'Open it to decide' }).click()
+    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    await page.goBack()
+    await waiting.getByRole('link', { name: '3 requests wait for your verdict' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('approvals')
+    expect(await page.getByRole('heading', { name: 'Recent runs' }).count()).toBe(1)
+  }, 60_000)
+
   it.runIf(canRunBrowser)('has one navigation on every page, the current page marked, and each page a title with one line of what it is for (T97)', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
@@ -394,7 +415,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await nav.getByRole('link', { name: 'Home' }).focus()
     await page.keyboard.press('Enter')
     await expect.poll(() => current()).toBe('Home')
-    await page.getByRole('link', { name: 'run_abc' }).click()
+    await page.getByRole('link', { name: 'run_abc' }).first().click()
     await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
     expect(await page.locator('main').innerText()).not.toContain('← ')
   }, 60_000)
@@ -405,7 +426,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.getByRole('link', { name: 'run_abc' }).click()
+    await page.getByRole('link', { name: 'run_abc' }).first().click()
     await expect.poll(() => page.getByText('worker:a/standard').count()).toBeGreaterThan(0)
     await expect.poll(() => page.getByText('proves reason').count()).toBeGreaterThan(0)
     // The token leaves the address bar once read; absent sections leave no stray text.

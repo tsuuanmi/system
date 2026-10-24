@@ -2,6 +2,9 @@
 
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
+- **Home**, a dashboard: what waits for the operator (approvals, reviews, runs that need a look,
+  each linked), the Workers at a glance, then those decisions and the recent runs;
+
 - runs, each with its steps in one line (how many completed, and those failed, waiting, or
   running, by name) and when it started; the run's page has every step;
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
