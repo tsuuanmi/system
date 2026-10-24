@@ -50,9 +50,12 @@ export const ACTIVITY_SHOWN = 50
 const ACTIVITY_PAGES = 5
 const ACTIVITY_STATES: TaskState[] = ['done', 'review', 'waiting-for-input', 'waiting-for-approval', 'cancelled']
 export const LIVE_RUNS = 50
-/** Runs "Waiting for you" lists at most, and runs of each state one count reads at most (INV-9). */
+/**
+ * Runs "Waiting for you" lists at most, and runs of each state one count reads at most (INV-9): as many
+ * as the page's list of runs reads on each refresh; past them the count says it is partial.
+ */
 export const WAITING_RUNS = 50
-const WAITING_READ = 500
+const WAITING_READ = 100
 /** Workers named per step of a start's preview, free and busy each. */
 export const LIKELY_WORKERS = 8
 /** Accepted results on their way into the repository that the reviews list, the latest first. */

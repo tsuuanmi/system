@@ -270,7 +270,7 @@ export const APP_JS = `'use strict'
         el('ul', {},
           el('li', {}, el('strong', {}, 'Requests. '), 'An ', termLink('approval', 'approval request'), ' asks your yes or no before something the policy does not let run alone. Each button says what it does. Unanswered by its time, a request counts as no.'),
           el('li', {}, el('strong', {}, 'Reviews. '), 'A finished task waits for you to accept it or send it back. Unanswered by its time, the task waits for input.'),
-          el('li', {}, el('strong', {}, 'Runs that need a look. '), 'A run that failed, or waits for your vote or approval, says why and what you can do.')),
+          el('li', {}, el('strong', {}, 'Runs that need a look. '), 'A run that waits for your vote or your approval of its plan, or a run outside the board that failed since you last marked Home as seen, says why and what you can do. A board task\\'s failed run is the board\\'s: it decides the next attempt.')),
         el('p', {}, '“Since you last looked” on Home tells what happened while you were away.')),
       section('help-policy', 'What runs without asking',
         el('p', {}, 'The ', termLink('policy', 'autonomy policy'), ' gives each kind of action a ', termLink('mode', 'mode'), ': ', el('strong', {}, 'auto'), ' runs on its own, ', el('strong', {}, 'notify'), ' runs then tells you, ', el('strong', {}, 'ask'), ' waits for you, ', el('strong', {}, 'forbid'), ' never runs.'),
@@ -698,12 +698,12 @@ export const APP_JS = `'use strict'
   // What waits for the operator and they can act on, from one read on every page (GET waiting, T127): the
   // window's title counts it ("(3) system — Home"), and Home's "Waiting for you" lists it. A failed run counts
   // until the operator marks Home as seen; a count that could not be read whole is shown as at least, or "?".
-  let waiting = null
+  let waits = null
   const readWaiting = async () => {
     const seen = seenOf()
     try { return await api('waiting' + (seen ? '?since=' + encodeURIComponent(seen.at) : '')) } catch (error) { return { unknown: error.message } }
   }
-  const badge = () => !waiting ? '' : waiting.unknown ? '(?) ' : waiting.count ? '(' + waiting.count + (waiting.partial ? '+' : '') + ') ' : waiting.partial ? '(?) ' : ''
+  const badge = () => !waits ? '' : waits.unknown ? '(?) ' : waits.count ? '(' + waits.count + (waits.partial ? '+' : '') + ') ' : waits.partial ? '(?) ' : ''
 
   // "Since you last looked" (T124): kept in this browser only (localStorage), never on the server: when
   // the operator last marked Home as seen, and each Worker's status then, to tell what changed since.
@@ -800,8 +800,8 @@ export const APP_JS = `'use strict'
     // A run's task by its title, from the Board's cards.
     const titles = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, t.title])))
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
-    waiting = await readWaiting()
-    const part = (name) => waiting.unknown ? { unknown: waiting.unknown } : waiting[name]
+    waits = await readWaiting()
+    const part = (name) => waits.unknown ? { unknown: waits.unknown } : waits[name]
     const asked = 'value' in part('requests') ? part('requests').value : 0
     const toReview = 'value' in part('reviews') ? part('reviews').value : 0
     const look = 'value' in part('runs') ? part('runs').value : []
@@ -1508,11 +1508,11 @@ export const APP_JS = `'use strict'
   async function refresh() {
     mark()
     // Help reads nothing from the server: it shows with or without a token.
-    if (view === 'help') { helpView(); if (token) waiting = await readWaiting(); mark(); return }
+    if (view === 'help') { helpView(); if (token) waits = await readWaiting(); mark(); return }
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
     // Home reads what waits as it renders; any other page reads the same.
-    if (view || current) waiting = await readWaiting()
+    if (view || current) waits = await readWaiting()
     mark()
   }
   refresh()

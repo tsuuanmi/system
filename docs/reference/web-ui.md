@@ -66,7 +66,7 @@ the window's title and by Home for *Waiting for you*:
   a plan's approval), whenever they started; and the runs outside the board that failed since
   `since`, when the operator last marked Home as seen (this browser's `system.seen`), which they
   may continue. A board task's failed run is not counted: the board decides its next attempt. At
-  most 50 listed, each state read by state (at most 500), `more` past them.
+  most 50 listed, each state read by state (at most 100, as the list of runs reads), `more` past them.
 
 A run that failed before the operator last marked Home as seen is seen: it stays in the recent runs,
 and no longer counts.
