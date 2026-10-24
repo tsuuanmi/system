@@ -12,7 +12,7 @@ import type { SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
 import type { ProviderAccounts } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { templatePool } from '@tsuuanmi/system-resources-core'
-import type { QuotaClass, Tier } from '@tsuuanmi/system-workers-core'
+import { type QuotaClass, type Tier, WORK_KIND } from '@tsuuanmi/system-workers-core'
 
 /** An agent provider (a runtime) of the `agent-workers` row: how its accounts are used, enrolled, metered, and run. */
 export interface AgentProviderConfig extends ProviderAccounts {
@@ -46,6 +46,8 @@ export interface AgentRoleConfig {
   quotaClass?: QuotaClass | undefined
   worktreePerRun?: boolean | undefined
   reviewMember?: boolean | undefined
+  /** The kinds of work its Workers take (ADR-0056); unset, any work. */
+  kinds?: string[] | undefined
   /** What differs per runtime, by runtime kind. */
   runtimes?: Record<string, AgentRoleRuntime> | undefined
 }
@@ -67,6 +69,7 @@ export interface DerivedWorker {
   quotaClass: QuotaClass
   worktreePerRun: boolean
   reviewMember: boolean
+  kinds?: string[]
   tools?: string[]
   model?: string
   maxTurns?: number
@@ -119,6 +122,24 @@ export function checkProviders(providers: readonly AgentProviderConfig[]): void 
   }
 }
 
+/** The most kinds of work one Worker takes (`capability-descriptor@1.6` `kinds`). */
+export const MAX_KINDS = 16
+
+/**
+ * What is wrong with a Worker's or role's `kinds` (ADR-0056), or undefined when nothing is: at least
+ * one, at most {@link MAX_KINDS}, each a kind label once; never on a review member, whose steps name
+ * no kind, so it would take none of them.
+ */
+export function kindsProblem(kinds: unknown, reviewMember: boolean | undefined): string | undefined {
+  if (kinds === undefined) return undefined
+  if (!Array.isArray(kinds) || !kinds.length || kinds.length > MAX_KINDS) return `must list 1 to ${MAX_KINDS} kinds of work`
+  const bad = kinds.find((k) => typeof k !== 'string' || !WORK_KIND.test(k))
+  if (bad !== undefined) return `${JSON.stringify(bad)} is not a kind of work (${WORK_KIND})`
+  if (new Set(kinds).size !== kinds.length) return 'name a kind twice'
+  if (reviewMember) return 'are not for a review member: its steps name no kind, so it would take none of them'
+  return undefined
+}
+
 /** Whether a provider entry sets anything only derived Workers use. */
 export const setsDerivedOnly = (p: AgentProviderConfig): boolean =>
   p.pool !== undefined || Object.keys(p.windows ?? {}).length > 0 || p.limitCooldownSeconds !== undefined || p.maxConcurrentRunsPerAccount !== undefined
@@ -142,6 +163,8 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
       if (role.sandbox !== 'read-only') fail(`${at} (${role.id}): a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
       if (role.worktreePerRun) fail(`${at} (${role.id}): a review member works in an empty directory outside any repository, never a worktree per run (worktreePerRun)`)
     }
+    const kinds = kindsProblem(role.kinds, role.reviewMember)
+    if (kinds) fail(`${at} (${role.id}).kinds ${kinds}`)
     for (const [runtime, settings] of Object.entries(role.runtimes ?? {})) {
       const family = settings?.family
       if (family !== undefined && (typeof family !== 'string' || !family.length || family.length > 128)) fail(`${at} (${role.id}).runtimes.${runtime}.family must be 1 to 128 characters`)
@@ -170,6 +193,7 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
       out.push({
         id: `${assignment.account}/${name}`, runtime, workspace: role.workspace, sandbox: role.sandbox, tier: role.tier,
         quotaClass: role.quotaClass ?? 'agent-plan', worktreePerRun: role.worktreePerRun === true, reviewMember: role.reviewMember === true,
+        ...(role.kinds ? { kinds: [...role.kinds] } : {}),
         ...(own.tools?.length ? { tools: [...own.tools] } : {}), ...(own.model ? { model: own.model } : {}), ...(own.maxTurns ? { maxTurns: own.maxTurns } : {}),
         ...(own.family !== undefined ? { family: own.family } : {}),
         ...(provider?.pool !== undefined ? { pool: templatePool(provider.pool, assignment.account), account: assignment.account, windows: { ...provider.windows } } : {}),

@@ -42,10 +42,18 @@ The **`agents` Worker source**: agent runtimes as Workers
   reviews. Optional: `reviewMember` (default false; see **Review members**
   below), refused at load (`config_error`) unless the sandbox is `read-only`
   (a writer never reviews), `family` is set, and `worktreePerRun` is off.
+  Optional: `kinds`, the kinds of work the operator gives it (1 to 16 labels such
+  as `code` or `docs`; [work kinds](../../../docs/design/routing.md#work-kinds),
+  [ADR-0056](../../../docs/decisions/adr/0056-route-work-by-kind.md)): it is then
+  described at `capability-descriptor@1.6` with them and takes only steps that
+  name one of them, never a step that names none; unset, it takes any work. A
+  malformed or repeated kind, an empty list, or kinds on a review member (whose
+  steps name no kind) is refused at load (`config_error`).
 - **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
   [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
   - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,
-    `sandbox`, `tier`, `quotaClass`, `worktreePerRun`, `reviewMember`, and under
+    `sandbox`, `tier`, `quotaClass`, `worktreePerRun`, `reviewMember`, `kinds`
+    (as a hand-named Worker's, for each of its Workers), and under
     `runtimes.<runtime>` what differs per runtime (`tools`, `model`,
     `maxTurns`, `family`; a review member's role names the family of each
     runtime it is assigned on);
@@ -83,9 +91,9 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **The move from hand-named rows** (`src/migrate.ts`, `system account
   migrate`, MCP `account_migrate`, operator scope;
   [runbook](../../../docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)):
-  - `planMigration` (rule `agent-workers.migration`, pure) gives the new row
-    from the loaded hand-named rows: rows that agree on the work's settings are
-    one role (`review` when read-only, `develop` when writing, then `review-2`,
+  - `planMigration` (rule `agent-workers.migration` version 2, pure) gives the new row
+    from the loaded hand-named rows: rows that agree on the work's settings
+    (their `kinds` included, which the role keeps) are one role (`review` when read-only, `develop` when writing, then `review-2`,
     …; a second row of one runtime starts another role), what each runtime set
     goes under `runtimes`; slot 1 of each runtime (its configured home, adopted
     where it is) is assigned that runtime's roles by its verified id; an old

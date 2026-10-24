@@ -181,6 +181,15 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     expect(() => deriveWorkers([ROLE('a', { worktreePerRun: true }), ROLE('b')], [], [])).toThrow(/share the workspace/)
   })
 
+  it('gives a role\'s Workers its kinds of work, and refuses kinds that are malformed, repeated, empty, or on a review member (REQ-WRK-11, ADR-0056)', () => {
+    const [code, docs, review] = deriveWorkers([ROLE('code', { kinds: ['code'] }), ROLE('docs', { kinds: ['docs', 'tests'] }), ROLE('review')], [{ account: ACC1, roles: ['code', 'docs', 'review'] }], [])
+    expect([code!.kinds, docs!.kinds, review!.kinds]).toEqual([['code'], ['docs', 'tests'], undefined])
+    expect(() => deriveWorkers([ROLE('code', { kinds: [] })], [], [])).toThrow(/kinds must list 1 to 16/)
+    expect(() => deriveWorkers([ROLE('code', { kinds: ['Code'] })], [], [])).toThrow(/"Code" is not a kind of work/)
+    expect(() => deriveWorkers([ROLE('code', { kinds: ['code', 'code'] })], [], [])).toThrow(/name a kind twice/)
+    expect(() => deriveWorkers([ROLE('member', { reviewMember: true, kinds: ['code'] })], [], [])).toThrow(/not for a review member/)
+  })
+
   it('refuses both shapes in one row, and per-account settings beside hand-named Workers, at load', async () => {
     const both = await boot({ workers: [{ id: 'reviewer', runtime: A, workspace: '/srv/ws', sandbox: 'read-only', tier: 'standard' }], roles: [ROLE('review')], assignments: [{ account: ACC1, roles: ['review'] }] })
     expect(both.ctx.get('agentWorkers')).toBeUndefined()
@@ -495,5 +504,23 @@ describe('system account migrate (PROP-0012 phase F: migration from hand-named r
     expect(planMigration({ rows: [...rows].reverse(), providers: [{ provider: A, slots: 3 }], accounts: accountsOf(A, B), runtimes, pools, stop: [] })).toEqual(plan)
     const mixed = planMigration({ rows: [rows[0]!, { ...rows[1]!, pool: undefined, account: undefined, windows: undefined }], providers: [], accounts: accountsOf(A), runtimes, pools, stop: [] })
     expect(mixed.blockers).toEqual([expect.stringMatching(/draw on different pools/), expect.stringMatching(/map limit windows differently/)])
+  })
+
+  it('keeps the kinds of work of the rows: rows of other kinds are other roles, and rows of one kind, in any order, one role (ADR-0056)', () => {
+    const accounts = [A, B].map((provider, i) => ({
+      schema: 'agent-account@1.0' as const, provider, slot: 1, home: `/h/${provider}`, status: 'ready' as const, accountId: `${provider}:${String(i).padStart(16, '0')}`, revision: 1, updatedAt: 'x',
+    }))
+    const runtimes = new Map([[A, { home: `/h/${A}` }], [B, { home: `/h/${B}` }]])
+    const writer = { workspace: '/w', sandbox: 'workspace-write' as const, tier: 'standard' as const, worktreePerRun: true }
+    const rows: AgentWorkerConfig[] = [
+      { id: 'a-code', runtime: A, ...writer, kinds: ['code'] },
+      { id: 'b-docs', runtime: B, ...writer, kinds: ['tests', 'docs'] },
+      { id: 'b-writer', runtime: B, ...writer },
+    ]
+    const plan = planMigration({ rows, providers: [], accounts, runtimes, pools: undefined, stop: [] })
+    expect(plan.roles.map((r) => [r.id, r.kinds])).toEqual([['develop', ['code']], ['develop-2', ['docs', 'tests']], ['develop-3', undefined]])
+    expect(plan.blockers).toEqual([])
+    const one = planMigration({ rows: [rows[0]!, { ...rows[1]!, kinds: ['code'] }], providers: [], accounts, runtimes, pools: undefined, stop: [] })
+    expect(one.roles.map((r) => [r.id, r.kinds])).toEqual([['develop', ['code']]])
   })
 })
