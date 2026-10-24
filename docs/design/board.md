@@ -9,23 +9,15 @@
 > [ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md).
 >
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
-> [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
+> [`board-core`](../../packages/board-core/README.md)), its bundle row on over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
-> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts (MCP `run` or
-> `system run --task`): it reserves a task's budget lines on the ledger before each step of its
-> run starts work, and a spent one stops the run before its next step and blocks the task (`budget-spent`,
-> [a task's budget](workflow-engine.md#a-tasks-budget)), asking for the lines that would fund its
-> next attempt, which the operator's approval adds to its budget
-> ([funding a spent budget](#funding-a-spent-budget)); a step that cannot finish without a
-> person's answer blocks it on its questions (`question`,
-> [a question from a run](workflow-engine.md#a-question-from-a-run)); and the `TASKS.md`
-> projection (`renderTasks` in [`board-core`](../../packages/board-core/README.md)) is written
-> into a task run's own worktree ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
-> Differs from target: a budget is enforced before each step of a run, never inside one, so a step
-> in flight can overdraw its last lines ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md));
-> only a Worker source with a worktree per run writes `TASKS.md`. The operator
+> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts, and the operator
 > accepts or rejects a review, and pauses, resumes, or closes a project, on `/ui`
-> ([`web-ui`](../../packages/plugins/web-ui/README.md)).
+> ([`web-ui`](../../packages/plugins/web-ui/README.md)); differs from target: a budget is
+> enforced before each step of a run, never inside one, so a step in flight can overdraw its last
+> lines ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md));
+> only a Worker source with a worktree per run writes `TASKS.md`
+> ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a

@@ -91,12 +91,24 @@ A decision artifact records **one decision**
 | `escalation` | routing policy | the next tier after an acceptance rejection |
 | `egress` | egress policy | payload permitted or blocked, with the artifact refs checked |
 | `acceptance` | routing, engine | accepted or rejected against the acceptance contract; what a review's source step read (`workflow.source-snapshot`) |
-| `gate` | engine, plugin host | exact-subject gate passed or failed; a step's instructions refused before any Worker starts (`workflow.instructions`, [briefs](workflow-engine.md#briefs)); a plugin's manifest check at start passed or failed (`plugin-host.manifest-check`, [plugin host](plugin-host.md#the-manifest-check)) |
+| `gate` | engine, plugin host, agent Workers | exact-subject gate passed or failed; a step's instructions refused before any Worker starts (`workflow.instructions`, [briefs](workflow-engine.md#briefs)); a plugin's manifest check at start passed or failed (`plugin-host.manifest-check`, [plugin host](plugin-host.md#the-manifest-check)); a tool call the run's gate decided without the policy (`agent-workers.tool-gate`, [approvals](approvals.md#what-each-verdict-does)) |
 | `reconciliation` | provider runtime | WAIT, RECOVER, RESUBMIT, or AMBIGUOUS, with snapshot hashes |
 | `graph-growth` | engine | `plan` artifact accepted (nodes appended) or rejected; a team's debate appended |
 | `recovery` | engine | failure class and retry disposition |
 | `spec-admission` | engine | the workflow spec accepted, with the provenance of each value |
 | `vote` | engine, caller, or operator | a team's tally of one round, or its decision: an option or `inconclusive` ([teams](teams.md#the-record); `decision@1.1`, `@1.2` with a review's checked findings) |
+| `retention` | turn runtime, agent Workers | a released session's website conversations made due for deletion ([conversation ledger](provider-turns.md#conversation-ledger)); a run's worktree retired ([agent runtimes](agent-runtimes.md#workspaces)) |
+| `autonomy` | approval queue | the mode the autonomy policy gives one action: `auto`, `notify`, `ask`, or `forbid` ([approvals](approvals.md#the-autonomy-policy)) |
+| `approval` | approval queue | how a request was resolved: `approved`, `rejected`, `denied:expired`, or `withdrawn` |
+| `board` | board | a task's or a project's move, naming the decision that caused it ([board](board.md)) |
+| `budget` | resource ledger | a reservation `reserved` or `refused` ([resources](resources.md#a-runs-budget)) |
+| `lifecycle` | plugin host | a plugin's lifecycle state ([plugin host](plugin-host.md#lifecycle-states)) |
+| `policy-change` | approval queue | the autonomy policy set in force ([approvals](approvals.md#a-policy-change)) |
+| `registration` | experiment registry | an experiment `preregistered` or `refused` ([experiments](experiments.md#a-registration)) |
+| `verdict` | evaluation engine | `supported`, `refuted`, `inconclusive`, or `invalid` ([evaluations](evaluations.md#the-verdict-rule)) |
+| `enrollment` | agent Workers | what account a slot of an agent runtime holds, and the move from hand-named Workers ([agent runtimes](agent-runtimes.md#enrollment-and-quarantine)) |
+
+Which `decision@1.x` each type needs is in [reference: schemas](../reference/schemas.md#decision).
 
 Rules:
 
@@ -168,8 +180,8 @@ attempt's answer is read: `system explain <runId>` names, on each acceptance dec
 ## Storage
 
 Envelopes and their bodies are stored in `ctx.store`, indexed by id, kind,
-`runId`, `nodeId`, subject, and decision type. A store for large bodies, addressed
-by the envelope's `blob` ref, is planned. Retention follows the workflow retention
+`runId`, `nodeId`, subject, and decision type. A large body is kept in a store of
+its own, addressed by the envelope's `blob` ref. Retention follows the workflow retention
 rules. A decision artifact is kept for as long as any artifact or state that
 references it.
 

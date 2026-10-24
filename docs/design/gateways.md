@@ -1,6 +1,6 @@
 # Gateways
 
-> Boundary: [gateways](../architecture/components.md#gateways).
+> Target state. Boundary: [gateways](../architecture/components.md#gateways).
 > Requirements: REQ-GW-1..5, REQ-HOST-1, REQ-HOST-3. Security: [threat model](../security/threat-model.md).
 > Decisions: [ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md),
 > [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md).
@@ -157,15 +157,15 @@ runs, operator controls, accounts, sessions) as native MCP tools to any MCP clie
 
 ## Target (not built)
 
-The gateways above differ from the target in these ways. Each item is planned.
+The target adds these to the gateways above.
 
 - **MCP tool inversion** (below) instead of the text protocol, for accounts and hosts that
   can reach a local MCP server through a website connector.
 - **Journaled client configuration edits** instead of printed commands (below).
 - **Status rows** mapped to Responses reasoning summaries and Messages `thinking` blocks.
 - **`POST /v1/responses/compact`** (remote compaction).
-- **`/admin/*` routes** (drain, resume, cancel, interrupt, shutdown); drain is an engine
-  operation today.
+- **`/admin/*` routes** (drain, resume, cancel, interrupt, shutdown), beside drain as an engine
+  operation ([drain](#drain)).
 - **`previous_response_id`** served from a local cache bounded by entries, age, and bytes.
 - **A measured model catalog:** Workers listed as models with measured context windows and
   composer budgets, and a request over budget refused in preflight, before a provider turn

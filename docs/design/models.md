@@ -8,8 +8,9 @@
 >
 > Implemented in [`models-core`](../../packages/models-core/README.md) and
 > [`models`](../../packages/plugins/models/README.md); differs from target: usage is the
-> provider's token counts per step, not priced; no API or local model has been verified live
-> ([release checklist](../validation/release-checklist.md)).
+> provider's token counts per step, not priced, and not recorded on the
+> [resource ledger](resources.md). What was verified live is in the
+> [release checklist](../validation/release-checklist.md).
 
 A **model Worker** is one entry of the operator's model catalog: an API model or a model served
 on this machine. It answers one prompt with text, and runs no tools. It keeps a session by

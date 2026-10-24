@@ -8,9 +8,9 @@
 > Implemented in [`ui-ops`](../../packages/ui-ops/README.md), with the heal audit in
 > [`provider-chatgpt-web`](../../packages/plugins/provider-chatgpt-web/README.md); differs from
 > target: every heal is deterministic (`heal: model` is parsed but acts as `deterministic`: the
-> `ctx.models` seam exists, but the heal engine does not use it yet); `sideEffect` is parsed but caps neither healing nor failure
-> handling; `system ui doctor`, `system ui overlay export`, and the diagnostic bundle are planned;
-> the Gemini driver runs with healing off.
+> heal engine does not use the `ctx.models` seam); `sideEffect` is parsed but caps neither healing
+> nor failure handling; there is no `system ui doctor`, `system ui overlay export`, or diagnostic
+> bundle, and no attachments; the Gemini driver runs with healing off.
 
 ## How a driver uses a website
 
@@ -54,13 +54,15 @@ flowchart LR
 The ChatGPT driver's procedures are `checkAuth`, `identity`, `open` (new or bound
 conversation, Chat mode, Temporary chat), `selectMode` (model and Power, read
 back), `ask` (Deep research tool, insert, send, wait, read), `snapshot`, and
-`binding` (URL `/c/<id>`). They hold no selectors. Attachments are not built yet.
+`binding` (URL `/c/<id>`). They hold no selectors.
 
 ## UI map (`ui-map@1.1`)
 
 One YAML file per provider, shipped with the driver package (for example,
 `packages/plugins/provider-chatgpt-web/ui/chatgpt-web.ui.yaml`). It is validated
-against the JSON Schema at load. Version 1.1 adds the element field `frames`.
+against the JSON Schema at load. What each minor adds, from `frames` at 1.1 to error rules on an
+answer at 1.4, is in [reference: schemas](../reference/schemas.md#ui-map); the example below is
+a 1.1 map.
 
 ```yaml
 schema: ui-map@1.1
@@ -149,8 +151,8 @@ For an element:
    settle (250 ms): a page still rendering shows some elements a moment before
    others, such as Gemini's prompt host before its bubble, or a menu still
    opening. If a non-primary candidate still wins, report drift (`onDrift`,
-   logged as `ui.drift`). The turn still succeeds; the event feeds the health view and,
-   once built, `system ui doctor`. An action whose target no candidate finds
+   logged as `ui.drift`). The turn still succeeds; the event feeds the health view and
+   `system ui doctor`. An action whose target no candidate finds
    (with no heal or fallback), or that misses its postcondition, is reported
    too before it fails, each with [drift evidence](#drift-evidence).
 
@@ -221,10 +223,9 @@ can repair the map while the fallback keeps the turn working.
    Levenshtein), test-id similarity, and the nearby role. Accept the best node
    only if its score is at least `τ` (default 0.8) and it beats the second best by
    a margin (default 0.15).
-3. **Model proposal** (planned: only with `heal: model`, once the `ctx.models`
-   seam exists). An **economy-tier** model receives the trimmed snapshot, the
+3. **Model proposal** (only with `heal: model`). An **economy-tier** model receives the trimmed snapshot, the
    operation description, and the fingerprint, and returns one ref. It is reached
-   only through the seam; no model is named in the map or code (INV-11).
+   only through the `ctx.models` seam; no model is named in the map or code (INV-11).
 4. **Verify.** Resolve the ref, check that the match is unique, then check the
    role and `require`. Turn it into a durable locator with `normalize()`, run
    the action, and check `verify`.
@@ -240,8 +241,7 @@ can repair the map while the fallback keeps the turn working.
    The overlay is `<DSH_HOME>/system/ui/<provider>.overlay.yaml`, owner-only and
    written durably. The shipped map is never modified at run time.
 
-Target cap by side-effect class (planned; today `sideEffect` is parsed and not
-enforced):
+Cap by side-effect class:
 
 | Side-effect class | Heal allowed | On failed verification |
 |---|---|---|
@@ -256,7 +256,7 @@ flowchart TD
   T[turn: candidate miss] --> H{heal}
   H -->|ok| O[overlay, decision, drift event] --> C[turn continues]
   H -->|fails| F["ui_drift (CONFIG_FIX): turn fails closed"]
-  subgraph Planned[operator tools: planned]
+  subgraph Tools[operator tools]
     U[system ui doctor provider] --> U1[signed-in context: resolve every element, dry-run reversible actions, resolve irreversible ones without clicking]
     U --> U2[report per-candidate matches, overlay entries, drift events]
     U --> X[system ui overlay export: a map diff with fixture updates, for review and a PR]

@@ -12,8 +12,10 @@
 > [`accounts`](../../packages/plugins/accounts/README.md),
 > [`login`](../../packages/plugins/login/README.md), and
 > [`credentials-vault`](../../packages/plugins/credentials-vault/README.md); differs from
-> target: Linux only (no `offscreen`); `system account remove`, retained pages per session,
-> sleep prevention, the challenge reload outside a turn, and the `imap` code provider are planned.
+> target: Linux only (no `offscreen`); there is no removal of a website account
+> (`system account remove` frees an agent account's slot only, and refuses a website account),
+> no retained page per session, no sleep prevention, no challenge reload outside a turn, no
+> paste from the host on the remote login page, and no `imap` code provider.
 
 ## Principle: a genuine browser, headed but invisible
 
@@ -245,7 +247,7 @@ account's profile open, Save reads it in place, in a page of its own.
     - Temporary turns open a page each.
   - Sessions stay apart by conversation, each in its own tab, so one account still
     serves several team members.
-- **Retained page per session** (planned), opt-in per capability. For long sessions and
+- **Retained page per session**, opt-in per capability. For long sessions and
   Deep Research, one page stays bound to a `SessionId`
   ([sessions](sessions-and-messaging.md)), with a TTL, a cap per account, and
   heartbeat sweeps. Eviction falls back to the fresh-context path.
@@ -257,6 +259,6 @@ account's profile open, Save reads it in place, in a page of its own.
 | Situation | Handling |
 |---|---|
 | Cloudflare challenge response (`cf-mitigated: challenge`) **outside** an active turn | reload once, then confirm with a 2xx |
-| a challenge during a turn, or after the reload | turn fails as `USER_ACTION` (`challenge`). The operator resolves it through the `visible` or `remote` view. Nothing is auto-solved |
+| a challenge during a turn, or after the reload | turn fails as `USER_ACTION` (`challenge`), and the account is marked `challenge`: its Workers are unavailable, so nothing loads the site again until the operator resolves it through the `visible` or `remote` view and saves the account. Nothing is auto-solved |
 | signed out (positive evidence) | `reauth-required`; queued work for the account fails closed (REQ-ACC-5) |
 | UI drift (no candidate resolves) | bounded self-heal ([UI operations](ui-operations.md#self-heal)); if it fails, the turn fails closed with `CONFIG_FIX` and a diagnostic bundle, and a health alert is raised |

@@ -77,10 +77,11 @@ the Worker another member runs on (PROP-0012 phase C,
 - The Workers another member holds are its session's (`affinity`), or, when no loaded source owns
   the session any more, the Worker it joined the team on.
 - Each held Worker's account is its **siblings** (`ctx.workers.siblings`): the tiers of a website
-  account, every role of an agent runtime's one home. Any Worker whose descriptor names the same
+  account, every role of an agent account (every hand-named Worker of an agent runtime, which share
+  its one home; [agent runtimes](agent-runtimes.md#agent-accounts)). Any Worker whose descriptor names the same
   `account` (`group` and `id`) is on it too, whichever source describes it. A Worker with neither
   (a model Worker) is an account of its own.
-- So two roles of one home, a reviewer and a developer, are one account: a second member never
+- So two roles of one account, a reviewer and a developer, are never two members: a second member never
   takes the other role as if it were independent. Members still differ by family first; a role
   with an operator-set `family` of its own does not make its account another one.
 - **Fail closed.** When a held Worker's account cannot be told apart, the member is refused

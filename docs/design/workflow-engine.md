@@ -57,8 +57,8 @@ A template node may declare named variants:
 - A variant changes only those six fields: it never adds a team, a planner's
   growth policy, or `differentFrom`. Each value is checked: a tier, a conversation,
   non-empty capabilities, non-empty text. Every variant is resolved when the template
-  is added, so a broken variant is refused then, not at a run's start. The one variant
-  today is `research`'s `deep` ([templates](../reference/workflow-templates.md#research)).
+  is added, so a broken variant is refused then, not at a run's start. `research`'s `deep`
+  is one ([templates](../reference/workflow-templates.md#research)).
 
 ### Conversations
 
@@ -104,8 +104,8 @@ provider family than the Workers that served those nodes
 
 ## Briefs
 
-Every Worker execution the engine starts is given a `brief@1.1`
-([`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
+Every Worker execution the engine starts is given a `brief@1.1` (`@1.2` for a board task's run,
+with its `ask` and `files`; [`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
 starts, in the transaction that starts it, and named by it (`workflow-node@1.2`
 `execution.brief`, the node's view, and the `workflow.node.started` event). The engine composes
 the record; the Worker source renders it into its own prompt
@@ -456,7 +456,7 @@ one `FAILED` node.
 node that failed with `quota_exhausted`, `challenge`, `reauth_required`, or `overloaded` before
 anything was sent (the execution reports `submitted: false`) is routed again with the failed
 Worker left out, and the other Workers on its account (the other tiers of a website account,
-every other role of an agent runtime's home, as its source's `siblings` names them), within its attempts: the `recovery` decision's outcome is `failover`, naming the
+every other role of an agent account, as its source's `siblings` names them), within its attempts: the `recovery` decision's outcome is `failover`, naming the
 Worker it leaves (`from`) and that nothing was sent. The Workers left out are kept on the node
 row (`excluded`), so a restart keeps them; `continue` clears them. The router records each as the
 `excluded` check. With no Worker left but those, the node routes as before: an overload waits its
@@ -503,8 +503,8 @@ a limit makes the account's work wait; it never moves to another account of its 
   sign-out fails for the operator (`USER_ACTION`), as before ADR-0034. An unsent `overloaded` is
   retried with its back-off, never as a failover, under the same rule. The `recovery` decision's
   `detail` names the `assignment`; `continue` clears it.
-- With one account per provider, as on the live host, nothing is moved anyway, and every route
-  chooses as before; what changes is that a known limit waits instead of failing.
+- With one account per provider, nothing is moved anyway, and every route chooses as before;
+  what changes is that a known limit waits instead of failing.
 - A waiting node holds its run open: it counts toward `maxActiveRuns`, and a drain waits for it.
 
 ### A deferred tool call
@@ -647,9 +647,8 @@ stateDiagram-v2
   are refused. An overdraw is bounded by the steps in flight (one long agent step can still draw up
   to its own `maxTurns`), and the brief tells each Worker what was left when the run was admitted.
   Stopping an agent run at its next turn or tool boundary is step 2 of
-  [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md),
-  deferred until the live install shows real overdraws: the ledger records no usage while a run is
-  in flight, and no seam stops one at a boundary yet.
+  [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md):
+  it needs usage recorded while a run is in flight, and a seam that stops a run at a boundary.
 - **Which outcome wins.** A step in flight that fails for good, or asks questions, decides the
   run as it would without the refusal (a failed run, or the question wait); the next attempt's
   first step is then refused on the spent line. A run whose holder was lost winds down as such.

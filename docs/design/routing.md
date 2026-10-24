@@ -5,10 +5,9 @@
 >
 > Implemented in [`workers`](../../packages/plugins/workers/README.md) (admission, order,
 > decisions, acceptance) and [`workflow`](../../packages/plugins/workflow/README.md) (tier
-> escalation); differs from target: `connector:<name>` is not proven by any Worker; nothing sets
-> a Worker `quota-exhausted`, and usage is reported per run step, not estimated per account; the
-> resume conformance test behind `persistent-conversation` and egress exceptions naming exact
-> artifacts are planned.
+> escalation); differs from target: `connector:<name>` is not proven by any Worker; usage is
+> reported per run step, not estimated per account; there is no resume conformance test behind
+> `persistent-conversation`, and no egress exception naming exact artifacts.
 
 Routing turns a **work requirement**
 ([`work-requirement.v1.json`](../../schemas/work-requirement.v1.json)) into exactly
@@ -51,7 +50,7 @@ each one with evidence from the sources shown below.
 | `web-search` | search the live web with citations | feature probe on the account |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
-| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers); the source's own replay (model Workers; for a review member's steps only, an agent Worker under the review-member profile whose runtime cannot resume: an exact, recorded replay). A resume conformance test for agent runtimes is planned |
+| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers); the source's own replay (model Workers; for a review member's steps only, an agent Worker under the review-member profile whose runtime cannot resume: an exact, recorded replay); target for agent Workers: a resume conformance test |
 | `local-data` | can read local files and datasets in place | runs on this machine; sandbox policy allows the paths |
 | `develop`, `validate` | edit code, run tests in a workspace | agent-runtime probe + writable sandbox; `validate` also needs `executes` |
 | `review` | assess a provided subject against criteria | a read-only agent Worker (runtime probe + read-only sandbox) |
@@ -79,7 +78,7 @@ ballot, debate) from the admitted spec, never from a template or model text (INV
   that work.
 - A descriptor below `@1.4`, or a requirement below `@1.1`, that carries a scope is refused, so no
   reader takes a scoped offer for a plain one.
-- Today one source scopes offers: an agent Worker under the enforced review-member profile
+- One source scopes offers: an agent Worker under the enforced review-member profile
   offers `reason`, granted by the profile while it is enforced, and, when its runtime cannot
   resume, `persistent-conversation` (kept by an exact, recorded replay), for a review member's
   steps only ([agent runtimes](agent-runtimes.md#review-members)).
@@ -171,7 +170,7 @@ stays admissible: it only orders it later.
 
 A descriptor may carry the account its Worker runs on (`capability-descriptor@1.5`):
 `account: { id, group, mode, limitUntil? }`. Every Worker of one account (the tiers of a website
-account) carries the same `id`; `group` is what accounts are compared with (a website's provider,
+account, the roles of an agent account) carries the same `id`; `group` is what accounts are compared with (a website's provider,
 an agent runtime); `mode` is that group's setting, `assigned` by default or `pooled`
 ([configuration](../reference/configuration.md)). The router compares `id` and `group` for
 equality only and never names one ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
@@ -196,7 +195,7 @@ A Worker with no `account` is routed as before.
   of another account of that group takes the work (check `assignment`, the caller's reason). The
   engine passes it after an unsent failure on an assigned account, so the next attempt never moves
   inside the provider.
-- **One account per group** (the live host): nothing is held, so every Worker is chosen exactly as
+- **One account per group**: nothing is held, so every Worker is chosen exactly as
   before, with the same decisions; a refusal for that account's known limit carries `limitUntil`.
 
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,

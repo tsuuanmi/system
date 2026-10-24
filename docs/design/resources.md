@@ -12,14 +12,14 @@
 > [`resources`](../../packages/plugins/resources/README.md) on `ctx.store`, with the MCP tools
 > `resources_pools` and `resources_usage`. Agent Workers configured with a pool reserve, record,
 > and observe through it ([agent runtimes](agent-runtimes.md#metering)), naming the board task
-> their brief serves; the workflow engine reserves a board task's budget lines before the task's
-> run starts work ([a task's budget](workflow-engine.md#a-tasks-budget)), and asks to fund a spent
+> their brief serves; the workflow engine reserves a board task's budget lines before each step of
+> the task's run starts work ([a task's budget](workflow-engine.md#a-tasks-budget)), and asks to fund a spent
 > one by lines it computes from the ledger's count of the task's usage
 > ([funding a spent task](workflow-engine.md#funding-a-spent-task)). Differs from target: no
-> other Worker source reports yet, no transcript is reconciled, the engine reserves only for a
-> task that declares a budget, the bundle configures no pool, and usage the ledger cannot count
-> counts as 0 against a cap: it is recorded and shown, and no cap fails closed on it yet
-> ([usage the ledger cannot count](#usage-the-ledger-cannot-count)).
+> other Worker source reports, no transcript is reconciled, the engine reserves only for a
+> task that declares a budget, the bundle configures no pool, no metering oracle checks recorded
+> usage, and usage the ledger cannot count counts as 0 against a cap: it is recorded and shown,
+> and no cap fails closed on it ([usage the ledger cannot count](#usage-the-ledger-cannot-count)).
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage
@@ -46,7 +46,7 @@ Claude Code Worker run through the Agent SDK may draw on a different pool than i
 
 ```mermaid
 sequenceDiagram
-  participant E as engine or board
+  participant E as engine or Worker source
   participant R as ctx.resources
   participant W as Worker runtime
   E->>R: reserve(runId, lines, caps)
@@ -63,7 +63,7 @@ sequenceDiagram
 | Step | Who | Records | On failure |
 |---|---|---|---|
 | observe | a Worker source or runtime, from a status line, limit notice, response headers, or result | the reading as an `evidence` artifact; the window's latest reading by `observedAt` | a reading for a pool or window not configured is refused (`unknown-pool`) |
-| reserve | the engine before a run, or the board before an attempt | a `budget` decision, `reserved` or `refused` with a reason per pool or cap | refused when a pool is not configured, or unavailable, or a cap would be exceeded |
+| reserve | the engine before each step of a board task's run, or a Worker source before a run | a `budget` decision, `reserved` or `refused` with a reason per pool or cap | refused when a pool is not configured, or unavailable, or a cap would be exceeded |
 | record | the Worker source, after the run | the record as a `receipt` artifact | refused for an unknown pool (`unknown-pool`), a schema violation, or cached input above the input (`invalid`) |
 | release | whoever reserved | the hold is removed | an unknown reservation is refused; an expired one releases quietly |
 | expiry | none: time | a hold nobody released (a crashed run) stops counting at its `expiresAt` (`holdSeconds`, the provider's default 4 hours) | — |
@@ -164,11 +164,11 @@ and its contract do not change, and to make each one visible and durable instead
   no length (a credit balance) never resets, so every such run counts until it is reconciled or
   the event log's retention removes it ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
 
-**Deferred: failing closed for metered pools** (D25's third option). A cap could refuse its
+**Not in this design: failing closed for metered pools** (D25's third option). A cap could refuse its
 scope's next reservation while a run of a pool whose kind requires counted usage (a metered pool)
 is unreconciled, keeping 0 for subscription pools with windows. That changes this guarantee seam's
-cap semantics, so it needs its own ADR (ADR-0036), and it waits until transcript reconciliation
-exists: before then, nothing could reconcile such a run, and its scope would stay refused for good.
+cap semantics, so it needs its own ADR (ADR-0036), and it rests on transcript reconciliation:
+without it, nothing could reconcile such a run, and its scope would stay refused for good.
 
 ## Fail-closed rules
 
