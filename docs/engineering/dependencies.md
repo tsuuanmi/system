@@ -92,6 +92,12 @@ operator signs it off.
   install, since serving others needs the Commercial Terms and each user's own
   credentials; that the SDK's feedback collection is acceptable for the runs' content;
   and that the agreements page still says the above for the release.
+- **Signed off for the pilot** by the operator on 2026-10-24 (D27): the install is the
+  operator's only, its Claude Code Workers run on the operator's own subscriptions, and
+  nothing is resold; unattended Workers count as the operator's own use. Two conditions
+  stand: the agreements page is read again at the release, and the Workers switch to an
+  API key if the install ever serves anyone but the operator. The decision did not
+  name the SDK's feedback collection, so that item is still signed off at the release.
 
 ## Built, with what was compared
 
