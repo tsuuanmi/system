@@ -107,7 +107,8 @@ describe('system MCP server on ctx.webServer', () => {
     for (let i = 0; i < 1000; i += 1) ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'interrupted', account: 'max', pool: 'max.agents', observedAt, reason: 'the host stopped while it ran, so no result came' } })
     ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_2', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
-  })
+    // A thousand appends and four MCP round trips: about 2 s alone, past the 5 s default on a loaded host.
+  }, 15_000)
 
   it('reads each Worker source\'s last read into health, after listing the Workers: a silent one is named, never ok (INV-2)', async () => {
     const { url, tokens, ctx } = await boot()

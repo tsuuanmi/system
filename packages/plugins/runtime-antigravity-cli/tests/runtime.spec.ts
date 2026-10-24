@@ -379,7 +379,8 @@ describe('antigravity-cli: every tool call passes the hook: the runtime\'s rules
       await runtime({ env: s.env, timing: { gateMs: 50, killMs: 500 } }).run({ prompt: 'go', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)
       expect(answers(s.log())).toEqual([['read_file', 'deny', expect.stringMatching(/the tool gate/)]])
     }
-  })
+    // Four scripted agy runs: about 5 s on a loaded host, the default's own bound.
+  }, 15_000)
 })
 
 describe('antigravity-cli: the hook fails closed on its own', () => {
@@ -533,7 +534,8 @@ describe('antigravity-cli: the outcome, and what a run consumed, from agy\'s own
     const none = await failure({ result: null, stderr: 'panic: runtime error' })
     expect(none).toMatchObject({ kind: 'session_broken', message: expect.stringContaining('without a result (exit 1): panic: runtime error') })
     expect(await failure({ exitCode: 3 })).toMatchObject({ kind: 'session_broken', message: expect.stringContaining('SUCCESS') })
-  })
+    // Five scripted agy runs: about 5 s on a loaded host, the default's own bound.
+  }, 15_000)
 
   it('stops agy when aborted, and reports what it saw', async () => {
     const controller = new AbortController()
