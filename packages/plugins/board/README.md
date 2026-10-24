@@ -73,6 +73,13 @@ charters, and their tasks.
   gate move, whose decision names the raise. A failure before that commit leaves the task as it
   was, waiting on the approved request; the next sweep applies it once and adopts any request
   the gate had opened. A request asked again after a policy change keeps the lines and subject.
+- **Reservations not released** (`block`'s `unreleased`, contract 1.3,
+  [ADR-0054](../../../docs/decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)):
+  checked with `unreleasedProblem` before anything else (`invalid` on another wait, or when
+  malformed), then named on the `funding` request: its summary counts them and its consequences,
+  after what approving does, name each run, step, and expiry (`unreleasedText`). They change
+  neither the subject nor the wait, and are not kept: a request asked again after a policy change
+  does not name them.
 - **A digest on a result** (`attachDigest`, contract 1.1): in one transaction, a stored
   `digest@1.0` report whose sources are exactly the result's artifacts becomes `result.digest`,
   once; the same digest again changes nothing. Refused while the task has no result, while its
@@ -146,7 +153,7 @@ charters, and their tasks.
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
   on its `approvals` inject and is not mounted.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
-  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.2
+  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.3
   over `FakeApprovals`, with no expected failures; the approval queue's own tests run it over the
   store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place

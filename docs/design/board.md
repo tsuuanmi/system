@@ -36,7 +36,7 @@ the operator itself: every move that needs a person goes through the
 
 ## Seam
 
-`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.2:
+`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.3:
 
 | Method | Does |
 |---|---|
@@ -48,7 +48,7 @@ the operator itself: every move that needs a person goes through the
 | `claim`, `renew` | take and renew a task's lease |
 | `start`, `submit` | record the run before it starts; record its result |
 | `accept(taskId, acceptance)` | apply the `acceptance` decision on the result |
-| `block`, `answer` | interrupt a running task, a spent budget naming the funding it asks for (`funding`, 1.2, optional: [funding a spent budget](#funding-a-spent-budget)); answer a waiting one |
+| `block`, `answer` | interrupt a running task, a spent budget naming the funding it asks for (`funding`, 1.2, optional) and the ledger's reservations its holder could not release (`unreleased`, 1.3, optional: [funding a spent budget](#funding-a-spent-budget)); answer a waiting one |
 | `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost |
 | `cancel` | cancel a task that is not running or in review |
 | `attachDigest(taskId, digest)` | set the result's `digest`, once (1.1, optional: a provider at 1.0 has none) |
@@ -292,7 +292,16 @@ count, never from a model.
 - **Exact lines.** The board applies only the lines its wait stored, and only on a request whose
   subject's version is their hash, so what the operator approved is what is added.
 - A `budget-spent` block without `funding` asks only to go on, as at 1.1. The engine sends none when
-  the ledger cannot count the task's usage.
+  the ledger cannot count the task's usage, or when no line is reached by recorded usage.
+- **Reservations not released** (1.3, [ADR-0054](../decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)):
+  a `budget-spent` block may name `unreleased`, 1 to 8 of the ledger's reservations its holder
+  could not release (each a run id and a step of 1 to 200 characters, `run` for a run's one
+  reservation, and an ISO date `expiresAt` when known); a malformed list, or one on another wait,
+  is refused (`invalid`) and nothing changes. They still count against the task's budget until they
+  expire, so they may be what refused the step. The request's consequences name each one and say
+  that the next attempt may be refused again before then; its summary counts them. They change
+  neither the request's subject nor the wait, and nothing is released or raised for them. A
+  request asked again after a policy change does not name them, since the wait does not keep them.
 - The workflow engine makes no `budget-spent` block on a task's last attempt, since no approval
   could serve it: it reports the run failed (`reconcileRun`), and the task waits for input
   (`retries-spent`) with nothing asked ([funding a spent task](workflow-engine.md#funding-a-spent-task)).
@@ -365,13 +374,15 @@ when the result is accepted:
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 27
-scenarios at contract 1.2 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
-1.2), run against the fake provider and the store-backed provider, both over
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 28
+scenarios at contract 1.3 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
+1.2, `board.budget-spent-names-unreleased` since 1.3), run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.
 Contract 1.0 is unreleased and amended in place
 ([ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)); the last amendment
 adds `board.policy-change-asks-again`, for which each harness changes the queue's policies
 (`changePolicies`: the fake's `reload`, or a restart of the store-backed queue over the same
-store). 1.1 adds `attachDigest`, and 1.2 the optional `funding` of a `budget-spent` block, both
-minors ([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)).
+store). 1.1 adds `attachDigest`, 1.2 the optional `funding` of a `budget-spent` block
+([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)), and 1.3 its optional
+`unreleased` ([ADR-0054](../decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)),
+all minors.

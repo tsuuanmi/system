@@ -14,7 +14,7 @@ import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type
 import type {} from '@tsuuanmi/system-artifacts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type ProjectState, renderTasks, type RunOutcome, type Subject,
-  type TaskInput, type TaskState, TERMINAL, type Unit, type WaitReason,
+  type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { contentId, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -635,8 +635,12 @@ export class StoreBoard extends Board {
     return moved
   }
 
-  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[] }, at: Date = new Date()) {
+  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[]; unreleased?: UnreleasedHold[] }, at: Date = new Date()) {
     if (wait.funding !== undefined && wait.reason !== 'budget-spent') throw new BoardError('invalid', `only a budget-spent block asks for funding, not a ${String(wait.reason)} one`)
+    if (wait.unreleased !== undefined && wait.reason !== 'budget-spent') throw new BoardError('invalid', `only a budget-spent block names unreleased reservations, not a ${String(wait.reason)} one`)
+    const problem = wait.unreleased === undefined ? undefined : unreleasedProblem(wait.unreleased)
+    if (problem) throw new BoardError('invalid', problem)
+    const unreleased = wait.unreleased?.map(({ runId, step, expiresAt }) => ({ runId, step, ...(expiresAt !== undefined ? { expiresAt } : {}) }))
     if (wait.reason === 'question') {
       return this.ctx.store.transaction(() => {
         const current = this.taskOf(taskId)
@@ -662,7 +666,7 @@ export class StoreBoard extends Board {
     const funding = wait.funding === undefined ? undefined : this.fundingAsk(before.task, wait.funding)
     const past = funding && this.pastBound(before.task, funding)
     if (past) return this.commitLater(before.task, at, generation, (c) => this.pastBoundMove(c.task, funding!, past, at))
-    return this.gate(before.task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, generation, funding)
+    return this.gate(before.task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, generation, funding, unreleased)
   }
 
   /**
@@ -1095,11 +1099,12 @@ export class StoreBoard extends Board {
    * `ask` verdict, so under any other (forbid, and also auto or notify) the task waits for input
    * (`rejected`) instead: it never runs again without a person, and is not cancelled while its
    * run may still be live; the wait expires in turn. A holder's call presents its `generation`
-   * again when the move commits. A spent budget's `funding` ask goes into the request's subject.
+   * again when the move commits. A spent budget's `funding` ask goes into the request's subject;
+   * the reservations its holder could not release (`unreleased`, 1.3) into its consequences.
    */
-  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number, funding?: BudgetLine[]): Promise<BoardTask> {
+  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
-    if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation, funding)
+    if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation, funding, unreleased)
     return this.commitLater(task, at, generation, (c) => ({
       changes: {
         state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at),
@@ -1254,15 +1259,18 @@ export class StoreBoard extends Board {
    * spent budget's `funding` ask is its subject's version ({@link fundingVersion}), so the verdict
    * binds to exactly those lines (INV-5), and its summary and consequences name them.
    */
-  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[]): NewRequest {
+  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): NewRequest {
     const { project } = this.projectOf(task.projectId)
     const asked = reason === 'budget-spent' ? funding : undefined
+    // The reservations the holder could not release still count: named, so the operator sees why the step was refused (1.3).
+    const held = reason === 'budget-spent' && unreleased?.length ? unreleasedText(unreleased) : undefined
+    const consequences = [asked ? this.fundingConsequences(task, asked) : undefined, held].filter((c): c is string => c !== undefined).join(' ')
     return {
       subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: asked ? fundingVersion(contentId(asked)) : reason },
       action: {
         class: actionClass,
-        summary: clamp(asked ? `${reason}: ${task.title}; raise its budget by ${linesText(asked, '+')}` : `${reason}: ${task.title}`, 500),
-        ...(asked ? { consequences: clamp(this.fundingConsequences(task, asked), 2000) } : {}),
+        summary: clamp(`${reason}: ${task.title}${asked ? `; raise its budget by ${linesText(asked, '+')}` : ''}${held ? `; ${unreleased!.length} reservation(s) not released still count` : ''}`, 500),
+        ...(consequences ? { consequences: clamp(consequences, 2000) } : {}),
       },
       requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
       verdict, classification: project.classification ?? 'operator-shared',
@@ -1329,8 +1337,8 @@ export class StoreBoard extends Board {
   }
 
   /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows, keeping a spent budget's funding ask. */
-  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number, funding?: BudgetLine[]): Promise<BoardTask> {
-    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict, funding), at)
+  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): Promise<BoardTask> {
+    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict, funding, unreleased), at)
     try {
       return this.commitLater(task, at, generation, () => ({
         changes: {

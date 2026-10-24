@@ -13,7 +13,7 @@ import { POLICIES } from '../../approvals-core/conformance/approvals.ts'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type RunOutcome,
-  type ProjectState, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
+  type ProjectState, type Subject, type TaskInput, type TaskState, TERMINAL, UNRELEASED_MAX, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '../src/index.ts'
 
 export type Boot = () => Promise<{
@@ -116,7 +116,7 @@ const digestOf = (ctx: Context, sources: ArtifactRef[], summary = 'the result in
   body: { schema: 'digest@1.0', sources, status: 'passed', summary, claims: [{ id: 'C1', kind: 'finding', text: 'it ran', citation: { artifact: sources[0]!, quote: 'attempt' } }] },
 }).id as ArtifactRef
 
-const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' | '1.2' = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' | '1.2' | '1.3' = '1.0'): Scenario<Boot> => ({
   id: `board.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose, changePolicies } = await boot()
@@ -130,7 +130,7 @@ const scenario = (id: string, title: string, run: (ctx: Context, booted: { chang
 
 export const boardSuite = defineSuite<Boot>({
   seam: 'board',
-  contract: '1.2',
+  contract: '1.3',
   scenarios: [
     scenario('charter-approved-activates', 'starts work only under a charter the operator approved, bound to that charter version, with every milestone planned (INV-5, INV-6)', async (ctx) => {
       expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER, milestones: [{ id: 'm1', title: 'First', state: 'funded', funding: `sha256:${'1'.repeat(64)}` }] }, T0))).toBe('invalid')
@@ -705,6 +705,49 @@ export const boardSuite = defineSuite<Boot>({
       expect((await ctx.approvals.list({ projectId: 'p2' })).length).toBe(open)
       expect(decisionOf(ctx, refused.lastDecision).decisionType).toBe('board')
     }, '1.2'),
+    scenario('budget-spent-names-unreleased', 'names in a spent budget\'s request the reservations its holder could not release, which still count against the budget: each run, step, and expiry, with or without a funding ask, the subject and the wait as without them; a malformed list, or one on another wait, is refused and changes nothing (INV-2, INV-9)', async (ctx) => {
+      await active(ctx, 'p2')
+      const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 2 }]
+      const running = async (title: string): Promise<{ taskId: string; generation: number }> => {
+        const { taskId } = await ready(ctx, task('p2', title, { budget }))
+        const { generation } = await ctx.board.claim(taskId, 'lead', 600_000, at(3))
+        await ctx.board.start(taskId, generation, { runId: `run-${title}` }, at(3))
+        return { taskId, generation }
+      }
+      const stuck: UnreleasedHold[] = [{ runId: 'run-stuck', step: 'b:1:0', expiresAt: at(240).toISOString() }, { runId: 'run-earlier', step: 'run' }]
+      const held = await running('held')
+      // Refused, and nothing changes: on another wait, none, too many, or a hold without its run or step, or with an expiry that is no date.
+      for (const wait of [
+        { reason: 'question' as const, questions: ['Which pool?'], unreleased: stuck },
+        { reason: 'reconciliation-failed' as const, unreleased: stuck },
+        { reason: 'budget-spent' as const, unreleased: [] },
+        { reason: 'budget-spent' as const, unreleased: Array.from({ length: UNRELEASED_MAX + 1 }, (_, i) => ({ runId: `run-${i}`, step: 'a:1:0' })) },
+        { reason: 'budget-spent' as const, unreleased: [{ runId: '', step: 'a:1:0' }] },
+        { reason: 'budget-spent' as const, unreleased: [{ runId: 'run-stuck' } as UnreleasedHold] },
+        { reason: 'budget-spent' as const, unreleased: [{ runId: 'run-stuck', step: 'a:1:0', expiresAt: 'soon' }] },
+      ]) expect(await failureOf(ctx.board.block(held.taskId, held.generation, wait, at(4)))).toBe('invalid')
+      expect(await stateOf(ctx, held.taskId)).toBe('running')
+      expect(unreleasedProblem(stuck)).toBeUndefined()
+
+      // With no funding ask: the request asks only to go on, and its consequences name each hold.
+      const blocked = validTask(await ctx.board.block(held.taskId, held.generation, { reason: 'budget-spent', unreleased: stuck }, at(4)))
+      expect(blocked).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent' }, budget })
+      expect(blocked.waiting!.funding).toBeUndefined()
+      const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+      expect(request.subject).toEqual({ type: 'content', ref: `board-task:${held.taskId}:attempt:1`, version: 'budget-spent' })
+      expect(request.action.consequences).toContain(unreleasedText(stuck))
+      for (const text of ['step b:1:0 of run run-stuck', `until ${at(240).toISOString()}`, 'the reservation of run run-earlier']) expect(request.action.consequences).toContain(text)
+
+      // With a funding ask: the subject binds the lines as at 1.2, and the holds are named beside what approving does.
+      const funded = await running('funded')
+      const ask: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }]
+      const both = validTask(await ctx.board.block(funded.taskId, funded.generation, { reason: 'budget-spent', funding: ask, unreleased: stuck.slice(0, 1) }, at(5)))
+      expect(both).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent', funding: ask } })
+      const asked = (await ctx.approvals.get(both.waiting!.approvalRequest!))!
+      expect(asked.subject.version).toBe(fundingVersion(contentId(ask)))
+      expect(asked.action.summary).toContain('+1 runs of max.programmatic')
+      expect(asked.action.consequences).toContain(unreleasedText(stuck.slice(0, 1)))
+    }, '1.3'),
     scenario('cancel-cascades', 'cancels a task not running, withdraws the approval it waited on, and cancels the tasks that depended on it', async (ctx) => {
       await active(ctx, 'p2')
       const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
@@ -1072,12 +1115,12 @@ export class FakeBoard extends Board {
    * only an approval goes on: a verdict under which no request can be opened leaves it waiting for
    * input, never readied or cancelled (INV-4).
    */
-  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', at: Date, funding?: BudgetLine[]): Promise<BoardTask> {
+  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', at: Date, funding?: BudgetLine[], unreleased?: UnreleasedHold[]): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
     if (verdict.mode !== 'ask') {
       return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, task.state, 'waiting-for-input', at, `${reason}: the policy gives ${actionClass} ${verdict.mode}, so no approval can be asked`) })
     }
-    const request = await this.ctx.approvals.request(this.request(task, actionClass, reason, verdict, funding), at)
+    const request = await this.ctx.approvals.request(this.request(task, actionClass, reason, verdict, funding, unreleased), at)
     return this.save(task, at, {
       state: 'waiting-for-approval', holder: undefined, ...(funding ? { schema: 'board-task@1.1' as const } : {}),
       waiting: { reason, approvalRequest: request.requestId, ...(funding ? { funding } : {}), since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: verdict.decision,
@@ -1085,11 +1128,14 @@ export class FakeBoard extends Board {
   }
 
   /** The request on `board-task:<id>:attempt:<n>`: its version the reason, or a funding ask's lines bound by {@link fundingVersion}. */
-  private request(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: Awaited<ReturnType<Context['approvals']['check']>>, funding?: BudgetLine[]) {
+  private request(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: Awaited<ReturnType<Context['approvals']['check']>>, funding?: BudgetLine[], unreleased?: UnreleasedHold[]) {
     const raise = funding?.map((l) => `+${l.amount} ${l.unit} of ${l.pool}`).join(', ')
     return {
       subject: { type: 'content' as const, ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: funding ? fundingVersion(contentId(funding)) : reason },
-      action: { class: actionClass, summary: `${reason}: ${task.title}${raise ? `; raise its budget by ${raise}` : ''}`.slice(0, 500) },
+      action: {
+        class: actionClass, summary: `${reason}: ${task.title}${raise ? `; raise its budget by ${raise}` : ''}`.slice(0, 500),
+        ...(unreleased?.length ? { consequences: unreleasedText(unreleased).slice(0, 2000) } : {}),
+      },
       requester: { component: 'board' as const, projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
       verdict, classification: this.projectOf(task.projectId).classification ?? 'operator-shared',
     }
@@ -1175,10 +1221,14 @@ export class FakeBoard extends Board {
     return { project: this.save(project, at, { state: 'closed', closure: { outcome: 'abandoned', decision, at: at.toISOString() }, lastDecision: decision }), cancelled }
   }
 
-  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[] }, at: Date = new Date()) {
+  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[]; unreleased?: UnreleasedHold[] }, at: Date = new Date()) {
     const task = this.taskOf(taskId)
     this.held(task, generation, at)
     this.expect(task, 'running')
+    if (wait.unreleased !== undefined) {
+      const problem = wait.reason === 'budget-spent' ? unreleasedProblem(wait.unreleased) : 'only a budget-spent block names unreleased reservations'
+      if (problem) throw new BoardError('invalid', problem)
+    }
     if (wait.funding !== undefined) {
       const lines = wait.funding
       if (wait.reason !== 'budget-spent' || !Array.isArray(lines) || lines.length < 1 || lines.length > 16) throw new BoardError('invalid', 'a budget-spent block asks for 1 to 16 lines')
@@ -1195,7 +1245,7 @@ export class FakeBoard extends Board {
     if (funding && !this.withinBound(task, funding)) {
       return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: this.decide(taskId, 'running', 'waiting-for-input', at, 'budget-spent: the funding asked is past the bound per task, so no request is opened') })
     }
-    return this.gate(task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, funding)
+    return this.gate(task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, funding, wait.reason === 'budget-spent' ? wait.unreleased : undefined)
   }
 
   async answer(taskId: string, answers: string[], at: Date = new Date()) {
