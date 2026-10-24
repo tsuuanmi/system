@@ -296,4 +296,30 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
     // The studio report counts every one of the period, the other project's included.
     expect(buildReport(PERIOD, { ...sources, unknowns }).usage.unknown).toMatchObject({ runs: 5, notReported: 2 })
   })
+
+  it('shows the agent runs whose liveness asked for the operator in its attention, and those still held, never counting them as interruptions (PROP-0013)', () => {
+    const live = (type: string, when: string, agentRun: string, extra: Record<string, unknown> = {}) => event(`agent-workers.run.${type}`, when, { agentRun, worker: 'agent:dev', ...extra }, { runId: 'run-1' })
+    const sources = { ...week(), events: [
+      ...week().events,
+      live('stalled', at(1), 'arun-1', { quietSeconds: 400, stallSeconds: 300 }),
+      live('unknown', at(2), 'arun-2', { verdict: 'unknown', looks: 3, cause: 'holder' }),
+      live('unknown', at(3), 'arun-3', { verdict: 'unknown', looks: 0, cause: 'cancel' }),
+      live('freed', at(4), 'arun-2', { again: false, worktrees: 1 }),
+      // Freed again for its worktree: one run freed, once.
+      live('freed', at(5), 'arun-2', { again: true, worktrees: 1 }),
+      // Outside the period.
+      live('unknown', at(8), 'arun-4', { verdict: 'unknown', looks: 3, cause: 'holder' }),
+    ] }
+    const report = buildReport(PERIOD, sources, 'p1')
+    expect(() => schemas.assertDef('mcp-report@1.2', 'report-output', report)).not.toThrow()
+    expect(report.attention.liveness).toEqual({ stalled: 1, unknown: 2, freed: 1, held: [{ agentRun: 'arun-3', worker: 'agent:dev', at: at(3), runId: 'run-1' }] })
+    // Interruptions keep their meaning: approval requests and reviews held for the operator.
+    expect(report.attention.interruptions).toBe(buildReport(PERIOD, week(), 'p1').attention.interruptions)
+    const text = renderReport(report)
+    expect(text).toContain('- Agent runs: 1 stalled, 2 ended without being known to be gone (their session and worktree held until you free them), 1 freed by you.')
+    expect(text).toContain('- Still held: arun-3 on agent:dev (run run-1); system explain <run> says why, and system free <run> --agent-gone frees one once its agent is gone.')
+    // None: no such field, no such line.
+    expect(buildReport(PERIOD, week(), 'p1').attention).not.toHaveProperty('liveness')
+    expect(renderReport(buildReport(PERIOD, week(), 'p1'))).not.toContain('Agent runs')
+  })
 })

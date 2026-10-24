@@ -71,7 +71,7 @@ export interface Sources {
   tasks: BoardTask[]
   requests: ApprovalRequest[]
   usage: UsageRecord[]
-  /** `workflow.task.reported`, `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened`, `workflow.gate.closed`, `approvals.batched`. */
+  /** `workflow.task.reported`, `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened`, `workflow.gate.closed`, `approvals.batched`, and {@link LIVENESS_EVENTS}. */
   events: Recorded[]
   decisions: ReadonlyMap<string, DecisionRead>
   /** By request id; absent when no digest provider is loaded. */
@@ -131,6 +131,13 @@ interface UnknownUsage { runs: number; reconciled: number; notReported: number; 
 interface ClassCounts { actionClass: ActionClass; asked: number; approved: number; rejected: number; expired: number; withdrawn: number }
 interface Day { date: string; interruptions: number; batches: number; over?: true }
 interface Attention { maxBatchesPerDay?: number; maxInterruptionsPerDay?: number }
+/** The agent runs whose liveness asked for the operator in the period (PROP-0013), and those still held at its end. */
+interface LivenessAttention { stalled: number; unknown: number; freed: number; held: Array<{ agentRun: string; worker: string; at: string; runId?: string }>; heldOmitted?: number }
+
+/** The event-log entries of an agent run's liveness the report counts (PROP-0013). */
+export const LIVENESS_EVENTS = ['agent-workers.run.stalled', 'agent-workers.run.unknown', 'agent-workers.run.freed'] as const
+/** Held runs one report lists (`mcp-report@1.2`); the rest are counted. */
+export const MAX_HELD = 64
 
 /** The `report` tool's output (`$defs/report-output`). */
 export interface Report {
@@ -143,7 +150,7 @@ export interface Report {
   attempts: { reported: number; accepted: number; rejected: number; heldForOperator: number; reconciled: number; other: number; review: { passed: number; failed: number; none: number } }
   remediation: { cycles: number; fixesOpened: number; fixesClosed: number }
   approvals: { asked: number; approved: number; rejected: number; expired: number; withdrawn: number; openNow: number; byClass: ClassCounts[]; wait?: { answered: number; medianSeconds: number; p90Seconds: number; maxSeconds: number } }
-  attention: { interruptions: number; batches: number; days: Day[]; threshold?: Attention; daysOver?: number }
+  attention: { interruptions: number; batches: number; days: Day[]; threshold?: Attention; daysOver?: number; liveness?: LivenessAttention }
   usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number }; unknown?: UnknownUsage }
   digests: { attached: number; bypassed: number; claimsKept?: number; claimsDropped?: number; escalated?: number }
   baseline: { acceptedResults: number; interruptions: number; attempts: number; perAcceptedResult?: { tokens: number; costUsd: number; turns: number; interruptions: number; attempts: number } }
@@ -274,9 +281,23 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
     const over = limits && ((limits.maxInterruptionsPerDay !== undefined && d.interruptions > limits.maxInterruptionsPerDay) || (limits.maxBatchesPerDay !== undefined && d.batches > limits.maxBatchesPerDay))
     return over ? { ...d, over: true } : d
   })
+  // Agent runs whose liveness asked for the operator (PROP-0013): stalls, runs that ended unknown, and
+  // those the operator freed; a run that ended unknown and was not freed in the period is still held.
+  // Shown beside the interruptions, never counted as one: the baseline's figure keeps its meaning.
+  const stalls = ofType(LIVENESS_EVENTS[0])
+  const unknowns = ofType(LIVENESS_EVENTS[1])
+  const frees = ofType(LIVENESS_EVENTS[2])
+  const freedRuns = new Set(frees.map((e) => String(e.data?.['agentRun'])))
+  const heldAll = [...new Map(unknowns.filter((e) => !freedRuns.has(String(e.data?.['agentRun']))).map((e) => [String(e.data?.['agentRun']), e])).values()].reverse()
+  const liveness: LivenessAttention | undefined = stalls.length || unknowns.length || frees.length ? {
+    stalled: stalls.length, unknown: unknowns.length, freed: new Set(frees.filter((e) => e.data?.['again'] !== true).map((e) => String(e.data?.['agentRun']))).size,
+    held: heldAll.slice(0, MAX_HELD).map((e) => ({ agentRun: String(e.data?.['agentRun']), worker: String(e.data?.['worker']), at: e.at, ...(e.runId !== undefined ? { runId: e.runId } : {}) })),
+    ...(heldAll.length > MAX_HELD ? { heldOmitted: heldAll.length - MAX_HELD } : {}),
+  } : undefined
   const attention = {
     interruptions: ordered.reduce((n, d) => n + d.interruptions, 0), batches: ordered.reduce((n, d) => n + d.batches, 0), days: ordered,
     ...(limits ? { threshold: limits, daysOver: ordered.filter((d) => d.over).length } : {}),
+    ...(liveness ? { liveness } : {}),
   }
 
   // Usage: the ledger's counted records observed in the period, per pool, summed in one order.
