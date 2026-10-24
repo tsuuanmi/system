@@ -55,12 +55,6 @@ export interface HealthSources {
   /** Configured workflow templates refused at load, with why. */
   templates?: () => Array<{ name: string; reason: string }>
   /**
-   * Usage the resource ledger could not count (docs/design/resources.md#usage-the-ledger-cannot-count):
-   * its configured pools with their windows' lengths, a page of the `usage.unknown` entries since a
-   * time (in `seq` order, after `afterSeq`, at most `limit`), and whether the ledger counted a record
-   * of a run in a pool.
-   */
-  /**
    * Usage the resource ledger could not count (docs/design/resources.md#usage-the-ledger-cannot-count),
    * counted by `countUnknownUsage` (`@tsuuanmi/system-libs`): the ledger's pools and windows, the
    * `usage.unknown` entries, and whether the ledger counted a record of a run in a pool.
