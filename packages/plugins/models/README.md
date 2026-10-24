@@ -54,6 +54,12 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   - **Result:** a `report` artifact, `model-answer@1.0`, as classified as its prompt and the
     history it replayed, at the highest, with the token usage, which the usage report shows.
   - **Cancel (REQ-WRK-4):** a running call is aborted, a queued one never sent.
+  - **Lease:** a call runs under its `model-call:<id>` lease, held through
+    `ctx.leases.hold` like every durable runner's: renewed within the TTL it was
+    granted, lost only on a positive loss
+    ([ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)).
+    Its answer, its failure, and every decision it records are fenced by it; a lost lease
+    stops the call and looks at it again after the lease's TTL.
   - **Restart (INV-4):** a model call is safe to repeat with a bounded cost. A
     call that was running is sent once more; a call already sent twice fails as
     `reconciliation_failed`. Each is a recorded `reconciliation` decision and a

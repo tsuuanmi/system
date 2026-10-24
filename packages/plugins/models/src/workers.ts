@@ -335,58 +335,38 @@ export class ModelWorkers {
   }
 
   private async runOwned(callId: string): Promise<void> {
-    const resource = `model-call:${callId}`
-    let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
-    if (!lease) {
-      // Another process holds it: it finishes the call, or crashed and its lease expires.
-      const holder = this.ctx.leases.current(resource)
-      this.retryLater(callId, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
-      return
-    }
-    const lost = new AbortController()
-    const heartbeat = setInterval(() => {
+    // While another process holds it, it finishes the call, or crashed and its lease expires.
+    const outcome = await this.ctx.leases.hold(`model-call:${callId}`, LEASE_TTL_MS, async ({ lease: current, lost }) => {
+      const cancel = new AbortController()
+      this.cancels.set(callId, cancel)
+      const signal = AbortSignal.any([lost, this.stopped.signal, cancel.signal])
       try {
-        lease = this.ctx.leases.renew(lease!, LEASE_TTL_MS)
+        const row = this.row(callId)
+        if (!row || row.status === 'completed' || row.status === 'failed') return
+        // A call already sent was interrupted by a stop or a crash: whether it is sent again is a
+        // recorded decision (INV-4, INV-13), as a website turn's reconciliation is.
+        if (row.sends > 0 && !this.reconcile(row, current)) return
+        const model = (await this.ctx.models.list()).find((m) => PREFIX + m.id === row.worker)
+        if (!model) throw new ProviderError('config_error', `${row.worker} is no longer in the model catalog`)
+        // The history this turn was accepted with, within this entry's bounds; nothing is sent otherwise.
+        const history = this.history(row, model)
+        // Before every send: the route may have changed since an earlier one (INV-12).
+        if (!(await this.egress(row, model, history, current))) return
+        await this.scheduler.runTurn(row.call_id, signal, async (slot) => this.execute(row, model, history, AbortSignal.any([signal, slot.signal]), current))
       } catch (error) {
-        lost.abort(error)
+        if (this.stopped.signal.aborted) return
+        if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.aborted) {
+          this.retryLater(callId, LEASE_TTL_MS)
+          return
+        }
+        const row = this.row(callId)
+        if (!row || row.status === 'completed' || row.status === 'failed') return
+        this.fail(row, cancel.signal.aborted ? new ProviderError('aborted', 'cancelled by the operator') : error, current)
+      } finally {
+        this.cancels.delete(callId)
       }
-    }, LEASE_TTL_MS / 3)
-    heartbeat.unref()
-    const current = (): Lease => lease!
-    const cancel = new AbortController()
-    this.cancels.set(callId, cancel)
-    const signal = AbortSignal.any([lost.signal, this.stopped.signal, cancel.signal])
-    try {
-      const row = this.row(callId)
-      if (!row || row.status === 'completed' || row.status === 'failed') return
-      // A call already sent was interrupted by a stop or a crash: whether it is sent again is a
-      // recorded decision (INV-4, INV-13), as a website turn's reconciliation is.
-      if (row.sends > 0 && !this.reconcile(row, current)) return
-      const model = (await this.ctx.models.list()).find((m) => PREFIX + m.id === row.worker)
-      if (!model) throw new ProviderError('config_error', `${row.worker} is no longer in the model catalog`)
-      // The history this turn was accepted with, within this entry's bounds; nothing is sent otherwise.
-      const history = this.history(row, model)
-      // Before every send: the route may have changed since an earlier one (INV-12).
-      if (!(await this.egress(row, model, history, current))) return
-      await this.scheduler.runTurn(row.call_id, signal, async (slot) => this.execute(row, model, history, AbortSignal.any([signal, slot.signal]), current))
-    } catch (error) {
-      if (this.stopped.signal.aborted) return
-      if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
-        this.retryLater(callId, LEASE_TTL_MS)
-        return
-      }
-      const row = this.row(callId)
-      if (!row || row.status === 'completed' || row.status === 'failed') return
-      this.fail(row, cancel.signal.aborted ? new ProviderError('aborted', 'cancelled by the operator') : error, current)
-    } finally {
-      this.cancels.delete(callId)
-      clearInterval(heartbeat)
-      try {
-        this.ctx.leases.release(current())
-      } catch {
-        // the store may already be closing; an unreleased lease simply expires
-      }
-    }
+    })
+    if (!outcome.held) this.retryLater(callId, outcome.retryInMs)
   }
 
   /**

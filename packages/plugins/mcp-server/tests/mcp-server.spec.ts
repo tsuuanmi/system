@@ -106,12 +106,15 @@ describe('system MCP server on ctx.webServer', () => {
     // Reconciled: the ledger now counts a record of the run.
     await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_1', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_1', turns: 4 })
     expect(await usage()).toMatchObject({ state: 'ok' })
-    // Past the event log's 1,000 entries per query, a new run is still read: the check pages.
-    for (let i = 0; i < 1000; i += 1) ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'interrupted', account: 'max', pool: 'max.agents', observedAt, reason: 'the host stopped while it ran, so no result came' } })
-    ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_2', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
+    // Past the event log's 1,000 entries per query, a new run is still read: the check pages. One
+    // transaction, not a thousand fsynced commits: those held the event loop for seconds on a loaded
+    // host, past the server's keep-alive, and the next call's pooled socket was reset (ECONNRESET).
+    ctx.store.transaction(() => {
+      for (let i = 0; i < 1000; i += 1) ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'interrupted', account: 'max', pool: 'max.agents', observedAt, reason: 'the host stopped while it ran, so no result came' } })
+      ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_2', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
+    })
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
-    // A thousand appends and four MCP round trips: about 2 s alone, past the 5 s default on a loaded host.
-  }, 15_000)
+  })
 
   it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.1 (REQ-HOST-8)', async () => {
     const { url, tokens, ctx } = await boot()

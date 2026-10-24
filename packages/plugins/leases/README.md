@@ -15,10 +15,11 @@
   - `invalidate`: fences every holder at once.
   - `current`.
   - `hold(resource, ttlMs, body)`: the one lease loop every durable runner uses
-    (website turns, agent runs, workflow runs, digest requests). It acquires, renews on a heartbeat
-    every third of the TTL, and releases when the body ends. It aborts `lost` only
-    on a positive loss: a renewal that throws `LeaseLost`, or the lease's own expiry
-    passing with no renewal. A renewal that fails otherwise (the store busy or
+    (website turns, agent runs, workflow runs, model calls, digest requests). It acquires, renews
+    on a heartbeat every third of the TTL the lease was granted, which `maxTtlMs` may cap below
+    the TTL asked for (each renewal's grant sets the next beat), and releases when the body ends.
+    It aborts `lost` only on a positive loss: a renewal that throws `LeaseLost`, or the lease's
+    own expiry passing with no renewal. A renewal that fails otherwise (the store busy or
     failing) is logged and tried again at the next beat, never later than the
     expiry ([ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)).
     While another holder's lease is live it runs nothing and returns
@@ -40,7 +41,10 @@
     committing transaction;
   - TTLs capped at `maxTtlMs`, and a TTL that is not a positive integer rejected;
   - `hold`: release when the body ends or throws, when to look again while another lease is
-    live, the heartbeat, and `lost` on invalidation;
+    live, the heartbeat, and `lost` on invalidation; a holder asking for more than `maxTtlMs`
+    keeps its lease across three granted TTLs (the heartbeat follows the TTL granted, not the
+    one asked for; checked on fake timers, scenario `leases.hold-renews-granted-ttl`, a 1.0
+    scenario added after the suite's 1.1 since it holds what 1.0's heartbeat already promised);
   - since 1.1, `hold` through a store that fails: a renewal error is not a loss (the lease is
     kept, renewed once the store answers, and no one else takes it), and with every renewal
     failing `lost` aborts with `LeaseLost` at the lease's expiry, after which a new holder
