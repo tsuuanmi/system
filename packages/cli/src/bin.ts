@@ -90,7 +90,8 @@ const USAGE = `Usage: system <command>
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
                             class, rows, why a manifest is absent or refused, and what the manifest check found
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
-  check                     check the profile against this install's code before starting it (an update's preflight)
+  check [--env-file <file>]  check the profile against this install's code before starting it (an update's preflight);
+                            --env-file: also the daemon unit's environment file (names only, never values)
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
                             (needs the gateway-anthropic row, off by default)
@@ -526,13 +527,16 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'check': {
       // Before an update's restart: the operator's profile against this install's code.
-      const outcome = await checkProfile()
+      const at = rest.indexOf('--env-file')
+      if (at >= 0 ? rest.length !== 2 || at !== 0 : rest.length) break
+      const outcome = await checkProfile(undefined, at >= 0 ? rest[1] : undefined)
+      for (const note of outcome.notes) console.log(`note: ${note}`)
       if (!outcome.problems.length) {
-        console.log(`ok: ${outcome.rows} row(s) of the profile pass this code's checks`)
+        console.log(`ok: ${outcome.rows} row(s) of the profile pass this code's checks${at >= 0 ? ', and so does its environment file' : ''}`)
         return 0
       }
       for (const problem of outcome.problems) console.error(problem)
-      console.error(`${outcome.problems.length} problem(s): fix the profile patch before starting this code (docs/operations/runbooks.md)`)
+      console.error(`${outcome.problems.length} problem(s): fix the profile patch${at >= 0 ? ' or the environment file' : ''} before starting this code (docs/operations/runbooks.md)`)
       return 1
     }
     case 'tools': {

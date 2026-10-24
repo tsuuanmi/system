@@ -5,10 +5,10 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir, constants as osConstants } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } from '@tsuuanmi/system-browser-patchright'
@@ -160,12 +160,15 @@ export function parseComposedRows(dump: string): ComposedRow[] {
  * exports `checkConfig` (workflow: its configured templates) must find nothing to refuse. The rows
  * and their config come from the profile as composed now; the plugins from this install's bundle.
  */
-export async function checkProfile(home: string = dshHome()): Promise<{ rows: number; problems: string[] }> {
+export async function checkProfile(home: string = dshHome(), envFile?: string): Promise<{ rows: number; problems: string[]; notes: string[] }> {
   const dump = spawnSync(process.execPath, [dshBin(), '--profile', PROFILE, '--dump-config'], { env: dshEnv({ ...process.env, DSH_HOME: home }), encoding: 'utf8' })
   if (dump.error) throw dump.error
-  if (dump.status !== 0) return { rows: 0, problems: [`the profile does not compose: ${dump.stderr.trim().slice(0, 500)}`] }
+  if (dump.status !== 0) return { rows: 0, problems: [`the profile does not compose: ${dump.stderr.trim().slice(0, 500)}`], notes: [] }
   const rows = (parseYaml(dump.stdout) ?? []) as ProfileRow[]
-  return checkRows(rows, createRequire(require.resolve('@tsuuanmi/system-bundle/package.json')))
+  const checked = await checkRows(rows, createRequire(require.resolve('@tsuuanmi/system-bundle/package.json')))
+  if (envFile === undefined) return { ...checked, notes: [] }
+  const env = checkEnvFile(envFile, rows)
+  return { rows: checked.rows, problems: [...checked.problems, ...env.problems], notes: env.notes }
 }
 
 export interface ProfileRow { id: string; name?: string; config?: unknown; disabled?: boolean }
@@ -211,6 +214,132 @@ export async function checkRows(rows: readonly ProfileRow[], fromBundle: Pick<No
     if (typeof check === 'function') for (const problem of check(row.config ?? {})) problems.push(`${named}: ${problem}`)
   }
   return { rows: checked, problems }
+}
+
+/**
+ * Every name the daemon reads from its launch environment, by role: the `EnvironmentFile=` of its
+ * unit declares them (docs/reference/cli.md#the-daemons-environment). Beside these, a file may
+ * set only the names the profile's rows name: a credential reference (`apiKeyEnv`) and a name an
+ * agent runtime forwards to its Workers (`forwardEnv`).
+ */
+export const DAEMON_ENV: { readonly required: Readonly<Record<string, string>>; readonly optional: Readonly<Record<string, string>>; readonly refused: Readonly<Record<string, string>> } = {
+  required: {
+    PATH: 'where the daemon finds git, Xvfb, bwrap, the VNC server and websockify, and an agent runtime named without a path',
+    DSH_HOME: 'the harness home, named so the unit never falls back to a default',
+  },
+  optional: {
+    DSH_AGENTS_HOME: "DSH's agents directory (default ~/.agents)",
+    CHROME_PATH: 'a Chrome to use instead of the discovered or managed one',
+    NODE_OPTIONS: "options for the daemon's Node",
+    NODE_EXTRA_CA_CERTS: 'an extra CA bundle, for a TLS-inspecting proxy',
+    HTTP_PROXY: 'an egress proxy', HTTPS_PROXY: 'an egress proxy', NO_PROXY: 'hosts reached without the proxy',
+    http_proxy: 'an egress proxy', https_proxy: 'an egress proxy', no_proxy: 'hosts reached without the proxy',
+    LANG: 'the locale', LC_ALL: 'the locale', TZ: 'the time zone', TMPDIR: 'the temporary directory',
+  },
+  refused: {
+    HOME: 'systemd sets it for the unit', USER: 'systemd sets it for the unit', LOGNAME: 'systemd sets it for the unit',
+    XDG_RUNTIME_DIR: 'systemd sets it for the unit', CREDENTIALS_DIRECTORY: 'systemd sets it for a LoadCredential= of the unit',
+    DISPLAY: "a desktop session's: a service shows nothing, and an invisible display is the daemon's own Xvfb",
+    WAYLAND_DISPLAY: "a desktop session's", XAUTHORITY: "a desktop session's",
+    DBUS_SESSION_BUS_ADDRESS: "a login session's message bus", SSH_AUTH_SOCK: "a login session's key agent", GPG_AGENT_INFO: "a login session's key agent",
+    SYSTEM_CODEX_GATE_SOCKET: 'the Codex runtime sets it for its own tool gate', SYSTEM_CODEX_GATE_KEY: 'the Codex runtime sets it for its own tool gate',
+    DSH_TELEMETRY_DISABLED: '`system start` sets it',
+  },
+}
+
+/** Names whose value is a path, or for PATH a list of them: systemd expands no variable or `~` in an EnvironmentFile. */
+const PATH_VALUED = new Set(['PATH', 'DSH_HOME', 'DSH_AGENTS_HOME', 'CHROME_PATH', 'NODE_EXTRA_CA_CERTS', 'TMPDIR'])
+
+export interface EnvFileEntry { name: string; line: number; value: string }
+
+/** An EnvironmentFile as systemd reads it, strictly: `NAME=VALUE` lines, comments (`#`, `;`), and blank lines. */
+export function parseEnvFile(text: string): { entries: EnvFileEntry[]; problems: string[] } {
+  const entries: EnvFileEntry[] = []
+  const problems: string[] = []
+  text.split('\n').forEach((raw, index) => {
+    const line = raw.replace(/\r$/, '').trimStart()
+    if (line === '' || line.startsWith('#') || line.startsWith(';')) return
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line)
+    if (!match) {
+      problems.push(`line ${index + 1} is not NAME=VALUE`)
+      return
+    }
+    let value = match[2]!.trimEnd()
+    if (value.endsWith('\\')) problems.push(`${match[1]} (line ${index + 1}) continues on the next line: write each value on one line`)
+    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0]) value = value.slice(1, -1)
+    entries.push({ name: match[1]!, line: index + 1, value })
+  })
+  return { entries, problems }
+}
+
+/** The environment names the profile's rows name: credential references (`apiKeyEnv`) and forwarded names (`forwardEnv`), each with its rows. */
+export function configEnvNames(rows: readonly ProfileRow[]): { credentials: Map<string, string[]>; forwarded: Map<string, string[]> } {
+  const credentials = new Map<string, string[]>()
+  const forwarded = new Map<string, string[]>()
+  const add = (to: Map<string, string[]>, name: string, row: string): void => {
+    const seen = to.get(name) ?? []
+    if (!seen.includes(row)) to.set(name, [...seen, row])
+  }
+  const walk = (value: unknown, row: string): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, row)
+      return
+    }
+    if (typeof value !== 'object' || value === null) return
+    for (const [key, inner] of Object.entries(value)) {
+      if (key === 'apiKeyEnv' && typeof inner === 'string') {
+        add(credentials, inner, row)
+      } else if (key === 'forwardEnv' && Array.isArray(inner)) {
+        for (const name of inner) if (typeof name === 'string') add(forwarded, name, row)
+      } else {
+        walk(inner, row)
+      }
+    }
+  }
+  for (const row of rows) if (!row.disabled) walk(row.config, row.id)
+  return { credentials, forwarded }
+}
+
+/**
+ * Check the daemon unit's EnvironmentFile against what the daemon reads and what the profile's rows
+ * name: owner-only, systemd's syntax, every required name, no name the daemon does not read, and
+ * absolute paths. Problems and notes name variables, never a value.
+ */
+export function checkEnvFile(path: string, rows: readonly ProfileRow[], uid: number | undefined = process.getuid?.()): { problems: string[]; notes: string[] } {
+  let stat
+  try {
+    stat = statSync(path)
+  } catch (error) {
+    return { problems: [`the environment file ${path} cannot be read: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`], notes: [] }
+  }
+  if (!stat.isFile()) return { problems: [`the environment file ${path} is not a regular file`], notes: [] }
+  const problems: string[] = []
+  const notes: string[] = []
+  if (uid !== undefined && stat.uid !== uid) problems.push(`${path} is owned by uid ${stat.uid}, not by you (uid ${uid})`)
+  if (stat.mode & 0o077) problems.push(`${path} is readable by others (mode ${(stat.mode & 0o777).toString(8)}): chmod 600 ${path}`)
+  const parsed = parseEnvFile(readFileSync(path, 'utf8'))
+  problems.push(...parsed.problems)
+  const { credentials, forwarded } = configEnvNames(rows)
+  const seen = new Set<string>()
+  for (const { name, line, value } of parsed.entries) {
+    if (seen.has(name)) problems.push(`${name} is set twice (again on line ${line})`)
+    seen.add(name)
+    const refused = Object.hasOwn(DAEMON_ENV.refused, name) ? DAEMON_ENV.refused[name] : undefined
+    if (refused) {
+      problems.push(`${name} must not be set here: ${refused}`)
+    } else if (credentials.has(name)) {
+      notes.push(`${name} is the credential reference of ${credentials.get(name)!.join(', ')}: set here, it shadows the vault, and \`system model key ${name}\` refuses it`)
+    } else if (!Object.hasOwn(DAEMON_ENV.required, name) && !Object.hasOwn(DAEMON_ENV.optional, name) && !forwarded.has(name)) {
+      problems.push(`${name} is not read by the daemon, nor named by a row (apiKeyEnv, forwardEnv): remove it`)
+    }
+    const parts = name === 'PATH' ? value.split(':') : [value]
+    if (PATH_VALUED.has(name) && parts.some((part) => !isAbsolute(part))) {
+      problems.push(`${name} is not ${name === 'PATH' ? 'a list of absolute directories' : 'an absolute path'}: systemd expands no variable or ~ in an environment file`)
+    }
+  }
+  for (const name of Object.keys(DAEMON_ENV.required)) if (!seen.has(name)) problems.push(`${name} is required: ${DAEMON_ENV.required[name]}`)
+  for (const [name, by] of forwarded) if (!seen.has(name)) notes.push(`${by.join(', ')} forward${by.length === 1 ? 's' : ''} ${name}, which the file does not set: its Workers start without it`)
+  return { problems, notes }
 }
 
 /** The profile's composed rows, as the launcher would mount them now. */
