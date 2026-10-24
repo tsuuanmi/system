@@ -40,8 +40,14 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     lifecycle is not the one the composition gives it: `default` mounted, `candidate` with its rows
     off, `retired` named by none), and `pluginsOmitted` counts the rest; `plugins: true` lists every
     one (`system plugins` asks for it). The reply is `mcp-status@1.0`
-    ([`mcp-status.v1.json`](../../../schemas/mcp-status.v1.json)), checked before it is sent: a
-    reply its schema refuses is a defect, and the call is an error. Health's `state` is always the
+    ([`mcp-status.v1.json`](../../../schemas/mcp-status.v1.json)), checked before it is sent. Each
+    check's detail is bounded where it is made: a list names at most 20 items, each cut to 300
+    characters, and counts the rest, and no detail is longer than 8,000 characters (`DETAIL_CHARS`,
+    well under the schema's 32,768). A reply its schema still refuses (a provider that broke its
+    own bounds, say) is a defect, said in the daemon's log, and is never sent as health; the call
+    still gives what health must say: the state and the names of the checks that are not `ok`
+    (with `okOmitted`), its text saying the full reply was not valid and why (T127). Only when even
+    that is not a valid record is the call an error. Health's `state` is always the
     worst of every check (REQ-HOST-6, `src/health.ts`); unasked, `checks` lists only the checks
     that are not `ok`, and `okOmitted` counts the rest (`compactHealth`), so the reply does not grow
     with each check that is ok; `checks: true` lists every one (`system health` asks for it). The

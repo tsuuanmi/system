@@ -115,6 +115,36 @@ describe('system MCP server on ctx.webServer', () => {
     expect(compactHealth({ state: 'ok', checks: [] })).toEqual({ state: 'ok', checks: [] })
   })
 
+  it('gives the state and the names of the checks not ok, never an error, when its reply still fails mcp-status@1.0 (T127 item 5, INV-2)', async () => {
+    const { url, tokens, ctx } = await boot()
+    // A Worker registry that breaks its own bound on what a source that cannot tell says (the router cuts it to 200 characters).
+    class Router extends Service {
+      constructor(c: Context) {
+        super(c, 'workers')
+      }
+      async list() {
+        return [{ worker: 'agent:dev', state: 'ready' }]
+      }
+      async liveness() {
+        return { runs: [], counts: { unknown: 0, looking: 0, stalled: 0 }, unread: [{ source: 'agents', detail: 'x'.repeat(5000) }] }
+      }
+    }
+    const fiber = ctx.plugin(Router)
+    await fiber
+    onTestFinished(() => fiber.dispose())
+    const schemas = new SchemaRegistry()
+    for (const args of [{}, { checks: true }]) {
+      const reply = await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: args })
+      expect(reply.isError).toBeFalsy()
+      schemas.assertDef(STATUS_SCHEMA, 'status-output', reply.structuredContent)
+      expect(reply.structuredContent).toEqual({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'], providers: [], health: { state: 'degraded', checks: [{ name: 'liveness', state: 'degraded' }], okOmitted: 5 } })
+      expect((reply.content as Array<{ text: string }>)[0]!.text).toMatch(/^health degraded: liveness degraded; the full reply was not a valid mcp-status@1\.0 record \(.+\), so only the state and the names of the checks not ok are given: see the daemon's log$/s)
+    }
+    // The client's reply holds no detail and no liveness listing: it is whole.
+    const client = await (await connect(url, tokens.client)).callTool({ name: 'status', arguments: { checks: true } })
+    expect((client.structuredContent as { health: { checks: unknown[] } }).health.checks).toHaveLength(6)
+  })
+
   it('is degraded by a run whose usage the ledger could not count in its pool\'s current window, until the ledger counts a record of it (D25)', async () => {
     const { url, tokens, ctx } = await boot()
     const pool = { pool: 'max.agents', account: 'max', kind: 'programmatic' as const, unknown: 'available' as const, windows: [{ id: 'five-hour', kind: 'rolling' as const, seconds: 18_000 }] }

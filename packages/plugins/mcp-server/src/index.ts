@@ -439,13 +439,28 @@ export class McpEndpoint extends McpTools {
           ...(all && listed ? { plugins: listed.map(pluginView), ...(listed.length < all.length ? { pluginsOmitted: all.length - listed.length } : {}) } : {}),
           ...(told && (livenessTotal(told) || told.unread.length) ? { liveness: livenessView(told) } : {}),
         }
-        // Checked before it is sent (mcp-status@1.0): a reply that is not one is an error, never sent as health.
-        try {
-          statusSchemas().assertDef(STATUS_SCHEMA, 'status-output', status)
-        } catch (error) {
-          return { isError: true, content: [{ type: 'text', text: `the status reply is not a valid ${STATUS_SCHEMA} record: ${(error as Error).message.slice(0, 500)}` }] }
-        }
         const notOk = health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
+        // Checked before it is sent (mcp-status@1.0). A reply that is not one is never sent as health; what
+        // health must still say is: its state and the names of the checks not ok (T127), only those; an
+        // error only when even that is not a valid record.
+        const schemas = statusSchemas()
+        try {
+          schemas.assertDef(STATUS_SCHEMA, 'status-output', status)
+        } catch (error) {
+          const why = (error as Error).message.slice(0, 500)
+          const ok = health.checks.length - notOk.length
+          const reduced = {
+            harness: status.harness, store: status.store, artifacts: status.artifacts, kernel: status.kernel, providers: status.providers,
+            health: { state: health.state, checks: health.checks.filter((c) => c.state !== 'ok').map(({ name, state }) => ({ name, state })), ...(ok > 0 ? { okOmitted: ok } : {}) },
+          }
+          try {
+            schemas.assertDef(STATUS_SCHEMA, 'status-output', reduced)
+          } catch (again) {
+            return { isError: true, content: [{ type: 'text', text: `the status reply is not a valid ${STATUS_SCHEMA} record (${why}), nor is its state alone (${(again as Error).message.slice(0, 500)})` }] }
+          }
+          this.ctx.logger.warn(`mcp-server: the status reply was not a valid ${STATUS_SCHEMA} record, so it gave the state and the checks not ok only: ${why}`)
+          return reply(reduced, `health ${health.state}: ${notOk.length ? notOk.join(', ') : 'all ok'}; the full reply was not a valid ${STATUS_SCHEMA} record (${why}), so only the state and the names of the checks not ok are given: see the daemon's log`)
+        }
         const plugins = all && listed ? `; ${all.length} plugins, ${listed.length === all.length ? 'all listed' : `${listed.length} need a look (plugins: true lists every one)`}` : ''
         const runs = told && livenessTotal(told) ? `; runs: ${(['unknown', 'looking', 'stalled'] as const).filter((s) => told.counts[s]).map((s) => `${told.counts[s]} ${s}`).join(', ')}` : ''
         return reply(status, `health ${health.state}: ${health.checks.length} checks, ${notOk.length ? notOk.join(', ') : 'all ok'}${plugins}${runs}`)
