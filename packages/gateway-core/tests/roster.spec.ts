@@ -89,6 +89,29 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(value(roster.sources).map((s) => s.source)).toEqual(['agents', 'website'])
   })
 
+  it('says, for the operator, why a window has no reading yet when its account\'s last usage report could not be read (T111)', async () => {
+    const workers = [descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE) })]
+    const unread = { why: 'its window spend is not in the checked shape ({ utilization, resets_at })', at: '2026-10-24T09:25:00.000Z' }
+    const base = services({}, workers).agentWorkers!.agentAccounts!
+    const over = { agentWorkers: { agentAccounts: { ...base, unreadReport: (a: { accountId?: string }) => (a.accountId === CLAUDE ? unread : undefined) } } }
+    const weekly = (roster: Roster) => value(entry(roster, `agent:${CLAUDE}/review`).pools)[0]!.windows.find((w) => w.id === 'weekly')
+    const operator = await readRoster(services(over, workers), { scope: 'operator', now: NOW })
+    valid(operator)
+    expect(weekly(operator)).toMatchObject({
+      state: 'unknown',
+      used: { unknown: `no reading yet: its account's usage report could not be read at 2026-10-24T09:25:00.000Z: ${unread.why}` },
+      resets: { unknown: 'no reading yet' },
+    })
+    expect(formatRoster(operator)).toContain(`window   weekly: unknown, used unknown (no reading yet: its account's usage report could not be read at 2026-10-24T09:25:00.000Z: ${unread.why})`)
+    // A window that has a reading keeps it; a client (the lead) gets no reason.
+    expect(value(entry(operator, `agent:${CLAUDE}/review`).pools)[0]!.windows[0]).toMatchObject({ id: 'five-hour', used: { value: 37.5 } })
+    const client = await readRoster(services(over, workers), { scope: 'client', now: NOW })
+    valid(client)
+    expect(weekly(client)).toMatchObject({ used: { unknown: 'no reading yet' } })
+    // Once a report is read, none is kept, and the line is as before.
+    expect(weekly(await readRoster(services({}, workers), { scope: 'operator', now: NOW }))).toMatchObject({ used: { unknown: 'no reading yet' } })
+  })
+
   it('says what each Worker is for, in the operator\'s words or as a line marked derived, and what it does now in one sentence, since its step started (T85)', async () => {
     const roster = await readRoster(services(), { scope: 'operator', now: NOW })
     valid(roster)

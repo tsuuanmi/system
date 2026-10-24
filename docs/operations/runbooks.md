@@ -1148,9 +1148,13 @@ When a window says unknown, or its `read` time stops moving:
 
 - **`used unknown (its latest reading gives no used share)`**: its latest reading was a run's own
   event (Claude Code reports a share only near a limit); the next report fills it.
-- **The report cannot be read.** The daemon's log names why, once per reason: `the usage report of
+- **The report cannot be read.** A window with no reading yet says why in `system roster` (and the
+  `/ui` Workers tab): `used unknown (no reading yet: its account's usage report could not be read at
+  <time>: …)`, until a report of that account is read; a window with an older reading keeps it and
+  its `read` time. The daemon's log names it too, once per reason: `the usage report of
   <accountId> (its periodic read) cannot be read, so nothing is recorded and its windows keep their
-  last readings: …`. Most often a runtime version whose report was not checked (`… Claude Code
+  last readings: …`. A report whose entries changed shape (`… its window <name> is not in the
+  checked shape`) is a reader to fix and pin again, never misread. Most often a runtime version whose report was not checked (`… Claude Code
   2.1.311 is not verified`): the shares stay unknown until a release pins that version after
   checking it, never misread. An account on an API key has no plan windows (`… reports no plan
   limits`): give its pool `unknown: available`, or no pool.

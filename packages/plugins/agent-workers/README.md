@@ -106,7 +106,10 @@ The **`agents` Worker source**: agent runtimes as Workers
     runs a few seconds after a start, then each when the next account is due.
     `readUsageReports()` runs a pass now. A report that cannot be read records
     nothing and is logged (once per reason for the periodic read); the
-    windows keep their last readings and `observedAt`.
+    windows keep their last readings and `observedAt`. Why, and when, is kept
+    per account in memory until a report of it is read:
+    `AgentAccounts.unreadReport` gives it to the roster, which says it to the
+    operator on each window with no reading yet.
 - **The move from hand-named rows** (`src/migrate.ts`, `system account
   migrate`, MCP `account_migrate`, operator scope;
   [runbook](../../../docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)):

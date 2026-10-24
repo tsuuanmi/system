@@ -218,7 +218,7 @@ describe('an account\'s usage report after each run (ADR-0059)', () => {
     expect(other.runtime.reads).toEqual([])
   })
 
-  it('records nothing from a report it cannot read, and the run\'s outcome stands', async () => {
+  it('records nothing from a report it cannot read, and the run\'s outcome stands; why is kept for the roster until a report is read (T111)', async () => {
     const b = await twoAccounts(metered({ limitReadSeconds: 0 }))
     await open(b, b.b.id)
     FakeAgentRuntime.report(b.b.home, 'garbled')
@@ -226,6 +226,12 @@ describe('an account\'s usage report after each run (ADR-0059)', () => {
     expect((await run(b, `agent:${b.b.id}/review`, 'k1')).status).toBe('completed')
     expect(b.runtime.reads).toHaveLength(1)
     expect((await b.ctx.resources.pools({ account: b.b.id }))[0]!.readings).toEqual(before[0]!.readings)
+    const slot = (id: string) => b.ctx.agentWorkers.agentAccounts.list().find((a) => a.accountId === id)!
+    expect(b.ctx.agentWorkers.agentAccounts.unreadReport(slot(b.b.id))).toEqual({ why: expect.stringMatching(/\S/), at: expect.any(String) })
+    expect(b.ctx.agentWorkers.agentAccounts.unreadReport(slot(b.a.id))).toBeUndefined()
+    FakeAgentRuntime.report(b.b.home, [{ window: 'five_hour', status: 'allowed', usedPercentage: 9 }])
+    expect((await run(b, `agent:${b.b.id}/review`, 'k2')).status).toBe('completed')
+    expect(b.ctx.agentWorkers.agentAccounts.unreadReport(slot(b.b.id))).toBeUndefined()
   })
 })
 

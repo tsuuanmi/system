@@ -106,6 +106,8 @@ export interface AccountsOptions {
   workersIn: (account: AgentAccount) => string[]
   /** The operator's display label of an account, by its id (agent-workers `assignments[].label`); for people only. */
   labelOf?: (accountId: string) => string | undefined
+  /** Why the last usage report of an account, by its id, could not be read, and when; none once one is read (ADR-0059). */
+  unreadReport?: (accountId: string) => { why: string; at: string } | undefined
 }
 
 /** What one reading makes of a slot: its next status and why, and what it makes of the slots it collides with. */
@@ -153,6 +155,14 @@ export class AgentAccounts {
   /** The operator's display label of this slot's account, when its assignment gives one; never a routing input. */
   labelOf(account: AgentAccount): string | undefined {
     return account.accountId ? this.options.labelOf?.(account.accountId) : undefined
+  }
+
+  /**
+   * Why this slot's account's last usage report could not be read, and when, while no later one was
+   * read (ADR-0059): the roster says it on a window with no reading yet, so the operator sees it.
+   */
+  unreadReport(account: AgentAccount): { why: string; at: string } | undefined {
+    return account.accountId ? this.options.unreadReport?.(account.accountId) : undefined
   }
 
   /**
