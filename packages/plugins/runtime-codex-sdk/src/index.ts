@@ -33,13 +33,14 @@
  *   proves the confinement on this host; without it, a run is refused.
  * A turn that fails on a usage limit is `quota_exhausted`, with the reset time Codex's message
  * names as a limit observation, read in the zone the child ran in, on a Codex version whose message
- * was verified (`limits.ts`).
+ * was verified (`limits.ts`). An account's usage report (`limits`, ADR-0059) is the app server's
+ * `account/rateLimits/read`, on a Codex version whose answer was checked (`rate-limits.ts`).
  * Codex's own configuration (its model provider and model) is the operator's, passed as
  * `config`, for example the system Responses gateway. The thread stays native; only its id
  * crosses as the run's handle (INV-7).
  * @module @tsuuanmi/system-runtime-codex-sdk
  */
-import { execFile, spawn } from 'node:child_process'
+import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { accessSync, constants, mkdtempSync, rmSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
@@ -49,8 +50,8 @@ import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions } from '
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec, type RuntimeEvidence,
-  type ToolCall, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement, readHomeJson, withMetering, writeLauncher,
+  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
+  type RuntimeEvidence, type ToolCall, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement, readHomeJson, withMetering, writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
@@ -58,9 +59,11 @@ import { type Deferral, type GateChannel, hookOverrides, openGateChannel } from 
 import { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
 import { configOverrides, refused } from './overrides.ts'
 import { probeGate, proofFailure, startProbeModel } from './proof.ts'
+import { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, askRateLimits, endAppServer, limitsFromRateLimits } from './rate-limits.ts'
 
 export { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
 export { FEATURES_OFF } from './overrides.ts'
+export { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, askRateLimits, limitsFromRateLimits } from './rate-limits.ts'
 
 /** The part of a Codex thread a run uses (the SDK's `Thread`, or a test double). */
 export interface CodexThread {
@@ -117,7 +120,12 @@ export interface RuntimeOptions {
   exec?: ConfinedExec
   /** The program the SDK starts for a confined Codex (default: an owner-only launcher script). */
   launcher?: (command: { command: string; args: string[] }) => string
+  /** Starts the confined app server for a usage report (default: `spawn`, stdin and stdout piped). */
+  appServer?: SpawnAppServer
 }
+
+/** Starts a confined `codex app-server` in a home, with Codex's environment. */
+export type SpawnAppServer = (command: string, args: string[], options: { cwd: string; env: Record<string, string> }) => ChildProcess
 
 /**
  * Paths hidden from every Codex child besides the confinement's own: the terminal devices. No
@@ -369,6 +377,53 @@ export class CodexRuntime implements AgentRuntimeProvider {
     return { status: 'verified', hmac: identityHmac(key, this.kind, { chatgptAccountId: accountId }), ...pinned }
   }
 
+  /**
+   * The usage report of the account signed in to `options.home` (its own home when absent): the app
+   * server's `account/rateLimits/read` (ADR-0059; `rate-limits.ts`). Only on a Codex version whose
+   * answer was checked (`VERIFIED_RATE_LIMITS_VERSIONS`), and only in a home that configures no MCP
+   * server, as for a probe: `codex app-server` starts under the confinement with its home bound back,
+   * Codex's environment, and the runtime's `--config` overrides; it is asked `initialize`, then the
+   * rate limits, and ended. It starts no thread and no turn. Never throws: anything it cannot read is
+   * `unreadable`, with why.
+   */
+  async limits(options: LimitsOptions, signal: AbortSignal): Promise<LimitReport> {
+    const unreadable = (why: string): LimitReport => ({ unreadable: `codex-sdk: ${why}` })
+    if (signal.aborted) return unreadable('the read was stopped')
+    // A named home is one account's (ADR-0051): an owner-only directory that exists, never made here.
+    const named = options.home !== undefined ? homeProblem(options.home) : undefined
+    if (named) return unreadable(named)
+    const home = options.home ?? this.home
+    const executable = this.executable()
+    if (!executable) return unreadable('Codex is not installed (no codex executable on PATH)')
+    let version: string
+    try {
+      version = await (this.options.version ?? codexVersion)(executable)
+    } catch (error) {
+      return unreadable(`codex --version failed: ${firstLine(error)}`)
+    }
+    if (!VERIFIED_RATE_LIMITS_VERSIONS.includes(version)) return unreadable(`the rate limits of Codex ${version}'s app server are not verified (verified: ${VERIFIED_RATE_LIMITS_VERSIONS.join(', ')})`)
+    if (!this.options.confine) return unreadable('no read confinement is configured; its usage report is not read with the host state readable (ADR-0024)')
+    let confinement: Confinement
+    try {
+      const servers = await this.mcpServers(executable, home)
+      if (servers.length) return unreadable(noMcp(home, servers).replace(/^codex-sdk: /, ''))
+      confinement = this.confinement({ writable: [home] })
+    } catch (error) {
+      return unreadable(firstLine(error))
+    }
+    if (signal.aborted) return unreadable('the read was stopped')
+    let child: ChildProcess | undefined
+    try {
+      const c = confinedCommand(executable, [...APP_SERVER_ARGS, ...this.overrides.flatMap((o) => ['--config', o])], confinement)
+      child = (this.options.appServer ?? spawnAppServer)(c.command, c.args, { cwd: home, env: this.environment(home) })
+      return limitsFromRateLimits(await askRateLimits(child, signal), Date.now())
+    } catch (error) {
+      return unreadable(signal.aborted ? 'the read was stopped' : firstLine(error))
+    } finally {
+      if (child) endAppServer(child)
+    }
+  }
+
   /** `codex login` in `home`, which the operator runs in their own terminal, without D-Bus (ADR-0051). */
   loginCommand(home: string): LoginCommand {
     return { command: this.executable() ?? 'codex', args: ['login'], env: { CODEX_HOME: home } }
@@ -552,6 +607,9 @@ async function loginStatus(command: { command: string; args: string[] }, env: Re
     throw new Error(said?.slice(0, 160) || firstLine(error))
   }
 }
+
+/** Starts the app server: stdin and stdout piped (its JSON-RPC), stderr ignored. */
+const spawnAppServer: SpawnAppServer = (command, args, options) => spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'ignore'] })
 
 /** Runs the probe's Codex turn: stdin closed (Codex otherwise waits for more input), stdout kept, killed at the timeout. */
 const execConfined: ConfinedExec = (command, env, timeoutMs) => new Promise((resolve, reject) => {
