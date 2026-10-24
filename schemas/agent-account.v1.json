@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:agent-account:v1",
   "title": "Agent account record",
-  "description": "One enrollment slot of an agent runtime and the account signed in to its home (proposals/0012-agent-accounts.md, ADR-0051): the account id is derived from the verified login principal by a keyed hash, never named by hand; the principal itself and every token stay inside the runtime (INV-8).",
+  "description": "One enrollment slot of an agent runtime and the account signed in to its home (proposals/0012-agent-accounts.md, ADR-0051): the account id is derived from the verified login principal by a keyed hash, never named by hand; the principal itself and every token stay inside the runtime (INV-8). 1.1 adds `quarantine.detail`, what the reading that quarantined it found.",
   "type": "object",
   "required": ["schema", "provider", "slot", "home", "status", "revision", "updatedAt"],
   "properties": {
-    "schema": { "const": "agent-account@1.0" },
+    "schema": { "enum": ["agent-account@1.0", "agent-account@1.1"] },
     "accountId": {
       "description": "`<provider>:<h>`: `h` the first 16 hex characters of `identity.hmac`. Absent until a principal was read whole.",
       "type": "string",
@@ -45,6 +45,12 @@
         "decision": {
           "description": "The `enrollment` decision that quarantined it (INV-13).",
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "detail": {
+          "description": "@1.1: what the reading that quarantined it found, in one line, as its decision's rationale says it (for `unverified`, which runtime version was found and which its reader admits); never a principal (INV-8).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
         }
       },
       "additionalProperties": false
@@ -78,6 +84,11 @@
   },
   "additionalProperties": false,
   "allOf": [
+    {
+      "description": "A quarantine's detail is 1.1's: a record carrying it below 1.1 is refused.",
+      "if": { "properties": { "quarantine": { "type": "object", "properties": { "detail": { "type": "string" } }, "required": ["detail"] } }, "required": ["quarantine"] },
+      "then": { "properties": { "schema": { "const": "agent-account@1.1" } } }
+    },
     {
       "description": "A ready account has its id and its verified identity, and no quarantine.",
       "if": { "properties": { "status": { "const": "ready" } }, "required": ["status"] },

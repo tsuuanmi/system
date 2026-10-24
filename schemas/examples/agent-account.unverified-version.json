@@ -1,0 +1,23 @@
+{
+  "schema": "agent-account@1.1",
+  "accountId": "claude-agent-sdk:b4bd4c88be9fffdf",
+  "provider": "claude-agent-sdk",
+  "slot": 1,
+  "home": "/home/operator/.dsh/system/claude-home",
+  "status": "quarantined",
+  "quarantine": {
+    "reason": "unverified",
+    "since": "2026-10-24T09:00:00Z",
+    "decision": "sha256:4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c",
+    "detail": "slot 1 of claude-agent-sdk cannot be verified: found Claude Code 2.1.310 (/home/operator/.local/bin/claude); its identity reader admits only 2.1.308"
+  },
+  "identity": {
+    "hmac": "b4bd4c88be9fffdf0123456789abcdef0123456789abcdef0123456789abcdef",
+    "reader": "claude-state-file",
+    "runtimeVersion": "2.1.308",
+    "verifiedAt": "2026-10-23T12:00:00Z"
+  },
+  "hint": "r…@example.com",
+  "revision": 3,
+  "updatedAt": "2026-10-24T09:00:00Z"
+}

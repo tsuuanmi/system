@@ -10,6 +10,7 @@
           "provider": "claude-agent-sdk",
           "description": { "value": "Reviews the studio's diffs before they merge" },
           "derived": "claude-agent-sdk Worker, role review, standard tier, agent-plan, local",
+          "name": "Claude Code · science · review",
           "family": { "value": "claude-agent-sdk" },
           "account": {
             "value": {
@@ -81,6 +82,7 @@
           "provider": "codex-sdk",
           "description": { "unknown": "no description is configured for it" },
           "derived": "codex-sdk Worker, role review, standard tier, agent-plan, local",
+          "name": "Codex · slot 2 · review",
           "family": { "value": "codex-sdk" },
           "account": {
             "value": {
@@ -116,6 +118,7 @@
           "provider": "chatgpt-web",
           "description": { "value": "The studio's chat subscription for quick questions (standard tier)" },
           "derived": "chatgpt-web Worker, standard tier, subscription-chat, remote",
+          "name": "chatgpt-web · Studio Plus · standard",
           "family": { "value": "chatgpt-web" },
           "account": {
             "value": {

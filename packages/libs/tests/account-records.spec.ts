@@ -57,6 +57,53 @@ describe('agent-account@1.0', () => {
   })
 })
 
+describe('agent-account@1.1', () => {
+  const tag = 'agent-account@1.1'
+  const unverified = example('agent-account.unverified-version')
+
+  it('adds what the reading that quarantined an account found, refused before 1.1 and past 300 characters (T103)', () => {
+    expect(valid(tag, unverified)).toBe(true)
+    expect(valid(tag, { ...unverified, schema: 'agent-account@1.0' })).toBe(false)
+    expect(valid(tag, { ...unverified, quarantine: { ...unverified.quarantine, detail: 'x'.repeat(301) } })).toBe(false)
+    expect(valid(tag, { ...unverified, quarantine: { ...unverified.quarantine, detail: '' } })).toBe(false)
+    // A 1.1 record without a detail, and a 1.0 record, stay valid.
+    expect(valid(tag, { ...unverified, quarantine: without(unverified.quarantine, 'detail') })).toBe(true)
+    expect(valid(tag, example('agent-account.quarantined'))).toBe(true)
+  })
+})
+
+describe('mcp-agent-accounts@1.2', () => {
+  const migrate = example('mcp-agent-accounts.migrate')
+  const output = migrate.output as Json
+  const role = (patch: Json): Json => ({ ...output, plan: { ...output.plan, roles: [{ ...output.plan.roles[1], ...patch }] } })
+  const ok = (value: Json): boolean => {
+    try {
+      registry.assertDef('mcp-agent-accounts@1.2', 'account-migrate-output', value)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('gives a plan\'s role the kinds and description of its rows, bounded as the configuration bounds them (T103)', () => {
+    expect(valid('mcp-agent-accounts@1.2', migrate)).toBe(true)
+    expect(ok(role({ kinds: ['docs', 'tests'], description: 'Writes the docs and the tests' }))).toBe(true)
+    expect(ok(role({ kinds: [] }))).toBe(false)
+    expect(ok(role({ kinds: ['Code'] }))).toBe(false)
+    expect(ok(role({ kinds: ['code', 'code'] }))).toBe(false)
+    expect(ok(role({ description: 'x'.repeat(201) }))).toBe(false)
+    expect(ok(role({ owner: 'someone' }))).toBe(false)
+  })
+
+  it('lists an account\'s operator label and a runtime\'s title, each bounded (T103)', () => {
+    const list = example('mcp-agent-accounts.list')
+    expect(valid('mcp-agent-accounts@1.2', list)).toBe(true)
+    const account = list.output.accounts[0]
+    expect(valid('mcp-agent-accounts@1.2', { ...list, output: { ...list.output, accounts: [{ ...account, label: 'x'.repeat(65) }] } })).toBe(false)
+    expect(valid('mcp-agent-accounts@1.2', { ...list, output: { ...list.output, providers: [{ ...list.output.providers[0], title: '' }] } })).toBe(false)
+  })
+})
+
 describe('capability-descriptor@1.5', () => {
   const descriptor = example('capability-descriptor.account')
 

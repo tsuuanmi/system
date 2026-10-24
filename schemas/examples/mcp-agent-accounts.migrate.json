@@ -1,0 +1,48 @@
+{
+  "tool": "account_migrate",
+  "input": { "stop": ["antigravity-cli"] },
+  "output": {
+    "outcome": "planned",
+    "plan": {
+      "workers": [
+        { "from": "agent:agy-review", "runtime": "antigravity-cli", "role": "review", "why": "antigravity-cli has no verified way to read who is signed in (no identity reader), so no account of it can be enrolled and its Workers have no ready account to move to; stopped by the operator at the cutover" },
+        { "from": "agent:claude-code", "runtime": "claude-agent-sdk", "role": "develop", "to": "agent:claude-agent-sdk:b4bd4c88be9fffdf/develop", "account": "claude-agent-sdk:b4bd4c88be9fffdf", "why": "claude-agent-sdk's home is slot 1, signed in as claude-agent-sdk:b4bd4c88be9fffdf" },
+        { "from": "agent:claude-research", "runtime": "claude-agent-sdk", "role": "review", "to": "agent:claude-agent-sdk:b4bd4c88be9fffdf/review", "account": "claude-agent-sdk:b4bd4c88be9fffdf", "why": "claude-agent-sdk's home is slot 1, signed in as claude-agent-sdk:b4bd4c88be9fffdf" },
+        { "from": "agent:codex-review", "runtime": "codex-sdk", "role": "review", "to": "agent:codex-sdk:d50b2d1fa5532a21/review", "account": "codex-sdk:d50b2d1fa5532a21", "why": "codex-sdk's home is slot 1, signed in as codex-sdk:d50b2d1fa5532a21" },
+        { "from": "agent:codex-writer", "runtime": "codex-sdk", "role": "develop-2", "to": "agent:codex-sdk:d50b2d1fa5532a21/develop-2", "account": "codex-sdk:d50b2d1fa5532a21", "why": "codex-sdk's home is slot 1, signed in as codex-sdk:d50b2d1fa5532a21" }
+      ],
+      "roles": [
+        { "id": "review", "workspace": "/home/operator/src/system", "sandbox": "read-only", "tier": "standard", "worktreePerRun": true, "description": "Reviews a change before it lands", "runtimes": { "antigravity-cli": { "model": "gemini-3.8-flash-high" } } },
+        { "id": "develop", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["code"], "description": "Writes the code" },
+        { "id": "develop-2", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["docs", "tests"], "description": "Writes the docs and the tests" }
+      ],
+      "assignments": [
+        { "account": "claude-agent-sdk:b4bd4c88be9fffdf", "roles": ["develop", "review"] },
+        { "account": "codex-sdk:d50b2d1fa5532a21", "roles": ["develop-2", "review"] }
+      ],
+      "providers": [
+        { "provider": "antigravity-cli" },
+        { "provider": "claude-agent-sdk", "maxConcurrentRunsPerAccount": 2 },
+        { "provider": "codex-sdk", "maxConcurrentRunsPerAccount": 2 }
+      ],
+      "templates": [],
+      "blockers": []
+    },
+    "row": {
+      "providers": [
+        { "provider": "antigravity-cli" },
+        { "provider": "claude-agent-sdk", "maxConcurrentRunsPerAccount": 2 },
+        { "provider": "codex-sdk", "maxConcurrentRunsPerAccount": 2 }
+      ],
+      "roles": [
+        { "id": "review", "workspace": "/home/operator/src/system", "sandbox": "read-only", "tier": "standard", "worktreePerRun": true, "description": "Reviews a change before it lands", "runtimes": { "antigravity-cli": { "model": "gemini-3.8-flash-high" } } },
+        { "id": "develop", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["code"], "description": "Writes the code" },
+        { "id": "develop-2", "workspace": "/home/operator/src/system", "sandbox": "workspace-write", "tier": "standard", "worktreePerRun": true, "kinds": ["docs", "tests"], "description": "Writes the docs and the tests" }
+      ],
+      "assignments": [
+        { "account": "claude-agent-sdk:b4bd4c88be9fffdf", "roles": ["develop", "review"] },
+        { "account": "codex-sdk:d50b2d1fa5532a21", "roles": ["develop-2", "review"] }
+      ]
+    }
+  }
+}

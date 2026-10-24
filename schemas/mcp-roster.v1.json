@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-roster:v1",
   "title": "MCP roster tool",
-  "description": "Input and output of the `roster` MCP tool (design/roster.md): every Worker in one read model, projected on read from the Worker registry, the account and enrollment records, the resource ledger, the workflow runs, and the board, never stored. A fact a source could not give is `{unknown: why}`, never a default. The root describes one call (tool, input, structured output); a provider validates the output against `#/$defs/roster-output`. 1.1 adds each Worker's `description` and `derived` line, and each step's `since` and `summary`.",
+  "description": "Input and output of the `roster` MCP tool (design/roster.md): every Worker in one read model, projected on read from the Worker registry, the account and enrollment records, the resource ledger, the workflow runs, and the board, never stored. A fact a source could not give is `{unknown: why}`, never a default. The root describes one call (tool, input, structured output); a provider validates the output against `#/$defs/roster-output`. 1.1 adds each Worker's `description` and `derived` line, and each step's `since` and `summary`. 1.2 adds each Worker's display `name` and an agent account quarantine's `detail`.",
   "type": "object",
   "required": [
     "tool",
@@ -232,11 +232,20 @@
             },
             "decision": {
               "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            },
+            "detail": {
+              "$ref": "#/$defs/quarantineDetail"
             }
           },
           "additionalProperties": false
         }
       ]
+    },
+    "quarantineDetail": {
+      "description": "1.2: what the reading that quarantined the account found (agent-account@1.1 `quarantine.detail`), such as the runtime version found and the ones its reader admits.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
     },
     "accountRecord": {
       "type": "object",
@@ -301,6 +310,9 @@
             },
             "decision": {
               "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            },
+            "detail": {
+              "$ref": "#/$defs/quarantineDetail"
             }
           },
           "additionalProperties": false
@@ -756,6 +768,12 @@
         },
         "derived": {
           "description": "1.1: a line made from its provider, role, and tier, for a reader to show, marked as derived, when there is no description.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "name": {
+          "description": "1.2: its display name, `<runtime> · <account> · <role or tier> [<kinds>]` (for example `Claude Code · science · develop [code]`): the runtime's title, the account's label for an operator (else its masked hint and slot, or its id; a client's names the slot or the id), its role or tier, and its kinds of work. For people only: never a routing input, never a key.",
           "type": "string",
           "minLength": 1,
           "maxLength": 300
