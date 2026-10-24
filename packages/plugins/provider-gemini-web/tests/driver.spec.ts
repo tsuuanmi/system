@@ -11,6 +11,7 @@ import Store from '@tsuuanmi/system-store'
 import { type DriftEvent, UiEngine } from '@tsuuanmi/system-ui-ops'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderDriver } from '@tsuuanmi/system-provider-core'
+import { deletionScenarios } from '../../../provider-core/conformance/deletion.ts'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
@@ -358,50 +359,16 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(await driver.snapshot(page, 'ffffffffffffffff')).toEqual({ text: '', running: false, observable: false })
   })
 
-  it('deletes exactly one bound conversation from its own menu, and a deleted one counts as gone (PROP-0004 Phase 5)', async () => {
-    const { page, driver, fake } = await open({ answer: 'to be deleted' })
-    const kept = await driver.ask(page, 'keep me', { conversation: 'persistent' })
-    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
-    expect(await driver.deleteConversation(await context!.newPage(), doomed.binding!)).toBe('deleted')
-    expect([...fake.deleted]).toEqual([doomed.binding])
-    expect(fake.conversations.has(kept.binding!)).toBe(true)
-    // Again, as a retry after a crash would: the site shows it is gone, and nothing is clicked.
-    expect(await driver.deleteConversation(await context!.newPage(), doomed.binding!)).toBe('gone')
-    expect(driver.deletes).toEqual(['chat'])
-  })
-
-  it('inspects a conversation\'s own menu without choosing anything: outlines, never text', async () => {
-    const { page, driver, fake } = await open({ answer: 'secret answer text' })
-    const turn = await driver.ask(page, 'inspect me', { conversation: 'persistent' })
-    const outlines = await driver.inspectConversation(page, turn.binding!)
-    expect(outlines.map((o) => o.root)).toEqual(['conversation page (shown)', 'conversation menu'])
-    expect(JSON.stringify(outlines)).not.toMatch(/secret answer text|inspect me/)
-    expect(JSON.stringify(outlines[1])).toMatch(/"role":"menuitem"/)
-    expect(fake.deleted.size).toBe(0)
-  })
-
-  it('never deletes another chat through a history row: with no menu button in its own pane, nothing is clicked', async () => {
-    const { page, driver, fake } = await open({ answer: 'x', paneMenu: false })
-    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
-    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
-    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!)).rejects.toMatchObject({ kind: 'ui_drift' })
-    expect(fake.deleteRequests).toEqual([])
-    expect(fake.conversations.has(other.binding!)).toBe(true)
-  })
-
-  it('stops a deletion that names another chat at the network, after its confirm is marked, and never clicks again once confirmed', async () => {
-    const { page, driver, fake } = await open({ answer: 'x' })
-    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
-    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
-    fake.options.dialogTarget = other.binding!
-    let marked = 0
-    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!, { beforeConfirm: () => void marked++ })).rejects.toBeInstanceOf(ProviderError)
-    expect(marked).toBe(1)
-    expect(fake.deleteRequests).toEqual([])
-    expect(fake.conversations.has(other.binding!)).toBe(true)
-    fake.options.dialogTarget = ''
-    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!, { confirmed: true })).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/not clicked again/) })
-    expect(fake.deleteRequests).toEqual([])
+  // The delete flow every website driver shares (provider-core's conformance/deletion.ts), on this site.
+  deletionScenarios<Page>({
+    open: async (scenario, options) => {
+      // A conversation that does not open: a driver that waits for it only briefly.
+      const opened = await open(options, scenario === 'unopened' ? { timeouts: { readyMs: 5000, snapshotMs: 1500 } } : {})
+      return { ...opened, newPage: () => context!.newPage() }
+    },
+    deletes: ['chat'],
+    // An unknown chat goes to /unavailable, which shows no prompt and no sign of a deletion.
+    unknown: 'ffffffffffffffff',
   })
 
   it('stops a deletion request that names another chat even when a second call in it names this one (guard bypass)', async () => {
@@ -423,15 +390,6 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(namesOnly('', 'aaaaaaaaaaaaaaaa')).toBe(false)
     expect(namesOnly('{"conversation":"c_bbbbbbbbbbbbbbbb"}', 'aaaaaaaaaaaaaaaa')).toBe(false)
     expect(namesOnly('at=x', 'aaaaaaaaaaaaaaaa')).toBe(false)
-  })
-
-  it('deletes nothing when the conversation does not open as itself', async () => {
-    const { page, driver, fake } = await open()
-    const quick = new GeminiWebDriver({ origin: fake.origin, timeouts: { readyMs: 5000, snapshotMs: 1500 } })
-    // An unknown chat goes to /unavailable, which shows no prompt and no sign of a deletion.
-    await expect(quick.deleteConversation(page, 'ffffffffffffffff')).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/nothing was deleted/) })
-    await expect(driver.deleteConversation(page, 'not-an-id')).rejects.toMatchObject({ kind: 'invalid_input' })
-    expect(fake.deleted.size).toBe(0)
   })
 
   it('does not observe a conversation whose prompt it cannot read, so nothing is resent blind', async () => {

@@ -21,4 +21,6 @@ their tests, which serve as the spec (TDD).
 
 **Conformance suites** (plugin rule 7) live in [`conformance/`](conformance/):
 `display.ts`, `browser.ts`, and `providers.ts`. Every provider's tests run the
-suite for its seam; the suites are not part of the built package.
+suite for its seam; the suites are not part of the built package. Beside them,
+`deletion.ts` is the delete flow every website driver that deletes conversations
+runs against its own fake site (PROP-0004 Phase 5).
