@@ -294,7 +294,8 @@ The **`agents` Worker source**: agent runtimes as Workers
     the branch `system/run/<runId>`. A run that belongs to no workflow run
     works in the configured workspace;
   - one worktree per (repository, workflow run): the first agent run creates it
-    from the repository's HEAD (`git worktree add -b`), and every later one of
+    from the repository's HEAD (`git worktree add -b`), or the engine had it cut
+    from the work of the task's previous attempt (carrying, below), and every later one of
     that workflow run on that repository, reviewers included, works in it. So
     a review reads the developer's tree and binds to its exact subject, and a
     remediation fix writes there. A run continued after its worktree was
@@ -392,6 +393,29 @@ The **`agents` Worker source**: agent runtimes as Workers
     aborted (`git merge --abort`), its files named, and the repository checked to be as it was
     (`conflict`); a merge git refuses before starting changes nothing (`failed`). Never a force, a
     reset, a branch deletion, or a push.
+- **Carrying** (`carry` on the `workers` seam, [ADR-0061](../../../docs/decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
+  proposed, [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
+  workflow engine asks it before the first step of a board task's next attempt, for the earlier
+  attempt's worktree (by workflow run and path; any other is undefined), one change at a time per
+  repository:
+  - refused `exists` when the new run has a worktree already (cut from HEAD) or its branch exists,
+    `gone` once the earlier worktree was retired or removed, `busy` while an agent run of the earlier
+    workflow run is unfinished or not known to be gone, `failed` when it is not intact or on its
+    branch, `base-moved` unless the repository's HEAD is still the commit the earlier tree is on
+    (where a fresh worktree is cut from), `moved` unless `captureGitSubject` still gives the subject
+    its writing step left (after `.system/` is removed as the retention removes it), and `empty`
+    when that tree holds no change; a refusal before the commit leaves the earlier tree as it was;
+  - then `git add --all` and one commit by the system on the earlier branch, with the engine's
+    message and `System-Subject` and `System-Carried-To: <runId>` trailers (a clean worktree whose
+    HEAD is that commit on top of the base is found committed);
+  - then the new worktree is added on `system/run/<runId>` at the base without a checkout
+    (`--no-checkout`), recorded (`carried_from`, migration 15), and given the commit's tree, staged
+    (`read-tree -u --reset`), so its HEAD is the base and the earlier change is its own; the commit
+    is recorded last (`carried_commit`). A worktree cut and not yet given the tree (a crash, or a
+    failure there) is never run in (`acquire` refuses it, `config_error`); the carry asked again
+    gives it the tree, or, when the tree can no longer be given, puts it back to the base, a fresh
+    worktree; one that cannot be put back stays marked for the operator. A carry asked again after
+    it was done answers `carried: false`. Never a force, a reset of a branch, a deletion, or a push.
 - **Metering** ([resources](../../../docs/design/resources.md)), for a Worker
   with a `pool`, through `ctx.resources` (optional: read when present, never
   injected):
