@@ -50,12 +50,22 @@ const QUEUE = [queued('apr-1', 'batch-1', { consequences: 'the branch lands on m
 /** A stand-in queue: what the UI lists, and the verdicts it passes on. */
 class StubApprovals extends Service {
   readonly calls: Array<[Verdict[], Date]> = []
+  /** Listings asked so far; while `held` is set, a listing waits for it (a slow refresh). */
+  lists = 0
+  held: Promise<void> | undefined
+  /** When set, `decide` throws it: the route answers 409, and nothing is decided. */
+  failure: Error | undefined
   constructor(ctx: Context) {
     super(ctx, 'approvals')
   }
-  async list() { return QUEUE }
+  async list() {
+    this.lists += 1
+    await this.held
+    return QUEUE
+  }
   async get(id: string) { return QUEUE.find((r) => r.requestId === id) }
   async decide(verdicts: Verdict[], at: Date): Promise<VerdictResult[]> {
+    if (this.failure) throw this.failure
     this.calls.push([verdicts, at])
     return verdicts.map((v) => v.requestId === 'apr-3' ? { requestId: v.requestId, state: 'open', refused: 'subject-changed' } : { requestId: v.requestId, state: v.verdict, approval: `sha256:${'a'.repeat(64)}` })
   }
@@ -285,22 +295,77 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     const queue = page.getByRole('region', { name: 'Approval queue' })
-    await expect.poll(() => queue.getByText('Batch batch-1').count()).toBe(1)
-    for (const text of ['merge apr-1', 'the branch lands on main', 'deploy', 'content board-task:apr-1:attempt:0 @ approval-needed', 'Not yet batched']) {
+    await expect.poll(() => queue.getByText('Batch batch-1: 2 related requests').count()).toBe(1)
+    for (const text of ['merge apr-1', 'the branch lands on main', 'deploy', 'content board-task:apr-1:attempt:0 @ approval-needed', 'Decided one by one',
+      'Allow a merge step: merge apr-1']) {
       expect(await queue.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
     }
+    expect(await queue.innerText()).toContain('3 requests wait for your verdict')
+    expect(await queue.innerText()).toContain('task apr-1 of project p1, attempt 1')
     expect(await page.locator('main').innerText()).not.toContain('null')
-    await queue.getByRole('textbox', { name: 'Note for batch-1' }).fill('ship it')
-    await queue.getByRole('button', { name: 'Approve batch' }).click()
+    await queue.getByRole('textbox', { name: 'Note for every request of this batch (optional)' }).fill('ship it')
+    await queue.getByRole('button', { name: 'Approve all 2 in this batch' }).click()
     await expect.poll(() => approvals().calls.length).toBe(1)
     expect(approvals().calls[0]![0]).toEqual([
       { requestId: 'apr-1', subject: QUEUE[0]!.subject, verdict: 'approved', note: 'ship it' },
       { requestId: 'apr-2', subject: QUEUE[1]!.subject, verdict: 'approved', note: 'ship it' },
     ])
-    await queue.getByRole('button', { name: 'Deny apr-3' }).click()
+    await expect.poll(() => page.locator('#outcome').innerText()).toContain('2 verdicts recorded')
+    await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Deny: hold the task' }).click()
     await expect.poll(() => approvals().calls.length).toBe(2)
     expect(approvals().calls[1]![0]).toEqual([{ requestId: 'apr-3', subject: QUEUE[2]!.subject, verdict: 'rejected' }])
-    await expect.poll(() => page.locator('#status').innerText()).toContain('refused: apr-3 (subject-changed)')
+    // A refused verdict is an alert that says why, and that nothing was decided.
+    await expect.poll(() => page.getByRole('alert').innerText()).toContain('Not recorded: your denial of Allow a deploy step: merge apr-3')
+    expect(await page.getByRole('alert').innerText()).toContain('what it asks about changed since the page showed it')
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('keeps a press on Approve when a refresh lands between pressing and releasing: the click is not lost (T84)', async () => {
+    const { origin, token, approvals } = await boot({ approvals: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    cleanups.push(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const approve = page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' })
+    await expect.poll(() => approve.count()).toBe(1)
+    // The next periodic refresh starts and waits on the queue's listing.
+    let release!: () => void
+    approvals().held = new Promise((resolve) => { release = resolve })
+    const listed = approvals().lists
+    await expect.poll(() => approvals().lists, { timeout: 10_000 }).toBeGreaterThan(listed)
+    // The operator presses Approve while it is in flight; it lands; then they release.
+    await approve.scrollIntoViewIfNeeded()
+    const box = (await approve.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    release()
+    approvals().held = undefined
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.mouse.up()
+    await expect.poll(() => approvals().calls.length).toBe(1)
+    expect(approvals().calls[0]![0]).toEqual([{ requestId: 'apr-3', subject: QUEUE[2]!.subject, verdict: 'approved' }])
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('shows a verdict that was not recorded as an alert that stays through refreshes until dismissed (INV-2, T84)', async () => {
+    const { origin, token, approvals } = await boot({ approvals: true })
+    approvals().failure = new Error('the store is busy')
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    cleanups.push(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' }).click()
+    const alert = page.getByRole('alert')
+    await expect.poll(() => alert.innerText()).toContain('Not recorded: your approval of Allow a deploy step: merge apr-3')
+    expect(await alert.innerText()).toContain('the store is busy')
+    expect(await alert.innerText()).toContain('Nothing was decided: the request is still open in the queue.')
+    // The buttons are back for another try.
+    expect(await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' }).isEnabled()).toBe(true)
+    // A periodic refresh does not take it away.
+    const listed = approvals().lists
+    await expect.poll(() => approvals().lists, { timeout: 10_000 }).toBeGreaterThan(listed)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await alert.innerText()).toContain('the store is busy')
+    await alert.getByRole('button', { name: 'Dismiss' }).click()
+    expect(await page.getByRole('alert').count()).toBe(0)
   }, 60_000)
 
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {

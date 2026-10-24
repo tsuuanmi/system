@@ -80,12 +80,31 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
 - `note` applies to every verdict that has none of its own; a note is trimmed to 2000
   characters.
 - With `batchId`, every verdict must be for a request of that batch, or nothing is decided
-  (`409`). The page sends it for **Approve batch** and **Deny batch**, with one verdict for each
-  request it shows.
+  (`409`). The page sends it for a batch's **Approve all N in this batch** and **Deny all N in
+  this batch**, with one verdict for each request it shows.
 - A malformed verdict refuses the whole call before any verdict applies (`400`). Otherwise
   the verdicts go to `ctx.approvals.decide` as the operator's (INV-6), at the server's clock:
   each applies or is refused on its own (`unknown-request`, `already-resolved`, `expired`,
   `subject-changed`, `failed`).
+
+The page shows each request as one entry: what is asked in plain words (a charter as *Found
+project …* or *Amend the charter of …*, a board task's step, a tool call, a budget raise, a fix,
+a policy change), who asked (the board for a task or project, an agent run, a run's step, the
+queue), the request's own text, what it is about with the exact subject behind **Exact
+subject**, what approving and what denying change, and when it expires, relative and absolute
+(unanswered by then, it counts as denied). The consequences a requester gave are shown as given;
+for a board charter or task request without them the page says what the board does with each
+verdict ([board](../design/board.md)), counting the project's proposed and open tasks from
+`GET projects` when the board runs. Each button names its effect (*Approve: activate project p1*,
+*Deny: hold the task*), and each entry has its own note; a batch has a note for all its requests.
+
+After a call the page reports, above the page until **Dismiss**, what happened: each verdict
+recorded, with its request and approval record and what happens next, or not recorded, with why
+in plain words (each `refused` failure, or the call's own `{error}` and status) and that nothing
+was decided. The same report follows a review verdict, a project move, and a run action. While a
+call is in flight its buttons are disabled. The page refreshes every 5 seconds, but never while
+an element of it has focus or a pointer or key is pressed: a render that lands during a press
+waits for its release, so a press is never lost to a refresh.
 
 ## Autonomy policy
 

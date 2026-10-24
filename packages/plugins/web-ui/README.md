@@ -2,7 +2,8 @@
 
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
-- runs and their steps;
+- runs, each with its steps in one line (how many completed, and those failed, waiting, or
+  running, by name) and when it started; the run's page has every step;
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
   route, acceptance, recovery);
 - the answer;
@@ -11,8 +12,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   buttons, and is decided in the queue;
 - when `ctx.approvals` is present, the **approval queue**
   ([approvals](../../../docs/design/approvals.md)) above the runs: open requests by batch, each
-  with its class, exact subject, summary, consequences, and expiry, and the operator's
-  **Approve / Deny** for one request or a whole batch, with an optional note; a `policy-change`
+  in plain words (what is asked, who asked, what approving and denying change, when it expires,
+  the exact subject behind **Exact subject**), and the operator's **Approve / Deny**, labelled by
+  their effect, for one request or a whole batch, each with an optional note. What a verdict did
+  (recorded, with its ids and what happens next, or not recorded and why) stays above the page
+  until dismissed ([the page](../../../docs/reference/web-ui.md#approval-queue)); a `policy-change`
   request shows the change it asks for (**Show change**: the effective modes it moves and the
   record's diff, and, for a change the queue proposed itself, that it did and why). Without it the page shows the runs alone and the queue routes answer `503`;
 - when `ctx.approvals` is present, the **autonomy policy** page (`?view=policy`): the set in force
@@ -110,7 +114,9 @@ headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), the roster route (operator only, valid against
 `mcp-roster@1.0`, labels shown, unknown without a Worker registry), and, with a browser, the runs,
-the queue, and the Roster page.
+the queue (labels by effect, a batch verdict, a refused one as an alert), a press a refresh lands
+on that still counts, a verdict not recorded that stays as an alert through refreshes until
+dismissed, and the Roster page.
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
@@ -128,6 +134,8 @@ pause and a close refused to a client token, bound to the revision shown; a paus
 ready task the engine does not run and whose proposed task is not gated, resumed and run to done;
 a close refused while a task is in review, then cancelling the open tasks, releasing a claim, and
 withdrawing the requests a waiting task and a pending amendment were on, in the store-backed queue;
-and, with a browser, a pause and a close each made only after its confirmation, and a Cancel that
+and, with a browser, a charter founded from the queue (what approving and denying do, with the
+project's task counts; the approval recorded and reported with its ids; the project active after
+the board's sweep), a pause and a close each made only after its confirmation, and a Cancel that
 moves nothing. [`tests/web-ui.spec.ts`](tests/web-ui.spec.ts) also checks the projects routes
 answer `503` without a board.

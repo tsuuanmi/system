@@ -131,6 +131,37 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     for (const move of ['close', 'pause', 'resume']) expect((await call(`projects/p1/${move}`, { revision: project.revision, outcome: 'achieved' })).status, move).toBe(409)
   })
 
+  it.runIf(canRunBrowser)('founds a project from the queue in a real browser: the charter says what approving and denying do, the approval is recorded and shown with its id, and the board activates the project (T84)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    const { approvalRequest } = await ctx.board.charter({ projectId: 'p1', title: 'project p1', charter: CHARTER })
+    for (const title of ['first', 'second']) await ctx.board.propose({ projectId: 'p1', title, goal: `do ${title}`, acceptance: [{ id: 'a1', statement: 'it answers' }], actionClass: 'read' })
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    cleanups.push(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    const card = page.getByRole('article', { name: 'Found project project p1 (charter version 1)' })
+    await expect.poll(() => card.count()).toBe(1)
+    const text = await card.innerText()
+    for (const said of ['Asked by the board of project project p1', 'request ' + approvalRequest, 'charter version 1 of project p1',
+      '2 proposed task(s) go through the autonomy policy', 'is closed as abandoned, and 2 open task(s) are cancelled', 'unanswered by then, it counts as denied']) expect(text, said).toContain(said)
+    await card.getByRole('textbox', { name: 'Note with your verdict on this request (optional)' }).fill('go')
+    await card.getByRole('button', { name: 'Approve: activate project p1' }).click()
+    const outcome = page.locator('#outcome')
+    await expect.poll(() => outcome.innerText()).toContain('Approved: Found project project p1 (charter version 1)')
+    const request = await ctx.approvals.get(approvalRequest)
+    expect(request).toMatchObject({ state: 'approved', resolution: { cause: 'verdict' } })
+    expect(await outcome.innerText()).toContain(`Recorded as your verdict on request ${approvalRequest} (approval record ${request!.resolution!.approval})`)
+    expect(ctx.artifacts.get(request!.resolution!.approval!)!.body).toMatchObject({ verdict: 'approved', by: 'operator', note: 'go' })
+    // The queue no longer lists it; the board's next sweep activates the project.
+    await expect.poll(() => page.locator('main').innerText()).toContain('Nothing waits for your verdict.')
+    await ctx.board.sweep(new Date())
+    expect((await ctx.board.project('p1'))?.state).toBe('active')
+    await outcome.getByRole('button', { name: 'Dismiss' }).click()
+    expect(await outcome.innerText()).toBe('')
+  }, 60_000)
+
   it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
     const booted = await boot()
     const { ctx } = booted
