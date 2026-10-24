@@ -181,6 +181,10 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     const heals: HealEvent[] = []
     const engine = new UiEngine(tab, map, { onDrift: (e) => drift.push(e), onHeal: (e) => heals.push(e), defaultResolveMs: 800, ...extra })
     await tab.goto(`${origin}/`)
+    // A test acts on a page that has drawn, as the product does: a click finds its target stable over
+    // two animation frames, and a browser just launched can draw its first window seconds late on a
+    // loaded runner, which a short bound (copied's 3 s click) must not count.
+    await tab.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     return { engine, tab, drift, heals }
   }
 
