@@ -411,7 +411,7 @@ export class AgentWorkers extends Service {
     assignments: z.array(z.object({
       account: z.string().pattern(/^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$/).required().description('An enrolled agent account, by the id system account list shows'),
       roles: z.array(z.string()).required().description('The roles it serves: one Worker agent:<account>/<role> each'),
-      label: z.string().max(MAX_LABEL).pattern(LABEL).description('Its display label in your words, such as science or lead: plain text on one line, at most 64 characters; shown in the roster\'s and the Workers tab\'s names (Claude Code · science · develop [code]) and system account list, never a routing input, never part of a Worker id'),
+      label: z.string().max(MAX_LABEL).pattern(LABEL).description('Its display label in your words, such as science or lead: plain text on one line, at most 64 characters; shown in the roster\'s and the Workers tab\'s names (<runtime> · science · develop [code]) and system account list, never a routing input, never part of a Worker id'),
     })).default([]).description('Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker'),
     providers: z.array(z.object({
       provider: z.string().required().description('The agent runtime kind, as its provider registers it (the runtime of its Workers)'),
