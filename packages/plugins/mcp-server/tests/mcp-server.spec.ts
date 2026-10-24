@@ -5,6 +5,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import EventLog from '@tsuuanmi/system-event-log'
@@ -13,7 +14,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { z as zod } from 'zod'
 import { FakePluginHost, manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
-import McpEndpoint from '../src/index.ts'
+import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
+import McpEndpoint, { needsLook } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -150,25 +152,49 @@ describe('system MCP server on ctx.webServer', () => {
       packages: { '@x/a': manifestText('@x/a', { version: '2.1.0' }), '@x/b': manifestText('@x/b'), '@x/c': manifestText('@x/c', { _meta: {} }), '@x/dsh': undefined, '@x/allowed': undefined },
       allowWithoutManifest: ['@x/allowed'],
     }
-    const host = ctx.plugin(FakePluginHost, { composition, ledger: new Map() })
+    // @x/allowed was recorded while its row was off; with no manifest now its record stays `candidate` though it is mounted.
+    const recorded = { state: 'candidate' as const, since: '2026-01-01T00:00:00.000Z', decision: `sha256:${'a'.repeat(64)}` as const, version: '1.0.0' }
+    const ledger = new Map([['@x/allowed', { name: '@x/allowed', ...recorded, rows: ['allowed'] }]])
+    const host = ctx.plugin(FakePluginHost, { composition, ledger })
     await host
     cleanups.push(() => host.dispose())
-    type Status = { plugins?: Array<Record<string, unknown>>; health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }
-    const status = async (token: string) => (await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as Status
-    const operator = await status(tokens.operator)
+    type Status = { plugins?: Array<Record<string, unknown>>; pluginsOmitted?: number; health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }
+    const call = async (token: string, args: Record<string, unknown> = {}) => (await connect(url, token)).callTool({ name: 'status', arguments: args })
+    const status = async (token: string, args: Record<string, unknown> = {}) => (await call(token, args)).structuredContent as Status
+    const all = await status(tokens.operator, { plugins: true })
     const checked = { since: expect.any(String), decision: expect.stringMatching(/^sha256:/) }
-    expect(operator.plugins).toEqual([
+    const [a, b, c, dsh, allowed] = [
       { name: '@x/a', rows: ['a'], mounted: true, manifest: 'valid', version: '2.1.0', class: { kind: 'family', family: 'surface' }, lifecycle: { state: 'default', since: expect.any(String), decision: expect.stringMatching(/^sha256:/) } },
       { name: '@x/b', rows: ['b'], mounted: false, manifest: 'valid', version: '1.0.0', class: { kind: 'family', family: 'surface' }, lifecycle: expect.objectContaining({ state: 'candidate' }) },
       { name: '@x/c', rows: ['c'], mounted: true, manifest: 'refused', reason: expect.stringMatching(/_meta/), findings: [{ kind: 'no-manifest', manifest: 'refused', reason: expect.stringMatching(/refused: it declares _meta/) }], checked },
       { name: '@x/dsh', rows: ['dsh'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/), findings: [{ kind: 'no-manifest', manifest: 'absent', reason: expect.stringMatching(/no manifest/) }], checked },
-      { name: '@x/allowed', rows: ['allowed'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/) },
-    ])
+      { name: '@x/allowed', rows: ['allowed'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/), lifecycle: { state: 'candidate', since: recorded.since, decision: recorded.decision } },
+    ]
+    expect(all.plugins).toEqual([a, b, c, dsh, allowed])
+    expect(all).not.toHaveProperty('pluginsOmitted')
+    // Unasked, only the plugins that need a look: a finding, a refused manifest, a lifecycle the composition does not give it.
+    const operator = await status(tokens.operator)
+    expect(operator.plugins).toEqual([c, dsh, allowed])
+    expect(operator.pluginsOmitted).toBe(2)
+    expect(operator.health).toEqual(all.health)
     expect(operator.health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'down', detail: expect.stringMatching(/^@x\/c: it runs with a manifest the host refused: it declares _meta.*; @x\/dsh: it runs with no manifest/) })
     expect(operator.health.state).toBe('down')
-    const client = await status(tokens.client)
-    expect(client.plugins).toBeUndefined()
-    expect(client.health.checks.find((c) => c.name === 'manifests')).toEqual({ name: 'manifests', state: 'down' })
+    // The text is a summary of the answer, never the answer again.
+    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: 'health down: 5 checks, manifests down; 5 plugins, 3 listed (those that need a look; plugins: true lists every one)' }])
+    for (const args of [{}, { plugins: true }]) {
+      const client = await status(tokens.client, args)
+      expect(client.plugins).toBeUndefined()
+      expect(client.health.checks.find((c) => c.name === 'manifests')).toEqual({ name: 'manifests', state: 'down' })
+    }
+  })
+
+  it('lists unasked a plugin whose recorded lifecycle is not the one the composition gives it: default when mounted, candidate when its rows are off, retired when none names it', () => {
+    const plugin = (mounted: boolean, rows: string[], state?: 'default' | 'candidate' | 'retired'): PluginRecord => ({
+      name: '@x/p', rows, mounted, manifestState: 'valid', ...(state ? { lifecycle: { state, since: '2026-01-01T00:00:00.000Z', decision: `sha256:${'a'.repeat(64)}` } } : {}),
+    })
+    expect([plugin(true, ['p'], 'default'), plugin(false, ['p'], 'candidate'), plugin(false, [], 'retired'), plugin(true, ['p'])].map(needsLook)).toEqual([false, false, false, false])
+    expect([plugin(true, ['p'], 'candidate'), plugin(false, ['p'], 'default'), plugin(false, [], 'candidate')].map(needsLook)).toEqual([true, true, true])
+    expect(needsLook({ ...plugin(true, ['p'], 'default'), manifestState: 'refused' })).toBe(true)
   })
 
   it('reads the event log for the operator only, in order, a page at a time (QA-7, ADR-0023)', async () => {
@@ -294,10 +320,48 @@ describe('scoped tokens', () => {
     const operator = await connect(url, tokens.operator)
     const listed = (await operator.listTools()).tools
     expect(listed.map((t) => t.name).sort()).toEqual(['artifact', 'ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'status'])
-    // The reference page shows each tool's scope from the listing.
-    expect(listed.find((t) => t.name === 'op_only')?._meta).toMatchObject({ 'system/scope': 'operator' })
-    expect(listed.find((t) => t.name === 'cl_tool')?._meta).toMatchObject({ 'system/scope': 'client' })
+    // The reference page shows each tool's scope from the listing: marked operator, or a client tool too.
+    expect(listed.find((t) => t.name === 'op_only')?._meta).toEqual({ 'system/scope': 'operator' })
+    expect(listed.find((t) => t.name === 'cl_tool')).not.toHaveProperty('_meta')
     expect((await operator.callTool({ name: 'op_only', arguments: {} })).content).toEqual([{ type: 'text', text: 'done' }])
+  })
+
+  it('lists each tool as the SDK would, less what tells a client nothing; a call is validated as strictly (QA-12, QA-14)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const at = zod.iso.datetime({ offset: true })
+    const inputSchema = { since: at.optional().describe('From'), window: zod.object({ until: at, size: zod.number().int().min(1) }).optional(), tag: zod.string().regex(/^[a-z]+$/).max(20).optional() }
+    ctx.mcp.tool('when', { description: 'dated', inputSchema, scope: 'client' }, async (args) => ({ content: [{ type: 'text' as const, text: JSON.stringify(args) }] }))
+    ctx.mcp.tool('op_when', { description: 'dated, operator', inputSchema }, async () => ({ content: [] }))
+    // What the SDK's own tools/list sends for the same zod schema (JSON Schema draft-07, with $schema).
+    const sdk = toJsonSchemaCompat(zod.object(inputSchema), { strictUnions: true, pipeStrategy: 'input' }) as Record<string, unknown>
+    expect(sdk).toHaveProperty('$schema')
+    expect(JSON.stringify(sdk)).toMatch(/"format":"date-time","pattern":"\^\(\?:/)
+    // Draft-07 and 2020-12 read these keywords alike, so no $schema; the date-time format stands for zod's pattern.
+    const strip = (node: unknown): unknown => Array.isArray(node) ? node.map(strip) : node !== null && typeof node === 'object'
+      ? Object.fromEntries(Object.entries(node).filter(([key]) => key !== '$schema' && !(key === 'pattern' && (node as { format?: unknown }).format === 'date-time')).map(([key, value]) => [key, strip(value)]))
+      : node
+    const expected = strip(sdk)
+    for (const [scope, token] of [['client', tokens.client], ['operator', tokens.operator]] as const) {
+      const response = await post(url, token, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }))
+      const text = await response.text()
+      const tools = (JSON.parse(text.split('\n').find((line) => line.startsWith('data: '))!.slice(6)) as { result: { tools: Array<Record<string, unknown>> } }).result.tools
+      // No `$schema`, no `execution` (absent, a tool takes no task: the SDK's "forbidden").
+      for (const tool of tools) {
+        expect(Object.keys(tool).filter((key) => key !== '_meta').sort(), `${scope} ${String(tool.name)}`).toEqual(['description', 'inputSchema', 'name'])
+        expect(JSON.stringify(tool.inputSchema)).not.toContain('$schema')
+      }
+      expect(tools.find((t) => t.name === 'when')).toEqual({ name: 'when', description: 'dated', inputSchema: expected })
+      expect(JSON.stringify(expected)).toContain('"pattern":"^[a-z]+$"')
+      expect(JSON.stringify(expected)).not.toMatch(/date-time","pattern"/)
+      // Only the operator token sees a tool the client token may not call, and only it is marked.
+      expect(tools.filter((t) => t._meta !== undefined).map((t) => t.name).sort()).toEqual(scope === 'operator' ? ['artifact', 'events', 'evidence', 'op_when'] : [])
+    }
+    // The server still checks every date-time and pattern with zod, as before.
+    const client = await connect(url, tokens.client)
+    expect(await client.callTool({ name: 'when', arguments: { since: '2026-10-24T08:00:00+07:00', window: { until: '2026-10-24T09:00:00Z', size: 1 } } })).not.toHaveProperty('isError', true)
+    for (const bad of [{ since: '2026-10-24' }, { since: '2026-02-30T08:00:00Z' }, { window: { until: 'tomorrow', size: 1 } }, { tag: 'A' }]) {
+      expect(await client.callTool({ name: 'when', arguments: bad }), JSON.stringify(bad)).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/Input validation error/) }] })
+    }
   })
 
   it('refuses a client calling an operator tool with 403 insufficient_scope, in a batch too (QA-14)', async () => {

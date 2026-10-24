@@ -26,8 +26,9 @@ on.
   `allowWithoutManifest` names), or with a consumed seam its mounted providers' manifests do not
   satisfy, is listed with its findings; each plugin's findings are recorded once, again only when
   they change or clear.
-- **Read by:** MCP `status` ([mcp-server](../mcp-server/README.md)): the plugins and their
-  findings for the operator, and the `manifests` health check; `system plugins`.
+- **Read by:** MCP `status` ([mcp-server](../mcp-server/README.md)): the plugins that need a
+  look and their findings for the operator (every plugin with `plugins: true`), and the
+  `manifests` health check; `system plugins`.
 - **Conformance:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the
   [suite](../../plugin-host-core/conformance/plugin-host.ts) at contract 1.1 over a stub of the
   loader and package directories installed under a temporary profile.
