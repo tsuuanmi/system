@@ -64,7 +64,7 @@ textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320p
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
 pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
-code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
+code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter, li.capacity meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } li.capacity .no-bar { display: inline-block; width: 64px; margin-right: 8px; } ul.capacities { list-style: none; padding: 0; margin: 6px 0; } li.capacity { margin: 2px 0; } section.account { margin: 20px 0; } section.account > h3 { margin-bottom: 4px; } section.account > h3 .muted { font-weight: 400; } .quota { margin: 4px 0 8px; } details.facts { margin-top: 6px; } details.facts dl { margin-top: 4px; } .panel.worker h4 { margin: 0 0 4px; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
 
@@ -167,12 +167,12 @@ export const APP_JS = `'use strict'
   const PAGES = {
     home: ['Home', 'What waits for your verdict, what needs a look, how the Workers are doing, and the latest runs.'],
     board: ['Board', 'Every project and its open tasks, and who works on them; pause, resume, or close a project.'],
-    workers: ['Workers', 'Every Worker: what it is for, what it does now, and when it is back if it rests at a limit.'],
+    workers: ['Workers', 'Every account and its Workers: what each is for, what it does now, how much quota is left, and until when one rests.'],
     policy: ['Autonomy policy', 'Which actions run on their own, which ask you first, and the changes proposed to that.'],
     run: ['Run', 'One run: what it answered, its steps in order, and what you can do with it.'],
   }
   // Idle capacity, and the step that puts it to work.
-  const capacityText = (idle, ready) => (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker idle' : ' Workers idle')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
+  const capacityText = (free, ready) => (free === undefined ? 'How many Workers are free is unknown now' : free + (free === 1 ? ' Worker free' : ' Workers free')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
     + (ready ? '. A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
   const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
@@ -513,10 +513,13 @@ export const APP_JS = `'use strict'
       el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
         waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now.')),
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
-        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' idle · ' + c.resting + ' at a limit · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
+        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' free · ' + c.resting + ' resting · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
           + (describing.length ? ' (so far: ' + describing.join(', ') + ' still describing its Workers)' : '') + ' ',
           el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'see each Worker'))
           : el('p', { class: 'muted' }, 'The Workers could not be read now.'),
+        // Each account's capacity in one line, its 5 h bar beside it (the CEO's view of what is left).
+        roster && 'value' in roster.workers && accountsOf(roster.workers.value).some((g) => g.account)
+          ? el('ul', { class: 'capacities', 'aria-label': 'Capacity of each account' }, accountsOf(roster.workers.value).filter((g) => g.account).map(capacityLine)) : null,
         ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'see the board')) : null),
       queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
       reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
@@ -739,7 +742,7 @@ export const APP_JS = `'use strict'
           el('li', {}, 'It runs the ' + task.template + ' template for this task, its attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ': the run claims the task, which moves to Working.'),
           el('li', {}, steps.length === 1 ? 'Its step, and the kind of Worker it runs on:' : 'Its ' + steps.length + ' steps, in order, and the kind of Worker each runs on:',
             el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step) + '.')))),
-          el('li', {}, (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' idle now') + '; a step no free Worker can take waits for one.'),
+          el('li', {}, (idle === undefined ? 'How many Workers are free is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' free now') + '; a step no free Worker can take waits for one.'),
           el('li', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
         yes, close))
       yes.focus()
@@ -754,7 +757,7 @@ export const APP_JS = `'use strict'
         t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
         t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
         t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
-        t.state === 'claimed' || t.state === 'running' ? el('div', {}, run ? [run.name + ', ', 'value' in run.since ? 'for ' + relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time'] : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
+        t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
         t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
         t.landing ? landingLine(t.landing) : null,
@@ -793,16 +796,6 @@ export const APP_JS = `'use strict'
       projects.length ? el('div', { class: 'folded' }, folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
   }
 
-  // The Workers (the roster, docs/design/roster.md): one card per Worker, grouped by what it does
-  // now, each saying what it is for, its status and why, what it works on, its account, limits, and
-  // load. A fact its source could not give shows as unknown with why, never a default.
-  const STATUS = {
-    busy: { group: 'Working', word: 'working' },
-    ready: { group: 'Idle', word: 'idle' },
-    resting: { group: 'At a limit', word: 'at a limit' },
-    unavailable: { group: 'Unavailable', word: 'unavailable' },
-    quarantined: { group: 'Quarantined', word: 'quarantined' },
-  }
   // A time as its clock time ("14:20"), with the day when it is not today.
   const clockOf = (iso) => {
     const d = new Date(iso)
@@ -833,64 +826,127 @@ export const APP_JS = `'use strict'
   const windowsView = (p) => {
     const named = (win) => win.seconds ? span(win.seconds) + (p.windows.filter((w) => w.seconds === win.seconds).length > 1 ? ' (' + win.id + ')' : '') : win.id
     const order = [...p.windows].sort((x, y) => Number(y.state === 'limited') - Number(x.state === 'limited'))
-    return order.map((win) => el('div', { class: 'window' + (win.state === 'limited' ? ' limited' : ''), 'aria-label': 'window ' + win.id + ' of ' + p.pool },
+    // Windows with no reading yet for the same reason read as one line ("5 h, 7 d: no reading yet: …").
+    const lines = []
+    for (const win of order) {
+      const none = !('value' in win.used) && /^no reading yet/.test(win.used.unknown) ? win.used.unknown : undefined
+      const same = none && lines.find((l) => l.none === none)
+      if (same) same.windows.push(win)
+      else lines.push({ none, windows: [win] })
+    }
+    return lines.map(({ windows: [win, ...more] }) => el('div', { class: 'window' + (win.state === 'limited' ? ' limited' : ''), 'aria-label': 'window ' + [win, ...more].map((w) => w.id).join(', ') + ' of ' + p.pool },
       'value' in win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(win.used.value), 'aria-hidden': 'true' }) : null,
-      el('span', {}, windowLine(win, named(win)))))
+      el('span', {}, windowLine(win, [win, ...more].map(named).join(', ')))))
   }
+  // The Workers by account (docs/design/roster.md): each account once, under a small header with its
+  // quota, then its Workers (its roles), each card calm: what it is for, its status (a reason that
+  // blocks work always shown), and what it does now; every unknown, derived, or technical fact is
+  // folded under the card's details, never dropped and never a default.
+  const isKnown = (k) => 'value' in k
+  const textOf = (k, render) => isKnown(k) ? (render ? render(k.value) : String(k.value)) : 'unknown (' + k.unknown + ')'
+  // A display name is "<runtime> · <account> · <work>": the account's name is all but the work.
+  const cut = (name) => { const i = name.lastIndexOf(' · '); return i > 0 ? [name.slice(0, i), name.slice(i + 3)] : [name, name] }
+  // Each account once, with its Workers in roster order; the Workers of no account last, each on its own.
+  const accountsOf = (workers) => {
+    const groups = new Map()
+    for (const w of workers) {
+      const key = isKnown(w.account) ? 'account:' + w.account.value.id : 'worker:' + w.worker
+      if (!groups.has(key)) groups.set(key, { key, name: isKnown(w.account) ? cut(w.name)[0] : w.name, account: isKnown(w.account) ? w.account.value : undefined, workers: [] })
+      const g = groups.get(key)
+      g.workers.push(w)
+      // The account rests when any of its Workers says it does.
+      if (g.account && !g.account.limitUntil && w.account.value.limitUntil) g.account = w.account.value
+    }
+    const all = [...groups.values()]
+    return all.filter((g) => g.account).concat(all.filter((g) => !g.account))
+  }
+  // An account's pools, read once from the first of its Workers that has them.
+  const poolsOf = (g) => { const w = g.workers.find((x) => isKnown(x.pools)); return w ? w.pools.value : undefined }
+  // Resting until when, in the operator's words.
+  const restingText = (until) => 'resting until ' + clockOf(until) + ' (' + relative(until) + ')'
+  // An account's capacity in one line, as Home shows it: its shortest window (the 5 h one) with a small
+  // bar, and, when it rests at a limit, until when; or that it has no reading yet.
+  const capacityLine = (g) => {
+    const pools = poolsOf(g) || []
+    const windows = pools.flatMap((p) => p.windows.filter((win) => win.seconds).map((win) => ({ p, win })))
+    const pick = windows.sort((x, y) => x.win.seconds - y.win.seconds)[0]
+    const resting = g.account && g.account.limitUntil ? g.account.limitUntil : pools.filter((p) => !p.available && p.until).map((p) => p.until).sort().at(-1)
+    return el('li', { class: 'capacity', 'aria-label': 'Capacity of ' + g.name },
+      pick && 'value' in pick.win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(pick.win.used.value), 'aria-hidden': 'true' }) : el('span', { class: 'no-bar', 'aria-hidden': 'true' }),
+      el('span', {}, g.name + ': ' + [resting ? restingText(resting) : null,
+        pick ? span(pick.win.seconds) + ' ' + (pick.win.state === 'limited' ? 'at its limit, ' : '') + ('value' in pick.win.used ? 'used ' + pick.win.used.value + ' %' + ('value' in pick.win.resets ? ', resets ' + clockOf(pick.win.resets.value) : '') : /^no reading yet/.test(pick.win.used.unknown) ? 'no reading yet' : 'used unknown') : null,
+      ].filter(Boolean).join('; ') || 'no quota is read for it'))
+  }
+  // A Worker's status in plain words, with the reason; one that blocks work is never folded.
+  const statusOf = (w) => {
+    const a = w.availability
+    if (a.state === 'busy') return a.slots !== undefined ? 'Working: ' + a.running + ' of ' + a.slots + ' slot(s) in use' + (a.running < a.slots ? '; it still takes work' : '; it takes no more until one ends') : 'Working'
+    if (a.state === 'ready') return 'Free: it takes work now'
+    if (a.state === 'resting') return isKnown(a.until) ? 'Resting until ' + clockOf(a.until.value) + ' (' + relative(a.until.value) + ')' : 'Resting: no reset is known (' + a.until.unknown + ')'
+    if (a.state === 'unavailable') return 'Unavailable: ' + textOf(a.reason)
+    return 'Quarantined: its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + (a.detail ? ' (' + a.detail + ')' : '') + ', since ' + when(a.since)
+  }
+  const runOpen = (runId) => el('a', { href: '?run=' + encodeURIComponent(runId), onclick: (e) => { e.preventDefault(); go(runId) }, 'aria-label': 'Open run ' + runId }, 'open run')
+  // What it does now, when it does something; its runs whose liveness needs a look (PROP-0013) are never folded.
+  const doingOf = (w) => {
+    const items = isKnown(w.work) ? w.work.value.items : []
+    const live = w.liveness && isKnown(w.liveness) ? w.liveness.value : []
+    if (!items.length && !live.length) return null
+    return el('div', { class: 'doing' },
+      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', {}, i.summary, ' ', runOpen(i.runId)))) : null,
+      isKnown(w.work) && w.work.value.more ? el('div', { class: 'muted' }, w.work.value.more + ' more step(s) not listed') : null,
+      live.length ? el('ul', { 'aria-label': 'Runs whose liveness needs a look' }, live.map((r) => el('li', { class: r.state === 'unknown' ? 'state failed' : 'unknown' }, r.summary, r.runId ? [' ', runOpen(r.runId)] : null))) : null)
+  }
+  // Its pools' windows, the closed pools first; a pool's own name only when there are several.
+  // A closed pool says it rests, unless its account already says so (\`rested\`).
+  const poolsView = (pools, rested) => [...pools].sort((x, y) => Number(x.available) - Number(y.available)).map((p) => el('div', { class: 'pool' },
+    pools.length > 1 || (!p.available && !rested) ? el('div', {}, pools.length > 1 ? el('strong', {}, p.pool + ' ') : null, p.available || rested ? null : el('span', { class: 'state resting' }, p.until ? restingText(p.until) : 'resting; no reset is known')) : null,
+    windowsView(p),
+    isKnown(p.unknownUsage) && p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null))
+  // The facts of a Worker or an account a person rarely needs, folded: what could not be read stays here, with why.
+  const detailsOf = (rows) => el('details', { class: 'facts' }, el('summary', {}, 'details'), el('dl', {}, rows.filter(Boolean).flatMap(([term, value]) => [el('dt', {}, term), el('dd', {}, value)])))
+  const recordText = (a) => a.id + (isKnown(a.record) ? ' · ' + a.record.value.kind + ' account, ' + a.record.value.status + (a.record.value.slot !== undefined ? ', slot ' + a.record.value.slot : '') : ' · its record is unknown (' + a.record.unknown + ')')
   async function workersView() {
     const roster = await api('roster')
     const ready = await readyTasks()
-    const isKnown = (k) => 'value' in k
-    const known = (k, render) => isKnown(k) ? render(k.value) : el('span', { class: 'unknown' }, 'unknown (' + k.unknown + ')')
-    const text = (k, render) => isKnown(k) ? (render ? render(k.value) : String(k.value)) : 'unknown (' + k.unknown + ')'
-    // Its status in plain words, with the reason.
-    const statusOf = (w) => {
-      const a = w.availability
-      if (a.state === 'busy') return a.slots !== undefined ? 'Working: ' + a.running + ' of ' + a.slots + ' slot(s) in use' + (a.running < a.slots ? '; it still takes work' : '; it takes no more until one ends') : 'Working (how many of its slots are in use is unknown)'
-      if (a.state === 'ready') return 'Idle: it takes work now'
-      if (a.state === 'resting') return 'At a limit: ' + (isKnown(a.until) ? 'back ' + when(a.until.value) : 'no reset is known (' + a.until.unknown + ')')
-      if (a.state === 'unavailable') return 'Unavailable: ' + text(a.reason)
-      return 'Quarantined: its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + (a.detail ? ' (' + a.detail + ')' : '') + ', since ' + when(a.since)
-    }
-    const accountOf = (w) => known(w.account, (a) => el('span', {},
-      isKnown(a.record) && a.record.value.label ? text(a.record.value.label) + ' ' : '',
-      el('span', { class: 'muted' }, a.id + (isKnown(a.record) ? ' · ' + a.record.value.kind + ' account, ' + a.record.value.status + (a.record.value.slot !== undefined ? ', slot ' + a.record.value.slot : '') : ' · its record is unknown (' + a.record.unknown + ')')),
-      isKnown(a.record) && a.record.value.sameAs ? el('div', { class: 'state failed' }, 'signed in as the same person as ' + a.record.value.sameAs.join(', ')) : null))
-    // Its runs whose liveness needs a look (PROP-0013): a held one is the operator's to free, a stalled or looked-at one is only said.
-    const livenessOf = (w) => !w.liveness ? null : known(w.liveness, (runs) => el('ul', { 'aria-label': 'Runs whose liveness needs a look' }, runs.map((r) => el('li', { class: r.state === 'unknown' ? 'state failed' : 'unknown' }, r.summary,
-      r.runId ? el('span', {}, ' ', el('a', { href: '?run=' + encodeURIComponent(r.runId), onclick: (e) => { e.preventDefault(); go(r.runId) }, 'aria-label': 'Open run ' + r.runId }, 'open run')) : null))))
-    const doing = (w) => el('div', {}, known(w.work, (work) => el('div', {},
-      work.items.length ? el('ul', {}, work.items.map((i) => el('li', {}, i.summary, ' ',
-        el('a', { href: '?run=' + encodeURIComponent(i.runId), onclick: (e) => { e.preventDefault(); go(i.runId) }, 'aria-label': 'Open run ' + i.runId }, 'open run')))) : el('span', { class: 'muted' }, 'Nothing now.'),
-      work.more ? el('div', { class: 'muted' }, work.more + ' more step(s) not listed') : null,
-      work.unread ? el('div', { class: 'unknown' }, work.unread) : null)), livenessOf(w))
-    const limitsOf = (w) => {
-      const lines = w.limits.map((l) => l.capability + ' held off until ' + when(l.until))
-      if (isKnown(w.account) && w.account.value.limitUntil) lines.unshift('its account is back ' + when(w.account.value.limitUntil))
-      return el('div', {},
-        lines.map((line) => el('div', {}, line)),
-        known(w.pools, (pools) => pools.length ? el('div', {}, [...pools].sort((x, y) => Number(x.available) - Number(y.available)).map((p) => el('div', {},
-          el('strong', {}, p.pool), ' ' + (p.available ? 'open' : 'at a limit: closed' + (p.until ? ', back ' + when(p.until) : '')),
-          windowsView(p),
-          isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
-    }
-    // Its display name heads the card; the id, the key every record uses, stays under it.
-    const card = (w) => el('article', { class: 'panel request', 'aria-labelledby': 'worker-' + w.worker + ' worker-id-' + w.worker },
-      el('h4', { id: 'worker-' + w.worker }, w.name),
-      el('p', { class: 'muted', id: 'worker-id-' + w.worker }, 'Worker id ', el('code', {}, w.worker)),
-      isKnown(w.description) ? el('p', {}, w.description.value)
-        : el('p', { class: 'muted' }, el('span', { class: 'tag' }, 'derived'), ' ' + w.derived + ' (no description is configured)'),
+    // One Worker's card; inside its account's section it is headed by its work (its role or tier).
+    const card = (w, inAccount) => el('article', { class: 'panel request worker', 'aria-label': w.name + ' (' + w.worker + ')' },
+      el('h4', {}, inAccount ? cut(w.name)[1] : w.name),
+      isKnown(w.description) ? el('p', {}, w.description.value) : null,
       el('p', { class: 'state ' + w.availability.state }, statusOf(w)),
-      el('dl', {},
-        el('dt', {}, 'Doing now'), el('dd', {}, doing(w)),
-        el('dt', {}, 'Account'), el('dd', {}, accountOf(w)),
-        el('dt', {}, 'Serves'), el('dd', {}, w.tier + ' tier, ' + w.quotaClass + ', ' + w.locality + '; provider ' + w.provider + ', family ' + text(w.family) + ', role ' + text(w.role, (r) => r === null ? 'none' : r)),
-        el('dt', {}, 'Limits'), el('dd', {}, limitsOf(w)),
-        el('dt', {}, 'Load'), el('dd', {}, text(w.load, (l) => l.running + ' of ' + l.slots + ' running, ' + l.queued + ' queued, ' + l.pending + ' routed and not started')))
-    )
+      doingOf(w),
+      w.limits.length ? el('div', {}, w.limits.map((l) => el('div', { class: 'state resting' }, l.capability + ' is held off until ' + clockOf(l.until) + ' (' + relative(l.until) + ')'))) : null,
+      detailsOf([
+        ['Worker id', el('code', {}, w.worker)],
+        isKnown(w.description) ? null : ['What it is', el('span', {}, el('span', { class: 'tag' }, 'derived'), ' ' + w.derived + ' (no description is configured)')],
+        isKnown(w.work) ? (w.work.value.unread ? ['Doing now', el('span', { class: 'unknown' }, w.work.value.unread)] : null) : ['Doing now', el('span', { class: 'unknown' }, 'unknown (' + w.work.unknown + ')')],
+        w.liveness && !isKnown(w.liveness) ? ['Liveness', el('span', { class: 'unknown' }, 'unknown (' + w.liveness.unknown + ')')] : null,
+        ['Account', isKnown(w.account) ? recordText(w.account.value) : el('span', { class: 'unknown' }, 'unknown (' + w.account.unknown + ')')],
+        ['Serves', w.tier + ' tier, ' + w.quotaClass + ', ' + w.locality + '; provider ' + w.provider + ', family ' + textOf(w.family) + ', role ' + textOf(w.role, (r) => r === null ? 'none' : r)],
+        inAccount ? null : ['Quota', isKnown(w.pools) ? (w.pools.value.length ? el('div', {}, poolsView(w.pools.value)) : 'no pool on its account') : el('span', { class: 'unknown' }, 'unknown (' + w.pools.unknown + ')')],
+        ['Load', textOf(w.load, (l) => l.running + ' of ' + l.slots + ' running, ' + l.queued + ' queued, ' + l.pending + ' routed and not started')],
+      ]))
+    // An account once: its name, its Workers' roles, what stops it (resting, signed out, quarantined, one person on two accounts), and its quota.
+    const accountView = (g) => {
+      const a = g.account
+      const record = isKnown(a.record) ? a.record.value : undefined
+      const pools = poolsOf(g)
+      const unknownPools = g.workers.find((w) => !isKnown(w.pools))
+      return el('section', { class: 'account', 'aria-label': 'Account ' + g.name },
+        el('h3', {}, g.name, el('span', { class: 'muted' }, ': ' + g.workers.map((w) => cut(w.name)[1]).join(', '))),
+        a.limitUntil ? el('p', { class: 'state resting' }, 'Its account is ' + restingText(a.limitUntil)) : null,
+        record && record.status !== 'ready' ? el('p', { class: 'state ' + (record.status === 'quarantined' || record.status === 'signed-out' ? 'unavailable' : 'unknown') }, 'Its account is ' + record.status.replace('-', ' ') + (record.quarantine ? ' (' + record.quarantine.reason + (record.quarantine.detail ? ': ' + record.quarantine.detail : '') + ')' : '')) : null,
+        record && record.sameAs ? el('p', { class: 'state failed' }, 'Signed in as the same person as ' + record.sameAs.join(', ')) : null,
+        pools && pools.length ? el('div', { class: 'quota' }, poolsView(pools, !!a.limitUntil)) : null,
+        detailsOf([
+          ['Account', recordText(a)],
+          pools ? (pools.length ? null : ['Quota', 'no pool on its account']) : ['Quota', el('span', { class: 'unknown' }, 'unknown (' + (unknownPools ? unknownPools.pools.unknown : 'not read') + ')')],
+        ]),
+        g.workers.map((w) => card(w, true)))
+    }
     const c = roster.counts
     const resting = isKnown(roster.workers) ? roster.workers.value.filter((w) => w.availability.state === 'resting' && isKnown(w.availability.until)).map((w) => w.availability.until.value).sort()[0] : undefined
-    const counts = [c.busy + ' working', c.ready + ' idle', c.resting + ' at a limit' + (resting ? ' (the first back ' + when(resting) + ')' : ''), c.unavailable + ' unavailable'].concat(c.quarantined ? [c.quarantined + ' quarantined'] : [])
+    const counts = [c.busy + ' working', c.ready + ' free', c.resting + ' resting' + (resting ? ' (the first until ' + clockOf(resting) + ')' : ''), c.unavailable + ' unavailable'].concat(c.quarantined ? [c.quarantined + ' quarantined'] : [])
     const unheard = isKnown(roster.sources) ? roster.sources.value.filter((s) => s.state !== 'described') : []
     show(
       pageHead('workers'),
@@ -901,12 +957,12 @@ export const APP_JS = `'use strict'
       unheard.length ? el('div', {}, unheard.map((s) => s.describing
         ? el('p', { class: 'muted' }, 'The Worker source ' + s.source + ' is still describing its Workers: its first read since it started has not landed (' + relative(s.at) + '). Its Workers are not listed yet, so the counts above are so far.')
         : el('p', { class: 'state failed' }, 'The Worker source ' + s.source + ' was ' + s.state + ' ' + relative(s.at) + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
-      known(roster.workers, (workers) => workers.length
-        ? el('div', {}, ['busy', 'ready', 'resting', 'unavailable', 'quarantined'].map((state) => {
-          const group = workers.filter((w) => w.availability.state === state)
-          return group.length ? el('section', { 'aria-label': STATUS[state].group }, el('h3', {}, STATUS[state].group + ' (' + group.length + ')' + (state === 'ready' ? ': each takes work as soon as a run is routed to it' : '')), group.map(card)) : null
-        }))
-        : el('p', { class: 'muted' }, 'No Worker is configured.')))
+      isKnown(roster.workers) ? (roster.workers.value.length ? (() => {
+        const groups = accountsOf(roster.workers.value)
+        const lone = groups.filter((g) => !g.account)
+        return el('div', {}, groups.filter((g) => g.account).map(accountView),
+          lone.length ? el('section', { class: 'account', 'aria-label': 'Workers of no account' }, el('h3', {}, 'Workers of no account'), lone.map((g) => card(g.workers[0], false))) : null)
+      })() : el('p', { class: 'muted' }, 'No Worker is configured.')) : el('p', { class: 'unknown' }, 'The Workers are unknown (' + roster.workers.unknown + ').'))
   }
 
   // The autonomy policy in force, its history, and a proposed change with its diff. A proposal is

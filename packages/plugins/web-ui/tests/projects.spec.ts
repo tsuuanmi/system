@@ -202,13 +202,14 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await column('Review').innerText()).toContain('Fix the slow image build')
     expect(await column('Waiting for you').innerText()).toContain('Merge the login fix')
     const card = column('Working').getByRole('article', { name: 'Research the hosting options' })
-    expect(await card.innerText()).toMatch(/Conformance · standard · standard, for less than a minute/)
+    // Which account and role took it, and for how long (T119).
+    expect(await card.innerText()).toMatch(/Conformance · standard · standard, less than a minute/)
     await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
     await expect.poll(() => page.getByRole('heading', { name: `Run ${run.runId}` }).count()).toBe(1)
     await page.goBack()
     // Several projects: all by default, each card naming its project; the filter shows one.
     await expect.poll(() => column('Ready').innerText()).toContain('Handbook rewrite')
-    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? idle · 2 tasks ready\. A ready task starts when you press Start on its card or the lead runs it/)
+    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? free · 2 tasks ready\. A ready task starts when you press Start on its card or the lead runs it/)
     await page.getByLabel('Show').selectOption('p2')
     await expect.poll(() => column('Ready').innerText()).not.toContain('Write the release notes')
     expect(await column('Ready').innerText()).toContain('Outline the chapters')
@@ -426,6 +427,11 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
         expect(box.x + box.width, `${path} ${name}`).toBeLessThanOrEqual(600)
       }
     }
+    // Workers of no account are listed under their own header, each card headed by its whole name (T119).
+    await page.goto(`${origin}/ui/?view=workers`)
+    const lone = page.getByRole('region', { name: 'Workers of no account' })
+    await expect.poll(() => lone.getByRole('article', { name: /^Conformance · standard · standard/ }).count()).toBe(1)
+    expect(await lone.getByRole('heading', { level: 4, name: 'Conformance · standard · standard' }).count()).toBe(1)
     await page.goto(`${origin}/ui/?view=board`)
     const columns = page.locator('.kanban > .column')
     await expect.poll(() => columns.count()).toBe(5)
