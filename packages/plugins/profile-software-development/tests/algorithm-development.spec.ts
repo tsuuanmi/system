@@ -192,14 +192,16 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     await digested(task.taskId)
     expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
     const worktreeOf = (runId: string): string => agent.runs.find((r) => r.role === 'develop' && basename(r.workspace) === runId)!.workspace
-    // Both are finished, each with its work uncommitted, and retire at the retention after their last agent run.
+    // Both are finished. The rejected attempt's work is uncommitted; the accepted one's was committed on
+    // its branch when it was accepted (landing, ADR-0060: its merge waits for the operator, from the branch).
     const listed = await ctx.agentWorkers.runWorktrees()
-    expect(listed.worktrees.map((w) => [w.runId, w.state, w.changes])).toEqual([[first.runId, 'finished', 'uncommitted'], [second.runId, 'finished', 'uncommitted']])
-    // The operator's removal never discards: without the commit flag, both stay.
-    expect((await ctx.agentWorkers.removeWorktrees()).worktrees.map((w) => w.outcome)).toEqual(['kept', 'kept'])
-    // The retention removes both once its hours have passed since their last agent run, the work kept on each branch.
+    expect(listed.worktrees.map((w) => [w.runId, w.state, w.changes])).toEqual([[first.runId, 'finished', 'uncommitted'], [second.runId, 'finished', 'clean']])
+    // The operator's removal never discards: without the commit flag, the uncommitted one stays; the
+    // clean one goes, its branch kept for the merge.
+    expect((await ctx.agentWorkers.removeWorktrees()).worktrees.map((w) => [w.runId, w.outcome])).toEqual([[first.runId, 'kept'], [second.runId, 'removed']])
+    // The retention removes the other once its hours have passed since its last agent run, its work kept on its branch.
     expect(await ctx.agentWorkers.sweepWorktrees(Date.now() + 167 * 60 * 60_000)).toEqual({ removed: [], kept: [] })
-    expect(await ctx.agentWorkers.sweepWorktrees(Date.now() + 169 * 60 * 60_000)).toEqual({ removed: [worktreeOf(first.runId), worktreeOf(second.runId)], kept: [] })
+    expect(await ctx.agentWorkers.sweepWorktrees(Date.now() + 169 * 60 * 60_000)).toEqual({ removed: [worktreeOf(first.runId)], kept: [] })
     for (const run of [first, second]) {
       expect(existsSync(worktreeOf(run.runId))).toBe(false)
       expect(pilot.git(pilot.repo, 'show', `system/run/${run.runId}:calc.py`)).toBe(FIXED.trim())
