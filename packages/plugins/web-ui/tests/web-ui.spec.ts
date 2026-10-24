@@ -95,14 +95,32 @@ class StubAccounts extends Service {
   async duplicateIdentities() { return [] }
 }
 
-async function boot(options: { approvals?: boolean; roster?: boolean } = {}) {
+/** A stand-in ledger: the website account's own pool, one window read from its usage report, one with no share, one never read (ADR-0059). */
+class StubResources extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'resources')
+  }
+  readonly at = Date.now()
+  async pools() {
+    const windows = [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }, { id: 'seven-day', kind: 'rolling', seconds: 604_800 }, { id: 'credit', kind: 'credit' }]
+    const read = (window: (typeof windows)[number], extra: Record<string, unknown>) => ({ schema: 'limit-state@1.0', pool: 'plan/plus', account: 'plus', window, source: 'runtime-result', observedAt: new Date(this.at - 60_000).toISOString(), ...extra })
+    return [{
+      pool: 'plan/plus', account: 'plus', kind: 'interactive', windows, available: false, until: new Date(this.at + 3_600_000).toISOString(),
+      readings: [read(windows[0]!, { state: 'ok', usedPercentage: 42, resetsAt: new Date(this.at + 900_000).toISOString() }), read(windows[1]!, { state: 'limited', resetsAt: new Date(this.at + 3_600_000).toISOString() })],
+    }]
+  }
+  async usage() { return { records: [], totals: [] } }
+}
+
+async function boot(options: { approvals?: boolean; roster?: boolean; pools?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-ui-'))
   // The UI takes the operator scope's token only (ADR-0023).
   writeFileSync(join(dir, 'operator.token'), Buffer.alloc(32, 7), { mode: 0o600 })
   writeFileSync(join(dir, 'client.token'), Buffer.alloc(32, 8), { mode: 0o600 })
   const token = Buffer.alloc(32, 7).toString('base64url')
   const ctx = new Context()
-  const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
+  const fibers = [ctx.plugin(StubWorkflow), ...(options.approvals ? [ctx.plugin(StubApprovals)] : []), ...(options.roster ? [ctx.plugin(StubRouter), ctx.plugin(StubAccounts)] : []),
+    ...(options.pools ? [ctx.plugin(StubResources)] : []), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
   onTestFinished(async () => { for (const f of [...fibers].reverse()) await f.dispose() })
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
@@ -289,6 +307,21 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(rest).toContain('unknown (the resource ledger (ctx.resources) is not mounted)')
     // The run link opens its page.
     await busy.getByRole('link', { name: 'Open run run_xyz' }).focus()
+    expect(await page.locator('main').innerText()).not.toContain('null')
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('shows each window of an account\'s pool as "used X % of N h, resets HH:MM (read HH:MM)", and what its reading does not give as unknown, with why (ADR-0059)', async () => {
+    const { origin, token } = await boot({ roster: true, pools: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?view=workers#token=${token}`)
+    const busy = page.getByRole('article', { name: 'worker:plus/standard' })
+    const line = (window: string) => busy.getByLabel(`window ${window} of plan/plus`)
+    await expect.poll(() => line('five-hour').count()).toBe(1)
+    expect(await line('five-hour').innerText()).toMatch(/^five-hour: used 42 % of 5 h, resets [^,()]+ \(read [^)]+\)$/)
+    expect(await line('seven-day').innerText()).toMatch(/^seven-day: used unknown \(its latest reading gives no used share\), resets [^,()]+ \(read [^)]+\); at its limit$/)
+    expect(await line('credit').innerText()).toBe('credit: used unknown (no reading yet), resets unknown (no reading yet)')
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 

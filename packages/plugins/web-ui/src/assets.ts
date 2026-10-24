@@ -532,12 +532,21 @@ export const APP_JS = `'use strict'
     unavailable: { group: 'Unavailable', word: 'unavailable' },
     quarantined: { group: 'Quarantined', word: 'quarantined' },
   }
-  // A time as "in 2 h (11:40)": relative, then the clock time, with the day when it is not today.
-  const when = (iso) => {
-    const d = new Date(iso), today = new Date()
-    const clock = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    return relative(iso) + ' (' + (d.toDateString() === today.toDateString() ? clock : absolute(iso)) + ')'
+  // A time as its clock time ("14:20"), with the day when it is not today.
+  const clockOf = (iso) => {
+    const d = new Date(iso)
+    return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : absolute(iso)
   }
+  // A time as "in 2 h (11:40)": relative, then the clock time, with the day when it is not today.
+  const when = (iso) => relative(iso) + ' (' + clockOf(iso) + ')'
+  // A window's length as "5 h" or "7 d" (ADR-0059's "used 42 % of 5 h").
+  const span = (seconds) => seconds % 86400 === 0 ? seconds / 86400 + ' d' : seconds % 3600 === 0 ? seconds / 3600 + ' h' : seconds % 60 === 0 ? seconds / 60 + ' min' : seconds + ' s'
+  // One window of a pool: "five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)", from its latest
+  // reading (an account's usage report, or a run's own); what that reading does not give stays unknown, with why.
+  const windowLine = (win) => win.id + ': ' + ('value' in win.used ? 'used ' + win.used.value + ' %' + (win.seconds ? ' of ' + span(win.seconds) : '') : 'used unknown (' + win.used.unknown + ')')
+    + ', resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
+    + (win.observedAt ? ' (read ' + clockOf(win.observedAt) + ')' : '')
+    + (win.state === 'limited' ? '; at its limit' : '')
   async function workersView() {
     const roster = await api('roster')
     const isKnown = (k) => 'value' in k
@@ -568,7 +577,7 @@ export const APP_JS = `'use strict'
         lines.map((line) => el('div', {}, line)),
         known(w.pools, (pools) => pools.length ? el('div', {}, pools.map((p) => el('div', {},
           el('strong', {}, p.pool), ' ' + (p.available ? 'open' : 'closed' + (p.until ? ', back ' + when(p.until) : '')),
-          p.windows.map((win) => el('div', { class: 'muted' }, win.id + ': ' + text(win.used, (n) => n + ' % used') + ', resets ' + text(win.resets, when))),
+          p.windows.map((win) => el('div', { class: 'muted', 'aria-label': 'window ' + win.id + ' of ' + p.pool }, windowLine(win))),
           isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
     }
     const card = (w) => el('article', { class: 'panel request', 'aria-labelledby': 'worker-' + w.worker },
