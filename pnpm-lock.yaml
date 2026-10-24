@@ -170,6 +170,9 @@ overrides:
   undici: ^8.12.2
   zod: ^4.6.6
 
+patchedDependencies:
+  patchright-core@1.63.0: a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284
+
 importers:
 
   .:
@@ -646,7 +649,7 @@ importers:
         version: link:../../provider-core
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -948,7 +951,7 @@ importers:
         version: 8.18.2
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -1198,7 +1201,7 @@ importers:
         version: 9.5.2
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
 
   packages/plugins/provider-gemini-web:
     dependencies:
@@ -1235,7 +1238,7 @@ importers:
         version: link:../store
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
 
   packages/plugins/providers:
     dependencies:
@@ -1503,7 +1506,7 @@ importers:
         version: link:../workers
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
 
   packages/plugins/web-ui:
     dependencies:
@@ -1567,7 +1570,7 @@ importers:
         version: link:../workers
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -1720,7 +1723,7 @@ importers:
         version: link:../workers
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -1921,7 +1924,7 @@ importers:
         version: link:../plugins/display-virtual
       patchright-core:
         specifier: 1.63.0
-        version: 1.63.0
+        version: 1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284)
 
   packages/workers-core:
     devDependencies:
@@ -12121,7 +12124,7 @@ snapshots:
 
   partial-json@0.1.7: {}
 
-  patchright-core@1.63.0: {}
+  patchright-core@1.63.0(patch_hash=a0adfdf949fb2d56a2b047ace2b0ac22c9655a74549995ae80266814e2666284): {}
 
   path-key@3.1.1: {}
 

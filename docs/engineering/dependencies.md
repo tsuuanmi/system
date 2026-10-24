@@ -20,7 +20,7 @@ package's `package.json`. **Status** is one of **in use**, **planned**, or
 | MCP server | `@modelcontextprotocol/sdk` (stateless Streamable HTTP) on DSH `ctx.webServer`, `zod` for tool schemas | protocol SDK | `mcp-server` | in use | DSH has only an MCP client ([review](../research/dsh-community-plugins-review.md)) |
 | Cross-process writer lock | DSH `@deepseek-ai/dsh-atomic-write` `withFileLock` | library (DSH) | `credentials-vault` | in use | its `writeFileAtomic` skips fsync, so `libs` keeps `writeFileDurable` |
 | DSH home path | `@deepseek-ai/dsh-home-paths` `resolveDshHome()` | library (DSH) | `libs` (`dshHome()`) | in use | DSH's own rule (a blank `$DSH_HOME` ignored, a relative one made absolute), so the CLI and the daemon agree on the home |
-| Browser automation | `patchright-core` and a system Chrome, headed | library | `browser-patchright`, `ui-ops` | in use | removes automation leaks ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md)); `@anweat/dsh-browser` is headless with no IndexedDB ([review](../research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11)) |
+| Browser automation | `patchright-core` and a system Chrome, headed; one line patched ([patches](#patches)) | library | `browser-patchright`, `ui-ops` | in use | removes automation leaks ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md)); `@anweat/dsh-browser` is headless with no IndexedDB ([review](../research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11)) |
 | Managed Chrome download | `@puppeteer/browsers`, the build pinned in `chrome.lock.json` | library | `browser-patchright`, `system init` | in use | only when the host has no recent Chrome ([ADR-0020](../decisions/adr/0020-pinned-managed-chrome.md)) |
 | Invisible display | Xvfb from system packages; own manager ported from internet | system tool + port | `display-virtual` | in use | uses `-displayfd` and X auth; `xvfb-run -a` and `@cypress/xvfb` guess display numbers |
 | Agent read confinement | bubblewrap (`bwrap`) from system packages | system tool | `agent-runtime-core`, `agent-runtimes`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli` | in use | unprivileged, already what Codex's own Linux sandbox and Flatpak use; Codex's permission profiles (schema changes between releases), Landlock through a native addon, and encrypting the state directory compared ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)) |
@@ -140,6 +140,18 @@ Not forced:
   patch is outside its range; no row `system` mounts loads it
   ([reuse map](../architecture/plugin-model.md#dsh-core-reuse-map)). It waits for a DSH release
   that moves the pin.
+
+## Patches
+
+The `patchedDependencies` of `pnpm-workspace.yaml` change a dependency's own code, from a patch in
+[`patches/`](../../patches/), applied by pnpm at install. A patch is keyed to that exact version, so
+moving the dependency means looking at the patch again. A patch is the smallest change that fixes a
+defect `system` cannot work around from its own code, and goes once a release of the dependency
+fixes it.
+
+| Package | Patch | Why |
+|---|---|---|
+| `patchright-core` 1.63.0 | [`patchright-core@1.63.0.patch`](../../patches/patchright-core@1.63.0.patch): a new page's request-interception setup, which patchright starts without awaiting (`CRPage`'s constructor), handles a rejection that says the page's session closed; any other rejection still goes unhandled | Its last step sends `Network.setCacheDisabled` on the page's session after the page attached, and when that session closed first (a context closed, the browser lost with its display, right after a page opened) the rejection had no handler. Under the `dsh` launcher an unhandled rejection exits the daemon (its fail-loud handler); in the suite it failed 5 of 13 loaded runs (`browser-patchright`'s lost-display and dispose tests), and those two tests alone 5 of 40 runs beside a suite copy, against none of 40 patched. `browser-patchright` already waits for a page to open before it closes the page's context ([README](../../packages/plugins/browser-patchright/README.md)); that cannot cover a crash or a lost display, and the step may still be running once the page has opened |
 
 ## Built, with what was compared
 

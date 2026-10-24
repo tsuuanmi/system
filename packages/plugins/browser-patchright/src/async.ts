@@ -25,8 +25,9 @@ async function boundedBy(promise: Promise<unknown>, ms: number): Promise<boolean
 /**
  * A new page of `context`, tracked until it has opened or failed. A close of the context waits
  * for it first (`closeWithin`): the browser library attaches a new page's session in steps of its
- * own, and one of them (`Network.setCacheDisabled`) rejects with no handler when the context
- * closes under it.
+ * own, and one of them (`Network.setCacheDisabled`) rejected with no handler when the context
+ * closed under it. That step may outlast the open, so the library is patched to handle it too
+ * (docs/engineering/dependencies.md#patches).
  */
 export function newPage(context: BrowserContext): Promise<Page> {
   const pending = context.newPage()

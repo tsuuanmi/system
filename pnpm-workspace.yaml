@@ -37,3 +37,5 @@ overrides:
   ip-address: ^10.7.4
   undici: ^8.12.2
   zod: ^4.6.6
+patchedDependencies:
+  patchright-core@1.63.0: patches/patchright-core@1.63.0.patch
