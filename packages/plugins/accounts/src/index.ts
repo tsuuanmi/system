@@ -72,8 +72,8 @@ const ID = /^[a-z][a-z0-9-]*$/
 export interface Config {
   accounts: CatalogEntry[]
   /**
-   * How each website provider's accounts are used (ADR-0052): `assigned` (the default, and the only
-   * one for personal subscriptions) or `pooled`, which needs `pooledTerms`. A provider no entry names
+   * How each website provider's accounts are used (ADR-0052, ADR-0055): `assigned` (the default) or
+   * `pooled`, which needs `pooledTerms`, the operator's recorded decision. A provider no entry names
    * is assigned.
    */
   providers?: ProviderAccounts[]
@@ -91,9 +91,9 @@ export class Accounts extends Service {
     })).default([]).description('Account catalog: any number of accounts per provider'),
     providers: z.array(z.object({
       provider: z.string().pattern(ID).required().description('The website provider: the provider of its catalog accounts (its driver kind)'),
-      accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms'),
+      accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms'),
       // Not z.object: an omitted object would come back as {}; checked when loaded.
-      pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: who confirmed that this provider\'s terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052)'),
+      pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: the operator\'s decision to pool this provider\'s accounts: who decided, when (ISO time), and which terms on what basis (that they allow it, or, for a personal subscription, that the operator accepts the risk); required for pooled (ADR-0055)'),
     })).default([]).description('How each website provider\'s accounts are used; a provider not listed is assigned (ADR-0052)'),
   }) as unknown as z<Config>
 

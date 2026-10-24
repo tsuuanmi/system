@@ -77,10 +77,11 @@ every Worker of its runtime, even when the runtime reports no reading
 
 ## Work waits for an account's limit
 
-Accounts are `assigned` unless you recorded that a provider's terms allow pooling
-([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): your
-subscriptions are personal, so a limit on one account never moves its work to another account of
-the same provider.
+Accounts are `assigned` unless you recorded pooling for their provider
+([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md),
+[ADR-0055](../decisions/adr/0055-personal-accounts-may-be-pooled-on-the-operators-recorded-acceptance.md);
+[runbook](runbooks.md#pool-a-providers-accounts)): a limit on an assigned account never moves its
+work to another account of the same provider.
 
 - **What you see.** The run's view (MCP `result`, `/ui`) shows the node `READY` with
   `waitingUntil`; `system explain <runId>` shows its `recovery` decision with outcome `wait`, the reset

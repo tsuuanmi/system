@@ -131,8 +131,8 @@ export interface Config {
    */
   workers: AgentWorkerConfig[]
   /**
-   * How each agent provider's (runtime's) accounts are used (ADR-0052): `assigned` (the default,
-   * and the only one for personal subscriptions) or `pooled`, which needs `pooledTerms`. A runtime
+   * How each agent provider's (runtime's) accounts are used (ADR-0052, ADR-0055): `assigned` (the
+   * default) or `pooled`, which needs `pooledTerms`, the operator's recorded decision. A runtime
    * no entry names is assigned. `slots`: how many accounts may be enrolled for it (ADR-0051; default
    * 1, its own home adopted as slot 1). With roles and assignments only: `maxConcurrentRunsPerAccount`,
    * and what each of its accounts draws on (`pool`, a template of the resources row; `windows`;
@@ -272,9 +272,9 @@ export class AgentWorkers extends Service {
     })).default([]).description('Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker'),
     providers: z.array(z.object({
       provider: z.string().required().description('The agent runtime kind, as its provider registers it (the runtime of its Workers)'),
-      accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms'),
+      accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms'),
       // Not z.object: an omitted object would come back as {}; checked when loaded.
-      pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: who confirmed that this runtime\'s plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052)'),
+      pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: the operator\'s decision to pool this runtime\'s accounts: who decided, when (ISO time), and which terms on what basis (that they allow it, or, for a personal subscription, that the operator accepts the risk); required for pooled (ADR-0055)'),
       slots: z.natural().min(1).max(MAX_SLOTS).description('How many accounts of this runtime may be enrolled (default 1: its own home, adopted as slot 1); each slot is an owner-only home (ADR-0051)'),
       maxConcurrentRunsPerAccount: z.natural().min(1).max(MAX_CONCURRENT_PER_ACCOUNT).description('How many runs one of its accounts runs at once, across all its roles (default 1; one per Worker as well); with roles and assignments only'),
       pool: z.string().description('The pool template (resources templates) each of its accounts draws on: pool <pool>/<accountId>; unset: not metered. With roles and assignments only'),

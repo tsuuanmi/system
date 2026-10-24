@@ -700,29 +700,44 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
 Every provider's accounts are `assigned` by default
 ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): each
 serves its own work, and a limit on one makes its work wait for the reset instead of moving to
-another account of that provider. Personal subscriptions stay assigned: rotating them around their
-limits is restricted or prohibited by the providers' terms. Pool a provider only when you have read
-its terms and they allow it (an organization plan's seats, say):
+another account of that provider. Pooling moves unsent work to another account of the provider
+when one is busy or at its limit
+([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)). It is your recorded
+decision
+([ADR-0055](../decisions/adr/0055-personal-accounts-may-be-pooled-on-the-operators-recorded-acceptance.md)),
+on one of two bases, and the record says which:
 
-1. Add the provider to the row that holds its accounts, with the terms you read. A website provider
-   goes on the `accounts` row, an agent runtime on the `agent-workers` row:
+- the provider's terms allow it (an organization plan's seats, say): name the terms you read;
+- the accounts are personal subscriptions, whose terms restrict or prohibit rotating accounts
+  around their limits, and you accept that risk: say that it is not a reading that the terms allow
+  pooling, name your decision, and say that you accept the risk. `system` does not assess it.
+
+1. Add the provider to the row that holds its accounts, with that record. A website provider goes
+   on the `accounts` row, an agent runtime on the `agent-workers` row:
 
    ```yaml
    - id: accounts            # or agent-workers
      config:
        providers:
-         - provider: chatgpt-web          # or the runtime kind, for example codex-sdk
+         - provider: chatgpt-web          # or the runtime kind, for example claude-agent-sdk
            accounts: pooled
            pooledTerms:
              confirmedBy: operator
              confirmedAt: "2026-10-24T09:00:00+07:00"
-             terms: "ChatGPT Team terms, section 3, read 2026-10-24"
+             terms: >-
+               Not a reading that chatgpt-web's terms allow pooling. Operator decision D33
+               (2026-10-24): move work between the operator's own personal accounts of this
+               provider when one is busy or at its limit; the operator accepts the risk under
+               the personal-plan terms.
    ```
 
-   The rest of the row's configuration stays (a targeted patch replaces the whole config).
+   For terms that allow it, `terms` names them instead ("ChatGPT Team terms, section 3, read
+   2026-10-24"). `confirmedBy` is who decided, `confirmedAt` when. The rest of the row's
+   configuration stays (a targeted patch replaces the whole config).
 2. Restart (`system shutdown`, then start). A pooled provider with no or partial `pooledTerms`
-   fails startup with the exact path. Each start records the terms as a `gate` decision (rule
-   `turns.pooled-terms` or `agent-workers.pooled-terms`); `system explain` shows it.
+   fails startup with the exact path. Each start records your record as a `gate` decision (rule
+   `turns.pooled-terms` or `agent-workers.pooled-terms`: "operator recorded pooling for
+   chatgpt-web on …: <terms>"); `system explain` shows it.
 3. To go back, set `accounts: assigned` (or remove the entry) and restart.
 
 ## Account re-auth
@@ -910,7 +925,8 @@ Before you start: back up (`system backup`), and read the Antigravity note in st
 
 **Assign roles later:** a newly enrolled account has no Worker until the row assigns it roles
 (`assignments: [{ account: <id>, roles: [review] }]`). Two accounts of one runtime can serve one
-role at once; a limit on one makes its work wait, never move to the other (assigned, D24).
+role at once; a limit on one makes its work wait, never move to the other, unless the runtime is
+[pooled](#pool-a-providers-accounts).
 `maxConcurrentRunsPerAccount` on the runtime's `providers` entry bounds how many of an account's
 runs run at once across its roles (default 1).
 

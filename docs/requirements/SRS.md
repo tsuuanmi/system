@@ -55,9 +55,12 @@
   They never appear in logs, prompts, artifacts, or process arguments.
 - **REQ-ACC-10** Each provider, website or agent, declares how its accounts are
   used: `assigned` by default, or `pooled` only on the operator's recorded
-  confirmation of that provider's terms. Under `assigned`, a usage limit on one
-  account never moves its work to another account of that provider
-  ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)).
+  decision to pool it (who, when, and which terms on what basis; for a personal
+  subscription, that the operator accepts the risk under its terms). Under
+  `assigned`, a usage limit on one account never moves its work to another
+  account of that provider
+  ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md),
+  [ADR-0055](../decisions/adr/0055-personal-accounts-may-be-pooled-on-the-operators-recorded-acceptance.md)).
 - **REQ-ACC-11** Agent accounts are enrolled into slots, each a home of its own. An
   account whose identity is missing, changed, ambiguous, duplicate, or unverified
   takes no work, and says why

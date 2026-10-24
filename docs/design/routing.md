@@ -328,8 +328,10 @@ design.
     account is [assigned](#assigned-accounts): it then waits for the reset, bounded.
 - **Accounts are assigned by default** (D24: personal subscriptions): a limit on one account
   never moves its work to another account of that provider, for website and agent accounts alike
-  ([assigned accounts](#assigned-accounts)). A provider is `pooled` only with the operator's
-  recorded confirmation of its terms (`pooledTerms`).
+  ([assigned accounts](#assigned-accounts)). A provider is `pooled` only on the operator's
+  recorded decision (`pooledTerms`: who, when, which terms on what basis), which for a personal
+  subscription records that the operator accepts the risk under its terms
+  ([ADR-0055](../decisions/adr/0055-personal-accounts-may-be-pooled-on-the-operators-recorded-acceptance.md)).
 - **Context economy.** Handoffs carry the synthesized, hash-bound result, not the
   research transcript. Retained conversations receive only new suffixes. Node
   results are reused by input hash.

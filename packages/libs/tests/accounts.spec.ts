@@ -31,6 +31,8 @@ describe('account settings per provider (ADR-0052)', () => {
     const decision = pooledTermsDecision('a', TERMS, 'turns.pooled-terms')
     new SchemaRegistry().assert('decision@1.0', { schema: 'decision@1.0', ...decision })
     expect(decision.outcome).toEqual({ option: 'pooled', detail: { provider: 'a', ...TERMS } })
+    // It names the operator's record and claims nothing about what the terms allow (ADR-0055).
+    expect(decision.candidates[0]!.reasons).toEqual([`operator recorded pooling for a on ${TERMS.confirmedAt}: ${TERMS.terms}`])
     expect(pooledTermsDecision('a', TERMS, 'turns.pooled-terms')).toEqual(decision)
     expect(pooledTermsDecision('a', { ...TERMS, terms: 'other' }, 'turns.pooled-terms').decider.hash).not.toBe(decision.decider.hash)
   })
