@@ -610,7 +610,7 @@ second execution path (INV-1).
   - since 1.5 (REQ-TEAM-4), a team member never takes a sibling of a Worker another member holds,
     even of another family, and takes a Worker of another account; a member whose held Worker's
     siblings name different accounts is refused, `config_error`, with nothing sent;
-  - since 1.6 ([ADR-0054](../../../docs/decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)),
+  - since 1.6 ([ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)),
     a task's next attempt never resumes a session its source holds: it starts fresh, given its
     brief, the decision saying why, and resumes it again once the source frees it;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is

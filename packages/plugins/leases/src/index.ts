@@ -51,7 +51,7 @@ export interface Holding {
   /**
    * Aborted (with a {@link LeaseLost}) on a positive loss only: a heartbeat finds the lease expired,
    * taken over, or invalidated, or the lease's expiry passes with no renewal. A renewal that merely
-   * failed is not a loss (ADR-0054).
+   * failed is not a loss (ADR-0056).
    */
   readonly lost: AbortSignal
 }
@@ -113,7 +113,7 @@ export class Leases extends Service {
    * another holder's lease is live, nothing runs and the caller learns when to look again: that
    * lease's expiry plus a second, at least a second. The body decides what a lost lease means.
    *
-   * `lost` aborts only on a positive loss (ADR-0054): a renewal that finds the lease expired, taken
+   * `lost` aborts only on a positive loss (ADR-0056): a renewal that finds the lease expired, taken
    * over, or invalidated ({@link LeaseLost}), or the lease's own expiry passing with no renewal. A
    * renewal that fails otherwise (the store busy or failing) is not a loss: it is tried again at the
    * next beat, and at the latest at the lease's expiry, while the lease is still live. Fencing is

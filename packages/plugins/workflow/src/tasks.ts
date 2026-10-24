@@ -440,7 +440,7 @@ export class TaskRuns {
       const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
       const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
       // A session blocked on an approval, or whose latest run is not finished or known to be gone,
-      // takes no input but that request's resolution (PROP-0013, ADR-0054): never resumed by an attempt.
+      // takes no input but that request's resolution (PROP-0013, ADR-0056): never resumed by an attempt.
       const held = handle ? await heldWhy(this.e, previous.sessionId) : undefined
       if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
       else if (held) fresh = `session ${previous.sessionId} of ${what} takes no input now: ${held}`

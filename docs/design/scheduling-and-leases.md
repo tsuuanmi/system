@@ -50,7 +50,7 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   renewal that fails otherwise (the store busy or failing) is not a loss: it is
   tried again at the next beat, and never later than the expiry. Fencing is the
   same either way, so a holder whose lease lapsed commits nothing
-  ([ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+  ([ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
   leases contract 1.1).
 - Website turns (`ctx.turns`) hold a `turn:<id>` lease with a heartbeat. The
   receipt written before the send, the routing, and the completion are fenced, so
@@ -75,7 +75,7 @@ added by reflex. Every fence is justified by a failing race test.
 
 Whether a run that another process held, or held before a restart, is gone is a
 verdict, never an assumption
-([ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+([ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
 PROP-0013). `livenessOf` in [`libs`](../../packages/libs/README.md) is a pure rule,
 pinned as `liveness@1`, over three signals and two configured bounds:
 

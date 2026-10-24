@@ -1,4 +1,4 @@
-# ADR-0054: A failed lease renewal is not a lost lease, and death needs a verdict
+# ADR-0056: A failed lease renewal is not a lost lease, and death needs a verdict
 
 - **Status:** Proposed
 - **Date:** 2026-10-24

@@ -1,5 +1,5 @@
 /**
- * The liveness verdict (PROP-0013 phases L1 and L2, ADR-0054): whether a run that another process
+ * The liveness verdict (PROP-0013 phases L1 and L2, ADR-0056): whether a run that another process
  * held, or held before a restart, is gone. A pure rule over recorded signals and two configured
  * bounds, pinned by version, beside the probes that read the signals on this host. Only `dead` is
  * death: a probe that fails, a signal never reported, and every combination the rule does not name

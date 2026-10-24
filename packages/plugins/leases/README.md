@@ -20,7 +20,7 @@
     on a positive loss: a renewal that throws `LeaseLost`, or the lease's own expiry
     passing with no renewal. A renewal that fails otherwise (the store busy or
     failing) is logged and tried again at the next beat, never later than the
-    expiry ([ADR-0054](../../../docs/decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)).
+    expiry ([ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)).
     While another holder's lease is live it runs nothing and returns
     when to look again: that lease's expiry plus a second, at least a second.
 - **Reuse:** the claim, heartbeat, and release by token follow

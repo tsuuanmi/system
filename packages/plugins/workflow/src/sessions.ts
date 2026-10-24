@@ -65,7 +65,7 @@ export function wake(e: Engine, sessionId: string): RunView | undefined {
 }
 
 /**
- * Why automation gives a session no input now (PROP-0013, ADR-0054), from the Worker source that owns
+ * Why automation gives a session no input now (PROP-0013, ADR-0056), from the Worker source that owns
  * it (`ctx.workers.held`): its latest run waits on an open approval request, has not finished, or is
  * not known to be gone. A provider without `held`, or one that fails, cannot show it free (INV-2).
  */

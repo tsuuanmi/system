@@ -160,13 +160,13 @@ export interface Config {
   runTimeoutMs?: number
   /**
    * A running agent whose process is present and that showed no activity for this long is `stalled`
-   * (default 300 s): reported once per stall, never prodded or stopped (PROP-0013, ADR-0054).
+   * (default 300 s): reported once per stall, never prodded or stopped (PROP-0013, ADR-0056).
    */
   stallSeconds?: number
   /**
    * A run that started and was not finished by its holder is `dead`, and reconciled, only when its
    * holder and its agent process are both positively gone and no activity was seen for this long
-   * (default 120 s, twice the run's lease) (PROP-0013, ADR-0054).
+   * (default 120 s, twice the run's lease) (PROP-0013, ADR-0056).
    */
   deadAfterSeconds?: number
   /**
@@ -255,7 +255,7 @@ const SETTING_DEFAULTS: Record<string, unknown> = {
 const BEAT_MS = LEASE_TTL_MS / 3
 /** The longest a started run waits between two liveness verdicts (INV-9). */
 const MAX_LOOK_MS = 15 * 60_000
-/** The rule a started run's reconciliation applies (PROP-0013, ADR-0054). */
+/** The rule a started run's reconciliation applies (PROP-0013, ADR-0056). */
 const RECONCILE_RULE = { type: 'rule', id: 'agent-workers.reconcile', version: '2' } as const
 /**
  * The agent runs whose agent this process is running now, across every instance of this source in
@@ -487,7 +487,7 @@ export class AgentWorkers extends Service {
       // Keyed by the account the limit holds: a hand-named Worker's runtime, a derived Worker's account id.
       sql: 'CREATE TABLE agent_cooldowns (runtime TEXT PRIMARY KEY, until TEXT NOT NULL, worker TEXT NOT NULL, run_id TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);',
     }, ACCOUNTS_MIGRATION, CUTOVER_MIGRATION, {
-      // The liveness verdict (PROP-0013, ADR-0054): who held a run, its agent process, its latest
+      // The liveness verdict (PROP-0013, ADR-0056): who held a run, its agent process, its latest
       // activity, a stall reported, the request it stopped on, and the verdicts it got after its holder stopped.
       version: 12,
       sql: `ALTER TABLE agent_runs ADD COLUMN holder TEXT;
@@ -1046,7 +1046,7 @@ export class AgentWorkers extends Service {
   }
 
   /**
-   * The verdict on a started run whose lease this process has just taken (PROP-0013, ADR-0054): the
+   * The verdict on a started run whose lease this process has just taken (PROP-0013, ADR-0056): the
    * holder's lease lapsed (it could be taken: expired or released), the holder's process and the
    * agent process as this host shows them now, and the latest activity recorded (its submission at
    * least). A signal never recorded, as on a run from before this was kept, is unknown.
@@ -1093,7 +1093,7 @@ export class AgentWorkers extends Service {
   }
 
   /**
-   * Why a session of this source takes no input now (PROP-0013, ADR-0054), derived when asked from
+   * Why a session of this source takes no input now (PROP-0013, ADR-0056), derived when asked from
    * durable facts, never stored as a flag: its latest run has not finished; or it ended without being
    * known to be gone; or it stopped on a tool call whose approval request is still open (asked of the
    * queue: none loaded, or unreadable, and it cannot be shown free). Undefined when the session is

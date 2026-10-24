@@ -761,7 +761,7 @@ is off.
 
 A started run is gone only on a [liveness verdict](scheduling-and-leases.md#liveness-verdict) of
 `dead`, never on its lease alone
-([ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+([ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
 PROP-0013 L1 and L2).
 
 - **What is recorded.** At submission the `agents` source records the run's holder (this

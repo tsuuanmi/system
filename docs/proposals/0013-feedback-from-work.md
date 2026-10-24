@@ -7,7 +7,7 @@ summary: Three ways for a board task's attempts to learn from the work itself, e
 owners: [operator]
 evidence: [coordination/research/paseo-superorchestrator-2026-10-23, coordination/research/orchestrators-survey-2026-10-24]
 related: [PROP-0008, PROP-0010, PROP-0011, PROP-0012, ADR-0015, ADR-0024, ADR-0036, ADR-0038, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0047, REQ-WF-4, REQ-WF-5, REQ-WF-8, REQ-WRK-3, REQ-WRK-6, REQ-SES-5, REQ-SES-7]
-implementation: [ADR-0054]
+implementation: [ADR-0056]
 ---
 
 # Proposal: Feedback from work — code-host observations, a completion gate, and a liveness verdict
@@ -665,7 +665,7 @@ research notes under [research](../research/README.md), is not done yet.
 
 The state of each phase is in the [roadmap](roadmap.md#feedback-from-work-prop-0013). Built:
 
-- **L1** (2026-10-24), [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+- **L1** (2026-10-24), [ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
   proposed:
   - `ctx.leases.hold` aborts `lost` only on `LeaseLost` or the lease's own expiry passing
     unrenewed. Any other renewal error is tried again, never later than the expiry (leases
@@ -693,7 +693,7 @@ Choices where this proposal left room:
 
 - **The ADR-0015 amendment.** The seam table expected one for held peer delivery. The
   `workerSessions` mailbox is unchanged, though: delivery still appends, and only the engine's
-  wake decides when a turn is taken. So no amendment was made, and ADR-0054 records why.
+  wake decides when a turn is taken. So no amendment was made, and ADR-0056 records why.
 - **Phase W1's `brief@1.2` pointer rule** is untouched.
 - **The activity signal.** The submission counts as the first activity. An open activity window
   is waited out without counting as an `unknown` look, since no probe failed.

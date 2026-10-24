@@ -214,7 +214,7 @@ exactly one other (a chain), resumes the session of the run before it when:
   request's resolution ([a deferred tool call](#a-deferred-tool-call)), so the attempt never
   resumes it. A provider of `ctx.workers` without `held`, or one that fails, cannot show the
   session free (PROP-0013,
-  [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
+  [ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md),
   workflow contract 1.6);
 - the session has served fewer than `maxSessionRuns` runs (default 5, INV-9).
 

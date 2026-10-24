@@ -4,7 +4,7 @@
  * through `ctx.leases` alone: one holder per resource, a monotonic generation per resource,
  * renewal and release by token, takeover after expiry, a commit fence inside the committing
  * store transaction, and bounded TTLs; from 1.1, a held lease is lost only on a positive loss, never
- * on a renewal that merely failed (ADR-0054). `boot` returns a context that provides `ctx.leases` and
+ * on a renewal that merely failed (ADR-0056). `boot` returns a context that provides `ctx.leases` and
  * `ctx.store`, with `maxTtlMs` set to {@link LEASE_MAX_TTL_MS} and no lease held.
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -207,7 +207,7 @@ export const leasesSuite = defineSuite<Boot>({
       })
       expect(outcome).toEqual({ held: true, value: { renewed: true, lost: true, reason: 'LeaseLost' } })
     }),
-    scenario('hold-renewal-error', 'keeps holding through a renewal that fails with an error other than a loss: lost stays unaborted, the lease is renewed once the store answers again, and no one else takes it meanwhile (ADR-0054)', async (ctx) => {
+    scenario('hold-renewal-error', 'keeps holding through a renewal that fails with an error other than a loss: lost stays unaborted, the lease is renewed once the store answers again, and no one else takes it meanwhile (ADR-0056)', async (ctx) => {
       const started = Date.now()
       // The store fails from the first beat (at a third of the TTL) until before the lease expires.
       const restore = flaky(ctx, () => Date.now() - started > 250 && Date.now() - started < 650)
@@ -222,7 +222,7 @@ export const leasesSuite = defineSuite<Boot>({
         restore()
       }
     }, '1.1'),
-    scenario('hold-lapsed-on-error', 'aborts lost with LeaseLost once the lease\'s own expiry passes with every renewal failing; a new holder then takes the resource, and the old holder\'s commit is refused (ADR-0054, INV-4)', async (ctx) => {
+    scenario('hold-lapsed-on-error', 'aborts lost with LeaseLost once the lease\'s own expiry passes with every renewal failing; a new holder then takes the resource, and the old holder\'s commit is refused (ADR-0056, INV-4)', async (ctx) => {
       let failing = false
       const restore = flaky(ctx, () => failing)
       try {

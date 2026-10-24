@@ -461,7 +461,7 @@ export const workflowSuite = defineSuite<Boot>({
   // member avoids every Worker on an account another member holds (its siblings), and is refused
   // when that account cannot be told apart (REQ-TEAM-4). 1.6: a task's next attempt never resumes a
   // session its Worker source holds (`held`: blocked on an approval, or its latest run not finished
-  // or not known to be gone), and starts fresh, saying why (ADR-0054).
+  // or not known to be gone), and starts fresh, saying why (ADR-0056).
   contract: '1.6',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {

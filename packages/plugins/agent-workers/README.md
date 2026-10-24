@@ -428,7 +428,7 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **Restart:** a queued run starts. A run that had started is never run again:
   the agent may already have acted. It is reconciled only on a liveness verdict
   ([restart and liveness](../../../docs/design/agent-runtimes.md#restart-and-liveness),
-  [ADR-0054](../../../docs/decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)):
+  [ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)):
   - each run records, fenced by its lease, its holder (this process: host,
     boot, pid, start time) and the submission as its first activity, then the
     agent process its runtime reports (`onProcess`) and its activity

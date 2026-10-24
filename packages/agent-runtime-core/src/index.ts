@@ -277,7 +277,7 @@ export function meteringOf(error: unknown): RunMetering | undefined {
 
 /**
  * What a run reports of itself while it runs, for its Worker source's liveness verdict (PROP-0013,
- * ADR-0054). Both are optional: a provider that reports neither leaves those signals unknown, and a
+ * ADR-0056). Both are optional: a provider that reports neither leaves those signals unknown, and a
  * missing signal is never read as gone. A callback that throws changes nothing about the run.
  */
 export interface RunObserver {

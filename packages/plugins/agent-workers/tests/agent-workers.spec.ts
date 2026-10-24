@@ -1025,7 +1025,7 @@ describe('agents source: a usage limit its runtime gives no reading for is never
   })
 })
 
-describe('agents source: a run is gone only on a liveness verdict (PROP-0013, ADR-0054)', () => {
+describe('agents source: a run is gone only on a liveness verdict (PROP-0013, ADR-0056)', () => {
   /** Start a run in `session` on a first boot, stop that boot while the agent runs, and return what a restart needs. */
   const started = async (agent: ScriptedAgent, session = 'ses_live') => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))

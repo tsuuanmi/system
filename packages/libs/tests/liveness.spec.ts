@@ -24,7 +24,7 @@ const signals = (overrides: Partial<LivenessSignals> & { quietSeconds?: number |
 }
 
 /** The liveness table of PROP-0013, row by row: only `dead` is death. */
-describe('livenessOf (PROP-0013, ADR-0054)', () => {
+describe('livenessOf (PROP-0013, ADR-0056)', () => {
   it('alive: the holder\'s lease live, the agent process present, activity within stallSeconds', () => {
     expect(livenessOf(signals({ quietSeconds: 299 }), BOUNDS)).toMatchObject({ verdict: 'alive', rule: LIVENESS_RULE })
   })

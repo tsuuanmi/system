@@ -85,7 +85,7 @@ stateDiagram-v2
    approval request, has not finished, or is not known to be gone. Its messages stay durable and
    unread, and it is woken once it takes input; the only input it takes meanwhile is that
    request's resolution (PROP-0013,
-   [ADR-0054](../decisions/adr/0054-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md);
+   [ADR-0056](../decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md);
    [a deferred tool call](workflow-engine.md#a-deferred-tool-call)).
 5. The engine **records** every message but **never relays or rewrites**
    content.

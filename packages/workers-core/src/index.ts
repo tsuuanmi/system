@@ -231,7 +231,7 @@ export interface WorkerSource {
   reset?(sessionId: string): boolean
   /**
    * Why the session takes no input now, when this source owns it and it does not (PROP-0013,
-   * ADR-0054): its latest run stopped on a tool call whose approval request is still open, or has
+   * ADR-0056): its latest run stopped on a tool call whose approval request is still open, or has
    * not finished, or is not known to be gone. Derived when asked, from the source's durable facts;
    * a source that cannot tell says so here, never undefined. Undefined: free, or not this source's.
    */
@@ -386,7 +386,7 @@ export abstract class Workers extends Service {
   /**
    * Why a session takes no input now, from the source that owns it (`WorkerSource.held`); undefined
    * when it is free. Optional: a caller that finds no `held` cannot tell, and gives the session no
-   * automated input (PROP-0013, ADR-0054).
+   * automated input (PROP-0013, ADR-0056).
    */
   abstract held?(sessionId: string): Promise<string | undefined>
 
