@@ -81,12 +81,31 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
 - `note` applies to every verdict that has none of its own; a note is trimmed to 2000
   characters.
 - With `batchId`, every verdict must be for a request of that batch, or nothing is decided
-  (`409`). The page sends it for **Approve batch** and **Deny batch**, with one verdict for each
-  request it shows.
+  (`409`). The page sends it for a batch's **Approve all N in this batch** and **Deny all N in
+  this batch**, with one verdict for each request it shows.
 - A malformed verdict refuses the whole call before any verdict applies (`400`). Otherwise
   the verdicts go to `ctx.approvals.decide` as the operator's (INV-6), at the server's clock:
   each applies or is refused on its own (`unknown-request`, `already-resolved`, `expired`,
   `subject-changed`, `failed`).
+
+The page shows each request as one entry: what is asked in plain words (a charter as *Found
+project …* or *Amend the charter of …*, a board task's step, a tool call, a budget raise, a fix,
+a policy change), who asked (the board for a task or project, an agent run, a run's step, the
+queue), the request's own text, what it is about with the exact subject behind **Exact
+subject**, what approving and what denying change, and when it expires, relative and absolute
+(unanswered by then, it counts as denied). The consequences a requester gave are shown as given;
+for a board charter or task request without them the page says what the board does with each
+verdict ([board](../design/board.md)), counting the project's proposed and open tasks from
+`GET projects` when the board runs. Each button names its effect (*Approve: activate project p1*,
+*Deny: hold the task*), and each entry has its own note; a batch has a note for all its requests.
+
+After a call the page reports, above the page until **Dismiss**, what happened: each verdict
+recorded, with its request and approval record and what happens next, or not recorded, with why
+in plain words (each `refused` failure, or the call's own `{error}` and status) and that nothing
+was decided. The same report follows a review verdict, a project move, and a run action. While a
+call is in flight its buttons are disabled. The page refreshes every 5 seconds, but never while
+an element of it has focus or a pointer or key is pressed: a render that lands during a press
+waits for its release, so a press is never lost to a refresh.
 
 ## Autonomy policy
 
@@ -120,11 +139,18 @@ Served always; each service it reads that is not mounted reads as unknown with w
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET roster` | — | the roster, an `mcp-roster@1.0` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+| `GET roster` | — | the roster, an `mcp-roster@1.1` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
 
-- Any other method is `405`. The page (`?view=roster`) shows one row per Worker: its id, provider,
-  family, and role; its account and the account's record; tier, quota class, and locality; its
-  availability; the steps it runs now (each run a link to its page) with their board tasks; its
-  load; and its account's pools, each window's used share and reset. A fact that is unknown shows
-  as `unknown (why)`; a Worker source that was silent or failed in its last read is named above
-  the table, its Workers not listed.
+- Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
+  (working, idle, at a limit with when the first is back, unavailable, and quarantined when any),
+  then one card per Worker, grouped by status (working, idle, at a limit, unavailable,
+  quarantined). Each card gives the Worker's id; what it is for (its `description`, else its
+  `derived` line, marked *derived*, with *no description is configured*); its status and why in
+  plain words (*Working: 1 of 2 slot(s) in use*, *At a limit: back in 2 h (11:40)*, *Unavailable:
+  its account is signed out*); what it does now (each step's `summary`, with a link to its run);
+  its account (the operator's label, id, kind, and state); what it serves (tier, quota class,
+  locality, provider, family, role); its limits (held-off capabilities, its account's return, each
+  pool and window with its used share and reset); and its load. Times read relative first, the
+  clock time beside. A fact that is unknown shows as `unknown (why)`; a Worker source that was
+  silent or failed in its last read is named above the cards, its Workers not listed. The tab
+  refreshes every 5 seconds like the rest of the page.

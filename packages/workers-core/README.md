@@ -11,8 +11,8 @@ Routing **seam definition**
 - The types mirror `capability-descriptor@1.6` (its optional `family`, an opaque
   provider family; `maxInputChars`, the longest input the Worker takes; `load` and `cooldowns`;
   a capability offer's `scope`; the `account` it runs on, `{ id, group, mode, limitUntil? }`;
-  and the `kinds` of work the operator gives it) and `work-requirement@1.2` (its optional `scope`
-  and `kind`). A scoped
+  the `kinds` of work the operator gives it; and the operator's `description`, for people only,
+  never a routing input) and `work-requirement@1.2` (its optional `scope` and `kind`). A scoped
   offer proves its capability only for work whose requirement names that scope (`provesFor`,
   [scoped offers](../../docs/design/routing.md#scoped-offers),
   [ADR-0049](../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)). A

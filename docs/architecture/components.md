@@ -354,7 +354,7 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Roster** (in `gateway-core`): every Worker in one read model, projected on read from the
   Worker registry, the account and enrollment records, the resource ledger, the event log, the
   workflow runs, and the board, each fact it cannot read shown as unknown with why; no state of
-  its own. Served as MCP `roster` (client scope), `system roster`, and the web UI's Roster page
+  its own. Served as MCP `roster` (client scope), `system roster`, and the web UI's Workers tab
   ([roster](../design/roster.md)).
 - **Report** (`report`): the baseline report of a period, for one project or every one, from
   recorded data only (the board, the approval queue, the resource ledger, the event log), as the

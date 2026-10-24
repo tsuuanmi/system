@@ -5,7 +5,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { afterEach, describe, expect, it } from 'vitest'
-import Accounts, { type PortableState } from '../src/index.ts'
+import Accounts, { type CatalogEntry, type PortableState } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -17,7 +17,7 @@ const catalog = [
   { id: 'chatgpt-2', provider: 'chatgpt-web', quotaClass: 'subscription-chat' as const, tiers: { standard: 'thinking' } },
 ]
 
-async function boot(accounts = catalog): Promise<{ ctx: Context; dir: string }> {
+async function boot(accounts: CatalogEntry[] = catalog): Promise<{ ctx: Context; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-accounts-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
@@ -80,6 +80,15 @@ describe('ctx.accounts', () => {
     await ctx.accounts.saveState('chatgpt-main', { state, identityHash: same, verifiedAt: '2026-10-11T08:00:00Z' })
     await ctx.accounts.saveState('chatgpt-2', { state, identityHash: same, verifiedAt: '2026-10-11T08:00:00Z' })
     expect(await ctx.accounts.duplicateIdentities()).toEqual([['chatgpt-main', 'chatgpt-2']])
+  })
+
+  it('carries an account\'s description in its view, and refuses one that is not plain text on one line of at most 200 characters (T85)', async () => {
+    const { ctx } = await boot([{ ...catalog[0]!, description: 'The studio\'s chat subscription' }, catalog[1]!])
+    expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ description: 'The studio\'s chat subscription' })
+    expect(await ctx.accounts.get('chatgpt-2')).not.toHaveProperty('description')
+    for (const description of ['', 'a\tb', 'x'.repeat(201)]) {
+      expect(() => new Accounts(new Context(), { accounts: [{ ...catalog[0]!, description }] }), JSON.stringify(description)).toThrow(/chatgpt-main: description must be plain text on one line, 1 to 200 characters/)
+    }
   })
 
   it('rejects unknown accounts and invalid catalogs', async () => {

@@ -27,6 +27,8 @@ export interface ModelEntry {
   maxTokens: number
   /** Who serves the model, as an opaque provider family (ADR-0027); the Worker's family. */
   family?: string
+  /** What it is for, in the operator's words: its Worker's `description` (`capability-descriptor@1.6`); never a routing input. */
+  description?: string
   /** Session bounds for this entry (ADR-0031); the Worker source's defaults when absent. */
   maxSessionTurns?: number
   maxHistoryChars?: number

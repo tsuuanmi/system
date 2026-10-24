@@ -40,7 +40,7 @@ import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, dshHome, type Liveness, LIVENESS_RULE, livenessOf,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
@@ -122,6 +122,8 @@ export interface AgentWorkerConfig {
    * `reviewMember` (a member's steps name no kind).
    */
   kinds?: string[]
+  /** What it is for, in the operator's words (`capability-descriptor@1.6`); never a routing input. */
+  description?: string
 }
 
 /** A Worker as this source runs it: a hand-named row, or one derived as account × role (`derived`). */
@@ -315,6 +317,7 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
     if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
     if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
     if (worker.family !== undefined && (typeof worker.family !== 'string' || !worker.family.length || worker.family.length > 128)) throw new ProviderError('config_error', `agent Worker ${worker.id}: family must be 1 to 128 characters`)
+    if (worker.description !== undefined && (typeof worker.description !== 'string' || !DESCRIPTION.test(worker.description))) throw new ProviderError('config_error', `agent Worker ${worker.id}: description must be plain text on one line, 1 to ${MAX_DESCRIPTION} characters`)
     if (worker.reviewMember) {
       // A writer never reviews: a review is independent of the change (INV-15).
       if (worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
@@ -376,6 +379,7 @@ export class AgentWorkers extends Service {
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
       // Not z.array: an omitted array would come back as [], a Worker given no kind at all; checked at load.
       kinds: z.any().description('The kinds of work it takes (ADR-0057), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member'),
+      description: z.string().max(MAX_DESCRIPTION).pattern(DESCRIPTION).description('What it is for, in your words: plain text on one line, at most 200 characters; shown on the roster, never a routing input'),
     })).default([]).description('Hand-named agent-runtime Workers (the shape before Workers are account × role): they run as before until system account migrate --apply, then are refused; never with roles or assignments. Each policy comes from here only (INV-6)'),
     roles: z.array(z.object({
       id: z.string().pattern(/^[a-z][a-z0-9-]{0,31}$/).required().description('Role id: its Workers are agent:<accountId>/<role>'),
@@ -387,6 +391,7 @@ export class AgentWorkers extends Service {
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family'),
       // Not z.array, as a hand-named Worker's.
       kinds: z.any().description('The kinds of work its Workers take (ADR-0057), as a hand-named Worker\'s; unset, any work. Not for a review member'),
+      description: z.string().max(MAX_DESCRIPTION).pattern(DESCRIPTION).description('What the role\'s Workers are for, in your words: plain text on one line, at most 200 characters; every Worker of the role shows it on the roster, never a routing input'),
       runtimes: z.dict(z.object({
         tools: z.array(z.string()),
         model: z.string(),
@@ -680,7 +685,8 @@ export class AgentWorkers extends Service {
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
         // the operator gives it, so it takes no other (ADR-0057).
-        schema: worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        schema: worker.kinds || worker.description ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        ...(worker.description ? { description: worker.description } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state, observedAt,
       }

@@ -9,7 +9,7 @@
  */
 import { isAbsolute, resolve } from 'node:path'
 import type { SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
-import type { ProviderAccounts } from '@tsuuanmi/system-libs'
+import { DESCRIPTION, MAX_DESCRIPTION, type ProviderAccounts } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { templatePool } from '@tsuuanmi/system-resources-core'
 import { type QuotaClass, type Tier, WORK_KIND } from '@tsuuanmi/system-workers-core'
@@ -48,6 +48,8 @@ export interface AgentRoleConfig {
   reviewMember?: boolean | undefined
   /** The kinds of work its Workers take (ADR-0057); unset, any work. */
   kinds?: string[] | undefined
+  /** What its Workers are for, in the operator's words (`capability-descriptor@1.6`); never a routing input. */
+  description?: string | undefined
   /** What differs per runtime, by runtime kind. */
   runtimes?: Record<string, AgentRoleRuntime> | undefined
 }
@@ -78,6 +80,7 @@ export interface DerivedWorker {
   account?: string
   windows?: Record<string, string>
   limitCooldownSeconds?: number
+  description?: string
   derived: { accountId: string; role: string }
 }
 
@@ -165,6 +168,7 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
     }
     const kinds = kindsProblem(role.kinds, role.reviewMember)
     if (kinds) fail(`${at} (${role.id}).kinds ${kinds}`)
+    if (role.description !== undefined && (typeof role.description !== 'string' || !DESCRIPTION.test(role.description))) fail(`${at} (${role.id}).description must be plain text on one line, 1 to ${MAX_DESCRIPTION} characters`)
     for (const [runtime, settings] of Object.entries(role.runtimes ?? {})) {
       const family = settings?.family
       if (family !== undefined && (typeof family !== 'string' || !family.length || family.length > 128)) fail(`${at} (${role.id}).runtimes.${runtime}.family must be 1 to 128 characters`)
@@ -195,7 +199,7 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
         quotaClass: role.quotaClass ?? 'agent-plan', worktreePerRun: role.worktreePerRun === true, reviewMember: role.reviewMember === true,
         ...(role.kinds ? { kinds: [...role.kinds] } : {}),
         ...(own.tools?.length ? { tools: [...own.tools] } : {}), ...(own.model ? { model: own.model } : {}), ...(own.maxTurns ? { maxTurns: own.maxTurns } : {}),
-        ...(own.family !== undefined ? { family: own.family } : {}),
+        ...(own.family !== undefined ? { family: own.family } : {}), ...(role.description !== undefined ? { description: role.description } : {}),
         ...(provider?.pool !== undefined ? { pool: templatePool(provider.pool, assignment.account), account: assignment.account, windows: { ...provider.windows } } : {}),
         ...(provider?.limitCooldownSeconds !== undefined ? { limitCooldownSeconds: provider.limitCooldownSeconds } : {}),
         derived: { accountId: assignment.account, role: name },

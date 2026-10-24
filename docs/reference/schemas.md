@@ -338,6 +338,13 @@ guesses.
   without `kinds` it takes any work. Routing compares kinds for equality only (admission check
   `capability`). A record carrying it below `@1.6` is refused. Readers accept 1.0 to 1.6. Example:
   [`capability-descriptor.kinds.json`](../../schemas/examples/capability-descriptor.kinds.json).
+- `capability-descriptor@1.6` adds the optional `description`: what the Worker is for, in the
+  operator's words, from the configuration row that defines it (`description` of an agent-workers
+  `workers[]` or `roles[]` entry, of a `models[]` entry, or of an accounts `accounts[]` entry, which
+  a website Worker carries with its tier). It is for people (the [roster](../design/roster.md))
+  and never a routing input. A record carrying it below `@1.6` is refused. Readers accept 1.0 to
+  1.6. Example:
+  [`capability-descriptor.description.json`](../../schemas/examples/capability-descriptor.description.json).
 
 ### `plan`
 
@@ -957,8 +964,15 @@ guesses.
   `quarantined` (the account's quarantine `reason`, `since`, and the `enrollment` `decision`); each
   has a `summary`, its one-line form. What makes each is in [availability](../design/roster.md#availability).
 - `account.record.label` is given to an operator-scope caller only; a client's record has no label.
+- `mcp-roster@1.1` adds, per Worker, `description` (known: the operator's words from its
+  descriptor, `capability-descriptor@1.6`, or `unknown` when none is configured) and `derived` (its
+  provider, role, tier, quota class, and locality as one line, for a reader to show, marked as
+  derived, when there is no description); and, per step of `work`, `since` (known: when its
+  current attempt started, from the event log) and `summary` (the step in one sentence: its task,
+  run, step, and for how long, as of `asOf`). Readers accept 1.0 and 1.1.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
-  rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources;
+  rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
+  step starts;
   past a bound with no count, the field is `unknown` with why, never cut silently. `work.unread`
   says the runs read were cut by their bound (500).
 - The call's text content is the record rendered for a terminal (what `system roster` prints); the

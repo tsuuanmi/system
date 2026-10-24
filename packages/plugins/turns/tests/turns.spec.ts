@@ -33,7 +33,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
+type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string>; description?: string }
 const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
 
 type AskSpec = { prompt: string; tier?: Tier; sessionId?: string; persist?: boolean; research?: boolean; search?: boolean; classification?: WorkRequirement['data']['classification']; key?: string }
@@ -126,6 +126,16 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(states).toMatchObject({ 'worker:chatgpt-free/economy': 'unavailable', 'worker:chatgpt-free/standard': 'unavailable', 'worker:chatgpt-main/standard': 'ready' })
     const admitted = await ctx.workers.route({ schema: 'work-requirement@1.0', objective: 'x', capabilities: ['reason'], data: { classification: 'public', refs: [] }, egressPolicy: 'default', tier: { min: 'economy', source: 'default' }, acceptance: { contract: 'acceptance.answer' } })
     expect(admitted.worker.worker).toBe('worker:chatgpt-main/economy')
+  }, 60_000)
+
+  it('describes each tier\'s Worker with its account\'s description and the tier (capability-descriptor@1.6), and an account without one as before (T85)', async () => {
+    const { ctx } = await boot({ accounts: [{ ...account('chatgpt-main', { economy: 'instant', frontier: 'high' }), description: 'The studio\'s chat subscription' }, account('chatgpt-2', { standard: 'medium' })] })
+    const listed = new Map((await ctx.workers.list()).map((w) => [w.worker, w]))
+    expect(listed.get('worker:chatgpt-main/economy')).toMatchObject({ schema: 'capability-descriptor@1.6', description: 'The studio\'s chat subscription (economy tier)' })
+    expect(listed.get('worker:chatgpt-main/frontier')).toMatchObject({ description: 'The studio\'s chat subscription (frontier tier)' })
+    expect(listed.get('worker:chatgpt-2/standard')).toMatchObject({ schema: 'capability-descriptor@1.5' })
+    expect(listed.get('worker:chatgpt-2/standard')).not.toHaveProperty('description')
+    expect((await ctx.accounts.get('chatgpt-main')).description).toBe('The studio\'s chat subscription')
   }, 60_000)
 
   it('re-verifies a falsely signed-out account from its stored state, without a login, and keeps a really signed-out one marked (REQ-ACC-5)', async () => {

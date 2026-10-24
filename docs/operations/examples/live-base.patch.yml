@@ -24,7 +24,8 @@
   config:
     executable: /home/tan/.local/bin/agy
 
-# The agent Workers. This list replaces the whole list, so it keeps the live patch's Claude Code
+# The agent Workers, each with a `description` the Workers tab and `system roster` show (plain text,
+# one line, at most 200 characters). This list replaces the whole list, so it keeps the live patch's Claude Code
 # Worker as it is (claude-research, renamed from claude-review on 2026-10-24). All three read the same checkout and never write, so none needs a worktree per run; give
 # every Worker on the workspace `worktreePerRun: true` once a writing Worker joins them.
 # These are hand-named Workers, the row's shape before Workers are account × role: they run as they
@@ -34,17 +35,20 @@
   config:
     workers:
       - id: claude-research
+        description: Researches and answers the lead's questions about the system checkout; reads only
         runtime: claude-agent-sdk
         workspace: /home/tan/workspaces/system
         sandbox: read-only
         tier: standard
         maxTurns: 4
       - id: codex-review
+        description: Reviews a pushed change of the system checkout as a team member; reads only
         runtime: codex-sdk
         workspace: /home/tan/workspaces/system
         sandbox: read-only
         tier: standard
       - id: agy-review
+        description: Reviews a pushed change of the system checkout as a second team member; reads only
         runtime: antigravity-cli
         workspace: /home/tan/workspaces/system
         sandbox: read-only

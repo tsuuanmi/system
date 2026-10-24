@@ -1810,7 +1810,7 @@ rejected by the engine as another attempt, also without you.
    whatever is pending**, since nothing else has run them.
 3. Add a note if you like, then press **Accept** or **Reject**. The page sends the exact subject it
    showed. A result that changed since, or a task no longer in review, is refused (`409`), nothing
-   is decided, and the page's status line says why.
+   is decided, and an alert at the top of the page says why; it stays until you dismiss it.
 4. What happens:
    - **Accept:** your `acceptance` decision is applied, and the task is `done` with
      `result.acceptance` set. Tasks that depend on it become ready on the board's next sweep. Nothing

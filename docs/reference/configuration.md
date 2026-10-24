@@ -14,6 +14,7 @@
 | `accounts[].id` (required) | string |  |  |
 | `accounts[].provider` (required) | string |  |  |
 | `accounts[].label` | string |  |  |
+| `accounts[].description` | string (…200) |  | What its Workers are for, in your words: plain text on one line, at most 200 characters; each tier's Worker shows it with its tier on the roster (never a routing input) |
 | `accounts[].quotaClass` (required) | "subscription-chat" \| "agent-plan" \| "metered" \| "local" |  |  |
 | `accounts[].tiers` | Record<string, string> | `{}` | Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served |
 | `providers` | object[] | `[]` | How each website provider's accounts are used; a provider not listed is assigned (ADR-0052) |
@@ -55,6 +56,7 @@
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
 | `workers[].kinds` | any |  | The kinds of work it takes (ADR-0057), such as [code] or [docs, tests]: only steps that name one of them, never a step that names none; unset, any work. Not for a review member |
+| `workers[].description` | string (…200) |  | What it is for, in your words: plain text on one line, at most 200 characters; shown on the roster, never a routing input |
 | `roles` | object[] | `[]` | Role templates (PROP-0012 phase F), each defined once: what the work needs, whatever account serves it |
 | `roles[].id` (required) | string |  | Role id: its Workers are agent:<accountId>/<role> |
 | `roles[].workspace` (required) | string |  | Absolute workspace root its work is done in |
@@ -64,6 +66,7 @@
 | `roles[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace, as a hand-named Worker's |
 | `roles[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family |
 | `roles[].kinds` | any |  | The kinds of work its Workers take (ADR-0057), as a hand-named Worker's; unset, any work. Not for a review member |
+| `roles[].description` | string (…200) |  | What the role's Workers are for, in your words: plain text on one line, at most 200 characters; every Worker of the role shows it on the roster, never a routing input |
 | `roles[].runtimes` | Record<string, object> | `{}` | What differs per runtime, by runtime kind: tools, model, maxTurns, family; never a routing input |
 | `assignments` | object[] | `[]` | Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker |
 | `assignments[].account` (required) | string |  | An enrolled agent account, by the id system account list shows |
@@ -289,6 +292,7 @@
 | `models[].locality` | "remote" \| "local" | `"remote"` | local: the model runs on this machine (egress class model-local) |
 | `models[].maxTokens` | number (1…200000) | `4096` | Output bound of every call (INV-9) |
 | `models[].family` | string |  | Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one |
+| `models[].description` | string (…200) |  | What the model Worker is for, in your words: plain text on one line, at most 200 characters; shown on the roster, never a routing input |
 | `models[].maxSessionTurns` | number (1…10000) |  | This model's session turns, at most (default: the row's maxSessionTurns) |
 | `models[].maxHistoryChars` | number (1…2000000) |  | Characters of history this model replays, at most (default: the row's maxHistoryChars); fit it to the context window |
 | `models[].maxInputChars` | number (1…2000000) |  | Characters of prompt this model takes, at most, declared to admission (ADR-0032; default: none declared); its history is bounded by maxHistoryChars |

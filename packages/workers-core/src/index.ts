@@ -102,6 +102,12 @@ export interface CapabilityDescriptor {
    */
   family?: string
   /**
+   * What the Worker is for, in the operator's words (`@1.6`): the `description` of the
+   * configuration row that defines it, at most `MAX_DESCRIPTION` characters (`libs`; a website
+   * Worker's carries its tier as well). For people only: routing never reads it.
+   */
+  description?: string
+  /**
    * The longest input this Worker takes, in characters (code points) of what it is sent, when its
    * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.
    */

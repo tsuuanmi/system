@@ -10,7 +10,7 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { type CredentialKey, type CredentialRecord, credentialKey } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
-import { type AccountSetting, accountSettings, ASSIGNED, type ContentId, type PooledTerms, type ProviderAccounts, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { type AccountSetting, accountSettings, ASSIGNED, type ContentId, DESCRIPTION, MAX_DESCRIPTION, type PooledTerms, type ProviderAccounts, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type PortableState, ProviderError, type Tier } from '@tsuuanmi/system-provider-core'
 
 export type { PortableState }
@@ -29,6 +29,8 @@ export interface CatalogEntry {
   id: string
   provider: string
   label?: string
+  /** What its Workers are for, in the operator's words (`capability-descriptor@1.6`); each tier's Worker carries it with its tier. */
+  description?: string
   quotaClass: QuotaClass
   /** Tier → provider mode, e.g. `{ economy: 'instant', frontier: 'pro' }` (purpose P4). */
   tiers: Partial<Record<Tier, string>>
@@ -86,6 +88,7 @@ export class Accounts extends Service {
       id: z.string().pattern(ID).required(),
       provider: z.string().pattern(ID).required(),
       label: z.string(),
+      description: z.string().max(MAX_DESCRIPTION).pattern(DESCRIPTION).description('What its Workers are for, in your words: plain text on one line, at most 200 characters; each tier\'s Worker shows it with its tier on the roster (never a routing input)'),
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).required(),
       tiers: z.dict(z.string()).default({}).description('Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served'),
     })).default([]).description('Account catalog: any number of accounts per provider'),
@@ -106,6 +109,9 @@ export class Accounts extends Service {
     for (const entry of config.accounts ?? []) {
       if (!ID.test(entry.id)) throw new ProviderError('config_error', `account id ${entry.id} must match ${ID}`)
       if (this.catalog.has(entry.id)) throw new ProviderError('config_error', `duplicate account id ${entry.id}`)
+      if (entry.description !== undefined && (typeof entry.description !== 'string' || !DESCRIPTION.test(entry.description))) {
+        throw new ProviderError('config_error', `account ${entry.id}: description must be plain text on one line, 1 to ${MAX_DESCRIPTION} characters`)
+      }
       this.catalog.set(entry.id, entry)
     }
     try {
@@ -260,6 +266,7 @@ export class Accounts extends Service {
     return {
       id: entry.id, provider: entry.provider, quotaClass: entry.quotaClass, tiers: entry.tiers,
       ...(entry.label !== undefined && { label: entry.label }),
+      ...(entry.description !== undefined && { description: entry.description }),
       status: record?.status ?? 'new',
       loginMode: record?.login?.mode ?? 'manual',
       revision: record?.revision ?? 0,

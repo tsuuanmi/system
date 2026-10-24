@@ -1,0 +1,32 @@
+{
+  "schema": "capability-descriptor@1.6",
+  "worker": "worker:account-b/frontier",
+  "provider": "provider-a",
+  "family": "provider-a",
+  "description": "The studio's second chat subscription: long reviews and research (frontier tier)",
+  "account": {
+    "id": "account-b",
+    "group": "provider-a",
+    "mode": "assigned"
+  },
+  "load": {
+    "running": 1,
+    "queued": 0,
+    "pending": 0,
+    "slots": 2
+  },
+  "tier": "frontier",
+  "quotaClass": "subscription-chat",
+  "locality": "remote",
+  "capabilities": [
+    {
+      "capability": "reason",
+      "evidence": {
+        "kind": "conformance",
+        "at": "2026-10-24T00:00:00Z"
+      }
+    }
+  ],
+  "state": "busy",
+  "observedAt": "2026-10-24T17:40:00Z"
+}
