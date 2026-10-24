@@ -602,6 +602,8 @@ export class Engine {
       const budget = await this.tasks.reserveStep(run, node, attempt)
       if (budget === 'wait') return 'wait'
       if (budget === 'stop' || signal.aborted) return
+      // Its brief states what the task may still draw at this step, not when the run was admitted.
+      if (this.tasks.bound(run.run_id)) draft = { ...draft, budget: { remaining: await this.tasks.budgetAt(run.run_id) } }
       // Members of one team route one at a time, so each sees which accounts the others hold.
       const release = await this.routingTurn(run.run_id)
       const exclude = differs ? await this.families(run, spec) : undefined

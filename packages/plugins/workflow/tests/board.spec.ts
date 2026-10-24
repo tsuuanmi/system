@@ -526,7 +526,8 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(reserved).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { runId: run.runId, lines: [{ pool: 'max.programmatic', unit: 'usd', amount: 0.000001 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }] } } })
     // Recorded on the run's row under its step before the step started (ADR-0047, step 1).
     const { holds } = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { holds: Array<{ step: string; reservationId: string; decision: string }> }
-    expect(holds).toEqual([{ step: 'solo:1:0', nodeId: 'solo', reservationId: expect.any(String), decision: held.decision }])
+    // With the ledger's expiry, so a funding request can name the hold should the ledger not release it (D31).
+    expect(holds).toEqual([{ step: 'solo:1:0', nodeId: 'solo', reservationId: expect.any(String), decision: held.decision, expiresAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/) }])
     const { reservationId } = holds[0]!
     workers.release(workers.started[0]!.id, { text: 'within budget' })
     expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
@@ -753,6 +754,86 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief.attempt).toBe(2)
     expect(brief.artifacts).toContainEqual({ ref: stepA, role: 'prior', note: 'the result of step a of attempt 1, which the task\'s spent budget stopped before its next step' })
     expect(ctx.eventLog.query({ runId: second.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => [e.nodeId, e.data?.['state']])).toEqual([['a', 'reserved'], ['b', 'reserved']])
+  })
+
+  it('states in each step\'s brief the budget left when that step starts, after the steps before it, not when the run was admitted (operator decision D31)', async () => {
+    const { ctx, workers } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }, { pool: 'max.programmatic', unit: 'turns', amount: 10 }]
+    const task = await ready(ctx, 'two briefs', { budget })
+    // Earlier work on the task: what the run is admitted with is already less than declared.
+    await drew(ctx, task.taskId, 'earlier', { turns: 2 })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the first step started')
+    const remaining = (i: number): unknown => (ctx.artifacts.get(workers.started[i]!.brief!)!.body as { budget: { remaining: unknown[] } }).budget.remaining
+    expect(remaining(0)).toEqual([{ pool: 'max.programmatic', unit: 'runs', amount: 2 }, { pool: 'max.programmatic', unit: 'turns', amount: 8 }])
+    // The first step's Worker run draws one run of three turns, as the ledger counts it.
+    await drew(ctx, task.taskId, 'step-a', { runId: workers.started[0]!.id, turns: 3 })
+    workers.release(workers.started[0]!.id, { text: 'the first half' })
+    await until(() => workers.started.length === 2, 'the second step started')
+    expect(remaining(1)).toEqual([{ pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'turns', amount: 5 }])
+    workers.release(workers.started[1]!.id, { text: 'the second half' })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'completed' })
+  })
+
+  it('names in the funding request a step\'s hold the ledger did not release, which still counts and refused the next step, instead of asking with nothing named; released when asked once more, it is not named (operator decision D31, INV-2)', async () => {
+    const { ctx, workers } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }]
+    // The ledger cannot release a reservation (its store did not answer, say) while `failing` holds.
+    let failing = true
+    const release = ctx.resources.release.bind(ctx.resources)
+    const spy = vi.spyOn(ctx.resources, 'release').mockImplementation(async (reservationId) => {
+      if (failing) throw new Error('the ledger did not answer')
+      return release(reservationId)
+    })
+    cleanups.push(() => spy.mockRestore())
+
+    const task = await ready(ctx, 'stuck hold', { budget })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the first step started')
+    const [hold] = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget).holds as Array<{ step: string; expiresAt: string }>
+    expect(hold).toMatchObject({ step: 'a:1:0', expiresAt: expect.any(String) })
+    // The step records no usage: only its unreleased hold fills the task's one run.
+    workers.release(workers.started[0]!.id, { text: 'the first half' })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent' } })
+    expect(workers.started).toHaveLength(1)
+    expect(failed.error!.message).toMatch(/1 held/)
+    expect(failed.error!.message).toContain(`The resource ledger did not release step a:1:0 of run ${run.runId} (until ${hold!.expiresAt}): it still counts`)
+    const view = await reported(ctx, run.runId)
+    // No line is reached by recorded usage, so no funding is asked: the hold is named instead.
+    expect(view.task?.budget).toMatchObject({ state: 'refused', spent: true, blocked: true, funding: [], unreleased: [{ runId: run.runId, step: 'a:1:0', expiresAt: hold!.expiresAt }] })
+    const blocked = (await ctx.board.task(task.taskId))!
+    expect(blocked).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent' } })
+    expect(blocked.waiting!.funding).toBeUndefined()
+    const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+    expect(request.subject.version).toBe('budget-spent')
+    expect(request.action.summary).toContain('1 reservation(s) not released still count')
+    expect(request.action.consequences).toContain(`step a:1:0 of run ${run.runId} (until ${hold!.expiresAt})`)
+
+    // A hold the ledger releases once the next step was refused, asked again, is not named: the request asks only to go on.
+    const other = await ready(ctx, 'released late', { budget })
+    const reserve = ctx.resources.reserve.bind(ctx.resources)
+    const reserving = vi.spyOn(ctx.resources, 'reserve').mockImplementation(async (request) => {
+      const reserved = await reserve(request)
+      if (reserved.state === 'refused' && request.taskId === other.taskId) failing = false
+      return reserved
+    })
+    cleanups.push(() => reserving.mockRestore())
+    const second = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: other.taskId } })
+    await until(() => workers.started.length === 2, 'its first step started')
+    workers.release(workers.started[1]!.id, { text: 'the first half' })
+    const late = await reported(ctx, second.runId)
+    expect(failing).toBe(false)
+    expect(late.task?.budget).toMatchObject({ state: 'refused', spent: true, blocked: true, funding: [] })
+    expect(late.task?.budget).not.toHaveProperty('unreleased')
+    const quiet = (await ctx.approvals.get((await ctx.board.task(other.taskId))!.waiting!.approvalRequest!))!
+    expect(quiet.action.consequences).toBeUndefined()
   })
 
   it('releases a step\'s hold as soon as its execution settles, so a sibling of its batch that reserves later is not refused for a hold no step needs (T62, ADR-0047)', async () => {

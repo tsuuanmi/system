@@ -1,7 +1,7 @@
 # ADR-0053: Workflow contract 1.4 states a board task's budget, a run's question, and TASKS.md in a run's workspace
 
-- **Status:** Proposed
-- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Date:** 2026-10-24 (accepted 2026-10-24, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
   [ADR-0040](0040-briefs-on-the-workers-and-workflow-seams.md),

@@ -180,7 +180,11 @@ flowchart LR
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
 criteria; the task's budget lines less the usage spent on the task (the brief informs; the run's
-[reservation](#a-tasks-budget) enforces); and at most 16
+[reservation](#a-tasks-budget) enforces), counted for each step when it starts, after its
+reservation, so a step's brief states what is left after the steps before it, in this attempt and
+the earlier ones (the operator's decision of 2026-10-24, D31; a step still in flight beside it has
+recorded nothing yet, and with no ledger able to count it the brief keeps what was left when the
+run was admitted, never more); and at most 16
 pointers, never content: the accepted results of the tasks it depends on (their digests when
 they have one, role `input`), and on a later attempt the previous attempt's result (`prior`; for
 an attempt a spent budget stopped between steps, the result of each step it completed) and
@@ -193,8 +197,9 @@ executions they started (each start's `workflow.node.started` event, and each no
 execution), so it reads the ledger for the task and for each of those ids, counts each record
 once by its `(source, requestId)`, and totals it per line: `tokens` input plus output, `usd` the
 cost, `turns`, `runs` one per record; `minutes` stay as declared. A run deleted by retention no
-longer counts. This informs the brief; the run's [reservation](#a-tasks-budget) is what enforces
-the lines, by the ledger's own count.
+longer counts. A step's brief takes the run's caps (the task's lines when it was admitted) less
+this count, read when the step starts. This informs the brief; the run's
+[reservation](#a-tasks-budget) is what enforces the lines, by the ledger's own count.
 
 **Resume from a brief.** A task's next attempt, or the first attempt of a task that depends on
 exactly one other (a chain), resumes the session of the run before it when:
@@ -633,11 +638,11 @@ stateDiagram-v2
 |---|---|---|
 | checked | nothing, when the ledger is loaded, configures every pool the budget names, and finds each available | a refusal before the task is taken: an `admission` decision (`workflow.task-admission`, `refuse`); `config_error` with no ledger or a pool not configured, `overloaded` for a pool unavailable now (retry once it is back); nothing is claimed or sent (INV-2) |
 | due → reserved | after the board recorded the run, before each Worker execution is routed: `ctx.resources.reserve` for the run and its task (and project), the task's lines as `caps`, and as `lines` the least the step draws on each (one token, turn, or run; a millionth of a dollar or a minute), so a line the task's earlier steps and attempts already reached refuses it; the ledger's `budget` decision, and the step's hold on the run's `workflow_tasks` row (`budget.holds`: the step as `<node>:<attempt>:<escalations>`, its reservation, its decision) before the step starts; `workflow.task.budget` with the node | no ledger loaded, or one that does not answer: the run waits and asks again (no step runs without a reservation) |
-| reserved → due | the step is no longer in flight (it completed, failed, or never started): its hold is released as soon as its execution settles, so a sibling of its batch still running does not keep it held and one reserving later does not count it beside the step's own usage; only that step's holds, since a sibling may have reserved and not yet started. The run's next turn releases, before any new step reserves, every hold whose step is not running, as the backstop (a stop, a lost lease, or a release that failed). Each is removed from the row | a ledger that does not release it: the hold stays on the row and is asked again; it expires on its own (`holdSeconds`, INV-9) |
+| reserved → due | the step is no longer in flight (it completed, failed, or never started): its hold is released as soon as its execution settles, so a sibling of its batch still running does not keep it held and one reserving later does not count it beside the step's own usage; only that step's holds, since a sibling may have reserved and not yet started. The run's next turn releases, before any new step reserves, every hold whose step is not running, as the backstop (a stop, a lost lease, or a release that failed). Each is removed from the row | a ledger that does not release it: the hold stays on the row and is asked again; it expires on its own (`holdSeconds`, INV-9); until then it counts against the task's caps, and a funding ask names it ([below](#funding-a-spent-task)) |
 | due → spent | the ledger refused a step while every pool is configured and available: a cap is reached. The refusal is on the run's row (`budget.state` `refused`, its decision and reasons), and the step stays as it was, nothing of it routed or sent. No new step starts: no node is promoted, and a step granted beside it does not start either. Steps already running finish and their results are taken, as in a holder-lost wind-down; then the run ends as below | — |
-| spent → asked | the funding ask ([below](#funding-a-spent-task)), on the run's row (`budget.funding`, the run's view) before the block | a board or ledger that does not answer: the run waits and asks again |
+| spent → asked | the funding ask and the reservations the ledger did not release ([below](#funding-a-spent-task)), on the run's row (`budget.funding`, `budget.unreleased`, the run's view) before the block | a board or ledger that does not answer: the run waits and asks again |
 | spent → ended | the board shows the run as the task's last attempt (`attempts.count` is `attempts.max`): no funding is asked, since an approval could raise nothing and start no attempt; a `gate` decision (`workflow.task-funding`, `end`, its input the ledger's refusal), and in one transaction with it the decision on the run's row (`budget.lastAttempt`, the run's view) and the run failed as `budget_spent` (`USER_ACTION`), its message saying it was the last attempt and how many steps ran before the refusal; its report is a failed run (`reconcileRun`), which leaves the task waiting for input (`retries-spent`), and nothing is put to the operator | a board that does not answer: the run waits and reads it again; a run the operator stopped meanwhile keeps its own failure, and nothing is recorded |
-| asked → blocked | the holder blocks the task (`board.block`, `budget-spent`, with the ask as `funding` unless it is empty), so the board asks the policy about `funding` and the operator decides whether the budget is raised by those lines and the task goes on ([board](board.md#funding-a-spent-budget)); then the run fails as `budget_spent` (`USER_ACTION`), its message naming the ask and how many steps ran before the refusal; its outcome is `blocked` | a board that does not answer is asked again; one that refuses the block (the holder lapsed, say) ends the run all the same, and its report reconciles it as a failed run |
+| asked → blocked | the holder blocks the task (`board.block`, `budget-spent`, with the ask as `funding` unless it is empty, and the holds as `unreleased` when there are any), so the board asks the policy about `funding` and the operator decides whether the budget is raised by those lines and the task goes on ([board](board.md#funding-a-spent-budget)); then the run fails as `budget_spent` (`USER_ACTION`), its message naming the ask and how many steps ran before the refusal; its outcome is `blocked` | a board that does not answer is asked again; one that refuses the block (the holder lapsed, say) ends the run all the same, and its report reconciles it as a failed run |
 | due → failed | the ledger refused a step for want of a pool (not configured, or unavailable since the start), or refused the request itself: once nothing is in flight, the run fails as `quota_exhausted`, no step started after the refusal | its report is a failed attempt (`reconcileRun`), through the board's gate |
 | due → released | when the run finishes, completed or not, every hold left is released and the run's budget is `released`, whether or not a step ever reserved (a run that ended before its first reservation too), so a start selects only rows that still hold something; holds a stop left are released at the next start | a ledger that does not release one: the hold expires on its own (`holdSeconds`, INV-9) |
 
@@ -645,14 +650,25 @@ stateDiagram-v2
   checked before it starts, and one that overdraws the task's lines while it runs is not stopped;
   what it drew is recorded under the task, so the run's next step, and the task's next attempt,
   are refused. An overdraw is bounded by the steps in flight (one long agent step can still draw up
-  to its own `maxTurns`), and the brief tells each Worker what was left when the run was admitted.
+  to its own `maxTurns`), and each step's brief tells its Worker what was left when that step
+  started ([a board task's brief](#a-board-tasks-brief)).
   Stopping an agent run at its next turn or tool boundary is step 2 of
   [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md),
   deferred until the live install shows real overdraws: the ledger records no usage while a run is
   in flight, and no seam stops one at a boundary yet.
-- **Which outcome wins.** A step in flight that fails for good, or asks questions, decides the
-  run as it would without the refusal (a failed run, or the question wait); the next attempt's
-  first step is then refused on the spent line. A run whose holder was lost winds down as such.
+- **Which outcome wins** (kept as built by the operator's decision of 2026-10-24, D31). Once the
+  step's budget is refused, the run's outcome is decided in this order:
+  1. a step that failed, for good or with questions: the run fails as that step did; questions
+     first raise the board's question wait (the outcome `blocked`) unless the holder was lost, and
+     any other failure is an attempt the board counts (`reconcileRun`);
+  2. otherwise a lost holder: the run winds down as such (`holder_lost`);
+  3. otherwise, once nothing is in flight, the budget's refusal: the funding block, or on the last
+     attempt the run's end (`retries-spent`), or `quota_exhausted` for a pool refused.
+
+  So a sibling step's failure or questions take precedence over a budget refusal beside it. The
+  refusal is not lost: the spent line is on the ledger, so the next attempt's first step is
+  refused on it, and the funding is asked then. Every path fails closed: no step starts after the
+  refusal.
 - **What a stopped attempt leaves.** The steps it completed keep their results; when the task goes
   on, its next attempt's brief points at each (`prior`, the step named), since the stopped attempt
   has no result of its own.
@@ -681,9 +697,20 @@ and each pool, the records a cap counts), never from a model:
 - for example, a task of 3 attempts with `runs` 2 and `usd` 3 that drew 2 runs and 3.5 usd asks for
   +1 runs (0 overdrawn, 2/3 rounded up) and +1.5 usd (0.5 overdrawn, plus 1): approved, its next
   attempt reserves, and its brief gives it 1 run and 1 usd;
-- empty when no line is reached by recorded usage (holds that expire refused the step), or when the
-  ledger cannot count the task's usage (more records than `usage` returns): the block then names no
+- empty when no line is reached by recorded usage (holds refused the step), or when the ledger
+  cannot count the task's usage (more records than `usage` returns): the block then names no
   `funding`, and the request asks only to go on;
+- with the reservations the ledger did not release named beside it (the operator's decision of
+  2026-10-24, D31; board contract 1.3,
+  [ADR-0054](../decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)):
+  before the block, the engine asks the ledger once more to release every hold of the task's runs
+  that no running step owns (the spent run's, and those an earlier, finished run left), then names
+  the ones still held and not expired, at most 8, those that count longest first, as `unreleased`
+  (each run, step, and expiry, which a step's hold records from the ledger's reservation). They are
+  fixed on the run's row with the ask (`budget.unreleased`, the run's view), so a block asked again
+  names the same ones, and the run's failure message names them too. Fail closed stays: they count
+  until they expire, so an approval given before then may see the next attempt's first step refused
+  again;
 - never made for the task's last attempt: with no attempt left, an approval could raise nothing and
   start nothing (the board never makes a task ready past `attempts.max`), so the run blocks
   nothing, and its report leaves the task waiting for input (`retries-spent`)

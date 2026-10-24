@@ -22,9 +22,11 @@ declare module '@deepseek-ai/cordis' {
  * The contract version of this seam; its conformance suite names the same. 1.1 adds the optional
  * {@link Board.attachDigest}: a provider at 1.0 has none. 1.2 adds the optional `funding` of a
  * `budget-spent` {@link Board.block}: the lines the holder asks to raise the task's budget by,
- * bound to the request's subject and applied, exactly, once the operator approves it.
+ * bound to the request's subject and applied, exactly, once the operator approves it. 1.3 adds the
+ * optional `unreleased` of a `budget-spent` {@link Board.block}: the ledger's reservations the
+ * holder could not release, which still count against the task's budget, named in the request.
  */
-export const BOARD_CONTRACT = '1.2'
+export const BOARD_CONTRACT = '1.3'
 
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
 export interface BudgetLine { pool: string; unit: Unit; amount: number }
@@ -67,6 +69,13 @@ export const TERMINAL: readonly TaskState[] = ['done', 'cancelled']
 export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired' | 'operator-review'
 export type CancelReason = 'operator' | 'lead' | 'project-closed' | 'input-expired' | 'superseded' | 'forbidden' | 'dependency-cancelled'
 
+/**
+ * A reservation on the resource ledger that one of the task's runs could not release, so it still
+ * counts against the task's budget until it expires (1.3): the run, the step that reserved it
+ * (`run` for a run's one reservation), and when it stops counting, when the holder knows.
+ */
+export interface UnreleasedHold { runId: string; step: string; expiresAt?: string }
+
 /** One raise of a task's budget (`board-task@1.1`): the lines the operator approved, that approval, and the board's decision that applied them. */
 export interface Funding { lines: BudgetLine[]; approval: ArtifactRef; decision: ArtifactRef; at: string }
 
@@ -77,6 +86,34 @@ export interface Funding { lines: BudgetLine[]; approval: ArtifactRef; decision:
  * `budget-spent`.
  */
 export const fundingVersion = (contentIdOfLines: `sha256:${string}`): string => `budget-spent:${contentIdOfLines}`
+
+/** Unreleased reservations a `budget-spent` block names, at most (1.3, INV-9). */
+export const UNRELEASED_MAX = 8
+
+/**
+ * Why `unreleased` is not what a `budget-spent` block may name ({@link Board.block}, 1.3), or
+ * undefined: 1 to {@link UNRELEASED_MAX} holds, each a run id and a step of 1 to 200 characters and
+ * an optional ISO date `expiresAt`. A provider refuses such a block as `invalid`.
+ */
+export function unreleasedProblem(unreleased: unknown): string | undefined {
+  if (!Array.isArray(unreleased) || unreleased.length < 1 || unreleased.length > UNRELEASED_MAX) return `a budget-spent block names 1 to ${UNRELEASED_MAX} unreleased reservations`
+  const text = (v: unknown): boolean => typeof v === 'string' && v.length > 0 && v.length <= 200
+  for (const hold of unreleased as unknown[]) {
+    const h = hold as Partial<Record<keyof UnreleasedHold, unknown>> | null
+    const date = h?.expiresAt
+    if (typeof hold !== 'object' || hold === null || !text(h!.runId) || !text(h!.step)
+      || (date !== undefined && (typeof date !== 'string' || !Number.isFinite(Date.parse(date)) || date.length > 40))) {
+      return `${JSON.stringify(hold)} is not an unreleased reservation (runId and step, 1 to 200 characters; expiresAt an ISO date when given)`
+    }
+  }
+  return undefined
+}
+
+/** The request text that names unreleased reservations (1.3), as every provider writes it. */
+export function unreleasedText(unreleased: readonly UnreleasedHold[]): string {
+  const named = unreleased.map((h) => `${h.step === 'run' ? 'the reservation' : `step ${h.step}`} of run ${h.runId}${h.expiresAt ? ` (until ${h.expiresAt})` : ''}`).join(', ')
+  return `The resource ledger did not release ${named}: ${unreleased.length === 1 ? 'it still counts' : 'they still count'} against the task's budget until ${unreleased.length === 1 ? 'it expires' : 'they expire'}, so the next attempt may be refused again before then.`
+}
 
 /** `board-task@1.0`; `board-task@1.1` once it carries a funding ask (`waiting.funding`) or a raise (`funding`). */
 export interface BoardTask {
@@ -231,8 +268,15 @@ export abstract class Board extends Service {
    * approval) before the next attempt goes through the gate; with no attempt left it raises
    * nothing. Rejected or expired, the budget stays as it was. Without `funding` the request asks
    * only to go on, as at 1.1.
+   *
+   * `unreleased` (1.3, optional, `budget-spent` only): 1 to {@link UNRELEASED_MAX} reservations the
+   * holder could not release ({@link UnreleasedHold}: a run id and a step, each a non-empty string
+   * of at most 200 characters, and an ISO date `expiresAt` when given), `invalid` otherwise and
+   * nothing changes. The request's consequences name each one and say that the next attempt may be
+   * refused again until they expire; they change neither its subject nor the wait, and nothing is
+   * released or raised for them.
    */
-  abstract block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[] }, at?: Date): Promise<BoardTask>
+  abstract block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[]; unreleased?: UnreleasedHold[] }, at?: Date): Promise<BoardTask>
 
   /** Answer a question wait's questions, every one (waiting-for-input → ready, through the gate again); no other wait takes answers. */
   abstract answer(taskId: string, answers: string[], at?: Date): Promise<BoardTask>

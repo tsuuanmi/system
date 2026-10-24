@@ -211,10 +211,12 @@ default (the agent rows, `board`, `approvals`, `resources`, `digest`, `report`).
 digest provider `digest-extractive` is off too, and the pilot does not need it; exit criterion 6
 swaps it in on its own.
 
-**Open, the operator's decision:** whether Base ships `profile-software-development` on by
-default. On, every install offers templates that need an agent Worker configured on a repository,
-and runs fail at their first step until one is; off, as now, the pilot's patch turns it on. The row
-stays off until the operator decides ([roadmap](../proposals/roadmap.md#next-base-v08), B8).
+Base ships `profile-software-development` **off by default** (the operator's decision of
+2026-10-24, D30). Off, no install offers a writing template until the operator names a repository;
+on, every install would offer templates that need an agent Worker configured on a repository, and
+their runs would fail at the first step until one is. The pilot's patch turns it on, and so does the live install, for
+the pilot and the live checks; the live install also puts its Claude Code Worker first in the
+`workers` row's `priority` ([pilot runbook](../operations/pilot.md#name-the-repository-and-the-workers)).
 
 ### Not in Base
 
