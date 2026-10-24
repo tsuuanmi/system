@@ -139,7 +139,7 @@ describe('system profile (e2e through dsh)', () => {
     const client = new Client({ name: 'e2e', version: '0' })
     const token = readFileSync(tokenFiles.operator).toString('base64url')
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
-    const status = await client.callTool({ name: 'status', arguments: { plugins: true } })
+    const status = await client.callTool({ name: 'status', arguments: { plugins: true, checks: true } })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'], providers: ['chatgpt-web', 'gemini-web'] })
     // The plugin host read every row from the loader and each package's manifest, and recorded each
     // plugin's lifecycle as a decision: a row on is default, a row off candidate (REQ-HOST-7, INV-13).
@@ -240,7 +240,7 @@ describe('system profile (e2e through dsh)', () => {
     await waitFor(discoveryPath, 60_000)
     const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator', string> }
     const client = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
-    const status = await client.callTool({ name: 'status', arguments: { plugins: true } }).finally(() => client.close())
+    const status = await client.callTool({ name: 'status', arguments: { plugins: true, checks: true } }).finally(() => client.close())
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok' })
     const { checks } = (status.structuredContent as { health: { checks: Array<{ name: string; detail?: string }> } }).health
     expect(checks.find((check) => check.name === 'workers')?.detail).toContain('agent:reviewer (unavailable)')
@@ -288,7 +288,7 @@ describe('system profile (e2e through dsh)', () => {
     const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator', string> }
     const client = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
     try {
-      const { plugins, health } = (await client.callTool({ name: 'status', arguments: {} })).structuredContent as { plugins: Plugin[]; health: { state: string; checks: Array<{ name: string; state: string; detail: string }> } }
+      const { plugins, health } = (await client.callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { plugins: Plugin[]; health: { state: string; checks: Array<{ name: string; state: string; detail: string }> } }
       const found = plugins.filter((p) => p.findings)
       expect(found.map((p) => [p.name, p.findings!.map((f) => f.kind)])).toEqual(DSH_PACKAGES.map((name) => [name, ['no-manifest']]))
       expect(health.state).toBe('down')
@@ -318,7 +318,7 @@ describe('system profile (e2e through dsh)', () => {
     const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator' | 'client', string> }
     const operator = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
     try {
-      const { plugins, health } = (await operator.callTool({ name: 'status', arguments: { plugins: true } })).structuredContent as { plugins: Plugin[]; health: { checks: Array<{ name: string; state: string }> } }
+      const { plugins, health } = (await operator.callTool({ name: 'status', arguments: { plugins: true, checks: true } })).structuredContent as { plugins: Plugin[]; health: { checks: Array<{ name: string; state: string }> } }
       const of = (name: string): Plugin => plugins.find((p) => p.name === name)!
       expect([of('@tsuuanmi/system-digest').mounted, of('@tsuuanmi/system-digest').lifecycle?.state]).toEqual([false, 'candidate'])
       expect([of('@tsuuanmi/system-digest-extractive').mounted, of('@tsuuanmi/system-digest-extractive').lifecycle?.state]).toEqual([true, 'default'])

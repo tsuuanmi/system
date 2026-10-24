@@ -1107,6 +1107,28 @@ guesses.
   defect, and the call is an error. Example:
   [`mcp-roster.call.json`](../../schemas/examples/mcp-roster.call.json).
 
+### MCP tool: `status`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `status` | client | the host's health, its kernel services and providers; for the operator also each check's detail, the plugins that need a look, and the runs whose liveness needs a look ([mcp-server](../../packages/plugins/mcp-server/README.md)) |
+
+- Input and output: [`mcp-status.v1.json`](../../schemas/mcp-status.v1.json) `$defs/status-input`
+  and `status-output`, at 1.0. The reply had no schema before (an MCP tool built before Base);
+  1.0 is its first version, and the shape it fixes is the compact one below.
+- `health.state` is the worst of every check, listed or not. Unasked, `health.checks` lists only
+  the checks that are not `ok`, and `okOmitted` counts the rest (absent when none is left out), so
+  the reply does not grow with each check that is ok; `checks: true` lists every check, in the
+  report's order, with no `okOmitted`. `system health` asks for every check. As before, a client
+  sees each listed check's name and state, and the operator also its `detail`.
+- Unasked, `plugins` lists only the plugins that need a look and `pluginsOmitted` counts the rest;
+  `plugins: true` lists every one (operator only). `liveness` is the operator's, only when a run
+  needs a look or a source cannot tell.
+- The reply is computed on each call and never stored, so it carries no `schema` tag. It is
+  validated before it is sent: a reply its schema refuses is a defect, and the call is an error
+  (fail closed; `system health` then reports the host `down` with why). Example:
+  [`mcp-status.call.json`](../../schemas/examples/mcp-status.call.json).
+
 ### `plugin-manifest`
 
 - `name` never changes; a renamed plugin lists its old names in `renames`, so the host matches

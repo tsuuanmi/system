@@ -285,8 +285,11 @@ describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
     const display = await ctx.display.prepare('invisible')
     const socket = `/tmp/.X11-unix/X${display.env.DISPLAY!.slice(1)}`
     expect(existsSync(socket)).toBe(true)
+    const own = statSync(socket).ino
     await fiber.dispose()
-    await vi.waitFor(() => expect(existsSync(socket)).toBe(false), { timeout: 10_000 })
+    // Its socket is gone. Another X server on the host (a parallel test file's) may take the display
+    // number at once: the socket at that path is then that server's, never this one's.
+    await vi.waitFor(() => expect(existsSync(socket) && statSync(socket).ino === own).toBe(false), { timeout: 10_000 })
     expect(display.lost.aborted).toBe(true)
   }, 15_000)
 })

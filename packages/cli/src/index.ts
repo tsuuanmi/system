@@ -662,10 +662,10 @@ export interface HealthView { state: 'ok' | 'degraded' | 'down'; checks: Array<{
 /** The exit code `system health` ends with: 0 healthy, 1 degraded, 2 down. */
 export const healthExit = (state: string): number => ({ ok: 0, degraded: 1, down: 2 } as Record<string, number>)[state] ?? 2
 
-/** The running host's health, or `down` when it does not answer. */
+/** The running host's health, every check of it, or `down` when it does not answer. */
 export async function hostHealth(call: typeof callTool = callTool): Promise<HealthView> {
   try {
-    const outcome = await call('status', {})
+    const outcome = await call('status', { checks: true })
     const health = outcome.structured?.health as HealthView | undefined
     if (outcome.isError || !health) return { state: 'down', checks: [{ name: 'host', state: 'down', detail: outcome.text || 'no health report' }] }
     return health

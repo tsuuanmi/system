@@ -1,0 +1,69 @@
+{
+  "tool": "status",
+  "input": {},
+  "output": {
+    "harness": "system",
+    "store": "ok",
+    "artifacts": 12,
+    "kernel": [
+      "store",
+      "eventLog",
+      "leases",
+      "artifacts",
+      "credentials"
+    ],
+    "providers": [
+      "chatgpt-web",
+      "gemini-web"
+    ],
+    "health": {
+      "state": "degraded",
+      "checks": [
+        {
+          "name": "workers",
+          "state": "degraded",
+          "detail": "cannot take work: worker:plus/frontier (quota-exhausted) (system explain shows why)"
+        }
+      ],
+      "okOmitted": 13
+    },
+    "plugins": [
+      {
+        "name": "@tsuuanmi/system-digest-extractive",
+        "rows": [
+          "digest-extractive"
+        ],
+        "mounted": false,
+        "manifest": "valid",
+        "version": "0.7.0",
+        "class": {
+          "kind": "family",
+          "family": "digest"
+        },
+        "lifecycle": {
+          "state": "default",
+          "since": "2026-10-20T08:00:00.000Z",
+          "decision": "sha256:5f1e0c2b9a7d4e3f6a8b0c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f7"
+        }
+      }
+    ],
+    "pluginsOmitted": 50,
+    "liveness": {
+      "counts": {
+        "stalled": 0,
+        "looking": 0,
+        "unknown": 1
+      },
+      "runs": [
+        {
+          "source": "agents",
+          "execution": "arun_0f1e2d3c4b5a6978",
+          "worker": "agent:claude-1/developer",
+          "state": "unknown",
+          "since": "2026-10-24T07:12:00.000Z",
+          "runId": "run_7a8b9c"
+        }
+      ]
+    }
+  }
+}

@@ -152,6 +152,13 @@ absence of automation leaks are properties of the real browser.
   mount `display-virtual`, as a profile's browsers share one display. Each test still launches
   its own Chrome. The fake passes the display conformance suite, and `display-virtual` itself is
   tested on its own real Xvfb.
+- A website driver's tests against its fake site are split by theme, one file each (pages, modes
+  or answers, the composer, stalls, conversations, deletion, Deep research), so they run side by
+  side: the suite's wall time is set by its slowest file. Each file launches one Chrome on its own
+  Xvfb through `fakeSite()` in the driver's `tests/site.ts`, and each test opens its own fake site
+  and browser context there, stopped when the test finishes. A test that expects the driver to give
+  up (a conversation that never renders, a send nothing confirms) sets that bound small rather than
+  waiting out the production default.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
   product's own `discoverChrome` and launch it with the product's arguments.
   The order is `CHROME_PATH`, then a system Chrome no older than the engine,
