@@ -50,8 +50,8 @@ export const GROUPS: Readonly<Record<string, Group>> = {
     packages: ['provider-core', 'ui-ops', 'display-virtual', 'browser-patchright', 'accounts', 'login', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'turns'],
   },
   surfaces: {
-    about: 'what the operator and clients reach: the MCP server, the gateways, the web UI, the report, the CLI, and the bundle that composes everything',
-    packages: ['gateway-core', 'gateway-turns', 'gateway-anthropic', 'gateway-responses', 'mcp-server', 'web-ui', 'report', 'cli', 'system-bundle'],
+    about: 'what the operator and clients reach: the MCP server, the gateways, notifications, the web UI, the report, the CLI, and the bundle that composes everything',
+    packages: ['gateway-core', 'gateway-turns', 'gateway-anthropic', 'gateway-responses', 'mcp-server', 'notify', 'web-ui', 'report', 'cli', 'system-bundle'],
   },
   libs: {
     about: 'the libraries, the schemas, and the repository scripts with their repository-wide checks',
