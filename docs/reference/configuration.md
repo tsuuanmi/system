@@ -80,6 +80,7 @@
 | `providers[].pool` | string |  | The pool template (resources templates) each of its accounts draws on: pool <pool>/<accountId>; unset: not metered. With roles and assignments only |
 | `providers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the template's window ids; with pool only |
 | `providers[].limitCooldownSeconds` | number (60…604800) |  | How long a limit hit with no reset time closes an account's pool, or with no pool cools the account down (default 3600); with roles and assignments only |
+| `providers[].limitReadSeconds` | number (0…86400) |  | How often each ready account with a pool has its runtime's usage report read into its pool's windows (ADR-0059; default 600, at least 60; 0 turns the periodic read off); with pool only |
 | `accountHomes` | string |  | Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
 | `probeTtlMs` | number (0…) | `300000` | How long a runtime's probe result stands, from when its probe started: the next probe starts in the background at half of it, a result past it admits no Worker until one finishes, and a probe not settled within it is refused as timed out (0: every read waits for a probe, bounded at 5 min) |
