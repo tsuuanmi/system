@@ -297,15 +297,15 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       listed.sort((a, b) => (a.heldFor === b.heldFor ? String(a.expiresAt ?? '').localeCompare(String(b.expiresAt ?? '')) : a.heldFor === 'operator' ? -1 : 1))
       // The results accepted and still on their way into the repository (ADR-0060), the latest first: a verdict's consequence stays in sight.
-      const accepted: Array<Record<string, unknown> & { at: string }> = []
+      const accepted: Array<{ at: string; entry: Record<string, unknown> }> = []
       for (const project of await board.projects()) {
         for (const task of await board.tasks({ projectId: project.projectId, states: ['done'] })) {
           const landing = task.run ? ctx.workflow.landing(task.run.runId) : undefined
-          if (landing && LANDING_OPEN.has(landing.state)) accepted.push({ taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, run: task.run, landing: landingCard(landing).landing, at: task.updatedAt ?? task.createdAt })
+          if (landing && LANDING_OPEN.has(landing.state)) accepted.push({ at: task.updatedAt ?? task.createdAt, entry: { taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, run: task.run, landing: landingCard(landing).landing } })
         }
       }
       accepted.sort((a, b) => b.at.localeCompare(a.at))
-      return json(res, 200, { reviews: listed, accepted: accepted.slice(0, ACCEPTED_SHOWN).map(({ at: _, ...rest }) => rest) })
+      return json(res, 200, { reviews: listed, accepted: accepted.slice(0, ACCEPTED_SHOWN).map((a) => a.entry) })
     }
     const match = /^reviews\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/decide$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
