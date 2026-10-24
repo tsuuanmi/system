@@ -27,8 +27,8 @@ export const BUDGET = {
    * mcp-stdio`). A Worker holds at most the `model` token, which `/mcp` refuses: it lists nothing.
    */
   toolsList: {
-    operator: { measured: 50_403, ceiling: 55_500 },
-    client: { measured: 30_983, ceiling: 34_100 },
+    operator: { measured: 51_105, ceiling: 55_500 },
+    client: { measured: 31_685, ceiling: 34_100 },
   },
   /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling. */
   tool: { measured: 4_896, ceiling: 5_400 },
