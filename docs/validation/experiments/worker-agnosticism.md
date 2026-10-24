@@ -1,9 +1,10 @@
 # Worker agnosticism on `review`
 
-> Experiment 2, and the first record of PROP-0011's feedback loop (its "first experiment", on
-> branch `prop/0011-feedback-loop`). State: **pre-registered** on 2026-10-23 (hypothesis, objective
-> contract, suite, metrics, protocol) and **blocked**: [P1 and P2](#preconditions) keep it from
-> running on this code. Nothing has run. Records: [records](records/README.md).
+> Experiment 2, and the first record of PROP-0011's feedback loop (its
+> [first experiment](../../proposals/0011-feedback-loop.md#the-first-experiment-worker-agnosticism-on-review)).
+> State: **pre-registered** on 2026-10-23 (hypothesis, objective contract, suite, metrics,
+> protocol), not yet frozen: its [preconditions](#preconditions) are open. Nothing has run.
+> Records: [records](records/README.md).
 
 ## Hypothesis and design
 
@@ -21,7 +22,7 @@ its outcomes beyond pre-registered margins
 | suite | [review-suite v1](records/review-suite.v1.json): the two commits the [self-build](../self-build.md#before-the-pilot-team-reviews-of-its-own-code) reviews ran on, nine labels (seven blocking defects, one defence-in-depth defect, one known non-defect; Q2 blocking by the operator's decision D20), all in the regression partition |
 | trials | 2 cases × 2 arms × 3 repetitions = 12, in blocks: each round runs both arms in the order the seed gives, each arm both cases |
 | maker, judges | the code was written by Claude Code sessions, a family in neither arm; the collector is deterministic; the operator adjudicates |
-| expected verdict | `inconclusive`: two cases are fewer than the five any declared method needs ([objective contract](records/review-objective-contract.v1.json)), and no statistic is computed until F2. That is a valid outcome: the loop is accepted when it gives an auditable verdict, not when one arm wins |
+| expected verdict | `inconclusive`: two cases are fewer than the five any declared method needs ([objective contract](records/review-objective-contract.v1.json)), and the helper computes no statistic (it calls no method of F2's library). That is a valid outcome: the loop is accepted when it gives an auditable verdict, not when one arm wins |
 
 The operator chose this one-member swap. PROP-0011's table proposed two website members against
 two CLI members; that comparison is a later experiment, `RELATED` to this one. The suite was found
@@ -32,38 +33,34 @@ Every way the protocol departs from PROP-0011's is listed in the experiment reco
 
 | Id | Precondition | State |
 |---|---|---|
-| P1 | agent Workers are admitted to `review` member steps | **blocked**, below |
-| P2 | Antigravity CLI Workers keep a conversation, as every team member must | **blocked**, below |
-| P3 | the arms' Workers verified live: the [release checklist](../release-checklist.md) rows *A Codex Worker*, *A Codex Worker's tool gate* (with a signed-in Worker), *An Antigravity CLI Worker end to end*, and *`review` of a public repository by URL* | open |
+| P1 | agent Workers are admitted to `review` member steps | built, opt-in: the review-member profile, below |
+| P2 | Antigravity CLI Workers keep a conversation, as every team member must | built for review members: a replay, below |
+| P3 | the arms' Workers verified live: the [release checklist](../release-checklist.md) rows *A Codex Worker*, *A Codex Worker's tool gate* (with a signed-in Worker), *An Antigravity CLI Worker end to end*, *A Codex Worker as a `review` team member*, *An Antigravity CLI Worker as a `review` team member*, and *`review` of a public repository by URL* | open |
 | P4 | the labels confirmed by the operator, after the [calibration](#1-calibrate-the-labels) passes | open |
 | P5 | a maintenance window: every other project paused, no other run, since an arm turns website and agent rows off for everyone | open |
 
 **P1.** Each member step of `review` requires the team node's capability `reason` (the template in
 [`spec.ts`](../../../packages/plugins/workflow/src/spec.ts), its steps unrolled by `unrollTeams`).
-An agent Worker never offers `reason`, so that agent-plan quota is spent only on what only agent
-Workers prove ([admission evidence](../../design/agent-runtimes.md#admission-evidence),
-[routing](../../design/routing.md#quota-and-cost-policy)). So the Codex and Antigravity CLI Workers
-fail admission for every member step, nothing sent: neither arm can run. Lifting it is a decision
-for the operator, not configuration:
-
-- the member steps ask for a capability that both a website Worker and a read-only agent Worker
-  prove: a change to the built-in template and to that quota rule;
-- or a configured `review` replacing the built-in one: the workflow configuration keeps a node's
-  `snapshot: true` today, but `snapshot` is no documented template field
-  ([configuration](../../reference/configuration.md#workflow)), so this preparation does not
-  rely on it. P2 would still block.
+An agent Worker never offers plain `reason`, so that agent-plan quota is spent only on what only
+agent Workers prove ([admission evidence](../../design/agent-runtimes.md#admission-evidence),
+[routing](../../design/routing.md#quota-and-cost-policy)). The review-member profile
+([ADR-0049](../../decisions/adr/0049-read-only-agent-workers-as-review-members.md), proposed: the
+operator decides, D19) lifts this for member steps only. A read-only agent Worker with
+`reviewMember: true` and a `family` offers `reason` scoped to review-member work, and the engine
+names that scope on every member step. Its steps run with every tool call denied, in an empty
+workspace outside any repository ([runbook](../../operations/runbooks.md#agent-workers-as-review-team-members)).
 
 **P2.** A team member's steps all run in its own conversation, so they need
 `persistent-conversation` ([teams](../../design/teams.md#membership-model-a)). The Antigravity CLI
-runtime never reports `resume` (continuing a conversation by id is not proven), so its Workers are
-no team members ([runbook](../../operations/runbooks.md#antigravity-cli-workers)). Both arms hold
-one. Lifting it is a runtime change with a supervised live check of its own, as
-[ADR-0043](../../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)
-did for the hook. A fixed member of another family instead (a Gemini website Worker, say) is a
-different experiment: a new hypothesis record, not an edit of this one.
+runtime never reports `resume` (continuing a conversation by id is not proven). Under the
+review-member profile, its Worker offers `persistent-conversation` for member steps only: the
+`agents` source replays the member's earlier turns exactly before each later one, and records them
+(`agent-result@1.3` `replay`); a step whose conversation cannot be replayed whole fails, nothing
+sent. A fixed member of another family instead (a Gemini website Worker, say) is a different
+experiment: a new hypothesis record, not an edit of this one.
 
-When P1 and P2 are lifted, the code that lifts them is part of what the experiment pins
-(`environment.system`), and the arm rows below are checked against it before the freeze.
+The code that lifts P1 and P2 is part of what the experiment pins (`environment.system`), and the
+arm rows below are checked against it before the freeze.
 
 ## The arms
 
@@ -92,7 +89,8 @@ arms run the same template, request, and bounds. The freeze hashes each file int
   config:
     workers:
       - { id: agy-review, runtime: antigravity-cli, workspace: /home/<you>/experiments/review-worker-agnostic-1/empty,
-          sandbox: read-only, tier: standard, model: <pinned>, pool: exp.agy, account: agy }
+          sandbox: read-only, tier: standard, model: <pinned>, pool: exp.agy, account: agy,
+          reviewMember: true, family: antigravity-cli }
 
 # Candidate arm (arm-candidate.patch.yml).
 - id: provider-chatgpt-web
@@ -104,9 +102,11 @@ arms run the same template, request, and bounds. The freeze hashes each file int
   config:
     workers:
       - { id: agy-review, runtime: antigravity-cli, workspace: /home/<you>/experiments/review-worker-agnostic-1/empty,
-          sandbox: read-only, tier: standard, model: <pinned>, pool: exp.agy, account: agy }
+          sandbox: read-only, tier: standard, model: <pinned>, pool: exp.agy, account: agy,
+          reviewMember: true, family: antigravity-cli }
       - { id: codex-review, runtime: codex-sdk, workspace: /home/<you>/experiments/review-worker-agnostic-1/empty,
-          sandbox: read-only, tier: standard, model: <pinned>, pool: exp.codex, account: codex }
+          sandbox: read-only, tier: standard, model: <pinned>, pool: exp.codex, account: codex,
+          reviewMember: true, family: codex-sdk }
 ```
 
 - The agent members' workspace is an empty directory: they read only what the engine shows them,
@@ -116,8 +116,18 @@ arms run the same template, request, and bounds. The freeze hashes each file int
   Claude Code is the maker's family, and it must not take a seat.
 - The Codex and Antigravity CLI rows are set up as their runbooks say
   ([Codex Workers](../../operations/runbooks.md#codex-workers),
-  [Antigravity CLI Workers](../../operations/runbooks.md#antigravity-cli-workers)).
+  [Antigravity CLI Workers](../../operations/runbooks.md#antigravity-cli-workers)), and each agent
+  Worker as a review member ([runbook](../../operations/runbooks.md#agent-workers-as-review-team-members)).
+  Its `family` is the one its seat pins in the experiment record.
 - Leave `allowSameFamily` off (the default): a same-family admission makes a trial invalid.
+- The agent Workers are hand-named rows. They load only until you move agent Workers to accounts ×
+  roles (`system account migrate --apply`,
+  [runbook](../../operations/runbooks.md#migrate-agent-workers-to-accounts--roles)); from then on
+  they are refused at load. After the move, each arm's `agent-workers` row is written with roles
+  and assignments, its Workers are `agent:<accountId>/<role>`, and the experiment record is revised
+  with those ids before the freeze (the runbook's step 7). An Antigravity CLI account cannot be
+  verified yet (no reader of its identity), so its derived Worker takes no work, and the fixed seat
+  waits for one.
 
 ## Metrics
 
@@ -174,8 +184,9 @@ Once P1 to P5 hold:
 
 1. Write `<dir>/arms/arm-baseline.patch.yml` and `arm-candidate.patch.yml` ([the arms](#the-arms)).
 2. Fill the experiment record's pins: each seat's `workers` (the Worker ids `system health`
-   shows: `worker:<account>/standard` for a website account, `agent:<id>` for an agent), `family`
-   (a website Worker's is its account's provider, an agent's its runtime;
+   shows: `worker:<account>/standard` for a website account, `agent:<id>` for a hand-named agent
+   Worker, `agent:<accountId>/<role>` for one derived from an account), `family`
+   (a website Worker's is its account's provider, an agent's the `family` its configuration names;
    [routing](../../design/routing.md#provider-diversity)), `model`, and `observed` (what the Worker
    shows: the site's mode and model, `codex --version`, `agy --version`); and
    `environment.system` (the install's version and commit).

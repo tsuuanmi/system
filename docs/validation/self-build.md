@@ -1,7 +1,7 @@
 # System building System
 
 `system` is built with `system`. Its development is a software-development workflow of the kind
-the [`algorithm-development` template](../operations/pilot.md) runs: a lead splits work into
+the [`algorithm-development` template](../reference/workflow-templates.md#algorithm-development) runs: a lead splits work into
 briefs, Workers change code in worktrees of their own, a team reviews the exact change, findings
 are fixed, checks validate, and the operator approves. When that loop runs through `system` and
 holds, it is evidence that `system` works; where it breaks, it is a defect to fix first.
