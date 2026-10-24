@@ -6,9 +6,11 @@ DSH bundle and profile, reusing DSH plugins without being locked in. Every part 
 it is a plugin.
 
 - **Workers:** website Workers on browser-backed accounts (ChatGPT Web, Gemini
-  Web), and agent Workers (Claude Code, Codex, ACP agents), and API and
-  local-model Workers. The default composition serves website Workers only; the
-  others are opt-in.
+  Web), agent Workers (Claude Code, Codex, ACP agents, the Antigravity CLI), and
+  API and local-model Workers. Every Worker comes from the operator's
+  configuration: an account, a repository, or a model. The default composition
+  mounts the website, Claude Code, and model rows; the other agent runtimes are
+  opt-in ([bundle](packages/system-bundle/README.md)).
 - **Workflows:** durable and reconcilable, built from Workers and teams.
 - **Clients:** Claude Code, Codex, or any MCP client over MCP, and the `system`
   CLI. The calling agent is the Lead: it decides, and what `system` returns is
@@ -34,46 +36,52 @@ Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
 
 ## Status
 
-Milestones M0 to M5 are done apart from a few listed items, and M6 (second
-domain and readiness) has started. PROP-0004 (the Claude Code-lead MVP) Phase 1
-is in progress: the default composition leaves the agent Worker and model gateway
-rows off until an operator
-[turns one on](docs/operations/runbooks.md#turn-an-off-row-back-on). The next
-release is Base (v0.8, [PROP-0010](docs/proposals/0010-base-version.md)): the
+The next release is Base (v0.8, [PROP-0010](docs/proposals/0010-base-version.md)): the
 closed core, with Claude Code as the first Worker
-([scope](docs/requirements/release-scope.md#base-v08)). Its specification, resource
-ledger, board, approval queue, briefs and digests, and plugin manifests (B1 to B7) are in the code,
-and so are B8's template and baseline report; the pilot is the operator's. The
-[roadmap](docs/proposals/roadmap.md) has the milestone table and what remains. What each package does today is in its own
-`README.md`; what was verified on live accounts, and when, is in the
-[release checklist](docs/validation/release-checklist.md).
+([scope](docs/requirements/release-scope.md#base-v08)). Each kind of status has one home
+([status ownership](docs/README.md#status-ownership)):
 
-Built today:
+- which milestones are done, and what remains: the [roadmap](docs/proposals/roadmap.md);
+- what each package does now: its own `README.md`;
+- what was verified on live accounts, and when: the
+  [release checklist](docs/validation/release-checklist.md).
+
+Built today, in outline:
 
 - website Workers on ChatGPT Web and Gemini Web, in an invisible headed Chrome,
   with saved accounts, receipts, and restart reconciliation;
-- agent Workers on Claude Code, Codex, and ACP agents, held to each runtime's own
-  sandbox;
+- [agent Workers](docs/design/agent-runtimes.md) on Claude Code, Codex, ACP agents, and the
+  Antigravity CLI, admitted only where the runtime holds its sandbox, its reads are confined,
+  and it asks the run's tool gate before every tool call; a git worktree per workflow run
+  when configured; several sign-ins per runtime as enrolled accounts, identified by their
+  login, with Workers derived as account × role;
 - the workflow engine: capability routing with decision artifacts, acceptance
   contracts, graph growth with plan approval, teams that decide by sealed vote
-  (`brainstorm`, `review`), Worker sessions with peer messages, and
-  exact-subject review;
+  (`brainstorm`, `review`), Worker sessions with peer messages, a brief recorded
+  before each Worker execution, and exact-subject review;
 - profiles for scientific research (`research`, with a `deep` variant) and
   software development (`agent-review`, for agent Workers, and `algorithm-development`: one
   attempt of a board task, developed, reviewed, and validated in its own worktree);
 - the [resource ledger](docs/design/resources.md): configured pools and their limit
-  windows, reservations before an agent run, and usage from the runtime's own numbers;
+  windows, reservations before an agent run and before each step of a board task's run,
+  usage from the runtime's own numbers, and the runs whose usage it could not count;
 - the [board](docs/design/board.md): projects with charters and tasks that outlive a run,
   whose attempts the workflow engine serves, with expiring waits;
 - the [approval queue](docs/design/approvals.md): an autonomy policy, one batched queue whose
-  expiry denies, and a gate that judges every tool call of a Claude Code Worker; an agent Worker
-  can work in a git worktree of its own per workflow run. The board and the queue are on in the
-  default composition;
+  expiry denies, the gate that judges every tool call of an agent Worker, and policy changes
+  that apply only on the operator's approval;
+- [digests](docs/design/digests.md): cited digests of raw artifacts, every quote checked, from
+  one of two providers the operator swaps by configuration;
+- the [plugin host](docs/design/plugin-host.md): a manifest per plugin, checked against the
+  code in CI and against the composition at start, and each plugin's lifecycle state recorded;
 - the [baseline report](docs/design/reports.md): what a period recorded, for one project or every
   one, counted by code (MCP `report`, `system report`; by default the weekly investor report);
+- the first parts of the [feedback loop](docs/proposals/0011-feedback-loop.md): its records,
+  the seam definitions of the experiment registry and the evaluation engine, and the
+  [statistics](docs/design/statistics.md) library;
 - the MCP server, the Anthropic Messages and Responses gateways, the `system`
-  CLI, and an operator web page at `/ui` (runs, the approval queue, and the reviews of board
-  tasks).
+  CLI, and an operator web page at `/ui` (runs, the approval queue and the autonomy policy,
+  the reviews of board tasks, and the board's projects).
 
 ## Quick start (Linux)
 
@@ -96,9 +104,12 @@ never served. A common pattern is two accounts:
         tiers: { economy: flash-lite, standard: flash, frontier: pro }
 ```
 
-Agent Workers (Claude Code, Codex, ACP agents) are rows of the `agent-workers`
-plugin ([configuration](docs/reference/configuration.md#agent-workers)), off by
-default ([runbook](docs/operations/runbooks.md#agent-workers)).
+Agent Workers (Claude Code, Codex, ACP agents, the Antigravity CLI) come from the
+`agent-workers` row ([configuration](docs/reference/configuration.md#agent-workers)), which
+names none by default: the operator adds them for a repository
+([runbook](docs/operations/runbooks.md#agent-workers)), and can enroll several sign-ins of one
+runtime as accounts with `system account login <runtime>`
+([runbook](docs/operations/runbooks.md#enroll-an-agent-account)).
 
 ```bash
 alias system="node $PWD/packages/cli/lib/bin.js"
@@ -116,12 +127,14 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   `brainstorm`, `review`, `vote` (break a team's tie), `run` (any workflow
   template), `result`, `usage`, `explain`, `status`, sessions
   (`session_send`, `session_inbox`), the resource ledger (`resources_pools`,
-  `resources_usage`), the board (`board_*`: projects with charters, tasks, claims), and the
-  approval queue (`approvals_list`, `approvals_get`, `approvals_policy`), the baseline `report`; `run` also serves one
+  `resources_usage`), the board (`board_*`: projects with charters, tasks, claims), the
+  approval queue (`approvals_list`, `approvals_get`, `approvals_policy`), digests
+  (`digests_request`, `digests_get`), and the baseline `report`; `run` also serves one
   attempt of a board task; operator tools for runs (`approve`,
   `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`), verdicts on the queue
-  (`approvals_decide`), policy changes asked in it (`approvals_policy_propose`), and accounts
-  (`account_*`). The full contracts are generated in
+  (`approvals_decide`), policy changes asked in it (`approvals_policy_propose`), a project's
+  pause, resume, and close (`board_pause`, `board_resume`, `board_close`), and accounts
+  (`account_*`). The full list and contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
 - **`research`:** the scientific-research procedure: testable hypotheses, two
   cited literature reviews on two provider families (one with web search), an
@@ -134,7 +147,8 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   ballot, debating once on a split. A tie comes back to the caller (`vote`).
   `review` reads text, or a public repository at one pinned commit; `system`
   checks every finding's quote, and a confirmed blocking finding decides
-  `changes` ([teams](docs/design/teams.md)).
+  `changes`. A read-only agent Worker the operator configures as a review member may also
+  be a `review` member ([teams](docs/design/teams.md)).
 - **Website Workers as the model:** with a gateway row turned on,
   `system claude-env` and `system codex-env` print commands that run Claude Code
   or Codex on the gateways, with a website Worker as their model.
@@ -162,7 +176,8 @@ flowchart LR
   end
   subgraph workers["Workers"]
     WEB["website Workers<br/>ChatGPT Web, Gemini Web"]
-    AG["agent Workers<br/>Claude Code, Codex, ACP agents"]
+    AG["agent Workers<br/>Claude Code, Codex, ACP agents,<br/>Antigravity CLI"]
+    MOD["model Workers<br/>API and local models"]
   end
   CC -- "model turns" --> GA
   CX -- "model turns" --> GR
@@ -176,11 +191,13 @@ flowchart LR
   WF --> RT
   RT --> WEB
   RT --> AG
+  RT --> MOD
   GA -. "native tool calls, run by the client" .-> CC
   GR -. "native tool calls, run by the client" .-> CX
 ```
 
-1. Sign in each provider account once through the remote-login page.
+1. Sign in each website account once through the remote-login page, and each agent
+   account once in its own home.
 2. Point a client at `system`: over MCP, or through a gateway that makes a
    website Worker its model. Through a gateway, the model proposes the client's
    tool calls in text, and the client runs them locally

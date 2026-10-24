@@ -19,6 +19,7 @@ each field, which a schema cannot fully express, is documented in
 | [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities; 1.5 adds the `account` it runs on and its provider's `assigned` or `pooled` mode |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node; 1.1 adds `RETIRED`; 1.2 adds the brief its execution was started with |
 | [provider-turn-receipt.v1.json](provider-turn-receipt.v1.json) | body of a provider turn `receipt` artifact |
+| [conversation.v1.json](conversation.v1.json) | one row of the conversation ledger: a website conversation `system` created, kept until it is deleted on its site |
 | [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |
 | [session-summary.v1.json](session-summary.v1.json) | body of a Worker session's `report` checkpoint or `handoff` compaction artifact |
 | [ui-outline.v1.json](ui-outline.v1.json) | body of a local-private `evidence` artifact: the structure of a page region a `ui.drift` event names, never its text |
@@ -39,9 +40,9 @@ each field, which a schema cannot fully express, is documented in
 | [assessment.v1.json](assessment.v1.json) | body of an `assessment` artifact: an independent review's verdict and findings, bound to the exact subject reviewed |
 | [ui-map.v1.json](ui-map.v1.json) | a provider website's UI operations as data: elements, actions, network signals, states ([ADR-0021](../docs/decisions/adr/0021-ui-operations-as-data.md)) |
 | [project.v1.json](project.v1.json) | durable state of a project on the board: its charter (intent, measurable criteria, constraints, stop and pivot rules, budget by resource pool) and milestones |
-| [board-task.v1.json](board-task.v1.json) | durable state of a board task, work that outlives a run, with its lease, run, result, and expiring waits |
+| [board-task.v1.json](board-task.v1.json) | durable state of a board task, work that outlives a run, with its lease, run, result, and expiring waits; 1.1 adds a spent budget's funding |
 | [approval-request.v1.json](approval-request.v1.json) | durable state of a request in the approval queue, bound to its exact subject; expiry rejects it; 1.1 adds the queue's own `policy-change` requests |
-| [policy-change.v1.json](policy-change.v1.json) | durable state of one change of the autonomy policy set: the proposed record, the whole set it makes, its hash, base, and configuration hashes, and whether the operator's approval applied it |
+| [policy-change.v1.json](policy-change.v1.json) | durable state of one change of the autonomy policy set: the proposed record, the whole set it makes, its hash, base, and configuration hashes, and whether the operator's approval applied it; 1.1 adds the `origin` of a change the queue proposed itself |
 | [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); still `@1.0`: `remediation` always asks by a load-time rule, and `promotion` by the schema as well |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
@@ -58,7 +59,7 @@ each field, which a schema cannot fully express, is documented in
 | [lesson.v1.json](lesson.v1.json) | body of a `finding` artifact: knowledge drawn from verdicts, with the envelope it was observed in and the predicates that make it stale |
 | [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools; `mcp-board` 1.1 adds the operator's `board_pause`, `board_resume`, and `board_close` |
 | [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period; 1.1 adds what a cap counts as 0 (records without a figure, runs whose usage the ledger could not count) |
-| [mcp-agent-accounts.v1.json](mcp-agent-accounts.v1.json) | input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents` |
+| [mcp-agent-accounts.v1.json](mcp-agent-accounts.v1.json) | input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents`; 1.1 adds `account_migrate` |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, …), the input and output of the MCP tools built before Base, and the
