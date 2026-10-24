@@ -15,6 +15,8 @@
     "lint": "oxlint scripts spikes packages",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "test:group": "tsx scripts/test-groups.ts group",
+    "test:affected": "tsx scripts/test-groups.ts affected",
     "build": "\"$npm_execpath\" -r --filter \"./packages/**\" run build",
     "test:e2e": "\"$npm_execpath\" run build && vitest run -c vitest.e2e.config.ts",
     "gen:reference": "tsx scripts/gen-reference.ts",

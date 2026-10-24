@@ -1,9 +1,14 @@
 name: ci
 
+# A pull request runs pnpm check and the test groups its change affects; every other trigger runs
+# the full gate (docs/engineering/testing.md#ci-gates): every push to main, so every merge, nightly
+# on main, and each release tag, through the release workflow.
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '23 2 * * *'
   # The release workflow runs these same gates on the tagged commit.
   workflow_call:
 
@@ -12,6 +17,7 @@ permissions:
 
 jobs:
   check:
+    # One name on every trigger, so a required check names this job whatever it ran.
     name: node ${{ matrix.node }} / check + test + e2e
     runs-on: ubuntu-24.04  # pinned: a new image can change the user-namespace policy bubblewrap needs
     strategy:
@@ -21,6 +27,9 @@ jobs:
         node: ['24.18.1', '24', '26']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # A pull request's test groups are read against its base branch, so it needs the history.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -35,10 +44,21 @@ jobs:
           google-chrome --version
           bwrap --dev-bind / / -- true
       - run: pnpm check
-      - run: pnpm test
+      - name: the test groups this change affects (docs/engineering/testing.md#test-groups)
+        if: github.event_name == 'pull_request'
+        run: pnpm test:affected --base "origin/$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          SYSTEM_REQUIRE_BROWSER: '1'
+          SYSTEM_REQUIRE_BWRAP: '1'
+      - name: the whole test suite
+        if: github.event_name != 'pull_request'
+        run: pnpm test
         env:
           SYSTEM_REQUIRE_BROWSER: '1'
           SYSTEM_REQUIRE_BWRAP: '1'
-      - run: pnpm test:e2e
+      - if: github.event_name != 'pull_request'
+        run: pnpm test:e2e
       - name: crash injection (SIGKILL at each reconcile point of a turn)
+        if: github.event_name != 'pull_request'
         run: pnpm test:crash

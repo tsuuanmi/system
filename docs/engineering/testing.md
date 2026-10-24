@@ -35,6 +35,10 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   once it passes, the run fails until the entry is removed. A baseline never hides a new
   failure.
 
+A provider's own spec tests what its seam's suite does not hold: what is particular to that
+provider (a default, the words of a refusal, a helper it exports). A test that only repeats a
+scenario of the suite, on the same provider, does not stay.
+
 ## Conventions adopted from DSH
 
 - **Real plugins over mocks.** Plugin tests compose the real plugins they inject
@@ -138,11 +142,40 @@ absence of automation leaks are properties of the real browser.
   `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
   skipping silently.
 
+## Test groups
+
+`pnpm test` runs the whole suite. Every workspace package's tests, and the repository scripts',
+belong to one functional group: `kernel`, `workflow`, `workers`, `websites`, `surfaces`, and
+`libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
+`pnpm test:group` with no name lists each with its packages; its own test fails when a package or
+a test file is in no group, or in two.
+
+- `pnpm test:group <name>...` runs those groups.
+- `pnpm test:affected` runs the groups the change since `origin/main` affects, committed or not
+  (`--base <ref>` for another base, `--dry-run` to print them only). A group is affected when its
+  tests depend on a changed package: on its code or on its test files (a fake site, a conformance
+  suite, a test helper), through imports and `package.json`, transitively; or when they locate a
+  changed package's data file. The `libs` group runs for every change, since the scripts' tests
+  check the whole repository, and documentation reaches it alone. A schema reaches every package;
+  a root configuration file, CI, or a path the script cannot place runs every group (fail
+  closed). A spike runs none: spikes are not part of the suite.
+
+The rule:
+
+- **A change** runs its groups (`pnpm test:affected`) and `pnpm check`.
+- **A big update** runs the full gate: `pnpm check`, `pnpm test`, `pnpm test:e2e`, and
+  `pnpm test:crash`. A contract, seam, or schema change, a batch integration, and a release are
+  big updates.
+
 ## CI gates
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to
-`main` and every pull request, on Node 24.18.1 (the floor), the latest 24, and the latest 26, with a real Xvfb, TigerVNC, bubblewrap, and
-Chrome installed. Each gate is a root [`package.json`](../../package.json) script:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request, every
+push to `main` (every merge), nightly on `main`, and on each release tag (the
+[release workflow](releasing.md) calls it), on Node 24.18.1 (the floor), the latest 24, and the
+latest 26, with a real Xvfb, TigerVNC, bubblewrap, and Chrome installed. A pull request runs
+`pnpm check` and its affected [test groups](#test-groups); everything else runs the full gate.
+The job keeps one name on every trigger, so a required check names it whatever ran. Each gate is
+a root [`package.json`](../../package.json) script:
 
 1. `pnpm check`:
    - `check:docs` ([`scripts/check-docs.ts`](../../scripts/check-docs.ts)):
@@ -171,10 +204,13 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
 2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1` and `SYSTEM_REQUIRE_BWRAP=1`:
    unit, contract, driver, concurrency, and architecture tests. The agent read
    confinement tests run against the real bubblewrap; locally they are skipped
-   when `bwrap` is missing, and in CI a missing one fails the run.
+   when `bwrap` is missing, and in CI a missing one fails the run. On a pull
+   request, `pnpm test:affected --base origin/<its base branch>` instead, with the
+   same environment.
 3. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`, and
-   upgrade every seeded store fixture.
-4. `pnpm test:crash`: crash injection at each reconcile point of a turn.
+   upgrade every seeded store fixture. Not on a pull request.
+4. `pnpm test:crash`: crash injection at each reconcile point of a turn. Not on a
+   pull request.
 
 [`.github/workflows/audit.yml`](../../.github/workflows/audit.yml) runs
 `pnpm audit:deps` (no high or critical advisory in a production dependency) once,
