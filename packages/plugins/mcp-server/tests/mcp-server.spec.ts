@@ -240,7 +240,10 @@ describe('system MCP server on ctx.webServer', () => {
     expect(operator.health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'down', detail: expect.stringMatching(/^@x\/c: it runs with a manifest the host refused: it declares _meta.*; @x\/dsh: it runs with no manifest/) })
     expect(operator.health.state).toBe('down')
     // The text is a summary of the answer, never the answer again.
-    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: 'health down: 5 checks, manifests down; 5 plugins, 3 listed (those that need a look; plugins: true lists every one)' }])
+    // The host's own checks (disk) depend on where the test runs, so the expected text names what this health reports.
+    const notOk = operator.health.checks.filter((c) => c.state !== 'ok').map((c) => `${c.name} ${c.state}`)
+    expect(notOk).toContain('manifests down')
+    expect((await call(tokens.operator)).content).toEqual([{ type: 'text', text: `health down: 5 checks, ${notOk.join(', ')}; 5 plugins, 3 listed (those that need a look; plugins: true lists every one)` }])
     for (const args of [{}, { plugins: true }]) {
       const client = await status(tokens.client, args)
       expect(client.plugins).toBeUndefined()
