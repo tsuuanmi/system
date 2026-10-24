@@ -246,7 +246,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await fetch(`${origin}/ui/api/runs`, { headers: auth })).status).toBe(200)
   })
 
-  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.1, and what it could not read as unknown (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.2, and what it could not read as unknown (REQ-HOST-8)', async () => {
     const { origin, token } = await boot({ roster: true })
     const auth = { authorization: `Bearer ${token}` }
     const response = await fetch(`${origin}/ui/api/roster`, { headers: auth })
@@ -254,7 +254,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
     const roster = await response.json() as Record<string, unknown>
-    new SchemaRegistry().assertDef('mcp-roster@1.1', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.2', 'roster-output', roster)
     expect(roster).toMatchObject({
       counts: { busy: 1, resting: 1 },
       workers: { value: [
@@ -286,14 +286,14 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(new URL(page.url()).search).toBe('?view=workers')
     expect(await page.getByLabel('Worker counts').innerText()).toMatch(/^1 working · 0 idle · 1 at a limit \(the first back .+\) · 0 unavailable$/)
     const working = page.getByRole('region', { name: 'Working' })
-    const busy = working.getByRole('article', { name: 'worker:plus/standard' })
+    const busy = working.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
     const card = await busy.innerText()
-    for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
+    for (const said of ['Worker id worker:plus/standard', 'The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
       'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote',
       // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013).
       'agent run arun_00000000000000a2 of run run_old ended without being known to be gone, holding session ses_9; free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)']) expect(card, said).toContain(said)
     await busy.getByRole('link', { name: 'Open run run_old' }).focus()
-    const resting = page.getByRole('region', { name: 'At a limit' }).getByRole('article', { name: 'worker:plus/frontier' })
+    const resting = page.getByRole('region', { name: 'At a limit' }).getByRole('article', { name: 'Chatgpt · Studio Plus · frontier' })
     const rest = await resting.innerText()
     expect(rest).toContain('derived')
     expect(rest).toContain('chatgpt-web Worker, frontier tier, subscription-chat, remote (no description is configured)')
@@ -384,13 +384,86 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByRole('alert').count()).toBe(0)
   }, 60_000)
 
+  it.runIf(canRunBrowser)('opens on a dashboard: what waits for you, each linked to its section, the Workers at a glance, the runs that need a look with their action, and the recent runs (T97)', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const waiting = page.getByRole('region', { name: 'Waiting for you' })
+    await expect.poll(() => waiting.innerText()).toContain('3 requests wait for your verdict')
+    expect(await waiting.innerText()).toContain('1 run needs a look')
+    expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 idle · 1 at a limit · 0 unavailable')
+    // The blocked run is listed with why and where it is decided.
+    const look = page.getByRole('region', { name: 'Runs that need a look' })
+    expect(await look.innerText()).toContain('its plan waits for your approval')
+    await look.getByRole('link', { name: 'Open it to decide' }).click()
+    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    await page.goBack()
+    await waiting.getByRole('link', { name: '3 requests wait for your verdict' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('approvals')
+    expect(await page.getByRole('heading', { name: 'Recent runs' }).count()).toBe(1)
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('has one navigation on every page, the current page marked, and each page a title with one line of what it is for (T97)', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const nav = page.getByRole('navigation', { name: 'Pages' })
+    const current = () => nav.locator('[aria-current="page"]').innerText()
+    await expect.poll(() => page.getByRole('heading', { name: 'Home', exact: true }).count()).toBe(1)
+    expect(await current()).toBe('Home')
+    expect(await page.locator('p.lead').innerText()).toContain('What waits for your verdict')
+    for (const [link, purpose] of [['Board', 'Every project and its open tasks'], ['Workers', 'Every Worker: what it is for'], ['Autonomy policy', 'Which actions run on their own']] as const) {
+      await nav.getByRole('link', { name: link }).click()
+      await expect.poll(() => page.getByRole('heading', { name: link, exact: true }).count()).toBe(1)
+      expect(await current()).toBe(link)
+      expect(await page.locator('p.lead').innerText()).toContain(purpose)
+      expect(await page.title()).toBe(`system: ${link}`)
+    }
+    // Keyboard: the navigation is links, reached and followed without a pointer.
+    await nav.getByRole('link', { name: 'Home' }).focus()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => current()).toBe('Home')
+    await page.getByRole('link', { name: 'run_abc' }).first().click()
+    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    expect(await page.locator('main').innerText()).not.toContain('← ')
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('shows a run as a sentence, what you can do, the answer, and its steps as a timeline in words, the decisions and spec folded (T97)', async () => {
+    const { origin, token } = await boot({ roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
+    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    const text = await page.locator('main').innerText()
+    expect(text).toContain('investigate run, started')
+    expect(text).toContain('It waits for you: its plan waits for your approval.')
+    expect(text).toContain('Step plan:1:gate waits for your approval of its plan before it runs.')
+    expect(text).toContain('No answer yet: it comes when the last step is done.')
+    const steps = page.locator('ol.timeline > li')
+    expect(await steps.count()).toBe(2)
+    expect(await steps.nth(0).innerText()).toMatch(/^plan:1 done · worker:a\/standard · standard tier/)
+    expect(await steps.nth(1).innerText()).toContain('plan:1:gate waiting for you · needs an economy tier Worker')
+    // Decisions and the spec are folded until asked for.
+    expect(await page.locator('details', { hasText: 'How it was decided (1)' }).getAttribute('open')).toBeNull()
+    expect(await page.getByText('proves reason').isVisible()).toBe(false)
+    await page.getByText('How it was decided (1)').click()
+    expect(await page.getByText('proves reason').isVisible()).toBe(true)
+    expect(await page.getByText('sha256:00').isVisible()).toBe(false)
+    expect(await page.getByText('ends it now: nothing more of it runs').count()).toBe(1)
+  }, 60_000)
+
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
     const { origin, token, workflow } = await boot()
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.getByRole('link', { name: 'run_abc' }).click()
+    await page.getByRole('link', { name: 'run_abc' }).first().click()
     await expect.poll(() => page.getByText('worker:a/standard').count()).toBeGreaterThan(0)
     await expect.poll(() => page.getByText('proves reason').count()).toBeGreaterThan(0)
     // The token leaves the address bar once read; absent sections leave no stray text.

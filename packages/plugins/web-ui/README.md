@@ -2,6 +2,11 @@
 
 The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
+- **Home**, a dashboard: what waits for the operator (approvals, reviews, runs that need a look,
+  each linked), the Workers at a glance, then those decisions and the recent runs;
+
+- a run's page: a sentence of where it is, what the operator can do, the answer, and its steps as
+  a timeline in words, decisions folded;
 - runs, each with its steps in one line (how many completed, and those failed, waiting, or
   running, by name) and when it started; the run's page has every step;
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
@@ -26,15 +31,21 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   next version, or a new project's policy), sees its diff, and proposes it. The proposal is asked
   in the queue as a `policy-change` request on the exact hash of the set it makes, and applies only
   when the operator approves it there ([a policy change](../../../docs/design/approvals.md#a-policy-change)).
+  An asked change's card, with its **Approve** and **Deny**, is at the top of the page, and its
+  history row links to it; every other pending decision (a charter or a task's approval on the
+  Board, a run's fix) links to its card on Home (`?request=<id>`).
   A queue at contract 1.0 takes no proposal (`501`);
 - when `ctx.board` is present, the **reviews**: every board task in review, those the board
   holds for the operator first ([board](../../../docs/design/board.md#required-checks-bind-at-acceptance)),
   each with its project, exact subject, result artifacts, the checks still pending, its run, and
   until when it waits, and the operator's **Accept / Reject**. Without it the reviews routes
   answer `503`;
-- when `ctx.board` is present, the **board** page (`?view=board`): every project, the closed ones
-  last, with its state, charter version, a pending amendment, and its open tasks per state, and
-  the operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
+- when `ctx.board` is present, the **board** page (`?view=board`), a Kanban: a project filter (all
+  by default); each project's header with its state, charter version, what of it waits for the
+  operator (linked), and the moves; idle Workers and ready tasks; then a column per task state
+  (Proposed, Ready, Working, Review, Waiting for you; Done and Cancelled folded), one card per task
+  with its title, who works on it (the Worker's name, since when), what it waits on, and its run.
+  The operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
   ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
   Each opens a confirmation that says what the move does to this project (what goes on, what is
   cancelled and released, which approval requests are withdrawn, or why a close is refused), and

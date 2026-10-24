@@ -47,6 +47,7 @@ manifest names each one it consumes (optional): the roster works with any subset
 |---|---|---|
 | `worker`, `provider`, `tier`, `quotaClass`, `locality`, `state`, `observedAt` | its descriptor | never: a listed Worker has them |
 | `description` | its descriptor's `description` (`@1.7`): the operator's words from the configuration row that defines it (agent-workers `workers[]` or `roles[]`, models `models[]`; a website Worker's is its accounts `accounts[]` entry's, with its tier), plain text on one line, at most 200 characters | no description is configured for it |
+| `name` | `<provider> · <account> · <role or tier>`: its provider's first word capitalised (a model's, its family's); its account's label (**operator scope only**), else its account's id or slot, else the rest of its own id; its role, else its tier. For people only, never an id to route by | never |
 | `derived` | its provider, role, tier, quota class, and locality, as one line; a surface shows it, marked as derived, when `description` is unknown | never |
 | `family` | its descriptor | its source declares none |
 | `account` | its descriptor's `account` (`@1.5`): `id`, `group`, `mode`, `limitUntil` | its source names no account |

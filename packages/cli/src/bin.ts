@@ -110,7 +110,7 @@ const USAGE = `Usage: system <command>
   codex-env                 print a command that runs Codex with website Workers as its model
                             (needs the gateway-responses row, off by default)
   tools [--markdown]        list the MCP tools the running profile serves (--markdown: the reference page)
-  ui                        print the web UI link: the approval queue (approve or deny one request or a batch),
+  ui                        print the web UI link: Home (what waits for you), the approval queue (approve or deny one request or a batch),
                             reviews of board tasks (accept or reject), runs (approve, vote, stop, continue),
                             the Board page's projects (pause, resume, close), the Workers tab (the roster),
                             and the Autonomy policy page (propose a change, which the queue asks for)

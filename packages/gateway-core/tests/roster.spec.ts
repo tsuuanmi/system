@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.1', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.2', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -151,6 +151,26 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(failed, review).liveness).toEqual({ unknown: 'it could not be read: no router' })
     // A router that tells no liveness: no field at all.
     expect(entry(await readRoster(services(), { scope: 'operator', now: NOW }), review)).not.toHaveProperty('liveness')
+  })
+
+  it('names each Worker for people, provider · account · role or tier, the label for the operator only, and counts a Worker running a step as busy whatever its source reports (T97)', async () => {
+    const roster = await readRoster(services(), { scope: 'operator', now: NOW })
+    valid(roster)
+    expect(entry(roster, `agent:${CLAUDE}/review`).name).toBe('Claude · t***@example.com · review')
+    expect(entry(roster, `agent:${CODEX}/review`).name).toBe('Codex · slot 2 · review')
+    expect(entry(roster, 'worker:plus/standard').name).toBe('Chatgpt · Studio Plus · standard')
+    const client = await readRoster(services(), { scope: 'client', now: NOW })
+    valid(client)
+    expect(entry(client, `agent:${CLAUDE}/review`).name).toBe('Claude · slot 1 · review')
+    expect(entry(client, 'worker:plus/standard').name).toBe('Chatgpt · plus · standard')
+    // No account: the rest of its own id; a model Worker's provider word is its family's.
+    const bare = await readRoster(services({}, [descriptor('model:fast', { provider: 'models', family: 'openai', tier: 'standard', locality: 'remote', quotaClass: 'metered' }), descriptor('agent:solo', { family: undefined, tier: 'economy' })]), { scope: 'operator', now: NOW })
+    expect(entry(bare, 'model:fast').name).toBe('Openai · fast · standard')
+    expect(entry(bare, 'agent:solo').name).toBe('Claude · solo · economy')
+    // Ready by its source, with no load, but the engine runs a step on it: busy, and said why.
+    const quiet = await readRoster(services({}, [descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE) })]), { scope: 'operator', now: NOW })
+    expect(entry(quiet, `agent:${CLAUDE}/review`).availability).toEqual({ state: 'busy', summary: 'busy: it runs 1 step(s) now (its source reports no load)' })
+    expect(quiet.counts).toMatchObject({ busy: 1, ready: 0 })
   })
 
   it('tells each availability apart: ready, busy N of M, resting until its reset, unavailable with why, quarantined', async () => {
@@ -327,9 +347,9 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     const roster = await readRoster(services({ board: undefined }), { scope: 'operator', now: NOW })
     const text = formatRoster(roster)
     expect(text.split('\n')[0]).toBe('Roster as of 2026-10-24T09:30:00.000Z: 4 Worker(s): 0 ready, 2 busy, 1 resting, 0 unavailable, 1 quarantined')
-    expect(text).toContain(`agent:${CLAUDE}/review  busy 1 of 2`)
-    expect(text).toContain('worker:plus/standard  resting at a limit until 2026-10-24T11:00:00Z')
-    expect(text).toContain(`agent:${CODEX}/review  quarantined: changed, since 2026-10-24T08:00:00Z`)
+    expect(text).toContain(`Claude · t***@example.com · review (agent:${CLAUDE}/review)  busy 1 of 2`)
+    expect(text).toContain('Chatgpt · Studio Plus · standard (worker:plus/standard)  resting at a limit until 2026-10-24T11:00:00Z')
+    expect(text).toContain(`Codex · slot 2 · review (agent:${CODEX}/review)  quarantined: changed, since 2026-10-24T08:00:00Z`)
     expect(text).toContain('Working on task task-42: agent-review run run_2, step review:1, for 4 min')
     expect(text).toContain('  is         Reviews the studio\'s diffs before they merge')
     expect(text).toContain('  is         chatgpt-web Worker, standard tier, subscription-chat, remote (derived: no description is configured)')
@@ -337,7 +357,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(text).toContain('unknown usage 1 run(s)')
   })
 
-  it('the example validates against mcp-roster@1.1, and a record that is not one is refused', async () => {
+  it('the example validates against mcp-roster@1.2, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)

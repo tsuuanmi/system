@@ -9,7 +9,7 @@ export const PAGE = `<!doctype html>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav aria-label="Pages"><a href="/ui/" id="home-link">Home</a> <a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
 <div id="outcome"></div>
 <main id="main"></main>
 <script src="/ui/app.js"></script>
@@ -23,7 +23,9 @@ export const APP_CSS = `
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
 header { display: flex; align-items: baseline; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; }
+header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; padding-bottom: 2px; }
+header nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); } header nav a:hover { color: var(--accent); }
+h2.page { margin-bottom: 0; } p.lead { color: var(--muted); margin-top: 4px; }
 #status { color: var(--muted); }
 main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
@@ -32,6 +34,7 @@ th { color: var(--muted); font-weight: 500; }
 a { color: var(--accent); }
 .state { font-weight: 600; } .COMPLETED, .completed { color: var(--ok); } .FAILED, .failed { color: var(--bad); } .BLOCKED, .RUNNING, .running { color: var(--wait); }
 .ready { color: var(--ok); } .busy, .resting { color: var(--wait); } .unavailable, .quarantined { color: var(--bad); } .unknown { color: var(--muted); font-style: italic; }
+.panel, .request dd, .request p { overflow-wrap: anywhere; }
 .panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
 button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; margin-right: 8px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -48,6 +51,14 @@ th, td.nowrap { white-space: nowrap; }
 .request label, .batch-actions label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
 .batch-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
 .soon { color: var(--wait); font-weight: 600; } details summary { cursor: pointer; color: var(--muted); }
+ol.timeline { list-style: none; padding: 0; margin: 8px 0; border-left: 2px solid var(--line); } ol.timeline li.step { padding: 4px 0 8px 12px; position: relative; overflow-wrap: anywhere; }
+ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.actions .muted { margin-right: 12px; } .state.ready { color: var(--ok); }
+.kanban { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; margin: 12px 0; }
+.column h3 { font-size: 14px; margin: 0 0 8px; } .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.card > * { margin: 2px 0; } .folded details { margin: 8px 0; } .folded .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
+@media (max-width: 900px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .kanban { grid-template-columns: 1fr; } }
 button:disabled { opacity: 0.6; cursor: progress; } button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
@@ -128,7 +139,7 @@ export const APP_JS = `'use strict'
   let pressed = false
   let pending = null
   const show = (...parts) => {
-    const kept = parts.filter((part) => part !== null && part !== undefined)
+    const kept = parts.flat().filter((part) => part !== null && part !== undefined)
     if (pressed) pending = kept
     else { pending = null; main.replaceChildren(...kept) }
   }
@@ -143,6 +154,18 @@ export const APP_JS = `'use strict'
   document.addEventListener('pointercancel', release, true)
   document.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') press() }, true)
   document.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') release() }, true)
+  // Every page opens with its title and, in one line, what it is for.
+  const PAGES = {
+    home: ['Home', 'What waits for your verdict, what needs a look, how the Workers are doing, and the latest runs.'],
+    board: ['Board', 'Every project and its open tasks, and who works on them; pause, resume, or close a project.'],
+    workers: ['Workers', 'Every Worker: what it is for, what it does now, and when it is back if it rests at a limit.'],
+    policy: ['Autonomy policy', 'Which actions run on their own, which ask you first, and the changes proposed to that.'],
+    run: ['Run', 'One run: what it answered, its steps in order, and what you can do with it.'],
+  }
+  // Idle capacity, and the step that puts it to work.
+  const capacityText = (idle, ready) => (idle === undefined ? 'How many Workers are idle is unknown now' : idle + (idle === 1 ? ' Worker idle' : ' Workers idle')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
+    + (ready ? '. A ready task starts when the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
+  const pageHead = (page, title) => [el('h2', { class: 'page' }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
   // What the operator's last verdict did, outside the refreshed page: it stays until dismissed.
@@ -167,6 +190,17 @@ export const APP_JS = `'use strict'
   }
   const ago = (iso) => el('time', { datetime: iso, title: absolute(iso) }, relative(iso))
 
+  // Every pending decision links to the card it is decided on (an approval request's, on Home).
+  let focusRequest = new URLSearchParams(location.search).get('request')
+  const focusCard = (requestId) => {
+    const card = document.getElementById('request-' + requestId)
+    if (!card) return false
+    card.scrollIntoView({ block: 'start' })
+    card.focus({ preventScroll: true })
+    return true
+  }
+  const decideLink = (requestId, text) => el('a', { href: '/ui/?request=' + encodeURIComponent(requestId), onclick: (e) => { e.preventDefault(); if (!focusCard(requestId)) openRequest(requestId) } }, text)
+
   const VERB = { approved: 'Approved', rejected: 'Denied' }
   const NOUN = { approved: 'approval', rejected: 'denial' }
   // Why a verdict was not applied, in plain words: each leaves its request as it was.
@@ -189,6 +223,10 @@ export const APP_JS = `'use strict'
     const task = /^board-task:(.+):attempt:(\\d+)$/.exec(ref)
     const call = /^agent-tool-call:([^:]+):(.+)$/.exec(ref)
     const projectText = r.requester.projectId ? ' of project ' + name(r.requester.projectId) : ''
+    // A board task by its title when the board lists it, else by its id.
+    const titleOf = (taskId) => { for (const p of projects.values()) { const t = (p.tasks || []).find((x) => x.taskId === taskId); if (t) return t.title } return undefined }
+    const taskOf = (taskId) => titleOf(taskId) ? 'the task "' + titleOf(taskId) + '"' : 'task ' + taskId
+    const Task = (taskId) => { const t = taskOf(taskId); return t.charAt(0).toUpperCase() + t.slice(1) }
     let d
     if (r.action.class === 'charter' && charter) {
       const [, id, v] = charter
@@ -217,23 +255,23 @@ export const APP_JS = `'use strict'
       const [, taskId, attempt] = task
       const reason = r.subject.version || ''
       const what = r.action.summary.replace(/^(approval-needed|budget-spent|reconciliation-failed): /, '')
-      const subject = 'task ' + taskId + projectText + ', attempt ' + (Number(attempt) + 1)
+      const subject = taskOf(taskId) + projectText + ', attempt ' + (Number(attempt) + 1)
       d = reason.startsWith('funding') || r.action.class === 'funding' ? {
         title: 'Raise the budget of a task: ' + what.split('; ')[0], subject,
         yes: 'Approve: raise the budget', no: 'Deny: keep the budget',
-        next: 'The board applies it to task ' + taskId + ' on its next sweep, within a minute.',
+        next: 'The board applies it to ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       } : reason === 'reconciliation-failed' ? {
         title: 'Go on after a failed reconciliation: ' + what, subject,
-        approve: 'Task ' + taskId + ' tries again: its next attempt goes through the autonomy policy for ' + r.action.class + '.',
-        deny: 'Task ' + taskId + ' does not go on: it waits for your input until it is cancelled or its wait expires.',
+        approve: Task(taskId) + ' tries again: its next attempt goes through the autonomy policy for ' + r.action.class + '.',
+        deny: Task(taskId) + ' does not go on: it waits for your input until it is cancelled or its wait expires.',
         yes: 'Approve: try again', no: 'Deny: hold the task',
-        next: 'The board applies it to task ' + taskId + ' on its next sweep, within a minute.',
+        next: 'The board applies it to ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       } : {
         title: 'Allow a ' + r.action.class + ' step: ' + what, subject,
-        approve: 'Task ' + taskId + ' may do this ' + r.action.class + ' step: it becomes ready on the board\\'s next sweep (within a minute), for a Worker to claim.',
-        deny: 'Task ' + taskId + ' does not do it: it waits for your input until it is cancelled or its wait expires.',
+        approve: Task(taskId) + ' may do this ' + r.action.class + ' step: it becomes ready on the board\\'s next sweep (within a minute), for a Worker to claim.',
+        deny: Task(taskId) + ' does not do it: it waits for your input until it is cancelled or its wait expires.',
         yes: 'Approve: allow this ' + r.action.class, no: 'Deny: hold the task',
-        next: 'The board moves task ' + taskId + ' on its next sweep, within a minute.',
+        next: 'The board moves ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       }
     } else if (call) {
       d = { title: 'Allow a tool call: ' + r.action.summary, subject: 'the exact ' + call[2] + ' call of agent run ' + call[1], yes: 'Approve: allow this call', no: 'Deny: refuse this call',
@@ -248,7 +286,7 @@ export const APP_JS = `'use strict'
     } else {
       d = { title: r.action.summary, subject: r.subject.type + ' ' + ref }
     }
-    const by = r.requester.component === 'board' ? 'the board' + (r.requester.taskId ? ', for task ' + r.requester.taskId : '') + projectText
+    const by = r.requester.component === 'board' ? 'the board' + (r.requester.taskId ? ', for ' + taskOf(r.requester.taskId) : '') + projectText
       : r.requester.component === 'worker' ? 'agent run ' + (r.requester.runId || '?') + (r.requester.sessionId ? ' (session ' + r.requester.sessionId + ')' : '')
       : r.requester.component === 'workflow' ? 'run ' + (r.requester.runId || '?') + (r.requester.nodeId ? ', step ' + r.requester.nodeId : '')
       : r.requester.component === 'approvals' ? 'the approval queue, for policy change ' + (r.requester.policyChangeId || '?') + ' (Show change says who proposed it)'
@@ -258,12 +296,12 @@ export const APP_JS = `'use strict'
 
   // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
   const notes = new Map()
-  async function approvals() {
+  // The open requests, each as a card the operator decides in place: on the home page, and on the
+  // page of what a request is about (a policy change on the policy page). Null when no queue runs;
+  // {error} when it could not be read.
+  async function queue() {
     let batches
-    try { ({ batches } = await api('approvals')) } catch (error) {
-      return error.status === 503 ? null : el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
-        el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + error.message + '. What waits for you is unknown; the page tries again every 5 seconds.'))
-    }
+    try { ({ batches } = await api('approvals')) } catch (error) { return error.status === 503 ? null : { error } }
     const requests = batches.flatMap((b) => b.requests)
     // The board's projects name what a charter or a task request is about; without a board, ids only.
     const projects = new Map()
@@ -302,7 +340,7 @@ export const APP_JS = `'use strict'
           ['The server refused the call (' + (error.status || 'no answer') + '): ' + error.message + '.', 'Nothing was decided: ' + (many ? 'the requests are' : 'the request is') + ' still open in the queue.'])
       }
       buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] })
-      await list().catch((error) => { status.textContent = 'could not refresh: ' + error.message })
+      await refresh()
     }
     const card = (r) => {
       const d = described.get(r.requestId)
@@ -324,7 +362,7 @@ export const APP_JS = `'use strict'
           shown.replaceChildren(change ? changeView(change) : el('p', { class: 'muted' }, 'The change of ' + r.requestId + ' is not among the latest.'))
         } catch (error) { shown.replaceChildren(el('p', { class: 'state failed' }, 'The change could not be read: ' + error.message)) }
       }
-      return el('article', { class: 'panel request', 'aria-labelledby': 'title-' + r.requestId },
+      return el('article', { class: 'panel request', id: 'request-' + r.requestId, tabindex: '-1', 'aria-labelledby': 'title-' + r.requestId },
         el('h3', { id: 'title-' + r.requestId }, d.title),
         el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.action.class), ' Asked by ' + d.by + ' · request ' + r.requestId + ' · ',
           el('span', { class: soon ? 'soon' : '' }, (Date.parse(r.expiresAt) > Date.now() ? 'expires ' : 'expired ') + relative(r.expiresAt) + ' — ' + absolute(r.expiresAt)), '; unanswered by then, it counts as denied.'),
@@ -339,6 +377,15 @@ export const APP_JS = `'use strict'
         shown,
         el('div', { class: 'actions' }, noteFor(r.requestId, 'Note with your verdict on this request (optional)'), yes, no))
     }
+    return { batches, requests, described, card, decide, noteFor, noteOf }
+  }
+
+  async function approvals() {
+    const q = await queue()
+    if (!q) return null
+    if (q.error) return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
+      el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. What waits for you is unknown; the page tries again every 5 seconds.'))
+    const { batches, requests, card, decide, noteFor, noteOf } = q
     const earliest = requests.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
     return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
       requests.length ? el('p', {}, requests.length + (requests.length === 1 ? ' request waits' : ' requests wait') + ' for your verdict; the first expires ' + relative(earliest) + '.')
@@ -358,33 +405,48 @@ export const APP_JS = `'use strict'
       }))
   }
 
-  // The board's tasks in review: the operator's Accept or Reject names the exact result shown (INV-5). Absent when no board runs.
+  // The board's tasks in review, one card each: the operator's Accept or Reject names the exact
+  // result shown (INV-5). Absent when no board runs.
   async function reviews() {
     let listed
-    try { ({ reviews: listed } = await api('reviews')) } catch (error) { return error.status === 503 ? null : el('p', { class: 'state failed' }, 'Reviews: ' + error.message) }
-    const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note for a review verdict' })
-    const decide = (r, verdict) => async () => {
+    try { ({ reviews: listed } = await api('reviews')) } catch (error) {
+      return error.status === 503 ? null : el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'), el('p', { class: 'state failed' }, 'The reviews could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
+    }
+    const decide = (r, verdict, buttons, clicked) => async () => {
+      const labels = buttons.map((b) => b.textContent)
+      buttons.forEach((b) => { b.disabled = true })
+      clicked.textContent = 'Recording…'
+      const key = 'review-' + r.taskId
       try {
-        const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: note.value })
-        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. Task ' + r.taskId + ' is now ' + task.state + '.'])
+        const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: (notes.get(key) || '').trim() })
+        notes.delete(key)
+        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep.' : '; it goes back for another attempt if it has one left.')])
       } catch (error) {
         report(false, 'Not recorded: your ' + (verdict === 'accept' ? 'acceptance' : 'rejection') + ' of ' + r.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was decided: the task is still in review.'])
       }
-      await list().catch((error) => { status.textContent = 'could not refresh: ' + error.message })
+      buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] })
+      await refresh()
     }
-    return el('section', { 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
-      listed.length ? null : el('p', { class: 'muted' }, 'No task waits for your review.'),
-      listed.length ? table(['Task', 'Project', 'Subject', 'Result', 'Checks pending', 'Run', 'Until', 'Verdict'], listed.map((r) => el('tr', {},
-        el('td', {}, el('strong', {}, r.title), el('div', { class: 'muted' }, r.taskId + ' · ' + r.actionClass)),
-        el('td', {}, r.project.title || r.project.projectId),
-        el('td', {}, el('code', {}, subjectText(r.subject))),
-        el('td', {}, r.artifacts.map((a) => el('div', {}, el('code', {}, a)))),
-        el('td', {}, r.pendingChecks.length ? r.pendingChecks.join(', ') : '-'),
-        el('td', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, r.run.runId) : '-'),
-        el('td', { class: 'muted' }, (r.heldFor === 'operator' ? 'yours until ' : 'reviewer until ') + (r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '-')),
-        el('td', {}, el('button', { class: 'primary', onclick: decide(r, 'accept'), 'aria-label': 'Accept ' + r.taskId }, 'Accept'), el('button', { onclick: decide(r, 'reject'), 'aria-label': 'Reject ' + r.taskId }, 'Reject')),
-      )), 'queue') : null,
-      listed.length ? note : null)
+    const card = (r) => {
+      const yes = el('button', { class: 'primary', 'aria-describedby': 'review-title-' + r.taskId }, 'Accept: mark it done')
+      const no = el('button', { 'aria-describedby': 'review-title-' + r.taskId }, 'Reject: send it back')
+      yes.addEventListener('click', decide(r, 'accept', [yes, no], yes))
+      no.addEventListener('click', decide(r, 'reject', [yes, no], no))
+      const key = 'review-' + r.taskId
+      const input = el('input', { id: 'note-' + key, value: notes.get(key) || '', oninput: () => notes.set(key, input.value) })
+      return el('article', { class: 'panel request', 'aria-labelledby': 'review-title-' + r.taskId },
+        el('h3', { id: 'review-title-' + r.taskId }, r.title),
+        el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.actionClass), ' Project ' + (r.project.title || r.project.projectId) + ' · task ' + r.taskId + ' · ',
+          r.expiresAt ? (r.heldFor === 'operator' ? 'yours until ' : 'its reviewer\\'s until ') + relative(r.expiresAt) + ' (' + absolute(r.expiresAt) + ')' : 'no expiry known'),
+        el('dl', {},
+          r.goal ? [el('dt', {}, 'Asked'), el('dd', {}, r.goal)] : null,
+          el('dt', {}, 'Checks not run'), el('dd', {}, r.pendingChecks.length ? r.pendingChecks.join(', ') + ': nothing has run them. Your Accept counts them as passed, so run them on the result first.' : 'none: every required check passed'),
+          el('dt', {}, 'Result'), el('dd', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named',
+            el('details', {}, el('summary', {}, 'Exact result (' + r.artifacts.length + ' artifact(s))'), el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a)))))),
+        el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input), yes, no))
+    }
+    return el('section', { id: 'reviews', 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
+      listed.length ? listed.map(card) : el('p', { class: 'muted' }, 'No task waits for your review.'))
   }
 
   // A run's steps in one line: how many completed, and the steps that failed, wait, or run, by name.
@@ -396,60 +458,129 @@ export const APP_JS = `'use strict'
     for (const [state, word] of [['FAILED', 'failed'], ['BLOCKED', 'waiting'], ['RUNNING', 'running']]) if (named(state).length) parts.push(word + ': ' + list(named(state)))
     return parts.join('; ')
   }
+  // What a failure asks of the operator, in words.
+  const DISPOSITION = { USER_ACTION: 'it needs you', BACKOFF: 'it is tried again later', CODE_FIX: 'it needs a fix in the code or configuration', NONE: 'nothing more happens' }
+  const failureText = (error) => error.message + (DISPOSITION[error.disposition] ? ' (' + DISPOSITION[error.disposition] + ')' : '')
+  const runLink = (run, text) => el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, text || run.runId)
+  // Why a run needs the operator's look, or nothing when it does not.
+  const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
+    : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
+  const RECENT = 15
 
+  // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
   async function list() {
     const { runs } = await api('runs')
-    show(await approvals(), await reviews(), el('h2', {}, 'Runs'), runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.map((run) => el('tr', {},
-      el('td', { class: 'nowrap' }, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
-      el('td', { class: 'nowrap' }, run.template),
-      el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
-      el('td', {}, stepsText(run)),
-      el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
-    ))) : el('p', { class: 'muted' }, 'No run yet.'))
+    const queued = await approvals()
+    const reviewed = await reviews()
+    let roster = null
+    try { roster = await api('roster') } catch {}
+    const ready = await readyTasks()
+    const asked = queued ? queued.querySelectorAll('article.request').length : 0
+    const toReview = reviewed ? reviewed.querySelectorAll('article.request').length : 0
+    const look = runs.filter(needsLook)
+    const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
+    const waiting = [
+      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
+      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review')) : null,
+      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look')) : null,
+    ].filter(Boolean)
+    const c = roster && roster.counts
+    show(pageHead('home'),
+      el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
+        waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now.')),
+      el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
+        c ? el('p', {}, c.busy + ' working · ' + c.ready + ' idle · ' + c.resting + ' at a limit · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '') + ' ',
+          el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'see each Worker'))
+          : el('p', { class: 'muted' }, 'The Workers could not be read now.'),
+        ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'see the board')) : null),
+      queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
+      reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
+      look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs that need a look' }, el('h2', {}, 'Runs that need a look'),
+        look.map((run) => el('article', { class: 'panel request', 'aria-label': 'Run ' + run.runId },
+          el('h3', {}, run.template + ' run ', runLink(run)),
+          el('p', {}, 'Started ', ago(run.createdAt), ': ' + needsLook(run) + '.'),
+          el('p', {}, runLink(run, run.status === 'failed' ? 'Open it to continue it or let it be' : 'Open it to decide'))))) : null,
+      el('h2', {}, 'Recent runs'),
+      runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
+        el('td', { class: 'nowrap' }, runLink(run)),
+        el('td', { class: 'nowrap' }, run.template),
+        el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
+        el('td', {}, stepsText(run)),
+        el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
+      ))) : el('p', { class: 'muted' }, 'No run yet. A run starts when the lead or a client asks for one.'),
+      runs.length > RECENT ? el('p', { class: 'muted' }, (runs.length - RECENT) + ' older run(s) are not listed here; open one by its link, or ask with system status.') : null)
+    if (focusRequest) {
+      const id = focusRequest
+      focusRequest = null
+      setTimeout(() => { if (!focusCard(id)) report(false, 'Request ' + id + ' no longer waits', ['It was decided, withdrawn, or expired since the link was made: nothing waits for your verdict on it.']) }, 0)
+    }
   }
 
+  // A step's state in words, and what it means for the run.
+  const STEP = {
+    COMPLETED: ['done', 'completed'], RUNNING: ['running', 'running'], FAILED: ['failed', 'failed'], BLOCKED: ['waiting for you', 'running'],
+    WAITING: ['waiting for earlier steps', 'unknown'], READY: ['ready to start', 'ready'], RETIRED: ['dropped from the plan', 'unknown'],
+  }
   async function detail(runId) {
     const { run, explain } = await api('runs/' + encodeURIComponent(runId))
+    let roster = null
+    try { roster = await api('roster') } catch {}
+    const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
+    const nameOf = (worker) => names.get(worker) || worker
     const act = (action, body) => async () => {
       try { await api('runs/' + encodeURIComponent(runId) + '/' + action, body()) } catch (error) {
         report(false, 'Not done: ' + action + ' of run ' + runId, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing changed.'])
       }
       await detail(runId).catch((error) => { status.textContent = 'could not refresh: ' + error.message })
     }
-    const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note' })
-    const rationale = el('input', { placeholder: 'rationale (required)', 'aria-label': 'Rationale' })
+    const note = el('input', { id: 'plan-note' })
+    const rationale = el('input', { id: 'vote-rationale' })
     const tie = run.blocked && run.blocked.kind === 'tie' ? run.blocked : null
     const vote = (option) => act('vote', () => ({ decision: tie.decision, option, rationale: rationale.value }))
     const decisions = new Map((explain ? explain.nodes : []).map((n) => [n.nodeId, n.decisions]))
+    const failed = run.nodes.find((n) => n.state === 'FAILED')
+    const running = run.nodes.filter((n) => n.state === 'RUNNING')
+    // The run in one sentence: what it is, when it started, and where it is.
+    const sentence = run.status === 'completed' ? 'It finished: every step is done.'
+      : run.status === 'failed' ? 'It failed' + (failed ? ' at step ' + failed.nodeId : '') + ': ' + (run.error ? failureText(run.error) : failed && failed.error ? failureText(failed.error) : 'no reason was recorded') + '.'
+      : run.blocked ? 'It waits for you: ' + needsLook(run) + '.'
+      : running.length ? 'It is running: ' + running.map((n) => 'step ' + n.nodeId + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ') + '.'
+      : 'It is ' + run.status + '.'
     show(
-      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← all runs')),
-      el('h2', {}, run.runId + ' ', el('span', { class: 'state ' + run.status }, run.status)),
-      el('p', { class: 'muted' }, run.template + ' · spec ', el('code', {}, run.specHash)),
-      run.error ? el('p', { class: 'state failed' }, run.error.kind + ': ' + run.error.message) : null,
+      pageHead('run', 'Run ' + run.runId),
+      el('p', {}, el('span', { class: 'state ' + run.status }, run.status), ' · ' + run.template + ' run, started ', ago(run.createdAt), ', last changed ', ago(run.updatedAt), '. ' + sentence),
       tie ? el('div', { class: 'panel' },
-        el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + new Date(tie.until).toLocaleString() + ' it waits for a deciding vote, then ends inconclusive.'),
+        el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + relative(tie.until) + ' (' + absolute(tie.until) + ') it waits for your deciding vote, then ends inconclusive.'),
         el('ul', {}, tie.options.map((o) => el('li', {}, el('strong', {}, o.option + ': '), o.summary))),
-        rationale,
-        tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
-        el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive')) : null,
+        el('div', { class: 'actions' }, el('label', { for: 'vote-rationale' }, 'Why (required)', rationale),
+          tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
+          el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive'))) : null,
       run.blocked && !tie && run.blocked.approvalRequest ? el('div', { class: 'panel' },
-        el('p', {}, 'The fix at ', run.blocked.nodeId, ' waits on approval request ', el('code', {}, run.blocked.approvalRequest), ' for plan ', el('code', {}, run.blocked.plan),
-          '. Decide it in the approval queue' + (run.blocked.until ? ', by ' + new Date(run.blocked.until).toLocaleString() : '') + '.')) : null,
+        el('p', {}, 'The fix at ', run.blocked.nodeId, ' waits for your verdict on approval request ', el('code', {}, run.blocked.approvalRequest),
+          run.blocked.until ? ', until ' + relative(run.blocked.until) + ' (' + absolute(run.blocked.until) + ')' : '', '. '),
+        el('p', {}, decideLink(run.blocked.approvalRequest, 'Decide it'))) : null,
       run.blocked && !tie && !run.blocked.approvalRequest ? el('div', { class: 'panel' },
-        el('p', {}, 'Waiting for your approval of plan ', el('code', {}, run.blocked.plan), ' at ', run.blocked.nodeId, '.'),
-        note,
-        el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),
-        el('button', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }, 'Reject plan')) : null,
-      el('p', {},
-        run.status === 'running' ? el('button', { onclick: act('stop', () => ({ reason: 'stopped from the web UI' })) }, 'Stop run') : null,
-        run.status === 'failed' ? el('button', { onclick: act('continue', () => ({})) }, 'Continue run') : null),
-      run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer)) : null,
+        el('p', {}, 'Step ', run.blocked.nodeId, ' waits for your approval of its plan before it runs. ', el('details', {}, el('summary', {}, 'Plan id'), el('code', {}, run.blocked.plan))),
+        el('div', { class: 'actions' }, el('label', { for: 'plan-note' }, 'Note (optional)', note),
+          el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),
+          el('button', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }, 'Reject plan'))) : null,
+      run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions' },
+        run.status === 'running' ? [el('button', { onclick: act('stop', () => ({ reason: 'stopped from the web UI' })) }, 'Stop run'), el('span', { class: 'muted' }, 'ends it now: nothing more of it runs')] : null,
+        run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Continue run'), el('span', { class: 'muted' }, 'runs its failed step again as a new attempt; the steps that are done are kept')] : null) : null,
+      run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
+        : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       el('h3', {}, 'Steps'),
-      table(['Step', 'State', 'Tier', 'Quota', 'Worker', 'Decisions'], run.nodes.map((n) => el('tr', {},
-        el('td', {}, n.nodeId), el('td', { class: 'state ' + n.state }, n.state + (n.error ? ' · ' + n.error.kind : '')),
-        el('td', {}, n.tier || n.minTier), el('td', {}, n.quotaClass || '-'), el('td', {}, n.worker || '-'),
-        el('td', {}, (decisions.get(n.nodeId) || []).map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))),
-      ))),
+      el('ol', { class: 'timeline' }, run.nodes.map((n) => {
+        const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
+        const made = decisions.get(n.nodeId) || []
+        return el('li', { class: 'step' },
+          el('div', {}, el('strong', {}, n.nodeId), ' ', el('span', { class: 'state ' + cls }, word),
+            n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (names.has(n.worker) ? '' : ' · ' + (n.tier || n.minTier) + ' tier') + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
+          n.error ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
+          made.length ? el('details', {}, el('summary', {}, 'How it was decided (' + made.length + ')'),
+            made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))) : null)
+      })),
+      el('details', {}, el('summary', {}, 'Technical details'), el('p', { class: 'muted' }, 'Template ' + run.template + ' · spec ', el('code', {}, run.specHash), run.sessionId ? ' · session ' + run.sessionId : '')),
     )
   }
 
@@ -458,10 +589,11 @@ export const APP_JS = `'use strict'
   // is refused and nothing moves. The page does not refresh while a confirmation is open.
   const OPEN = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
   let confirming = false
+  let boardProject = 'all'
   async function boardView() {
     let projects
     try { ({ projects } = await api('projects')) } catch (error) {
-      show(el('h2', {}, 'Board'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The board is not running.' : error.message))
+      show(pageHead('board'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The board is not running, so there are no projects to show.' : 'The board could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
       return
     }
     const count = (p, states) => states.reduce((n, s) => n + (p.open[s] || 0), 0)
@@ -507,19 +639,79 @@ export const APP_JS = `'use strict'
     }
     const moves = (p) => p.state === 'active' ? ['pause', 'close'] : p.state === 'paused' ? ['resume', 'close'] : []
     const label = { pause: 'Pause', resume: 'Resume', close: 'Close' }
-    const stateOf = (p) => p.state + (p.closure ? ' (' + p.closure.outcome + ')' : p.state === 'proposed' ? ' (its charter waits in the approval queue)' : '')
+    // What waits for the operator in each project, each linked to the card it is decided on.
+    const q = await queue()
+    const open = q && !q.error ? q.requests : []
+    const charterOf = (p) => open.find((r) => r.action.class === 'charter' && r.subject.ref.startsWith('project:' + p.projectId + ':charter:'))
+    const asksOf = (p) => open.filter((r) => r.requester.component === 'board' && r.requester.projectId === p.projectId && r.requester.taskId)
+    const stateOf = (p) => {
+      const charter = charterOf(p)
+      return el('div', {},
+        charter ? el('div', {}, p.state === 'proposed' ? 'Its charter waits for your verdict: ' : 'Its amendment waits for your verdict: ', decideLink(charter.requestId, 'decide it')) : null,
+        asksOf(p).length ? el('div', {}, asksOf(p).length + ' task(s) wait for your approval: ', asksOf(p).flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])) : null)
+    }
+    // Who works on a task: the Worker the engine runs its run's step on, by its name, and since when.
+    let roster = null
+    try { roster = await api('roster') } catch {}
+    const working = new Map()
+    if (roster && 'value' in roster.workers) for (const w of roster.workers.value) if ('value' in w.work) for (const i of w.work.value.items) working.set(i.runId, { name: w.name, worker: w.worker, since: i.since })
+    const shownProjects = boardProject === 'all' ? projects : projects.filter((p) => p.projectId === boardProject)
+    const pick = el('select', { id: 'board-project', onchange: () => { boardProject = pick.value; boardView() } },
+      el('option', { value: 'all' }, 'All projects (' + projects.length + ')'), projects.map((p) => el('option', { value: p.projectId }, p.title)))
+    pick.value = shownProjects.length === projects.length ? 'all' : boardProject
+    const ready = shownProjects.reduce((n, p) => n + (p.open.ready || 0), 0)
+    const head = (p) => el('article', { class: 'panel request', 'aria-labelledby': 'project-' + p.projectId },
+      el('h3', { id: 'project-' + p.projectId }, p.title),
+      el('p', { class: 'meta' }, el('span', { class: 'tag' }, p.state), ' project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ', amendment ' + p.amendment + ' waits' : '') + ' · ' + count(p, OPEN) + ' open task(s)' + (p.closure ? ' · closed (' + p.closure.outcome + ')' : '')),
+      stateOf(p),
+      moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))) : null)
+    const WAITS = {
+      'approval-needed': 'waits for your approval', 'budget-spent': 'its budget is spent: waits for your funding verdict', 'reconciliation-failed': 'its run could not be settled: waits for your verdict',
+      'retries-spent': 'used all its attempts: waits for input', question: 'asked a question: waits for an answer', rejected: 'was rejected: waits for input', 'review-expired': 'its review expired', 'operator-review': 'waits for your review',
+    }
+    const cardOf = (p, t) => {
+      const run = t.run ? working.get(t.run.runId) : undefined
+      const since = t.updatedAt || t.createdAt
+      return el('article', { class: 'card', 'aria-label': t.title },
+        el('strong', {}, t.title),
+        boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
+        el('div', { class: 'muted' }, el('span', { class: 'tag' }, t.actionClass), ' ', ago(since)),
+        t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
+        t.state === 'ready' ? el('div', {}, 'Waits for the lead to start it') : null,
+        t.state === 'claimed' || t.state === 'running' ? el('div', {}, run ? [run.name + ', ', 'value' in run.since ? 'for ' + relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time'] : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
+        t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
+        t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
+        t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'open its run')) : null)
+    }
+    const tasksIn = (states) => shownProjects.flatMap((p) => (p.tasks || []).filter((t) => states.includes(t.state)).map((t) => [p, t]))
+    const moreIn = (states) => shownProjects.reduce((n, p) => n + states.reduce((m, s) => m + ((p.more || {})[s] || 0), 0), 0)
+    const column = (name, states, hint) => {
+      const cards = tasksIn(states)
+      return el('section', { class: 'column', 'aria-label': name },
+        el('h3', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
+        cards.length ? cards.map(([p, t]) => cardOf(p, t)) : el('p', { class: 'muted' }, hint),
+        moreIn(states) ? el('p', { class: 'muted' }, moreIn(states) + ' older not shown') : null)
+    }
+    const folded = (name, states) => {
+      const cards = tasksIn(states)
+      return el('details', { class: 'column' }, el('summary', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
+        cards.length ? el('div', { class: 'cards' }, cards.map(([p, t]) => cardOf(p, t))) : el('p', { class: 'muted' }, 'None.'))
+    }
+    const idle = roster ? roster.counts.ready : undefined
     show(
-      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
-      el('h2', {}, 'Board'),
-      projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet.'),
-      projects.length ? table(['Project', 'State', 'Charter', 'Open tasks', 'Move'], projects.map((p) => el('tr', {},
-        el('td', {}, el('strong', {}, p.title), el('div', { class: 'muted' }, p.projectId)),
-        el('td', { class: 'state' }, stateOf(p)),
-        el('td', {}, 'version ' + p.charter.version + (p.amendment ? '; amendment ' + p.amendment + ' waits' : '')),
-        el('td', {}, OPEN.filter((s) => p.open[s]).map((s) => s + ' ' + p.open[s]).join(', ') || '-'),
-        el('td', {}, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))),
-      )), 'queue') : null,
-      shown)
+      pageHead('board'),
+      projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet. A project starts when the lead proposes its charter and you approve it.'),
+      projects.length ? el('p', {}, el('label', { for: 'board-project' }, 'Show ', pick)) : null,
+      projects.length ? el('p', { 'aria-label': 'Capacity' }, capacityText(idle, ready)) : null,
+      shownProjects.map(head),
+      shown,
+      projects.length ? el('div', { class: 'kanban' },
+        column('Proposed', ['proposed'], 'None proposed.'),
+        column('Ready', ['ready'], 'None ready.'),
+        column('Working', ['claimed', 'running'], 'Nothing runs now.'),
+        column('Review', ['review'], 'Nothing to review.'),
+        column('Waiting for you', ['waiting-for-input', 'waiting-for-approval'], 'Nothing waits for you.')) : null,
+      projects.length ? el('div', { class: 'folded' }, folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
   }
 
   // The Workers (the roster, docs/design/roster.md): one card per Worker, grouped by what it does
@@ -538,8 +730,13 @@ export const APP_JS = `'use strict'
     const clock = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
     return relative(iso) + ' (' + (d.toDateString() === today.toDateString() ? clock : absolute(iso)) + ')'
   }
+  // Tasks ready across the board's projects, or undefined when the board cannot be read.
+  const readyTasks = async () => {
+    try { return (await api('projects')).projects.reduce((n, p) => n + (p.open.ready || 0), 0) } catch { return undefined }
+  }
   async function workersView() {
     const roster = await api('roster')
+    const ready = await readyTasks()
     const isKnown = (k) => 'value' in k
     const known = (k, render) => isKnown(k) ? render(k.value) : el('span', { class: 'unknown' }, 'unknown (' + k.unknown + ')')
     const text = (k, render) => isKnown(k) ? (render ? render(k.value) : String(k.value)) : 'unknown (' + k.unknown + ')'
@@ -575,7 +772,8 @@ export const APP_JS = `'use strict'
           isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
     }
     const card = (w) => el('article', { class: 'panel request', 'aria-labelledby': 'worker-' + w.worker },
-      el('h4', { id: 'worker-' + w.worker }, w.worker),
+      el('h4', { id: 'worker-' + w.worker }, w.name),
+      el('p', { class: 'muted' }, 'Worker id ', el('code', {}, w.worker)),
       isKnown(w.description) ? el('p', {}, w.description.value)
         : el('p', { class: 'muted' }, el('span', { class: 'tag' }, 'derived'), ' ' + w.derived + ' (no description is configured)'),
       el('p', { class: 'state ' + w.availability.state }, statusOf(w)),
@@ -591,15 +789,16 @@ export const APP_JS = `'use strict'
     const counts = [c.busy + ' working', c.ready + ' idle', c.resting + ' at a limit' + (resting ? ' (the first back ' + when(resting) + ')' : ''), c.unavailable + ' unavailable'].concat(c.quarantined ? [c.quarantined + ' quarantined'] : [])
     const unheard = isKnown(roster.sources) ? roster.sources.value.filter((s) => s.state !== 'described') : []
     show(
-      el('h2', {}, 'Workers'),
+      pageHead('workers'),
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
+      ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
       unheard.length ? el('div', {}, unheard.map((s) => el('p', { class: 'state failed' }, 'The Worker source ' + s.source + ' was ' + s.state + ' ' + relative(s.at) + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
       known(roster.workers, (workers) => workers.length
         ? el('div', {}, ['busy', 'ready', 'resting', 'unavailable', 'quarantined'].map((state) => {
           const group = workers.filter((w) => w.availability.state === state)
-          return group.length ? el('section', { 'aria-label': STATUS[state].group }, el('h3', {}, STATUS[state].group + ' (' + group.length + ')'), group.map(card)) : null
+          return group.length ? el('section', { 'aria-label': STATUS[state].group }, el('h3', {}, STATUS[state].group + ' (' + group.length + ')' + (state === 'ready' ? ': each takes work as soon as a run is routed to it' : '')), group.map(card)) : null
         }))
         : el('p', { class: 'muted' }, 'No Worker is configured.')))
   }
@@ -609,10 +808,16 @@ export const APP_JS = `'use strict'
   async function policyView() {
     let value
     try { value = await api('policy') } catch (error) {
-      show(el('h2', {}, 'Autonomy policy'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The approval queue is not running.' : error.message))
+      show(pageHead('policy'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The approval queue is not running, so there is no autonomy policy to show.' : 'The policy could not be read: ' + error.message + '. Reload the page to try again.'))
       return
     }
     const { set, policies, effective, changes, proposals } = value
+    // An asked change is decided here, on its own card, as on Home (T95).
+    const q = await queue()
+    const askedCards = (changes || []).filter((c) => c.state === 'asked').flatMap((c) => {
+      const r = q && !q.error ? q.requests.find((x) => x.requestId === c.requestId) : undefined
+      return r ? [q.card(r)] : []
+    })
     const columns = effective.map((e) => e.projectId ? 'project ' + e.projectId : 'studio')
     const classes = effective[0].effective.map((e) => e.actionClass)
     const editor = el('textarea', { 'aria-label': 'Proposed policy record (JSON)', spellcheck: 'false' })
@@ -642,16 +847,20 @@ export const APP_JS = `'use strict'
       try {
         const { change, request } = await api('policy/propose', { policy: draft, note: note.value })
         status.textContent = 'proposed ' + change.changeId + ': decide request ' + request.requestId + ' in the approval queue'
+        report(true, 'Proposed: ' + change.policy.id + ' version ' + change.policy.version, ['Recorded as change ' + change.changeId + '. Nothing changes yet: it waits for your verdict on request ' + request.requestId + ', shown at the top of this page and on Home.'])
         await policyView()
       } catch (error) { preview.replaceChildren(el('p', { class: 'state failed' }, error.message)) }
     }
-    const when = (t) => t ? new Date(t).toLocaleString() : '-'
+    const when = (t) => t ? ago(t) : '-'
     show(
-      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
-      el('h2', {}, 'Autonomy policy'),
-      set ? el('p', {}, 'In force: ', el('code', {}, set.hash), set.source === 'store'
-        ? ' — the change ' + set.changeId + ' the operator approved, kept while the configuration it came from is unchanged (' + set.configHash + ').'
-        : ' — the configuration.') : null,
+      pageHead('policy'),
+      askedCards.length ? el('section', { 'aria-label': 'Changes waiting for your verdict' },
+        el('h3', {}, askedCards.length === 1 ? 'A change waits for your verdict' : askedCards.length + ' changes wait for your verdict'),
+        el('p', { class: 'muted' }, 'A change applies only once you approve it, here or on Home.'),
+        askedCards) : null,
+      set ? el('p', {}, set.source === 'store' ? 'In force: the change ' + set.changeId + ' you approved, kept while the configuration it came from is unchanged.' : 'In force: the configuration.',
+        el('details', {}, el('summary', {}, 'Exact set'), el('code', {}, set.hash), set.configHash ? el('div', { class: 'muted' }, 'configuration ', el('code', {}, set.configHash)) : null)) : null,
+      el('p', { class: 'muted' }, 'auto: it runs on its own · notify: it runs, then tells you · ask: it waits for your approval on Home · forbid: it never runs.'),
       table(['Action class'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => el('td', {}, (e.effective.find((x) => x.actionClass === c) || {}).mode || '-')))), 'queue'),
       el('h3', {}, 'Policies'),
       table(['Policy', 'Scope', 'Version'], policies.map((p) => el('tr', {}, el('td', {}, el('code', {}, p.id)), el('td', {}, p.scope + (p.projectId ? ' ' + p.projectId : '')), el('td', {}, String(p.version))))),
@@ -668,9 +877,9 @@ export const APP_JS = `'use strict'
       changes && changes.length ? table(['Change', 'Policy', 'State', 'Proposed', 'In force from', 'Effect'], changes.map((c) => el('tr', {},
         el('td', {}, el('code', {}, c.changeId)),
         el('td', {}, c.policy.id + ' ' + (c.previous ? c.previous.version + ' → ' : '') + c.policy.version + (c.origin ? ' (proposed by the queue)' : '')),
-        el('td', { class: 'state' }, c.state + (c.declined ? ' (' + c.declined.cause + ')' : '')),
+        el('td', { class: 'state' }, c.state === 'asked' ? decideLink(c.requestId, 'waiting for your verdict') : c.state + (c.declined ? ' (' + c.declined.cause + ')' : '')),
         el('td', { class: 'muted' }, when(c.proposedAt)),
-        el('td', { class: 'muted' }, c.applied ? when(c.applied.at) + (c.retired ? ' until ' + when(c.retired.at) : '') : '-'),
+        el('td', { class: 'muted' }, c.applied ? [when(c.applied.at), c.retired ? [' until ', when(c.retired.at)] : null] : '-'),
         el('td', {}, c.effect.length ? c.effect.map((e) => (e.projectId || 'studio') + ' ' + e.actionClass + ' ' + e.from + '→' + e.to).join('; ') : '-'),
       ))) : null,
       changes && changes.length ? el('details', {}, el('summary', {}, 'Diffs'), changes.map(changeView)) : null)
@@ -686,6 +895,15 @@ export const APP_JS = `'use strict'
     history.pushState(null, '', runId ? '?run=' + encodeURIComponent(runId) : '/ui/')
     refresh()
   }
+  // Home, scrolled to one request's card, which takes the focus.
+  function openRequest(requestId) {
+    focusRequest = requestId
+    current = null
+    view = null
+    confirming = false
+    history.pushState(null, '', '?request=' + encodeURIComponent(requestId))
+    refresh()
+  }
   const nav = (id, name) => document.getElementById(id).addEventListener('click', (e) => {
     e.preventDefault()
     current = null
@@ -694,11 +912,23 @@ export const APP_JS = `'use strict'
     history.pushState(null, '', '?view=' + name)
     refresh()
   })
+  document.getElementById('home-link').addEventListener('click', (e) => { e.preventDefault(); go() })
   nav('board-link', 'board')
   nav('workers-link', 'workers')
   nav('policy-link', 'policy')
   window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); confirming = false; refresh() })
+  // The page shown is marked in the navigation and named in the window's title.
+  const mark = () => {
+    const page = view === 'policy' || view === 'board' || view === 'workers' ? view : current ? 'run' : 'home'
+    for (const [id, name] of [['home-link', 'home'], ['board-link', 'board'], ['workers-link', 'workers'], ['policy-link', 'policy']]) {
+      const link = document.getElementById(id)
+      if (name === page || (page === 'run' && name === 'home')) link.setAttribute('aria-current', 'page')
+      else link.removeAttribute('aria-current')
+    }
+    document.title = 'system: ' + PAGES[page][0] + (current ? ' ' + current : '')
+  }
   async function refresh() {
+    mark()
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
   }

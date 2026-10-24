@@ -10,7 +10,28 @@ Every route is under `/ui/api` and passes the shared request guard first
 (`content-type: application/json`, else `415`), of at most 16 KiB (else `413`; 128 KiB for
 `policy/propose`). Errors are `{error}`.
 
+## Home
+
+One navigation on every page, **Home**, **Board**, **Workers**, and **Autonomy policy**, the
+current one marked (`aria-current`) and named in the window's title; a run's page counts as Home's.
+Each page opens with its title and one line of what it is for.
+
+**Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting
+for review, and the runs that need a look, each linking to its section), the Workers at a glance
+(the roster's counts), the approval cards, the reviews as cards (what was asked, the checks not
+run, the run that made the result, the exact result folded; **Accept: mark it done** and
+**Reject: send it back**, each with its own note), the runs that need a look (failed, or waiting
+for a plan approval, a fix's verdict, or a deciding vote) with why and a link, and the 15 most
+recent runs.
+
 ## Runs
+
+A run's page (`?run=<runId>`) says in one sentence what the run is, when it started, and where it
+is (finished, running which step on which Worker, failed at which step and why, or waiting for
+you); then what the operator can do (the plan's approval, the tie's vote, the fix's verdict link,
+**Stop run**, **Continue run**, each with what it does), the answer, and the steps as a timeline in
+words (done, running, failed, waiting for you, waiting for earlier steps), each with its Worker's
+roster `name` and tier; each step's decisions and the run's spec hash are folded.
 
 | Route | Body | Answer |
 |---|---|---|
@@ -50,7 +71,7 @@ Served when `ctx.board` is present; without it, every route answers `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt` |
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt`; and `tasks`, its tasks as the Board's cards (`taskId`, `title`, `state`, `actionClass`, `createdAt`, `updatedAt`, `run {runId, startedAt}`, `holder {owner, leaseExpiresAt}`, `waiting {reason, approvalRequest?, since, expiresAt}`), per state the most recently changed first, at most 50 each, `more` counting the rest per state |
 | `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
 | `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
 | `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
@@ -61,6 +82,15 @@ Served when `ctx.board` is present; without it, every route answers `503`
 - The move goes to `ctx.board` as the operator's (INV-6), at the server's clock. A refusal by the
   board is `409` with its failure: `invalid-transition` for a move from another state, or a close
   while a task of the project runs or is in review.
+- The **Board** page is a Kanban: a project filter (all projects by default), each shown
+  project's header (title, state, charter version, what of it waits for the operator, linked to
+  its card, and **Pause**, **Resume**, **Close**), how many Workers are idle and tasks ready and how
+  a ready task gets a Worker, then a column per state: *Proposed*, *Ready*, *Working* (claimed and
+  running), *Review*, *Waiting for you* (input and approval), with *Done* and *Cancelled* folded.
+  Each card gives the task's title, its project (when several are shown), its action class, when it
+  last changed, what it waits on in words (a link to the approval card or the review), who works
+  on it (the Worker's roster `name` and for how long, from the roster's current work), and a link
+  to its run.
 - A close cancels every open task of the project (`project-closed`), releasing a claimed one's
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
@@ -107,7 +137,18 @@ call is in flight its buttons are disabled. The page refreshes every 5 seconds, 
 an element of it has focus or a pointer or key is pressed: a render that lands during a press
 waits for its release, so a press is never lost to a refresh.
 
+Every pending decision on another page links to its card: a project's charter or amendment and a
+task's approval on the Board, a run's fix on the run's page, and an asked policy change in the
+policy page's history. The link is `/ui/?request=<requestId>`: Home, scrolled to that card, which
+takes the focus; a request that no longer waits says so in the report above the page. The policy
+page shows an asked change's own card, with **Approve** and **Deny**, at its top.
+
 ## Autonomy policy
+
+The page says what is in force in words (the configuration, or the change you approved), the
+set's hash folded, and what each mode means (*auto* runs on its own, *notify* runs then tells
+you, *ask* waits for your approval, *forbid* never runs); its history's times read relative, the
+clock time beside.
 
 Served when `ctx.approvals` is present; without it, both routes answer `503`
 ([a policy change](../design/approvals.md#a-policy-change)).

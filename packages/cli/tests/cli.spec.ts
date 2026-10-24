@@ -99,7 +99,7 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(await hostRoster(false, call)).toBe('Roster as of 2026-10-24T09:30:00.000Z: 0 Worker(s): 0 ready, 0 busy, 0 resting, 0 unavailable, 0 quarantined')
     expect(JSON.parse(await hostRoster(true, call))).toEqual(record)
     expect(calls).toEqual(['roster', 'roster'])
-    await expect(hostRoster(false, async () => ({ isError: true, text: 'the roster could not be made: mcp-roster@1.1#/$defs/roster-output: …', structured: undefined }))).rejects.toThrow(/could not be made/)
+    await expect(hostRoster(false, async () => ({ isError: true, text: 'the roster could not be made: mcp-roster@1.2#/$defs/roster-output: …', structured: undefined }))).rejects.toThrow(/could not be made/)
     await expect(hostRoster(true, async () => ({ isError: false, text: 'x', structured: undefined }))).rejects.toThrow(/no roster record/)
   })
 

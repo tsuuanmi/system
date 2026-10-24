@@ -1000,6 +1000,11 @@ guesses.
   Worker has a run that is `stalled`, being looked at (`looking`), or ended without being known to
   be gone (`unknown`), each with `execution`, `state`, `since`, `runId`, and `summary`; or
   `unknown` when the read failed or a source could not tell. A 1.1 record stays valid.
+- `mcp-roster@1.2` adds each Worker's `name` for people: `<provider> · <account> · <role or tier>`,
+  its provider's first word capitalised (a model Worker's, its family's), its account's label for
+  an operator-scope caller (a website account's catalog label, an agent account's masked hint),
+  else its account's id (a website account) or slot (an agent account), else the rest of its own
+  id, and its role, else its tier. It is never an id to route by. Readers accept 1.0 to 1.2.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

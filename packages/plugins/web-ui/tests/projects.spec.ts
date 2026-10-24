@@ -157,6 +157,77 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await outcome.innerText()).toBe('')
   }, 60_000)
 
+  it.runIf(canRunBrowser)('shows the Board as a Kanban: a column per state with one card per task, who works on it, its run, a project filter, and the moves in each project\'s header (T97)', async () => {
+    const booted = await boot()
+    const { ctx, workers } = booted
+    await activeProject(ctx)
+    const { approvalRequest } = await ctx.board.charter({ projectId: 'p2', title: 'Handbook rewrite', charter: CHARTER })
+    const charter = await ctx.approvals.get(approvalRequest)
+    await ctx.approvals.decide([{ requestId: approvalRequest, subject: charter!.subject, verdict: 'approved' }])
+    await ctx.board.sweep(new Date())
+    await readyTask(ctx, 'Write the release notes')
+    await reviewed(ctx, 'Fix the slow image build')
+    await ctx.board.propose({ projectId: 'p1', title: 'Merge the login fix', goal: 'merge the branch', acceptance: [{ id: 'a1', statement: 'merged' }], actionClass: 'merge' })
+    await ctx.board.propose({ projectId: 'p2', title: 'Outline the chapters', goal: 'outline', acceptance: [{ id: 'a1', statement: 'it answers' }], actionClass: 'read' })
+    await ctx.board.sweep(new Date())
+    // A task whose run is on a Worker now.
+    const busy = await readyTask(ctx, 'Research the hosting options')
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'research', classification: 'public', task: { taskId: busy.taskId } })
+    await vi.waitFor(() => expect(ctx.workflow.get(run.runId)?.nodes[0]?.state).toBe('RUNNING'), { timeout: 10_000 })
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    const column = (name: string) => page.getByRole('region', { name, exact: true })
+    await expect.poll(() => column('Ready').innerText()).toContain('Write the release notes')
+    expect(await column('Ready').innerText()).toContain('Outline the chapters')
+    expect(await column('Review').innerText()).toContain('Fix the slow image build')
+    expect(await column('Waiting for you').innerText()).toContain('Merge the login fix')
+    const card = column('Working').getByRole('article', { name: 'Research the hosting options' })
+    expect(await card.innerText()).toMatch(/Conformance · standard · standard, for less than a minute/)
+    await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
+    await expect.poll(() => page.getByRole('heading', { name: `Run ${run.runId}` }).count()).toBe(1)
+    await page.goBack()
+    // Several projects: all by default, each card naming its project; the filter shows one.
+    await expect.poll(() => column('Ready').innerText()).toContain('Handbook rewrite')
+    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? idle · 2 tasks ready\. A ready task starts when the lead runs it/)
+    await page.getByLabel('Show').selectOption('p2')
+    await expect.poll(() => column('Ready').innerText()).not.toContain('Write the release notes')
+    expect(await column('Ready').innerText()).toContain('Outline the chapters')
+    expect(await page.getByRole('button', { name: 'Pause p1' }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: 'Pause p2' }).count()).toBe(1)
+    // Done and Cancelled are folded.
+    expect(await page.locator('details', { hasText: 'Done (' }).getAttribute('open')).toBeNull()
+  }, 90_000)
+
+  it.runIf(canRunBrowser)('links each pending decision on the Board to its card: a charter, and a task waiting for approval (T97)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    const merge = await ctx.board.propose({ projectId: 'p1', title: 'Merge the login fix', goal: 'merge the branch', acceptance: [{ id: 'a1', statement: 'merged' }], actionClass: 'merge' })
+    await ctx.board.sweep(new Date())
+    const waiting = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+    const { approvalRequest } = await ctx.board.charter({ projectId: 'docs', title: 'Handbook rewrite', charter: CHARTER })
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    await expect.poll(() => page.locator('main').innerText()).toContain('Its charter waits for your verdict')
+    expect(await page.locator('main').innerText()).toContain('1 task(s) wait for your approval')
+    await page.getByRole('link', { name: 'decide it', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${approvalRequest}`)
+    expect(new URL(page.url()).search).toBe(`?request=${approvalRequest}`)
+    await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
+    await expect.poll(() => page.locator('main').innerText()).toContain('wait for your approval')
+    await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${waiting}`)
+    // The card names the task by its title, not its id.
+    expect(await page.locator(`#request-${waiting}`).innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
+  }, 60_000)
+
   it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
     const booted = await boot()
     const { ctx } = booted
