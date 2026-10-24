@@ -82,7 +82,8 @@ export class TaskCarries {
       inputs: [writer.result],
       candidates: [
         { option: 'carry', selected: !why, reasons: why ? [`not carry: ${why}`] : [
-          `step ${writer.nodeId} of run ${previous.run_id} (attempt ${attempt}) completed its change, ${tree} in ${writer.workspace}, and the attempt failed only after it (${this.failures(previous).join(', ')}); no review judged the change, and it is on the commit the task writes`,
+          `step ${writer.nodeId} of run ${previous.run_id} (attempt ${attempt}) completed its change, ${tree}`,
+          `the attempt failed only after it (${this.failures(previous).join(', ')}); no review judged the change, and it is on ${writer.subject.ref}, the commit the task writes`,
           'the run\'s worktree is to start from that tree so the work is not done again: the Worker source that holds it carries it before the run\'s first step, only while it is still that tree and the repository\'s HEAD is still its base',
         ] },
         { option: 'fresh', selected: !!why, reasons: why ? [why, 'the run\'s worktree is cut from the repository\'s HEAD, as for any attempt'] : ['not fresh: the earlier work is the task\'s own, intact as its writing step left it, and only a later step failed'] },
@@ -123,7 +124,8 @@ export class TaskCarries {
       inputs: [...carry.decisions.slice(0, 1), carry.from.result],
       candidates: [
         { option: 'carry', selected: !!carried, reasons: carried ? [
-          `${carried.carried ? `source ${carried.source} committed` : `source ${carried.source} had committed`} the tree step ${carry.from.nodeId} of run ${carry.from.runId} left (${tree}) on ${carried.from.branch} as ${carried.from.commit}, and cut run ${runId}'s worktree ${carried.worktree} on ${carried.branch} at ${carried.base}, holding it`,
+          `source ${carried.source} ${carried.carried ? 'committed' : 'had committed'} the tree step ${carry.from.nodeId} of run ${carry.from.runId} left, ${tree}, on ${carried.from.branch} as ${carried.from.commit}`,
+          `run ${runId}'s worktree on ${carried.branch} starts at ${carried.base}, holding that change: ${carried.worktree}`,
           'every brief of the run says so: its writing step continues from that work, and its review reviews the whole change',
         ] : [`not carry: ${fresh}`] },
         { option: 'fresh', selected: !carried, reasons: carried ? ['not fresh: the earlier tree was still what its writing step left, and the repository\'s HEAD was still its base'] : [fresh!, 'the run\'s worktree is cut from the repository\'s HEAD, as for any attempt'] },
