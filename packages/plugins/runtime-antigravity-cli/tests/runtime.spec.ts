@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { type Confinement, meteringOf, proveConfinement, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeLimitsConformance, agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { HOOK_COMMAND, HOOK_ENV, HOOK_NAME, HOOKS_JSON, openChannel, TOKEN_ENV } from '../src/bridge.ts'
 import { AntigravityRuntime, type HookProof, limitsFromUsage, refusal, type RuntimeOptions, USAGE_ARGS, usageFrom, VERIFIED_HOOK_VERSIONS, VERIFIED_LIMIT_VERSIONS, workspaceCustomizations } from '../src/index.ts'
@@ -570,6 +570,15 @@ describe('antigravity-cli: an account\'s usage report, agy\'s own /usage (ADR-00
     observedAt: string; cases: Array<{ case: string; stdout: unknown; limits?: unknown[]; unreadable?: string }>
   }
   const text = (stdout: unknown): string => (typeof stdout === 'string' ? stdout : JSON.stringify(stdout))
+  // A report is read at the host's now: each test starts at the fixture's, so its resets stay ahead of
+  // the read whenever the suite runs (only Date is faked; it advances with real time).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+    vi.setSystemTime(Date.parse(fixture.observedAt))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   const workspace = join(root, 'limited')
   mkdirSync(workspace, { recursive: true })
   const spec = { prompt: 'x', workspace, sandbox: 'read-only' as const }
