@@ -53,3 +53,6 @@ The e2e tests boot the real profile and assert its exact row set:
 [`tests/profile.e2e.ts`](tests/profile.e2e.ts) the default composition, with the
 scope matrix, and [`tests/api-first.e2e.ts`](tests/api-first.e2e.ts) the
 `api-first` preset, with a model Worker answering through a fake API server.
+[`tests/surface.e2e.ts`](tests/surface.e2e.ts) holds the default composition's MCP
+surface to its token budget
+([token budget](../plugins/mcp-server/README.md#token-budget)).
