@@ -54,7 +54,10 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   The `system` wrapper boots the shipped profile from built `lib/` through the
   real `dsh` launcher, once per preset. Each test asserts the exact row set, calls
   MCP with a token, and checks cleanup on SIGTERM; the `api-first` one also
-  answers through a model Worker against a fake API server.
+  answers through a model Worker against a fake API server. The default one also
+  checks the profile against the code before a start, the plugin host's findings at
+  start ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)),
+  and a digest provider swapped by the operator's patch alone.
 - **Upgrade suite**
   ([`packages/cli/tests/upgrade/`](../../packages/cli/tests/upgrade/upgrade.e2e.ts),
   part of `pnpm test:e2e`; REQ-HOST-2,
@@ -73,30 +76,45 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
     ([releasing](releasing.md#cutting-a-release)); a fixture is never edited
     afterwards. Until the first release, one is seeded from the current code.
 - **Crash injection**
-  ([`packages/system-bundle/tests/crash/`](../../packages/system-bundle/tests/crash/restart.crash.ts),
+  ([`packages/system-bundle/tests/crash/`](../../packages/system-bundle/tests/crash/),
   `pnpm test:crash`).
-  - The engine runs as a separate process on the built packages, against the
-    fake site. It is killed with SIGKILL, with its whole process group (Xvfb and
-    Chrome too).
-  - The kill comes at each reconcile point of a website turn: sent but not
-    answered, and answered but not committed, in a persistent and in a
-    temporary chat.
-  - It is then restarted on the same state. The provider must see the prompt
-    exactly once, and the run must recover, or fail closed as AMBIGUOUS.
-  - The same holds for every other row of the
+  - The engine runs as a separate process on the built packages. It is killed
+    with SIGKILL, with its whole process group (Xvfb and Chrome too), then
+    restarted on the same state.
+  - A website turn, against the fake site, is killed at each reconcile point:
+    sent before its conversation was bound, sent and bound but not answered, and
+    answered but not committed; a temporary chat once sent; a deletion clicked on
+    the site but not recorded; a session-bound account's turn; and a failed run
+    whose turn was still running, superseded after the restart (that turn is
+    cancelled). The provider must see the prompt exactly once, and the run must
+    recover, or fail closed as AMBIGUOUS.
+  - Every other row of the
     [effect register](../architecture/data-flow.md#effect-register) that names a
-    crash test: an agent run never starts again; a model call is sent exactly once
-    more; a spent budget on a board task's last attempt ends the task once
-    (`retries-spent`), never asking for funding.
+    crash test gets what its row says a restart does: an agent run, a model call,
+    a board task's spent budget on its last attempt, and a node waiting for an
+    assigned account's limit.
+  - A two-step run killed around its per-step budget reservation
+    ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md))
+    runs its first step once and never its second. A daemon killed between an
+    enrollment slot's allocation and its verification leaves the slot `enrolled`,
+    never `ready`, until the operator verifies it
+    ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
 - **Architecture rules**
   ([`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
-  Capability-routed code names no tools (INV-11). There is one provider per
-  service (INV-1), one bundle row per plugin (REQ-HOST-4), and a conformance
-  suite per seam (QA-9).
+  Capability-routed code names no tools (INV-11). Native protocol objects stay
+  inside their own adapters (INV-7). There is one provider per service (INV-1),
+  one bundle row per plugin (REQ-HOST-4), and a conformance suite per seam (QA-9),
+  a guarantee seam's at a pinned contract (ADR-0036). A work requirement has no
+  provider field (REQ-ACC-2).
 - **HMR safety.** Every registry gets a test that disposes the contributing
   plugin and asserts cleanup (plugin rule 3).
 - **Mock only the expensive boundary.** Keep the real registry, store, and
   engine downstream of a scripted provider.
+- **Golden fixtures.** The statistics library is checked against SciPy's results
+  on fixed datasets, generated once by hand
+  ([`scripts/statistics/`](../../scripts/statistics/sign-flip-goldens.py)) and
+  committed with the versions they ran with. No test runs Python
+  ([golden tests](../design/statistics.md#golden-tests)).
 
 ## Real display and browser tests
 
@@ -149,12 +167,18 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
      ([plugin host](../design/plugin-host.md#manifests));
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
 2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1` and `SYSTEM_REQUIRE_BWRAP=1`:
-   unit, contract, driver, concurrency, and architecture tests. The agent read
-   confinement tests run against the real bubblewrap; locally they are skipped
-   when `bwrap` is missing, and in CI a missing one fails the run.
-3. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`, and
-   upgrade every seeded store fixture.
-4. `pnpm test:crash`: crash injection at each reconcile point of a turn.
+   every `*.spec.ts` in a package's `tests/`, in `scripts/`, and in `spikes/`
+   ([`vitest.config.ts`](../../vitest.config.ts)): unit, contract, driver,
+   concurrency, and architecture tests, and the tests of the repository's scripts.
+   The agent read confinement tests run against the real bubblewrap; locally they
+   are skipped when `bwrap` is missing, and in CI a missing one fails the run.
+3. `pnpm test:e2e`: build, then every `*.e2e.ts`, one file at a time
+   ([`vitest.e2e.config.ts`](../../vitest.e2e.config.ts)): boot the shipped
+   profile and the `api-first` preset through `dsh`, and upgrade every seeded
+   store fixture.
+4. `pnpm test:crash`: build, then every `*.crash.ts`, one file at a time
+   ([`vitest.crash.config.ts`](../../vitest.crash.config.ts)): the cases of
+   [crash injection](#conventions-adopted-from-dsh).
 
 [`.github/workflows/audit.yml`](../../.github/workflows/audit.yml) runs
 `pnpm audit:deps` (no high or critical advisory in a production dependency) once,
@@ -164,9 +188,10 @@ registry error fails it like an advisory does, so it is never run with
 [`.github/workflows/codeql.yml`](../../.github/workflows/codeql.yml) runs CodeQL's
 `security-extended` queries on the same triggers and weekly.
 [`.github/dependabot.yml`](../../.github/dependabot.yml) proposes npm and Action
-updates weekly, except `@deepseek-ai/*`, whose one exact pin moves by hand after
-the conformance and composition suites pass (CON-8). Every third-party Action is
-pinned by commit SHA, with its version in a comment.
+updates weekly, each version once it is a week old, except `@deepseek-ai/*`, whose
+one exact pin moves by hand after the conformance and composition suites pass
+(CON-8). Every third-party Action is pinned by commit SHA, with its version in a
+comment; a test in [`scripts/checks.spec.ts`](../../scripts/checks.spec.ts) checks the pin.
 
 CI cannot prove account-bound flows. The
 [release checklist](../validation/release-checklist.md) covers them.

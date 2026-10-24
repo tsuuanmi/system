@@ -33,11 +33,14 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
    - seeds this release's store fixture for the
      [upgrade suite](testing.md) with `pnpm gen:upgrade-fixture v<version>`.
      Fixtures are never edited afterwards.
+
+   With no pending changeset the version does not move, and it stops there,
+   before the presets, the manifests, and the fixture.
 2. Run every gate, merge the pull request, then tag the merge commit on `main`
    with `v<version>` and push the tag.
 3. The [`release` workflow](../../.github/workflows/release.yml) then:
-   - checks first, in seconds, without an install
-     (`node scripts/release-artifacts.ts --verify`,
+   - checks first, in seconds, without an install (its `verify` job:
+     `git merge-base`, then `node scripts/release-artifacts.ts --verify --tag <tag>`,
      [`scripts/release-artifacts.ts`](../../scripts/release-artifacts.ts)). It
      refuses:
      - a tag whose commit is not on `main`;
