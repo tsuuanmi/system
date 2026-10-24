@@ -138,6 +138,14 @@ scenario of the suite, on the same provider, does not stay.
   it must see (a row's state, the next read of a poll or sweep), or runs a long
   timer on fake time. A fixed sleep stays only where a test shows that nothing
   happens during a window, and nothing it could wait for marks that window.
+- **Pin the time a test reads.** A test that formats or compares a clock time, a
+  day, or a reset passes whenever and wherever it runs. Its data names fixed
+  instants, not offsets from the host's now. A page that shows them opens in a
+  context with a `timezoneId` and a locale, its clock fixed at the data's instant
+  (`page.clock.setFixedTime`). Code that reads the host's now itself (a runtime
+  reading a usage limit) runs with only `Date` faked at the fixture's instant
+  (`vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })`), so timers
+  and child processes run as before.
 
 ## Real display and browser tests
 
@@ -159,6 +167,11 @@ absence of automation leaks are properties of the real browser.
   and browser context there, stopped when the test finishes. A test that expects the driver to give
   up (a conversation that never renders, a send nothing confirms) sets that bound small rather than
   waiting out the production default.
+- The turn runtime's and the workflow engine's browser specs are split by theme the same way
+  (turns: asks, sessions, sign-in, routing, limits; workflow: static DAGs, acceptance, plans, plan
+  approval, the operator's stop and supersede, deletion), each file on its own Xvfb through its
+  package's `tests/stack.ts`. Those stacks do not pace page opens (the drivers' `pageGapMs` and the
+  runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
   product's own `discoverChrome` and launch it with the product's arguments.
   The order is `CHROME_PATH`, then a system Chrome no older than the engine,

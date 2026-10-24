@@ -157,7 +157,8 @@ operator's words, the Workers by account under its header, each card calm with i
 derived, and technical facts folded under its details, a reason that blocks work shown, the step
 in one sentence, each pool window's share, reset, and read time or `unknown (why)`, Home's
 capacity line per account, and a run held for want of a verdict with what frees it and a link to
-its run).
+its run), on a page whose clock stands at a fixed instant in UTC, so each time it shows is named
+exactly whenever the test runs.
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
