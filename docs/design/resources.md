@@ -142,8 +142,8 @@ its own use, with no plan written into configuration:
   accounts and the Gemini API, which tell a limit only when it is hit.
 - **The seam does not change** (ADR-0036): `observe` takes these readings as it takes a run's
   (contract 1.1, `limit-state@1.0`); the roster already shows each window's `used`, `resets`, and
-  `observedAt` (`mcp-roster@1.1`), which the Workers tab renders as "used 42 % of 5 h, resets 14:20
-  (read 14:05)".
+  `observedAt` (`mcp-roster@1.1`), which the Workers tab renders as "5 h: used 42 % — resets 14:20
+  (read 14:05)" ([roster](roster.md#surfaces)).
 
 ## Counting
 

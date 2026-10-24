@@ -64,7 +64,7 @@ textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320p
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 8px 0; }
 pre.diff .add { color: var(--ok); } pre.diff .del { color: var(--bad); }
-code.exact { display: block; overflow-wrap: anywhere; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { min-width: 12em; } details.advanced { margin: 8px 0; }
+code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { min-width: 12em; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
 
@@ -816,12 +816,27 @@ export const APP_JS = `'use strict'
   const when = (iso) => relative(iso) + ' (' + clockOf(iso) + ')'
   // A window's length as "5 h" or "7 d" (ADR-0059's "used 42 % of 5 h").
   const span = (seconds) => seconds % 86400 === 0 ? seconds / 86400 + ' d' : seconds % 3600 === 0 ? seconds / 3600 + ' h' : seconds % 60 === 0 ? seconds / 60 + ' min' : seconds + ' s'
-  // One window of a pool: "five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)", from its latest
-  // reading (an account's usage report, or a run's own); what that reading does not give stays unknown, with why.
-  const windowLine = (win) => win.id + ': ' + ('value' in win.used ? 'used ' + win.used.value + ' %' + (win.seconds ? ' of ' + span(win.seconds) : '') : 'used unknown (' + win.used.unknown + ')')
-    + ', resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
-    + (win.observedAt ? ' (read ' + clockOf(win.observedAt) + ')' : '')
-    + (win.state === 'limited' ? '; at its limit' : '')
+  // One window of a pool, as it reads after the per-account limits (ADR-0059): "5 h: used 9 % — resets
+  // 23:30 (read 22:05)" with a small bar, from its latest reading (an account's usage report, or a run's
+  // own); "5 h: no reading yet: <why>" before any; at its limit said first. What a reading does not
+  // give stays unknown, with why.
+  const ISO_TIME = /\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d(?::\\d\\d(?:\\.\\d+)?)?(?:Z|[+-]\\d\\d:\\d\\d)/g
+  const clocked = (text) => text.replace(ISO_TIME, (iso) => Number.isNaN(Date.parse(iso)) ? iso : clockOf(iso))
+  const windowLine = (win, label) => {
+    const limited = win.state === 'limited'
+    if (!('value' in win.used) && /^no reading yet/.test(win.used.unknown)) return label + ': ' + clocked(win.used.unknown)
+    return label + ': ' + (limited ? 'at its limit, ' : '') + ('value' in win.used ? 'used ' + win.used.value + ' %' : 'used unknown (' + win.used.unknown + ')')
+      + ' — resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
+      + (win.observedAt ? ' (read ' + clockOf(win.observedAt) + ')' : '')
+  }
+  // A pool's windows, the ones at their limit first, each named by its length ("5 h"; its id when it has none, or beside a twin).
+  const windowsView = (p) => {
+    const named = (win) => win.seconds ? span(win.seconds) + (p.windows.filter((w) => w.seconds === win.seconds).length > 1 ? ' (' + win.id + ')' : '') : win.id
+    const order = [...p.windows].sort((x, y) => Number(y.state === 'limited') - Number(x.state === 'limited'))
+    return order.map((win) => el('div', { class: 'window' + (win.state === 'limited' ? ' limited' : ''), 'aria-label': 'window ' + win.id + ' of ' + p.pool },
+      'value' in win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(win.used.value), 'aria-hidden': 'true' }) : null,
+      el('span', {}, windowLine(win, named(win)))))
+  }
   async function workersView() {
     const roster = await api('roster')
     const ready = await readyTasks()
@@ -854,9 +869,9 @@ export const APP_JS = `'use strict'
       if (isKnown(w.account) && w.account.value.limitUntil) lines.unshift('its account is back ' + when(w.account.value.limitUntil))
       return el('div', {},
         lines.map((line) => el('div', {}, line)),
-        known(w.pools, (pools) => pools.length ? el('div', {}, pools.map((p) => el('div', {},
-          el('strong', {}, p.pool), ' ' + (p.available ? 'open' : 'closed' + (p.until ? ', back ' + when(p.until) : '')),
-          p.windows.map((win) => el('div', { class: 'muted', 'aria-label': 'window ' + win.id + ' of ' + p.pool }, windowLine(win))),
+        known(w.pools, (pools) => pools.length ? el('div', {}, [...pools].sort((x, y) => Number(x.available) - Number(y.available)).map((p) => el('div', {},
+          el('strong', {}, p.pool), ' ' + (p.available ? 'open' : 'at a limit: closed' + (p.until ? ', back ' + when(p.until) : '')),
+          windowsView(p),
           isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
     }
     // Its display name heads the card; the id, the key every record uses, stays under it.

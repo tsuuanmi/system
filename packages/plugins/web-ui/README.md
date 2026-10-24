@@ -76,10 +76,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   a link to its run; its account, with the account's label and its enrolled, ready, signed-out, or
   quarantined state; what it serves (tier, quota class, locality, provider, family, role); its
   limits, with each reset relative and on the clock, and each window of its account's pools as
-  `five-hour: used 42 % of 5 h, resets 14:20 (read 14:05)` (the window's latest reading, an
-  account's usage report among them, [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
-  its share of the window's length, its reset, and when it was read, each on the clock with the day
-  when not today; `; at its limit` while it is limited); and its load
+  `5 h: used 42 % — resets 14:20 (read 14:05)` beside a small bar of its share (the window's
+  latest reading, an account's usage report among them, [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md):
+  the window by its length, its share, its reset, and when it was read, each on the clock with the
+  day when not today; `at its limit` first, and listed first, while it is limited; `5 h: no reading
+  yet: <why>` before any reading); and its load
   ([roster](../../../docs/design/roster.md)). A fact a source could not give shows as
   `unknown (why)`, and a Worker source that did not answer is named above the cards.
 
