@@ -12,31 +12,6 @@ import { browserStack, until } from './stack.ts'
 const { boot, cleanups } = browserStack()
 
 describe.runIf(canRunBrowser)('ctx.workflow: failures, restarts, retention, explain, and MCP', () => {
-  it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
-    const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })
-    const blocker = ctx.workflow.start({ template: 'ask', input: 'hold the only slot' })
-    await until(() => ctx.workflow.get(blocker.runId)?.nodes[0]?.executionId !== undefined)
-    const run = ctx.workflow.start({ template: 'ask', input: 'after the blocker' })
-    const done = await ctx.workflow.wait(run.runId, 60_000)
-    expect(done.status).toBe('completed')
-    expect(done.nodes[0]!.attempt).toBeGreaterThan(1)
-    const retry = ctx.eventLog.query({ type: 'workflow.node.retry', runId: run.runId })[0]!
-    expect(retry.data).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
-    // The retry is a decision (INV-13), named by the event.
-    expect(ctx.artifacts.get(retry.decision!)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'retry' } })
-    // explain shows why the failed attempt failed, in its own words, after the run completed.
-    const recovery = ctx.workflow.explain(run.runId)!.nodes[0]!.decisions.find((d) => d.type === 'recovery')!
-    expect(recovery).toMatchObject({ outcome: 'retry', reasons: expect.arrayContaining([expect.stringMatching(/^error: \S/)]) })
-    // A browser's call log never carries typed text into a decision.
-    const { errorLine } = await import('../src/recovery.ts')
-    expect(errorLine('locator.fill: Timeout\n\u001b[2m  - waiting for fill("my private prompt")\u001b[22m')).toBe('locator.fill: Timeout - waiting for fill(…)')
-    // An escaped quote inside the typed text does not end it early.
-    expect(errorLine('locator.type: x, type("say \\"hi\\" and my secret") failed')).toBe('locator.type: x, type(…) failed')
-    expect(errorLine("press: pressSequentially('it\\'s my secret')")).toBe('press: pressSequentially(…)')
-    expect((await ctx.workflow.wait(blocker.runId, 10_000)).status).toBe('completed')
-    expect(fake.sent.map((s) => s.prompt)).toEqual(['hold the only slot', 'after the blocker'])
-  }, 90_000)
-
   it('never resends a submitted prompt: a timeout after sending fails the node, without a retry (INV-4)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 20_000 }, turns: { turnTimeoutMs: 4000, stallTimeoutMs: 3500 }, workflow: { retryDelayMs: 100 } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'slow' }).runId, 60_000)

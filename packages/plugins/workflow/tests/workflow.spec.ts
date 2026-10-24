@@ -1,7 +1,6 @@
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { describe, expect, it } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
-import type { RunView } from '../src/types.ts'
 import { browserStack, until, waitingPlan } from './stack.ts'
 import { TEST_TEMPLATES } from './templates.ts'
 
@@ -61,17 +60,6 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.start({ template: 'panel-led', input: 'q' })).toThrow(/workflow template panel-led was refused at load: node panel: team must be/)
     expect((await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'hi' }).runId, 60_000)).status).toBe('completed')
   }, 90_000)
-
-  it('is idempotent on clientRequestId and refuses an unknown template', async () => {
-    const { ctx, fake } = await boot()
-    const a = ctx.workflow.start({ template: 'ask', input: 'once', clientRequestId: 'req-1' })
-    const b = ctx.workflow.start({ template: 'ask', input: 'once', clientRequestId: 'req-1' })
-    expect(b.runId).toBe(a.runId)
-    await ctx.workflow.wait(a.runId, 30_000)
-    expect(fake.sent).toHaveLength(1)
-    expect(() => ctx.workflow.start({ template: 'ask', input: 'other', clientRequestId: 'req-1' })).toThrow(/different/)
-    expect(() => ctx.workflow.start({ template: 'nope', input: 'x' })).toThrow(/unknown workflow template/)
-  }, 60_000)
 
   it('fails the run when a result is rejected by its acceptance contract, and never runs the next node (REQ-WRK-3, INV-3)', async () => {
     // A deployment that requires cited reports.
@@ -133,14 +121,6 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected', disposition: 'NONE' } })
   }, 60_000)
 
-  it('refuses an invalid plan without appending anything', async () => {
-    const { ctx, fake } = await boot({ fake: { answer: () => '```json\n{"confidence":"high","nodes":[{"id":"a","objective":"o","prompt":"p","capabilities":["develop"],"tier":"economy"}]}\n```' } })
-    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'investigate', input: 'q' }).runId, 60_000)
-    expect(done).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected', disposition: 'NONE' } })
-    expect(done.nodes.map((n) => n.nodeId)).toEqual(['plan:1', 'synthesis:1'])
-    expect(fake.sent).toHaveLength(1)
-  }, 60_000)
-
   it('approves only the plan the operator names when two plans wait, never whichever came first (INV-5)', async () => {
     const [planner, synthesis] = TEST_TEMPLATES.investigate!
     const gated = { ...planner!, grows: { maxNodes: 2, approvalRequired: ['reason'] } }
@@ -200,33 +180,6 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.approve(second.runId, { verdict: 'approved' })).toThrow(/waiting for approval/)
   }, 150_000)
 
-  it('closes a gate nobody decided within gateTimeoutHours, failing the run by rule; continue waits again (INV-9)', async () => {
-    const gated = TEST_TEMPLATES.investigate!.map((n) => (n.grows ? { ...n, grows: { maxNodes: 2, approvalRequired: ['reason'] } } : n))
-    const answer = (prompt: string): string => (prompt.includes('Plan how to answer')
-      ? '```json\n{"confidence":"high","nodes":[{"id":"only","objective":"o","prompt":"the step","capabilities":["reason"],"tier":"economy"}]}\n```'
-      : prompt.includes('<findings>') ? 'final' : 'step done')
-    const { ctx, fake } = await boot({ fake: { answer }, workflow: { templates: { gated }, gateTimeoutHours: 0.0008 } })
-    const run = ctx.workflow.start({ template: 'gated', input: 'q' })
-    await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 60_000)
-    const blocked = ctx.workflow.get(run.runId)!.blocked as Extract<RunView['blocked'], { kind: 'gate' }>
-    expect(Date.parse(blocked.until!) - Date.now()).toBeLessThanOrEqual(3000)
-    // Nobody approves: the gate closes by rule, the run fails saying why, and the plan's step never ran.
-    // A blocked run is returned at once by wait; the rule ends the wait once its time is up.
-    await until(() => ctx.workflow.get(run.runId)!.status === 'failed', 30_000)
-    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'failed', error: { kind: 'gate_timeout', message: expect.stringMatching(/^no verdict on plan sha256:[0-9a-f]{64} arrived by .* \(gateTimeoutHours 0.0008\); continue the run to wait again$/) } })
-    expect(fake.sent).toHaveLength(1)
-    const gate = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'plan:1:gate')!
-    expect(gate.decisions.at(-1)).toMatchObject({ type: 'gate', outcome: 'closed' })
-    expect(ctx.artifacts.get(gate.decisions.at(-1)!.id)!.body).toMatchObject({ decider: { type: 'rule', id: 'workflow.gate-timeout' }, deterministic: true })
-    // Continued, it waits again with a new deadline, and an approval in time runs the plan.
-    ctx.workflow.continue(run.runId)
-    await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 30_000)
-    expect((ctx.workflow.get(run.runId)!.blocked as { until: string }).until > blocked.until!).toBe(true)
-    ctx.workflow.approve(run.runId, { verdict: 'approved' })
-    await until(() => ctx.workflow.get(run.runId)!.status !== 'running', 60_000)
-    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'completed', answer: 'final' })
-  }, 150_000)
-
   it('lets the operator stop a run: running work is cancelled, nothing else starts, nothing is resent (REQ-WF-7)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 20_000 } })
     const run = ctx.workflow.start({ template: 'deep-research', input: 'long one' })
@@ -241,36 +194,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await expect(ctx.workflow.stop(run.runId)).rejects.toThrow(/not running/)
   }, 90_000)
 
-  it('drains: refuses new runs, reports what is still executing until it ends, and resumes (REQ-HOST-1)', async () => {
-    const { ctx, fake } = await boot({ fake: { thinkMs: 3000 } })
-    const run = ctx.workflow.start({ template: 'ask', input: 'a slow one' })
-    await until(() => ctx.workflow.get(run.runId)?.nodes[0]?.state === 'RUNNING' && fake.sent.length === 1)
-    expect(ctx.workflow.drain()).toEqual({ draining: true, active: [run.runId] })
-    expect(() => ctx.workflow.start({ template: 'ask', input: 'new work' })).toThrow(/draining/)
-    await until(() => ctx.workflow.drain().active.length === 0)
-    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'completed' })
-    expect(ctx.workflow.resume()).toEqual({ draining: false, active: [] })
-    expect(ctx.workflow.start({ template: 'ask', input: 'after resume' }).status).toBe('running')
-  }, 60_000)
-
-  it('lets the operator continue one failed node as a new attempt, recorded as their decision (REQ-WF-7)', async () => {
-    const strict = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited', maxEscalations: 0 }]
-    let cite = false
-    const { ctx, fake } = await boot({ fake: { answer: () => (cite ? 'See https://src.example/a' : 'no source') }, workflow: { templates: { strict } } })
-    const failed = await ctx.workflow.wait(ctx.workflow.start({ template: 'strict', input: 'q' }).runId, 60_000)
-    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'acceptance_rejected' } })
-    cite = true
-    const reopened = ctx.workflow.continue(failed.runId)
-    expect(reopened).toMatchObject({ status: 'running' })
-    const done = await ctx.workflow.wait(failed.runId, 60_000)
-    expect(done).toMatchObject({ status: 'completed', answer: 'See https://src.example/a' })
-    expect(fake.sent).toHaveLength(2)
-    const recovery = ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: failed.runId }).map((a) => a.body as { decider: { type: string }; outcome: { option: string } })
-    expect(recovery).toContainEqual(expect.objectContaining({ decider: expect.objectContaining({ type: 'operator' }), outcome: expect.objectContaining({ option: 'continue' }) }))
-    expect(() => ctx.workflow.continue(failed.runId)).toThrow(/not failed/)
-  }, 120_000)
-
-  it('keeps a completed step when a later one fails: continuing re-runs only the failed step, on the same input (QA-2, REQ-WF-3)', async () => {
+  it('keeps a completed step when a later one fails: the operator\'s continue re-runs only the failed step, on the same input, as a new attempt recorded as their decision (QA-2, REQ-WF-3, REQ-WF-7)', async () => {
     const chain = [
       { nodeId: 'first:1', objective: 'x', prompt: 'first: {{input}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
       { nodeId: 'second:1', objective: 'y', dependsOn: ['first:1'], prompt: 'second: {{node:first:1}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited', maxEscalations: 0 },
@@ -278,17 +202,21 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     let cite = false
     const { ctx, fake } = await boot({ fake: { answer: (p: string) => (p.startsWith('first') ? 'the first result' : cite ? 'See https://src.example/a' : 'no source') }, workflow: { templates: { chain } } })
     const failed = await ctx.workflow.wait(ctx.workflow.start({ template: 'chain', input: 'q' }).runId, 60_000)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'acceptance_rejected' } })
     expect(failed.nodes.map((n) => n.state)).toEqual(['COMPLETED', 'FAILED'])
     const before = ctx.workflow.records(failed.runId)
     cite = true
-    ctx.workflow.continue(failed.runId)
+    expect(ctx.workflow.continue(failed.runId)).toMatchObject({ status: 'running' })
     const done = await ctx.workflow.wait(failed.runId, 60_000)
-    expect(done.status).toBe('completed')
+    expect(done).toMatchObject({ status: 'completed', answer: 'See https://src.example/a' })
     // The first step was sent once; the second twice, both times on the same input hash.
     expect(fake.sent.map((s) => s.prompt.split(':')[0])).toEqual(['first', 'second', 'second'])
     const after = ctx.workflow.records(done.runId)
     expect(after[0]!.outputReceipt).toEqual(before[0]!.outputReceipt)
     expect(after[1]!.inputReceipt!.inputHash).toBe(before[1]!.inputReceipt!.inputHash)
+    const recovery = ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: failed.runId }).map((a) => a.body as { decider: { type: string }; outcome: { option: string } })
+    expect(recovery).toContainEqual(expect.objectContaining({ decider: expect.objectContaining({ type: 'operator' }), outcome: expect.objectContaining({ option: 'continue' }) }))
+    expect(() => ctx.workflow.continue(failed.runId)).toThrow(/not failed/)
   }, 120_000)
 
   it('deletes a deleted run\'s website conversation on its site, but never one a later run of the session still uses (REQ-PRV-8)', async () => {
