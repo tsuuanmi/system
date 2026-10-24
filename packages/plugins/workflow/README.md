@@ -88,7 +88,9 @@ second execution path (INV-1).
     a configured one. Admitted runs keep their resolved spec, so withdrawing a
     template never touches them: they still answer `explain` and `result`, and
     a new run of it is refused (`unknown workflow template`). `templateNames()`
-    lists what is served. The seam's conformance suite is
+    lists what is served, and `templateSteps(name)` what one runs, step by step (each step's
+    objective, capabilities, least tier, kind of work, and team), which the web UI says before
+    the operator starts a board task's run. The seam's conformance suite is
     [`conformance/profiles.ts`](conformance/profiles.ts).
   - Config `templates` adds or replaces templates. A template is checked at
     load (preflight):

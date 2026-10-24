@@ -28,13 +28,13 @@ import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
-import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput } from './types.ts'
+import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep } from './types.ts'
 import { explain, usage } from './views.ts'
 
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -192,6 +192,21 @@ export class Workflow extends Service {
   /** The templates served now: built-in, configured, and contributed by profiles. */
   templateNames(): string[] {
     return Object.keys(this.engine.templates).sort()
+  }
+
+  /**
+   * What a template runs, step by step, as a surface tells a person before a start: each step's
+   * objective and the Worker it needs (its capabilities, least tier, kind of work; a team's kind and
+   * members; a source step the engine runs itself; a planner). Undefined for a template not served.
+   * A read only: it starts and decides nothing.
+   */
+  templateSteps(name: string): TemplateStep[] | undefined {
+    const nodes = Object.hasOwn(this.engine.templates, name) ? this.engine.templates[name] : undefined
+    return nodes?.map((n): TemplateStep => ({
+      nodeId: n.nodeId, objective: n.objective, capabilities: [...n.capabilities], tier: n.tier, ...(n.kind ? { kind: n.kind } : {}),
+      ...(n.team ? { team: { kind: n.team.kind, members: n.team.members ?? 2 } } : {}), ...(n.snapshot ? { source: true as const } : {}),
+      ...(n.grows ? { plans: true as const } : {}),
+    }))
   }
 
   /**
