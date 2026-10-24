@@ -10,7 +10,7 @@ import EventLog from '../src/index.ts'
 // The store-backed event log against the suite every `ctx.eventLog` provider must pass (ADR-0036).
 runSuite(eventLogSuite, {
   name: '@tsuuanmi/system-event-log',
-  contract: '1.0',
+  contract: '1.1',
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-event-log-conformance-'))
     const ctx = new Context()

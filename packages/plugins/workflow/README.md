@@ -558,6 +558,11 @@ second execution path (INV-1).
     `usageUnknown`, the kind its Worker source recorded first in the run's
     `usage.unknown` entries
     ([resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
+    The latest started first, at most `limit` (1 to 500). Since contract 1.7, an optional filter
+    (`UsageFilter`): `status`, only runs in those states, whenever they started, so a run that has
+    run for hours is never past the limit for being old; `changedSince`, only runs whose state
+    changed after that time, the latest changed first (a time that is not one is refused). The
+    web UI's live view and activity read by them (T127).
   - `explain` gives the run's own decisions that no step holds (`decisions`: a board
     task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
     holder, the result's subject and acceptance, the report, a funding gate, and the
@@ -651,7 +656,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.6 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.7 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -687,6 +692,8 @@ second execution path (INV-1).
   - since 1.6 ([ADR-0056](../../../docs/decisions/adr/0056-a-failed-lease-renewal-is-not-a-lost-lease-and-death-needs-a-verdict.md)),
     a task's next attempt never resumes a session its source holds: it starts fresh, given its
     brief, the decision saying why, and resumes it again once the source frees it;
+  - since 1.7 (T127), `usage` lists runs by state whenever they started, and by when their state
+    changed, the latest changed first, at most the limit asked;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

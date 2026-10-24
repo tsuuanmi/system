@@ -38,8 +38,8 @@ const withOffset = (ms: number, hours: number): string => {
   return `${shifted}${sign}${String(Math.abs(hours)).padStart(2, '0')}:00`
 }
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>): Scenario<Boot> => ({
-  id: `eventLog.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since = '1.0'): Scenario<Boot> => ({
+  id: `eventLog.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
     try {
@@ -52,7 +52,9 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const eventLogSuite = defineSuite<Boot>({
   seam: 'eventLog',
-  contract: '1.0',
+  // 1.1: a read newest first (`order: 'desc'`) and before a cursor (`beforeSeq`), so a reader takes the
+  // latest entries of a run or a type without reading the log forward (T127).
+  contract: '1.1',
   scenarios: [
     scenario('append-assigns-seq', 'assigns each entry the next monotonic seq and its UTC time, and stores it as an event@1.0 record read back unchanged (QA-7, INV-14)', async (ctx) => {
       const before = Date.now()
@@ -158,6 +160,30 @@ export const eventLogSuite = defineSuite<Boot>({
       expect(read).toEqual(Array.from({ length: 1001 }, (_, i) => i + 1))
       expect(ctx.eventLog.query({ afterSeq: 1001 })).toEqual([])
     }),
+    scenario('query-newest-first', 'reads newest first with order desc, filtered and bounded as in seq order, and pages back before a cursor with no gap or repeat; refuses an order or cursor it cannot honour (QA-7, INV-9, INV-2)', async (ctx) => {
+      ctx.store.transaction(() => {
+        for (let i = 0; i < 1001; i++) ctx.eventLog.append({ type: i % 2 ? 'a.odd' : 'a.even', runId: i < 10 ? 'r1' : 'r2', data: { i } })
+      })
+      // The latest entry of a run, of a type, at once.
+      expect(seqs(ctx.eventLog.query({ runId: 'r1', order: 'desc', limit: 1 }))).toEqual([10])
+      expect(seqs(ctx.eventLog.query({ type: 'a.odd', order: 'desc', limit: 2 }))).toEqual([1000, 998])
+      expect(seqs(ctx.eventLog.query({ order: 'asc', limit: 2 }))).toEqual([1, 2])
+      expect(ctx.eventLog.query({ order: 'desc', limit: 5000 })).toHaveLength(1000)
+      // Paged back by beforeSeq, above afterSeq: every entry once.
+      const read: number[] = []
+      let before: number | undefined
+      for (;;) {
+        const page = ctx.eventLog.query({ order: 'desc', afterSeq: 100, limit: 300, ...(before !== undefined ? { beforeSeq: before } : {}) })
+        if (!page.length) break
+        expect(page.length).toBeLessThanOrEqual(300)
+        read.push(...seqs(page))
+        before = page.at(-1)!.seq
+      }
+      expect(read).toEqual(Array.from({ length: 901 }, (_, i) => 1001 - i))
+      expect(seqs(ctx.eventLog.query({ beforeSeq: 4 }))).toEqual([1, 2, 3])
+      expect(seqs(ctx.eventLog.query({ runId: 'r1', beforeSeq: 4, order: 'desc' }))).toEqual([3, 2, 1])
+      for (const filter of [{ order: 'newest' }, { beforeSeq: Number.NaN }, { beforeSeq: 1.5 }]) expect(failed(() => ctx.eventLog.query(filter as never)), JSON.stringify(filter)).toBe(true)
+    }, '1.1'),
     scenario('query-since', 'reads what happened since a time given in any UTC offset, and refuses a since that is not a time (QA-7, INV-2)', async (ctx) => {
       const before = Date.now() - 1000
       ctx.eventLog.append({ type: 'a.one' })

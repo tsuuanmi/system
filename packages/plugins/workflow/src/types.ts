@@ -99,6 +99,15 @@ export interface RunView {
  * run's `result` already gives (its answer, result and brief ids, what it waits for, errors, its
  * task), so a page of recent runs stays small.
  */
+/**
+ * Which runs `usage` lists (contract 1.7, optional): only runs in these states, whenever they started; and
+ * only runs whose state changed after `changedSince` (an ISO time), the latest changed first.
+ */
+export interface UsageFilter {
+  status?: readonly RunStatus[]
+  changedSince?: string
+}
+
 export interface UsageRunView extends Pick<RunView, 'runId' | 'template' | 'status' | 'sessionId' | 'createdAt' | 'updatedAt'> {
   nodes: Array<Omit<NodeView, 'result' | 'brief' | 'error'>>
 }

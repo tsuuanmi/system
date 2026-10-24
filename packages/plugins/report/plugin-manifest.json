@@ -15,7 +15,7 @@
     },
     {
       "seam": "eventLog",
-      "range": "^1.0.0"
+      "range": "^1.1.0"
     },
     {
       "seam": "approvals",

@@ -457,8 +457,9 @@ export const workflowSuite = defineSuite<Boot>({
   // member avoids every Worker on an account another member holds (its siblings), and is refused
   // when that account cannot be told apart (REQ-TEAM-4). 1.6: a task's next attempt never resumes a
   // session its Worker source holds (`held`: blocked on an approval, or its latest run not finished
-  // or not known to be gone), and starts fresh, saying why (ADR-0056).
-  contract: '1.6',
+  // or not known to be gone), and starts fresh, saying why (ADR-0056). 1.7: `usage` lists runs by state,
+  // whenever they started, and by when their state changed, the latest changed first (T127).
+  contract: '1.7',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1237,5 +1238,24 @@ export const workflowSuite = defineSuite<Boot>({
       expect(refused.error).toMatchObject({ kind: 'config_error' })
       expect(workers.started).toHaveLength(1)
     }, {}, '1.5'),
+    scenario('usage-by-state', 'lists runs by state whenever they started, and by when their state changed, the latest changed first, at most the limit asked: a long run is never past the limit for being old (T127, INV-9)', async ({ ctx, workers }) => {
+      workers.reply = (request) => (request.prompt.includes('long') ? 'hold' : { text: 'done' })
+      const long = start(ctx, 'solo', 'long')
+      await until(() => nodeOf(ctx, long.runId, 'solo')?.state === 'RUNNING', 'the long run running')
+      await settled(ctx, start(ctx, 'solo', 'early').runId)
+      await pause(10)
+      const mark = new Date().toISOString()
+      await pause(10)
+      const later: string[] = []
+      for (const input of ['later 1', 'later 2', 'later 3']) later.push((await settled(ctx, start(ctx, 'solo', input).runId)).runId)
+      // By when they started alone, the long run is past the latest three.
+      expect(ctx.workflow.usage(3).map((r) => r.runId)).toEqual([...later].reverse())
+      expect(ctx.workflow.usage(3, { status: ['running'] }).map((r) => r.runId)).toEqual([long.runId])
+      expect(ctx.workflow.usage(50, { status: ['completed', 'failed'], changedSince: mark }).map((r) => r.runId)).toEqual([...later].reverse())
+      expect(ctx.workflow.usage(2, { status: ['completed'], changedSince: mark }).map((r) => r.runId)).toEqual([later[2], later[1]])
+      expect(ctx.workflow.usage(50, { status: ['failed'] })).toEqual([])
+      expect(ctx.workflow.usage(50, { status: [] })).toEqual([])
+      expect(() => ctx.workflow.usage(5, { changedSince: 'yesterday' })).toThrow()
+    }, {}, '1.7'),
   ],
 })

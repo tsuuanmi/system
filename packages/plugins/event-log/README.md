@@ -10,6 +10,10 @@
     listener can neither veto the append nor make it fail.
   - `query`: reads after a cursor, with filters (type, run, node, session,
     turn, and `since`, a time normalized to UTC; an invalid one is refused).
+    Contract 1.1: only before a cursor too (`beforeSeq`), and newest first with
+    `order: 'desc'`, so a reader takes the latest entries of a run or a type at
+    once and pages back, never reading the log forward (the web UI's live view
+    and activity, T127); an order or cursor it cannot honour is refused.
   - `trim`: deletes entries older than `retainDays` in batches, at start and
     daily (INV-9); a failed pass is logged and retried. With the default 0,
     every entry is kept. Freed space is reused, not returned to the disk.
@@ -17,11 +21,12 @@
   or private content.
 - **Used by:** `workflow`, `turns`, `agent-workers`, `models`, `approvals`,
   `digest`, `digest-extractive`, `browser-patchright`, `provider-chatgpt-web`,
-  and `provider-gemini-web` append; `mcp-server` (the `events` tool and health)
-  and `report` query; `profile-scientific-research` listens to `system/event`.
+  and `provider-gemini-web` append; `mcp-server` (the `events` tool and health),
+  `report`, and `web-ui` (the activity and live view) query;
+  `profile-scientific-research` listens to `system/event`.
 - **Injects:** `store`.
 - **Config:** `maxDataBytes`, `retainDays` (default 0: keep every entry).
-- The conformance suite is [`conformance/event-log.ts`](conformance/event-log.ts):
+- The conformance suite is [`conformance/event-log.ts`](conformance/event-log.ts), contract 1.1:
   - `append` assigns the next `seq` and a UTC `at`, and what is read back is the
     `event@1.0` record appended, unchanged by later appends;
   - an invalid record is refused and nothing stored; `data` is accepted up to
@@ -31,5 +36,8 @@
   - `query` filters by type, run, node, session, and turn in `seq` order, pages
     after a cursor with no gap or repeat and at most 1000 a call, and reads since
     a time in any UTC offset, refusing one that is not a time;
+  - from 1.1, `query` reads newest first with `order: 'desc'`, filtered and
+    bounded as in order, and pages back before a cursor with no gap or repeat,
+    refusing an order or cursor it cannot honour;
   - `trim` removes every entry older than `retainDays`, a backlog larger than a
     batch included, and keeps younger ones; a `seq` is never reused.
