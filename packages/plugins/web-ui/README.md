@@ -38,8 +38,10 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - when `ctx.board` is present, the **reviews**: every board task in review, those the board
   holds for the operator first ([board](../../../docs/design/board.md#required-checks-bind-at-acceptance)),
   each with its project, exact subject, result artifacts, the checks still pending, its run, and
-  until when it waits, and the operator's **Accept / Reject**. Without it the reviews routes
-  answer `503`;
+  until when it waits, and the operator's **Accept / Reject**; above them, and on Home's waiting
+  line, when the first review held for the operator expires (marked within the hour), since an
+  unanswered one expires and its task waits for input that nothing revives (T99 D6). Without it
+  the reviews routes answer `503`;
 - when `ctx.board` is present, the **board** page (`?view=board`), a Kanban: a project filter (all
   by default); each project's header with its state, charter version, what of it waits for the
   operator (linked), and the moves; idle Workers and ready tasks; then a column per task state

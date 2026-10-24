@@ -341,7 +341,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   tokens. Plugins contribute tools for their lifetime, each declaring the scope that may call
   it ([MCP tools](../reference/mcp-tools.md),
   [ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)). Its `status` tool gives the
-  host's health, read from the mounted services, the resource ledger and the event log among them
+  host's health, read from the mounted services, the resource ledger, the event log, and the
+  board's reviews held for the operator among them
   ([mcp-server](../../packages/plugins/mcp-server/README.md)).
 - **Request guard** (in `gateway-core`): one set of transport checks for every client endpoint
   (MCP, both protocol gateways, the web UI): a loopback `Host`, no browser `Origin`, the bearer
