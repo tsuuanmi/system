@@ -224,16 +224,38 @@ describe('agent accounts: quarantine (ADR-0051, REQ-ACC-7, REQ-ACC-11)', () => {
     expect(accounts(b).list().map((a) => a.quarantine?.reason)).toEqual(['ambiguous', 'ambiguous'])
   })
 
-  it('quarantines an account no verified reader can read (unverified): an unpinned version, or a runtime with no reader', async () => {
+  it('quarantines an account no verified reader can read (unverified): an unpinned version, or a runtime with no reader, saying what the reading found (agent-account@1.1)', async () => {
     const b = await boot({ runtime: (home) => new FakeAgentRuntime(KIND, '9.9.9', home) })
     await accounts(b).begin({ provider: KIND })
     FakeAgentRuntime.signIn(b.home, 'alice@example.test')
     const unverified = await accounts(b).verify({ provider: KIND, slot: 1 })
-    expect(unverified).toMatchObject({ status: 'quarantined', quarantine: { reason: 'unverified' } })
+    expect(unverified).toMatchObject({ schema: 'agent-account@1.1', status: 'quarantined', quarantine: { reason: 'unverified', detail: 'slot 1 of fake-runtime cannot be verified: no reader is verified for version 9.9.9' } })
     expect(unverified).not.toHaveProperty('accountId')
-    const none = await boot({ runtime: (home) => Object.assign(new FakeAgentRuntime(KIND, '1.0.0', home), { identity: undefined }) })
-    await accounts(none).begin({ provider: KIND })
-    expect(await accounts(none).verify({ provider: KIND, slot: 1 })).toMatchObject({ status: 'quarantined', quarantine: { reason: 'unverified' } })
+    schemas.assertRecord(unverified)
+    // A slot taken before its runtime lost its reader (an earlier release) still reads unverified.
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-accounts-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const earlier = await boot({ dir })
+    await accounts(earlier).begin({ provider: KIND })
+    await earlier.stop()
+    const none = await boot({ dir, runtime: (home) => Object.assign(new FakeAgentRuntime(KIND, '1.0.0', home), { identity: undefined }) })
+    expect(await accounts(none).verify({ provider: KIND, slot: 1 })).toMatchObject({ status: 'quarantined', quarantine: { reason: 'unverified', detail: expect.stringMatching(/no identity reader/) } })
+  })
+
+  it('takes no free slot of a runtime with no identity reader, so adopting its home never holds the Workers running there (T103, PROP-0012 open question 1)', async () => {
+    const b = await boot({ runtime: (home) => Object.assign(new FakeAgentRuntime(KIND, '1.0.0', home), { identity: undefined }) })
+    const state = async () => (await b.ctx.workers.list()).find((w) => w.worker === 'agent:reviewer')!.state
+    expect(await state()).toBe('ready')
+    for (const ref of [{ provider: KIND }, { provider: KIND, slot: 1 }, { provider: KIND, slot: 2 }]) {
+      await expect(accounts(b).begin(ref), JSON.stringify(ref)).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/^fake-runtime has no verified way to read who is signed in \(no identity reader\).*Nothing was enrolled: its Workers run as before/) })
+    }
+    const refused = await call(b, 'account_enroll', { step: 'begin', provider: KIND })
+    expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^config_error: fake-runtime has no verified way to read who is signed in/) }] })
+    // Nothing was taken, recorded, or made, and the Worker in its home runs as before.
+    expect(accounts(b).list()).toEqual([])
+    expect(decisions(b)).toEqual([])
+    expect(existsSync(join(b.dir, 'agent-homes'))).toBe(false)
+    expect(await state()).toBe('ready')
   })
 
   it('reads a slot no one is signed in to as signed-out, and frees a slot on removal, keeping its home', async () => {
@@ -297,7 +319,8 @@ describe('agent accounts: the Workers in an enrolled home (ADR-0051, INV-2)', ()
     FakeAgentRuntime.signIn(b.home, 'bob@example.test')
     const source = b.ctx.workers.source('agents')!
     const done = await source.wait(source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'review', requirement: requirement(), decisions: admitted.decisions }).id, 10_000)
-    expect(done).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(/quarantined \(changed\)/) } })
+    // The refusal says the reason and what the reading found (agent-account@1.1 `detail`).
+    expect(done).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(/quarantined \(changed: slot 1 of fake-runtime now signs in as another principal/) } })
     expect(accounts(b).list()[0]).toMatchObject({ status: 'quarantined', quarantine: { reason: 'changed' } })
   })
 })
@@ -318,6 +341,45 @@ describe('agent accounts: the operator\'s MCP tools (mcp-agent-accounts@1.0)', (
     const accountId = (verified.structuredContent!.account as AgentAccount).accountId!
     expect((await call(b, 'account_remove', { accountId })).structuredContent).toMatchObject({ removed: { accountId } })
     expect(JSON.stringify(listed)).not.toMatch(/alice/)
+  })
+
+  it('runs the check of what a change would return before it commits: a begin, a verification, or a removal it refuses leaves every slot as it was (T103)', async () => {
+    const b = await boot()
+    const defect = (): never => {
+      throw new Error('a defect')
+    }
+    await expect(accounts(b).begin({ provider: KIND }, defect)).rejects.toThrow('a defect')
+    expect(accounts(b).list()).toEqual([])
+    expect(decisions(b)).toEqual([])
+    await accounts(b).begin({ provider: KIND })
+    FakeAgentRuntime.signIn(b.home, 'alice@example.test')
+    await expect(accounts(b).verify({ provider: KIND, slot: 1 }, { check: defect })).rejects.toThrow('a defect')
+    expect(accounts(b).list()).toMatchObject([{ status: 'enrolled', revision: 0 }])
+    expect(decisions(b).map((d) => d.outcome.option)).toEqual(['enrolled'])
+    const ready = await accounts(b).verify({ provider: KIND, slot: 1 })
+    await expect(accounts(b).remove({ provider: KIND, slot: 1 }, defect)).rejects.toThrow('a defect')
+    expect(accounts(b).list()).toEqual([ready])
+    expect(decisions(b).map((d) => d.outcome.option)).toEqual(['enrolled', 'ready'])
+  })
+
+  it('lists each account with the operator\'s label from its assignment, and each runtime with its title when its provider gives one (mcp-agent-accounts@1.2, T103)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-accounts-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const titled = (home: string): AgentRuntimeProvider => Object.assign(new FakeAgentRuntime(KIND, '1.0.0', home), { title: 'Fake Agent' })
+    const first = await boot({ dir, runtime: titled })
+    await accounts(first).begin({ provider: KIND })
+    FakeAgentRuntime.signIn(first.home, 'alice@example.test')
+    const accountId = (await accounts(first).verify({ provider: KIND, slot: 1 })).accountId!
+    await first.stop()
+    const b = await boot({ dir, runtime: titled, config: { workers: [], roles: [{ id: 'review', workspace: join(dir, 'ws'), sandbox: 'read-only', tier: 'standard' }], assignments: [{ account: accountId, roles: ['review'], label: 'science' }] } })
+    const listed = await call(b, 'account_agents', {})
+    schemas.assertDef('mcp-agent-accounts@1.2', 'account-agents-output', listed.structuredContent)
+    expect(listed.structuredContent).toMatchObject({
+      accounts: [{ account: { accountId }, workers: [`agent:${accountId}/review`], label: 'science' }],
+      providers: [{ provider: KIND, title: 'Fake Agent', identity: true, login: true }],
+    })
+    // Never part of a Worker id, and not in the record the slot keeps.
+    expect(JSON.stringify(accounts(b).list())).not.toMatch(/science/)
   })
 
   it('refuses an input its schema refuses, and a call that fails, doing nothing', async () => {

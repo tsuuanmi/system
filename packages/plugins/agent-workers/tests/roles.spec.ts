@@ -23,7 +23,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import { FakeAgentRuntime } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
-import { planMigration } from '../src/migrate.ts'
+import { Cutover, planMigration } from '../src/migrate.ts'
 import { deriveWorkers } from '../src/roles.ts'
 import AgentWorkers, { type AgentWorkerConfig, checkConfig, type Config } from '../src/index.ts'
 
@@ -129,7 +129,7 @@ const wait = (b: Booted, run: WorkerExecution | string): Promise<WorkerExecution
 const described = async (b: Booted): Promise<Map<string, CapabilityDescriptor>> => new Map((await b.ctx.workers.list()).map((d) => [d.worker, d]))
 const call = async (b: Booted, tool: string, args: Record<string, unknown>) => {
   const result = await b.mcp.tools.get(tool)!.handler(args, { scope: 'operator' }) as { isError?: boolean; content: Array<{ text: string }>; structuredContent?: Record<string, unknown> }
-  if (!result.isError) schemas.assertDef('mcp-agent-accounts@1.1', `${tool.replaceAll('_', '-')}-output`, result.structuredContent)
+  if (!result.isError) schemas.assertDef('mcp-agent-accounts@1.2', `${tool.replaceAll('_', '-')}-output`, result.structuredContent)
   return result
 }
 const enrollments = (b: Booted) => (b.ctx.store.db.prepare("SELECT id FROM artifacts WHERE kind = 'decision' ORDER BY created_at, rowid").all() as Array<{ id: string }>)
@@ -169,6 +169,16 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
     for (const bad of ['', 'two\nlines', 'x'.repeat(201), 42]) {
       expect(() => deriveWorkers([ROLE('review', { description: bad })], [], []), String(bad)).toThrow(/roles\[0\] \(review\)\.description must be plain text on one line, 1 to 200 characters/)
     }
+  })
+
+  it('takes an account\'s display label for people only: the Worker ids stay agent:<accountId>/<role>, and a label that is not plain text on one line of at most 64 characters is refused (T103)', () => {
+    const labelled = deriveWorkers([ROLE('review')], [{ account: ACC1, roles: ['review'], label: 'science' }], [])
+    expect(labelled).toEqual(deriveWorkers([ROLE('review')], [{ account: ACC1, roles: ['review'] }], []))
+    expect(labelled.map((w) => w.id)).toEqual([`${ACC1}/review`])
+    for (const bad of ['', 'two\nlines', 'x'.repeat(65), 42]) {
+      expect(() => deriveWorkers([ROLE('review')], [{ account: ACC1, roles: ['review'], label: bad as string }], []), String(bad)).toThrow(/assignments\[0\] \(fake-a:0123456789abcdef\)\.label must be plain text on one line, 1 to 64 characters/)
+    }
+    expect(checkConfig({ roles: [ROLE('review')], assignments: [{ account: ACC1, roles: ['review'], label: 'lead' }] })).toEqual([])
   })
 
   it('refuses a malformed, repeated, or unknown role or account, and a review member with no family on its runtime', () => {
@@ -565,5 +575,138 @@ describe('system account migrate (PROP-0012 phase F: migration from hand-named r
     expect(plan.blockers).toEqual([])
     const one = planMigration({ rows: [rows[0]!, { ...rows[1]!, kinds: ['code'] }], providers: [], accounts, runtimes, pools: undefined, stop: [] })
     expect(one.roles.map((r) => [r.id, r.kinds])).toEqual([['develop', ['code']]])
+  })
+
+  it('keeps a role\'s description when its rows agree on it, and none when they do not (rule version 3, T103)', () => {
+    const accounts = [A, B].map((provider, i) => ({
+      schema: 'agent-account@1.0' as const, provider, slot: 1, home: `/h/${provider}`, status: 'ready' as const, accountId: `${provider}:${String(i).padStart(16, '0')}`, revision: 1, updatedAt: 'x',
+    }))
+    const runtimes = new Map([[A, { home: `/h/${A}` }], [B, { home: `/h/${B}` }]])
+    const reader = { workspace: '/w', sandbox: 'read-only' as const, tier: 'standard' as const }
+    const agree: AgentWorkerConfig[] = [{ id: 'a-review', runtime: A, ...reader, description: 'Reviews a change' }, { id: 'b-review', runtime: B, ...reader, description: 'Reviews a change' }]
+    expect(planMigration({ rows: agree, providers: [], accounts, runtimes, pools: undefined, stop: [] }).roles).toEqual([{ id: 'review', ...reader, description: 'Reviews a change' }])
+    for (const differ of [[agree[0]!, { ...agree[1]!, description: 'Reviews another way' }], [agree[0]!, { ...agree[1]!, description: undefined }]]) {
+      expect(planMigration({ rows: differ, providers: [], accounts, runtimes, pools: undefined, stop: [] }).roles).toEqual([{ id: 'review', ...reader }])
+    }
+  })
+
+  it('stops the move for a runtime that reads no identity, whose account cannot be enrolled, until its Workers are stopped (T103)', () => {
+    const accounts = [{ schema: 'agent-account@1.0' as const, provider: A, slot: 1, home: `/h/${A}`, status: 'ready' as const, accountId: `${A}:${'0'.repeat(16)}`, revision: 1, updatedAt: 'x' }]
+    const runtimes = new Map([[A, { home: `/h/${A}`, identity: true }], [C, { home: `/h/${C}`, identity: false }]])
+    const rows: AgentWorkerConfig[] = [{ id: 'a-review', runtime: A, workspace: '/w', sandbox: 'read-only', tier: 'standard' }, { id: 'c-review', runtime: C, workspace: '/w', sandbox: 'read-only', tier: 'standard' }]
+    const waiting = planMigration({ rows, providers: [], accounts, runtimes, pools: undefined, stop: [] })
+    expect(waiting.blockers).toEqual([expect.stringMatching(/^fake-c has no verified way to read who is signed in \(no identity reader\), so no account of it can be enrolled.*the cutover waits until its identity can be verified, or stop its Workers at the cutover \(--stop fake-c/)])
+    const stopped = planMigration({ rows, providers: [], accounts, runtimes, pools: undefined, stop: [C] })
+    expect(stopped.blockers).toEqual([])
+    expect(stopped.workers.find((w) => w.from === 'agent:c-review')).toMatchObject({ why: expect.stringMatching(/stopped by the operator at the cutover$/) })
+    expect(stopped.workers.find((w) => w.from === 'agent:c-review')).not.toHaveProperty('to')
+  })
+
+  // T98's live patch: rows with kinds and descriptions, so the plan's roles carry both; the planner
+  // gave roles kinds and the tool's schema refused them, after an apply would have committed.
+  it('plans, applies, and rolls back through account_migrate a move whose roles have kinds and descriptions, each output as mcp-agent-accounts@1.2 says (T103)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const ws = join(dir, 'ws')
+    const row = (id: string, runtime: string, extra: Partial<AgentWorkerConfig>): AgentWorkerConfig => ({ id, runtime, workspace: ws, sandbox: 'read-only', tier: 'standard', ...extra })
+    const config = {
+      workers: [
+        row('claude-code', A, { sandbox: 'workspace-write', kinds: ['code'], description: 'Writes the code' }),
+        row('codex-writer', B, { sandbox: 'workspace-write', kinds: ['tests', 'docs'], description: 'Writes the docs and the tests' }),
+        row('claude-research', A, { description: 'Reviews a change' }),
+        row('codex-review', B, { description: 'Reviews a change' }),
+        row('agy-review', C, { description: 'Reviews a change with a third family' }),
+        row('claude-member', A, { tier: 'frontier', description: 'Gives a second opinion' }),
+        row('codex-member', B, { tier: 'frontier', description: 'Gives a second opinion' }),
+      ],
+    }
+    const b = await boot(config, { dir })
+    const a = await enroll(b, A, 'alice@example.test')
+    const bb = await enroll(b, B, 'bob@example.test')
+    expect(await wait(b, start(b, 'agent:codex-review', 'turn-1', 'ses_codex'))).toMatchObject({ status: 'completed' })
+    const planned = await call(b, 'account_migrate', { stop: [C] })
+    expect(planned.isError).toBeUndefined()
+    const plan = planned.structuredContent!.plan as ReturnType<typeof planMigration>
+    expect(plan.roles.map((r) => [r.id, r.sandbox, r.tier, r.kinds, r.description])).toEqual([
+      // The read-only rows of three runtimes disagree on their description: their role has none.
+      ['review', 'read-only', 'standard', undefined, undefined],
+      ['develop', 'workspace-write', 'standard', ['code'], 'Writes the code'],
+      ['review-2', 'read-only', 'frontier', undefined, 'Gives a second opinion'],
+      ['develop-2', 'workspace-write', 'standard', ['docs', 'tests'], 'Writes the docs and the tests'],
+    ])
+    expect(plan.blockers).toEqual([])
+    const applied = await call(b, 'account_migrate', { apply: true, stop: [C] })
+    expect(applied.isError).toBeUndefined()
+    expect(applied.structuredContent).toMatchObject({ outcome: 'applied', plan, moved: { sessions: 1, runs: 1 }, cutover: { plan } })
+    expect(enrollments(b).filter((d) => d.decider.id === 'agent-workers.migration').map((d) => d.decider)).toEqual(Array(8).fill({ type: 'rule', id: 'agent-workers.migration', version: '3' }))
+    const row2 = applied.structuredContent!.row as Partial<Config>
+    expect(row2.roles).toEqual(plan.roles)
+    await b.stop()
+    // The printed row loads, and each derived Worker describes its role's kinds and description.
+    const derived = await boot(row2, { dir })
+    const workers = await described(derived)
+    expect(workers.get(`agent:${a}/develop`)).toMatchObject({ kinds: ['code'], description: 'Writes the code' })
+    expect(workers.get(`agent:${bb}/develop-2`)).toMatchObject({ kinds: ['docs', 'tests'], description: 'Writes the docs and the tests' })
+    expect(workers.get(`agent:${bb}/review`)).not.toHaveProperty('description')
+    expect(derived.ctx.workers.affinity('ses_codex')).toEqual([`agent:${bb}/review`])
+    const undone = await call(derived, 'account_migrate', { rollback: true })
+    expect(undone.isError).toBeUndefined()
+    expect(undone.structuredContent).toMatchObject({ outcome: 'rolled-back', plan, moved: { sessions: 1, runs: 1 } })
+    expect(derived.ctx.workers.affinity('ses_codex')).toEqual(['agent:codex-review'])
+  })
+
+  it('refuses an apply whose output its schema refuses before anything is decided or moved, where it used to commit and only then report the defect (T103)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agent-roles-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const ws = join(dir, 'ws')
+    // A workspace longer than a plan's role may name (4096): the row loads, and its plan is one the schema refuses.
+    const config = { workers: [...LIVE(ws), { id: 'long-writer', runtime: A, workspace: `/${'w'.repeat(5000)}`, sandbox: 'workspace-write' as const, tier: 'standard' as const }] }
+    const b = await boot(config, { dir })
+    await enroll(b, A, 'alice@example.test')
+    await enroll(b, B, 'bob@example.test')
+    expect(await wait(b, start(b, 'agent:codex-review', 'turn-1', 'ses_codex'))).toMatchObject({ status: 'completed' })
+    const decided = enrollments(b).length
+    // The plan alone changes nothing, and still says it is a defect.
+    expect(await call(b, 'account_migrate', { stop: [C] })).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^account_migrate made an output its schema refuses \(a defect\): .*workspace/) }] })
+    const refused = await call(b, 'account_migrate', { apply: true, stop: [C] })
+    expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^account_migrate would make an output its schema refuses \(a defect\), so nothing changed: .*workspace/) }] })
+    // Nothing was decided, applied, or moved: the hand-named Workers run on.
+    expect(enrollments(b)).toHaveLength(decided)
+    expect(b.ctx.store.db.prepare('SELECT (SELECT COUNT(*) FROM agent_cutover) AS cutover, (SELECT COUNT(*) FROM agent_cutover_moves) AS moves').get()).toEqual({ cutover: 0, moves: 0 })
+    expect(b.ctx.workers.affinity('ses_codex')).toEqual(['agent:codex-review'])
+    expect(await wait(b, start(b, 'agent:codex-review', 'still'))).toMatchObject({ status: 'completed' })
+  })
+
+  it('runs the cutover\'s check after every write and before the commit: a check that throws leaves an apply and a rollback undone (T103)', async () => {
+    const { b, ws } = await live()
+    await enroll(b, A, 'alice@example.test')
+    const bb = await enroll(b, B, 'bob@example.test')
+    expect(await wait(b, start(b, 'agent:codex-review', 'turn-1', 'ses_codex'))).toMatchObject({ status: 'completed' })
+    const runtimes = new Map([A, B, C].map((kind) => [kind, { home: b.homes[kind] }]))
+    const plan = planMigration({ rows: LIVE(ws), providers: [], accounts: accounts(b).list(), runtimes, pools: undefined, stop: [C] })
+    expect(plan.blockers).toEqual([])
+    const cutover = new Cutover(b.ctx)
+    const decided = enrollments(b).length
+    let seen: unknown
+    expect(() => cutover.apply(plan, () => undefined, (applied) => {
+      seen = applied
+      throw new Error('a defect')
+    })).toThrow('a defect')
+    // The check saw the cutover as it would have stood, and none of it stands.
+    expect(seen).toMatchObject({ applied: true, moved: { sessions: 1, runs: 1 } })
+    expect(cutover.state()).toBeUndefined()
+    expect(enrollments(b)).toHaveLength(decided)
+    expect(b.ctx.workers.affinity('ses_codex')).toEqual(['agent:codex-review'])
+    expect(cutover.apply(plan, () => undefined).applied).toBe(true)
+    expect(b.ctx.workers.affinity('ses_codex')).toEqual([`agent:${bb}/review`])
+    const applied = enrollments(b).length
+    expect(() => cutover.rollback(() => {
+      throw new Error('a defect')
+    })).toThrow('a defect')
+    expect(cutover.state()).toMatchObject({ plan })
+    expect(enrollments(b)).toHaveLength(applied)
+    expect(b.ctx.workers.affinity('ses_codex')).toEqual([`agent:${bb}/review`])
+    expect(cutover.rollback()).toMatchObject({ rolledBack: true, moved: { sessions: 1, runs: 1 } })
+    expect(b.ctx.workers.affinity('ses_codex')).toEqual(['agent:codex-review'])
   })
 })

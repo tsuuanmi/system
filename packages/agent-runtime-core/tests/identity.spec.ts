@@ -3,11 +3,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeIdentityConformance, agentRuntimeProviderConformance, FakeAgentRuntime } from '../conformance/agent-runtimes.ts'
-import { type AgentRuntimeProvider, accountIdOf, homeProblem, identityHmac, MAX_HOME_FILE_BYTES, maskEmail, probeIn, readHomeJson } from '../src/index.ts'
+import { type AgentRuntimeProvider, accountIdOf, homeProblem, identityHmac, MAX_HOME_FILE_BYTES, maskEmail, probeIn, readHomeJson, titleOf } from '../src/index.ts'
 
 // The fake with scripted homes passes the provider suite and the identity suite (ADR-0051).
 agentRuntimeProviderConformance('FakeAgentRuntime', () => new FakeAgentRuntime())
 agentRuntimeIdentityConformance('FakeAgentRuntime', { make: () => new FakeAgentRuntime(), signIn: FakeAgentRuntime.signIn, signOut: FakeAgentRuntime.signOut })
+
+describe('a runtime\'s title for people (T103)', () => {
+  it('is used only when it is plain text on one line of at most 64 characters; otherwise there is none', () => {
+    expect(titleOf({ title: 'Claude Code' })).toBe('Claude Code')
+    for (const bad of ['', 'two\nlines', 'x'.repeat(65), 42, undefined]) expect(titleOf({ title: bad as string }), String(bad)).toBeUndefined()
+    expect(titleOf(undefined)).toBeUndefined()
+  })
+})
 
 describe('agent account identity (ADR-0051)', () => {
   const key = new Uint8Array(32).fill(1)

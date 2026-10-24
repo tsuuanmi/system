@@ -20,22 +20,23 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { type CredentialProvider, type CredentialRecord, credentialKey } from '@deepseek-ai/dsh-credentials'
-import { type AgentRuntimeProvider, type IdentityReading, type LoginCommand, accountIdOf } from '@tsuuanmi/system-agent-runtime-core'
+import { type AgentRuntimeProvider, type IdentityReading, type LoginCommand, accountIdOf, titleOf } from '@tsuuanmi/system-agent-runtime-core'
 import { type ContentId, ensurePrivateDir, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
 export type AccountStatus = 'enrolled' | 'ready' | 'signed-out' | 'quarantined'
 export type QuarantineReason = 'changed' | 'ambiguous' | 'duplicate' | 'unverified'
 
-/** One slot and the account signed in to its home (`agent-account@1.0`). */
+/** One slot and the account signed in to its home (`agent-account@1.0`; `@1.1` with a quarantine's `detail`). */
 export interface AgentAccount {
-  schema: 'agent-account@1.0'
+  schema: 'agent-account@1.0' | 'agent-account@1.1'
   accountId?: string
   provider: string
   slot: number
   home: string
   status: AccountStatus
-  quarantine?: { reason: QuarantineReason; since: string; decision: ContentId }
+  /** Why it takes no work: the reason, since when, its decision, and what the reading found (`detail`, `@1.1`). */
+  quarantine?: { reason: QuarantineReason; since: string; decision: ContentId; detail?: string }
   identity?: { hmac: string; reader: string; runtimeVersion: string; verifiedAt: string }
   hint?: string
   revision: number
@@ -78,6 +79,15 @@ const KEY_RECORD = credentialKey('system-agent-workers', 'identity-key')
 const KEY_BYTES = 32
 const schemas = new SchemaRegistry()
 const now = (): string => new Date().toISOString()
+/** The most characters of a quarantine's `detail` (`agent-account@1.1`). */
+const MAX_DETAIL = 300
+/** One line of at most `max` characters (code points), cut with an ellipsis. */
+const clip = (text: string, max: number): string => {
+  const line = text.replace(/\p{Cc}+/gu, ' ').trim() || 'no reason was given'
+  return [...line].length > max ? `${[...line].slice(0, max - 1).join('')}…` : line
+}
+/** A quarantine's reason, with what its reading found when the record says it (1.1). */
+const quarantineText = (q: NonNullable<AgentAccount['quarantine']> | undefined): string => (q ? `${q.reason}${q.detail ? `: ${q.detail}` : ''}` : 'duplicate')
 
 interface Row {
   provider: string
@@ -94,6 +104,8 @@ export interface AccountsOptions {
   root: string
   /** The configured Workers that run on a slot's account, for the listing. */
   workersIn: (account: AgentAccount) => string[]
+  /** The operator's display label of an account, by its id (agent-workers `assignments[].label`); for people only. */
+  labelOf?: (accountId: string) => string | undefined
 }
 
 /** What one reading makes of a slot: its next status and why, and what it makes of the slots it collides with. */
@@ -116,18 +128,31 @@ export class AgentAccounts {
     return (this.ctx.store.db.prepare('SELECT * FROM agent_accounts ORDER BY provider, slot').all() as unknown as Row[]).map((row) => JSON.parse(row.record) as AgentAccount)
   }
 
-  /** The providers that can be enrolled into: each registered runtime with its slots, how many are taken, and whether it reads identity. */
-  providers(): Array<{ provider: string; slots: number; taken: number; identity: boolean; login: boolean }> {
+  /**
+   * The providers that can be enrolled into: each registered runtime with its slots, how many are
+   * taken, whether it reads identity and gives a sign-in command, and its title for people, when it
+   * gives one.
+   */
+  providers(): Array<{ provider: string; slots: number; taken: number; identity: boolean; login: boolean; title?: string }> {
     const taken = this.list()
     return this.ctx.agentRuntimes.list().filter((kind) => PROVIDER.test(kind)).map((provider) => {
       const runtime = this.ctx.agentRuntimes.get(provider)
-      return { provider, slots: this.options.slots(provider), taken: taken.filter((a) => a.provider === provider).length, identity: typeof runtime?.identity === 'function', login: typeof runtime?.loginCommand === 'function' }
+      const title = titleOf(runtime)
+      return {
+        provider, slots: this.options.slots(provider), taken: taken.filter((a) => a.provider === provider).length, identity: typeof runtime?.identity === 'function', login: typeof runtime?.loginCommand === 'function',
+        ...(title !== undefined ? { title } : {}),
+      }
     })
   }
 
   /** The configured Workers that run on this slot's account: those assigned to it, or, with hand-named rows, its runtime's when it is the runtime's own home. */
   workersIn(account: AgentAccount): string[] {
     return this.options.workersIn(account)
+  }
+
+  /** The operator's display label of this slot's account, when its assignment gives one; never a routing input. */
+  labelOf(account: AgentAccount): string | undefined {
+    return account.accountId ? this.options.labelOf?.(account.accountId) : undefined
   }
 
   /**
@@ -141,7 +166,7 @@ export class AgentAccounts {
     if (held.length === 1 && account.status === 'ready') return { state: 'ready', account }
     const named = `${accountId} (slot ${held.map((a) => a.slot).join(' and ')} of ${account.provider})`
     const why = held.length > 1 || account.status === 'quarantined'
-      ? `the account ${named} is quarantined (${account.quarantine?.reason ?? 'duplicate'}): its Workers take no work until the operator resolves it (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`
+      ? `the account ${named} is quarantined (${quarantineText(account.quarantine)}): its Workers take no work until the operator resolves it (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`
       : account.status === 'signed-out'
         ? `the account ${named} is signed out: sign it in again (system account login ${accountId})`
         : `the account ${named} is ${account.status} and not verified: finish its sign-in (system account verify ${accountId})`
@@ -163,8 +188,12 @@ export class AgentAccounts {
    * `enrolled` before the slot is taken. A taken slot, or an account by its id, changes nothing: its
    * account is signed in again in its own home, and `verify` then requires the pinned principal.
    * Returns the runtime's own sign-in command for the home, which the operator runs in their terminal.
+   * A runtime with no identity reader takes no free slot: its account could only ever be quarantined
+   * `unverified`, and taking its own home would hold the Workers running there now (INV-2); nothing
+   * is enrolled. `check` sees what a free slot's taking would return, before anything is made or
+   * recorded: one that throws leaves the slot free.
    */
-  begin(ref: SlotRef): Promise<Begun> {
+  begin(ref: SlotRef, check?: (begun: Begun) => void): Promise<Begun> {
     return this.serial(this.providerOf(ref), async () => {
       const taken = 'accountId' in ref || ref.slot !== undefined ? this.find(ref) : undefined
       const provider = taken?.provider ?? (ref as { provider: string }).provider
@@ -172,6 +201,10 @@ export class AgentAccounts {
       if (typeof runtime.loginCommand !== 'function') throw new ProviderError('config_error', `${provider} gives no sign-in command for a home, so it cannot be enrolled`)
       if (taken) return { account: taken, login: runtime.loginCommand(taken.home), adopted: false }
       if ('accountId' in ref) throw new ProviderError('invalid_input', `no slot holds the account ${ref.accountId}`)
+      if (typeof runtime.identity !== 'function') {
+        throw new ProviderError('config_error', `${provider} has no verified way to read who is signed in (no identity reader), so an account of it could only be quarantined (unverified) and take no work; `
+          + `taking a slot would also hold the Workers that run in ${provider}'s own home now. Nothing was enrolled: its Workers run as before until a reader is verified (PROP-0012 open question 1)`)
+      }
       const slots = this.options.slots(provider)
       const used = new Set(this.list().filter((a) => a.provider === provider).map((a) => a.slot))
       const slot = ref.slot ?? Array.from({ length: slots }, (_, i) => i + 1).find((n) => !used.has(n))
@@ -183,6 +216,10 @@ export class AgentAccounts {
       const clash = this.list().find((a) => a.home === home)
       if (clash) throw new ProviderError('config_error', `the home ${home} is already slot ${clash.slot} of ${clash.provider}; one home holds one account`)
       const adopted = slot === 1 && runtime.home === home && existsSync(home)
+      const at = now()
+      const account: AgentAccount = { schema: 'agent-account@1.0', provider, slot, home, status: 'enrolled', revision: 0, updatedAt: at }
+      const begun: Begun = { account, login: runtime.loginCommand(home), adopted }
+      check?.(begun)
       try {
         if (slot > 1) {
           ensurePrivateDir(this.options.root)
@@ -192,13 +229,13 @@ export class AgentAccounts {
       } catch (error) {
         throw new ProviderError('config_error', `slot ${slot} of ${provider} cannot have its home ${home}: ${(error as Error).message}; nothing was enrolled`, { cause: error })
       }
-      const at = now()
-      const account: AgentAccount = { schema: 'agent-account@1.0', provider, slot, home, status: 'enrolled', revision: 0, updatedAt: at }
-      const decision = this.decide(undefined, account, {
-        option: 'enrolled', why: adopted ? `slot 1 of ${provider} adopts its runtime's own home ${home}, where it stays` : `slot ${slot} of ${provider} was free; its home is ${home}`,
+      this.ctx.store.transaction(() => {
+        const decision = this.decide(undefined, account, {
+          option: 'enrolled', why: adopted ? `slot 1 of ${provider} adopts its runtime's own home ${home}, where it stays` : `slot ${slot} of ${provider} was free; its home is ${home}`,
+        })
+        this.write(account, decision, 'insert')
       })
-      this.write(account, decision, 'insert')
-      return { account, login: runtime.loginCommand(home), adopted }
+      return begun
     })
   }
 
@@ -208,9 +245,11 @@ export class AgentAccounts {
    * pinned, equal to it; `signed-out` when no one is; else quarantined `changed`, `ambiguous`,
    * `duplicate` (both slots), or `unverified`. `accept` takes a `changed` slot's new principal as a new
    * account (the old id keeps its history in the decisions). The operator's call: the only way a
-   * quarantine or a sign-out is lifted. Each change is an `enrollment` decision first.
+   * quarantine or a sign-out is lifted. Each change is an `enrollment` decision first. `check` sees
+   * the slot's record as it would be once the reading is recorded, before anything commits: one that
+   * throws leaves every slot as it was.
    */
-  verify(ref: SlotRef, options: { accept?: boolean } = {}): Promise<AgentAccount> {
+  verify(ref: SlotRef, options: { accept?: boolean; check?: (account: AgentAccount) => void } = {}): Promise<AgentAccount> {
     return this.serial(this.providerOf(ref), async () => {
       const current = this.find(ref)
       if (!current) throw new ProviderError('invalid_input', `${describeRef(ref)} holds no account: take a slot first (system account login <provider>)`)
@@ -219,7 +258,7 @@ export class AgentAccounts {
         throw new ProviderError('invalid_input', `slot ${current.slot} of ${current.provider} is ${current.status}${current.quarantine ? ` (${current.quarantine.reason})` : ''}, not quarantined as changed: there is no new principal to accept`)
       }
       const reading = await this.read(runtime, current.home)
-      return this.apply(current, reading, { accept: options.accept === true, operator: true })
+      return this.apply(current, reading, { accept: options.accept === true, operator: true, ...(options.check ? { check: options.check } : {}) })
     })
   }
 
@@ -227,15 +266,19 @@ export class AgentAccounts {
    * Free a slot (ADR-0051): its account is no longer enrolled, recorded first as an `enrollment`
    * decision. Its home and the sign-in in it stay where they are (nothing is deleted); a later sign-in
    * in that slot replaces it. A slot that held a duplicate's other half keeps its quarantine until the
-   * operator verifies it again.
+   * operator verifies it again. `check` sees the record removed before anything commits: one that
+   * throws leaves the slot taken.
    */
-  remove(ref: SlotRef): Promise<AgentAccount> {
+  remove(ref: SlotRef, check?: (removed: AgentAccount) => void): Promise<AgentAccount> {
     return this.serial(this.providerOf(ref), async () => {
       const current = this.find(ref)
       if (!current) throw new ProviderError('invalid_input', `${describeRef(ref)} holds no account`)
-      this.decide(current, { ...current, revision: current.revision + 1 }, { option: 'removed', why: `the operator freed slot ${current.slot} of ${current.provider}; its home ${current.home} is kept as it is` })
-      this.ctx.store.db.prepare('DELETE FROM agent_accounts WHERE provider = ? AND slot = ?').run(current.provider, current.slot)
-      return current
+      return this.ctx.store.transaction(() => {
+        this.decide(current, { ...current, revision: current.revision + 1 }, { option: 'removed', why: `the operator freed slot ${current.slot} of ${current.provider}; its home ${current.home} is kept as it is` })
+        this.ctx.store.db.prepare('DELETE FROM agent_accounts WHERE provider = ? AND slot = ?').run(current.provider, current.slot)
+        check?.(current)
+        return current
+      })
     })
   }
 
@@ -280,22 +323,28 @@ export class AgentAccounts {
       ? `the account in ${provider}'s home, ${named}, is enrolled and not verified yet: finish its sign-in (system account login ${account.provider} --slot ${account.slot})`
       : account.status === 'signed-out'
         ? `the account in ${provider}'s home, ${named}, is signed out: sign it in again (system account login ${account.accountId ?? `${account.provider} --slot ${account.slot}`})`
-        : `the account in ${provider}'s home, ${named}, is quarantined (${account.quarantine?.reason}): it takes no work until the operator resolves it (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`
+        : `the account in ${provider}'s home, ${named}, is quarantined (${quarantineText(account.quarantine)}): it takes no work until the operator resolves it (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`
     return { state: 'unavailable', why }
   }
 
-  /** What one reading makes of a slot, recorded: its own decision first, then each peer's. */
-  private async apply(current: AgentAccount, reading: IdentityReading, options: { accept: boolean; operator: boolean }): Promise<AgentAccount> {
+  /**
+   * What one reading makes of a slot, recorded in one transaction: its own decision first, then each
+   * peer's; `check` sees the slot's record before it commits, and one that throws rolls all of it back.
+   */
+  private async apply(current: AgentAccount, reading: IdentityReading, options: { accept: boolean; operator: boolean; check?: (account: AgentAccount) => void }): Promise<AgentAccount> {
     const others = this.list().filter((a) => a.provider === current.provider && a.slot !== current.slot)
     const assessed = assess(current, reading, others, now(), options.accept)
     // The periodic re-read only takes away: it never lifts a quarantine or a sign-out, nor makes a peer one.
     if (!options.operator && assessed.next.status === 'ready') return current
-    const next = this.recorded(current, assessed.next, assessed.reason, assessed.why, reading)
-    for (const peer of options.operator ? assessed.peers : []) {
-      if (peer.account.status === 'quarantined' && peer.account.quarantine?.reason === peer.reason) continue
-      this.recorded(peer.account, { ...peer.account, status: 'quarantined' }, peer.reason, peer.why)
-    }
-    return next
+    return this.ctx.store.transaction(() => {
+      const next = this.recorded(current, assessed.next, assessed.reason, assessed.why, reading)
+      for (const peer of options.operator ? assessed.peers : []) {
+        if (peer.account.status === 'quarantined' && peer.account.quarantine?.reason === peer.reason) continue
+        this.recorded(peer.account, { ...peer.account, status: 'quarantined' }, peer.reason, peer.why)
+      }
+      options.check?.(next)
+      return next
+    })
   }
 
   /** Write `next` when it differs from `current` in what it holds, its decision recorded first; else keep `current`. */
@@ -306,9 +355,12 @@ export class AgentAccounts {
     if (same) return current
     const at = now()
     const { quarantine: _, ...rest } = proposed
-    const draft: AgentAccount = { ...rest, revision: current.revision + 1, updatedAt: at }
+    const draft: AgentAccount = { ...rest, schema: 'agent-account@1.0', revision: current.revision + 1, updatedAt: at }
     const decision = this.decide(current, draft, { option: draft.status, why, ...(reason ? { reason } : {}), ...(reading ? { reading } : {}) })
-    const next: AgentAccount = reason ? { ...draft, quarantine: { reason, since: current.quarantine?.reason === reason ? current.quarantine.since : at, decision } } : draft
+    // A quarantine says what its reading found (1.1), so the operator reads the version found, not only `unverified`.
+    const next: AgentAccount = reason
+      ? { ...draft, schema: 'agent-account@1.1', quarantine: { reason, since: current.quarantine?.reason === reason ? current.quarantine.since : at, decision, detail: clip(why, MAX_DETAIL) } }
+      : draft
     this.write(next, decision, 'update')
     if (next.status === 'quarantined' && (current.status !== 'quarantined' || current.quarantine?.reason !== reason)) this.quarantined(next, decision)
     return next

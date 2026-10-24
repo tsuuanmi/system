@@ -441,6 +441,12 @@ guesses.
   each change; a freed slot's record is deleted, its history kept in its decisions. Examples:
   [`agent-account.ready.json`](../../schemas/examples/agent-account.ready.json),
   [`agent-account.quarantined.json`](../../schemas/examples/agent-account.quarantined.json).
+- `agent-account@1.1` adds the optional `quarantine.detail`: what the reading that quarantined the
+  account found, in one line of at most 300 characters, as its `enrollment` decision's reason says
+  it (for `unverified`, the runtime version found and the ones its reader admits); never a
+  principal. The `agents` source writes a quarantined record at 1.1 with it, and any other at 1.0.
+  A record carrying it below `@1.1` is refused. Readers accept 1.0 and 1.1. Example:
+  [`agent-account.unverified-version.json`](../../schemas/examples/agent-account.unverified-version.json).
 
 ### `session-summary`
 
@@ -908,21 +914,35 @@ guesses.
 
 | Tool | Scope | Does |
 |---|---|---|
-| `account_enroll` | operator | step `begin`: take the lowest free slot of a runtime (or the slot named; a taken slot, or an `accountId`, is signed in again) and return the runtime's own sign-in command for its home; step `verify`: read who signed in and record the account (`accept` takes a `changed` slot's new principal as a new account) |
+| `account_enroll` | operator | step `begin`: take the lowest free slot of a runtime (or the slot named; a taken slot, or an `accountId`, is signed in again) and return the runtime's own sign-in command for its home (a runtime with no identity reader takes no free slot: `config_error`, nothing enrolled); step `verify`: read who signed in and record the account (`accept` takes a `changed` slot's new principal as a new account) |
 | `account_remove` | operator | free a slot, by `accountId` or by `provider` and `slot`; its home is kept |
-| `account_agents` | operator | every slot and the account in it, with the Workers that run on its account; each runtime's slots, how many are taken, and whether it reads identity and gives a sign-in command |
-| `account_migrate` | operator | `@1.1`: the move from hand-named agent Workers to Workers derived as account × role: `plan` (`workers`: each old Worker's `from`, `runtime`, `role`, new id `to` and `account`, or none when it stops, and why; the new row's `roles`, `assignments`, `providers`; `templates` for the resources row; `blockers`), the new row's whole config (`row`), the `outcome` (`planned`, `applied`, `already-applied`, `rolled-back`, `not-applied`), the `cutover` in force (its decision, when, and the plan applied), and how many sessions and runs were `moved`. `apply` and `rollback` never together |
+| `account_agents` | operator | every slot and the account in it, with the Workers that run on its account and the operator's `label` of its account (`@1.2`); each runtime's slots, how many are taken, whether it reads identity and gives a sign-in command, and its `title` (`@1.2`) |
+| `account_migrate` | operator | `@1.1` (a role's `kinds` and `description` `@1.2`): the move from hand-named agent Workers to Workers derived as account × role: `plan` (`workers`: each old Worker's `from`, `runtime`, `role`, new id `to` and `account`, or none when it stops, and why; the new row's `roles`, `assignments`, `providers`; `templates` for the resources row; `blockers`), the new row's whole config (`row`), the `outcome` (`planned`, `applied`, `already-applied`, `rolled-back`, `not-applied`), the `cutover` in force (its decision, when, and the plan applied), and how many sessions and runs were `moved`. `apply` and `rollback` never together |
 
 - Input and output: [`mcp-agent-accounts.v1.json`](../../schemas/mcp-agent-accounts.v1.json)
-  `$defs/<tool>-input` and `<tool>-output` (`mcp-agent-accounts@1.1`; 1.1 adds `account_migrate`). A slot is named by its
+  `$defs/<tool>-input` and `<tool>-output` (`mcp-agent-accounts@1.2`; 1.1 adds `account_migrate`). A slot is named by its
   `provider` and `slot` or by the `accountId` it holds, never both; `verify` and `remove` name the
   slot whole, and only `verify` accepts. An `accountId` two slots hold (a duplicate) names neither.
-- Each account is an [`agent-account@1.0`](#agent-account) record. The sign-in command's
+- `mcp-agent-accounts@1.2` adds, each optional: on a plan's role, `kinds` (1 to 16 `workKind`
+  labels, each once) and `description` (1 to 200 characters), as the planner gives them (rule
+  `agent-workers.migration` version 3: the rows' kinds, and their description when every row of
+  the role gives the same one); in `account_agents`, an account's `label` (the operator's,
+  `assignments[].label`, 1 to 64 characters) and a runtime's `title` (its provider's name for
+  people, 1 to 64 characters). Readers accept 1.0 to 1.2. A 1.1 reader refuses a plan whose roles
+  carry `kinds`: that was the defect 1.2 fixes.
+- Each account is an [`agent-account@1.x`](#agent-account) record. The sign-in command's
   environment names the home and never a session bus; nothing holds a principal or a token (INV-8).
   A refused input does nothing (`invalid input, nothing done`); a refused call says its kind
   (`invalid_input`, `config_error`) and changes nothing.
+- **Output checked before a change commits.** A call that changes anything (a slot taken, a reading
+  recorded, a slot freed, a cutover applied or rolled back) checks the output it would give against
+  its `<tool>-output` before its change commits: an output its schema refuses is a defect,
+  refused as `<tool> would make an output its schema refuses (a defect), so nothing changed`. A
+  call that changes nothing (`account_agents`, a plan) is checked as it returns (`<tool> made an
+  output its schema refuses (a defect)`).
 - Examples: [`mcp-agent-accounts.enroll.json`](../../schemas/examples/mcp-agent-accounts.enroll.json),
-  [`mcp-agent-accounts.list.json`](../../schemas/examples/mcp-agent-accounts.list.json).
+  [`mcp-agent-accounts.list.json`](../../schemas/examples/mcp-agent-accounts.list.json),
+  [`mcp-agent-accounts.migrate.json`](../../schemas/examples/mcp-agent-accounts.migrate.json).
 
 ### MCP tool: agent runs
 
@@ -1007,6 +1027,14 @@ guesses.
   id, and its role, else its tier. It is never an id to route by. A Worker its source describes
   ready, on which the engine runs a step, is `busy` whatever load its source reports, and its
   `summary` says so. Readers accept 1.0 to 1.3.
+- `mcp-roster@1.2` adds, per Worker, `name`: its display name, `<runtime> · <account> · <role or
+  tier> [<kinds>]`, made on each read from the runtime's title, the account's label for an
+  operator (an agent account's `assignments[].label`, else its masked hint and slot; a website
+  account's catalog label, else its id; for a client the slot or the id, never a label), its role
+  or tier, and its kinds ([display names](../design/roster.md#display-names)); never a routing
+  input, never a key. It also adds an agent account quarantine's `detail` (`agent-account@1.1`),
+  on the account record and the `quarantined` availability, and in its summary. Readers accept 1.0
+  to 1.2.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

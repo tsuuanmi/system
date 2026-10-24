@@ -562,5 +562,21 @@ describe('agent accounts on the command line (ADR-0051)', () => {
     })
     expect(JSON.stringify(line)).not.toContain('f'.repeat(64))
   })
+
+  it('lists an agent account with the operator\'s label and what its quarantine\'s reading found (agent-account@1.1, T103)', () => {
+    const detail = 'slot 1 of claude-agent-sdk cannot be verified: found Claude Code 2.1.310 (/usr/bin/claude); its identity reader admits only 2.1.308'
+    const line = agentAccountLine({
+      account: {
+        schema: 'agent-account@1.1', accountId: 'claude-agent-sdk:b4bd4c88be9fffdf', provider: 'claude-agent-sdk', slot: 1, home: '/h', status: 'quarantined',
+        quarantine: { reason: 'unverified', since: '2026-10-24T09:00:00Z', decision: `sha256:${'0'.repeat(64)}`, detail }, revision: 3, updatedAt: '2026-10-24T09:00:00Z',
+      },
+      workers: ['agent:claude-agent-sdk:b4bd4c88be9fffdf/develop'],
+      label: 'science',
+    })
+    expect(line).toEqual({
+      kind: 'agent', id: 'claude-agent-sdk:b4bd4c88be9fffdf', label: 'science', provider: 'claude-agent-sdk', slot: 1, status: 'quarantined', reason: 'unverified', detail, since: '2026-10-24T09:00:00Z', home: '/h',
+      workers: ['agent:claude-agent-sdk:b4bd4c88be9fffdf/develop'],
+    })
+  })
 })
 

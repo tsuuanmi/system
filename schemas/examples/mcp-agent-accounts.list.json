@@ -20,13 +20,14 @@
           "revision": 1,
           "updatedAt": "2026-10-24T08:00:00Z"
         },
-        "workers": ["agent:codex-review"]
+        "workers": ["agent:codex-sdk:04aa5c1e9b7d3f20/review"],
+        "label": "codex-1"
       }
     ],
     "providers": [
-      { "provider": "antigravity-cli", "slots": 1, "taken": 0, "identity": false, "login": true },
-      { "provider": "claude-agent-sdk", "slots": 3, "taken": 0, "identity": true, "login": true },
-      { "provider": "codex-sdk", "slots": 2, "taken": 1, "identity": true, "login": true }
+      { "provider": "antigravity-cli", "slots": 1, "taken": 0, "identity": false, "login": true, "title": "Antigravity CLI" },
+      { "provider": "claude-agent-sdk", "slots": 3, "taken": 0, "identity": true, "login": true, "title": "Claude Code" },
+      { "provider": "codex-sdk", "slots": 2, "taken": 1, "identity": true, "login": true, "title": "Codex" }
     ]
   }
 }

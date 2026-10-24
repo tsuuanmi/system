@@ -40,7 +40,7 @@ import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
@@ -52,7 +52,7 @@ import {
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
-import { CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration } from './migrate.ts'
+import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Probes, refused } from './probes.ts'
 import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT, setsDerivedOnly,
@@ -135,6 +135,15 @@ type WorkerSpec = AgentWorkerConfig & { derived?: DerivedWorker['derived'] }
 export type { AgentAssignmentConfig, AgentProviderConfig, AgentRoleConfig } from './roles.ts'
 export type { WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
 export type { MigrationPlan } from './migrate.ts'
+
+/** What `system account migrate` gives (`mcp-agent-accounts` `account-migrate-output`). */
+export type MigrateOutput = {
+  outcome: 'planned' | 'applied' | 'already-applied' | 'rolled-back' | 'not-applied'
+  plan: MigrationPlan
+  row: Record<string, unknown>
+  cutover?: CutoverRecord
+  moved?: Moved
+}
 
 export interface Config {
   /**
@@ -415,6 +424,7 @@ export class AgentWorkers extends Service {
     assignments: z.array(z.object({
       account: z.string().pattern(/^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$/).required().description('An enrolled agent account, by the id system account list shows'),
       roles: z.array(z.string()).required().description('The roles it serves: one Worker agent:<account>/<role> each'),
+      label: z.string().max(MAX_LABEL).pattern(LABEL).description('Its display label in your words, such as science or lead: plain text on one line, at most 64 characters; shown in the roster\'s and the Workers tab\'s names (<runtime> · science · develop [code]) and system account list, never a routing input, never part of a Worker id'),
     })).default([]).description('Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker'),
     providers: z.array(z.object({
       provider: z.string().required().description('The agent runtime kind, as its provider registers it (the runtime of its Workers)'),
@@ -508,6 +518,7 @@ export class AgentWorkers extends Service {
       slots: (provider) => slots.get(provider) ?? 1,
       root: config.accountHomes ?? join(dshHome(), 'system', 'agent-homes'),
       workersIn: (account) => this.workersIn(account),
+      labelOf: (accountId) => config.assignments?.find((a) => a.account === accountId)?.label,
     })
     this.probes = new Probes({
       ttlMs: config.probeTtlMs ?? 5 * 60_000,
@@ -771,15 +782,21 @@ export class AgentWorkers extends Service {
    * The move from the hand-named rows to Workers derived as account × role (`system account migrate`):
    * printed by default, applied with `apply` (refused while it has blockers or a run of an old Worker is
    * queued or running; applied already, nothing changes), or undone with `rollback`. `stop`: runtimes
-   * whose Workers stop at the cutover, their account not ready.
+   * whose Workers stop at the cutover, their account not ready. `check` sees the output an apply or a
+   * rollback would give before anything it does commits; one that throws leaves everything as it was.
    */
-  async migrate(options: { apply?: boolean; rollback?: boolean; stop?: readonly string[] } = {}): Promise<{ outcome: 'planned' | 'applied' | 'already-applied' | 'rolled-back' | 'not-applied'; plan: MigrationPlan; row: Record<string, unknown>; cutover?: CutoverRecord; moved?: Moved }> {
+  async migrate(options: { apply?: boolean; rollback?: boolean; stop?: readonly string[] } = {}, check?: (out: MigrateOutput) => void): Promise<MigrateOutput> {
     if (options.apply && options.rollback) throw new ProviderError('invalid_input', 'apply or roll back, not both')
     if (options.rollback) {
-      const current = this.cutover.state()
-      const undone = this.cutover.rollback()
-      const plan = current?.plan ?? await this.plan(options.stop ?? [])
-      return { outcome: undone.rolledBack ? 'rolled-back' : 'not-applied', plan, row: this.rowOf(plan), moved: undone.moved }
+      // A rollback with nothing to undo plans the move as it stands now; the plan is read before the transaction.
+      const plan = this.cutover.state() ? undefined : await this.plan(options.stop ?? [])
+      const outputOf = (undone: RolledBack): MigrateOutput => {
+        const shown = undone.cutover?.plan ?? plan
+        // Only when a cutover was applied between the two reads, and so nothing was rolled back.
+        if (!shown) throw new ProviderError('invalid_input', 'a cutover was applied while the rollback read it, and nothing changed: run the rollback again')
+        return { outcome: undone.rolledBack ? 'rolled-back' : 'not-applied', plan: shown, row: this.rowOf(shown), moved: undone.moved }
+      }
+      return outputOf(this.cutover.rollback(check && ((undone) => check(outputOf(undone)))))
     }
     const current = this.cutover.state()
     // Applied already: what was applied is what stands, whatever is loaded now.
@@ -787,8 +804,10 @@ export class AgentWorkers extends Service {
     const plan = await this.plan(options.stop ?? [])
     if (!options.apply) return { outcome: 'planned', plan, row: this.rowOf(plan) }
     const slotDecision = (account: string): ContentId | undefined => this.agentAccounts.decisionOf(account)
-    const applied = this.cutover.apply(plan, slotDecision)
-    return { outcome: applied.applied ? 'applied' : 'already-applied', plan: applied.cutover.plan, row: this.rowOf(applied.cutover.plan), cutover: applied.cutover, moved: applied.moved }
+    const outputOf = (applied: Applied): MigrateOutput => ({
+      outcome: applied.applied ? 'applied' : 'already-applied', plan: applied.cutover.plan, row: this.rowOf(applied.cutover.plan), cutover: applied.cutover, moved: applied.moved,
+    })
+    return outputOf(this.cutover.apply(plan, slotDecision, check && ((applied) => check(outputOf(applied)))))
   }
 
   /** The move as it stands now: from the loaded hand-named rows (none, when derived Workers are loaded). */
@@ -797,7 +816,10 @@ export class AgentWorkers extends Service {
     const metered = rows.some((r) => r.pool !== undefined)
     const resources = this.ctx.get('resources')
     const pools = metered && resources ? await resources.pools().catch(() => undefined) : undefined
-    const runtimes = new Map(this.ctx.agentRuntimes.list().map((kind) => [kind, { home: this.ctx.agentRuntimes.get(kind)?.home }]))
+    const runtimes = new Map(this.ctx.agentRuntimes.list().map((kind) => {
+      const runtime = this.ctx.agentRuntimes.get(kind)
+      return [kind, { home: runtime?.home, identity: typeof runtime?.identity === 'function' }]
+    }))
     const plan = planMigration({ rows, providers: this.config.providers ?? [], accounts: this.agentAccounts.list(), runtimes, pools: metered && resources ? pools ?? [] : undefined, stop })
     if (this.derived) plan.blockers.push('Workers derived from roles and assignments are loaded: there are no hand-named rows to migrate')
     return plan

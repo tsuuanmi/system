@@ -162,7 +162,7 @@ describe('system MCP server on ctx.webServer', () => {
       counts: { ready: 0, busy: 1, resting: 1, unavailable: 0, quarantined: 0 },
       workers: { value: [
         { worker: 'worker:plus/frontier', availability: { state: 'resting', until: { value: '2026-10-24T11:00:00.000Z' } }, siblings: { value: ['worker:plus/standard'] } },
-        { worker: 'worker:plus/standard', role: { value: null }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } },
+        { worker: 'worker:plus/standard', name: 'Chatgpt · Studio Plus · standard', role: { value: null }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } },
           pools: { value: [{ pool: 'plus.chat', available: false, windows: [{ id: 'three-hour', state: 'unknown', used: { unknown: 'no reading yet' } }], unknownUsage: { value: { runs: 0, kinds: {} } } }] },
           work: { unknown: 'the workflow engine (ctx.workflow) is not mounted' } },
       ] },
@@ -171,7 +171,8 @@ describe('system MCP server on ctx.webServer', () => {
     const client = await roster(tokens.client)
     schemas.assertDef('mcp-roster@1.3', 'roster-output', client.structuredContent)
     expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
-    expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 } })
+    // A client's names carry the account id, never the operator's label.
+    expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 }, workers: { value: [{ name: 'Chatgpt · plus · frontier' }, { name: 'Chatgpt · plus · standard' }] } })
     // The model token reaches no MCP tool.
     const model = await fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'roster', arguments: {} } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${tokens.model}` } })
     expect(model.status).toBe(401)

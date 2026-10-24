@@ -147,6 +147,7 @@ interface Deferral {
 
 export class AntigravityRuntime implements AgentRuntimeProvider {
   readonly kind = KIND
+  readonly title = 'Antigravity CLI'
   /** Its own configured home: where every run runs, and slot 1 of its accounts. */
   readonly home: string
 

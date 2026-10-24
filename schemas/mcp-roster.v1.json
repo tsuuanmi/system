@@ -232,11 +232,20 @@
             },
             "decision": {
               "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            },
+            "detail": {
+              "$ref": "#/$defs/quarantineDetail"
             }
           },
           "additionalProperties": false
         }
       ]
+    },
+    "quarantineDetail": {
+      "description": "1.2: what the reading that quarantined the account found (agent-account@1.1 `quarantine.detail`), such as the runtime version found and the ones its reader admits.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
     },
     "accountRecord": {
       "type": "object",
@@ -301,6 +310,9 @@
             },
             "decision": {
               "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            },
+            "detail": {
+              "$ref": "#/$defs/quarantineDetail"
             }
           },
           "additionalProperties": false

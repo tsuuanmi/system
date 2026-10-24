@@ -14,7 +14,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   type AgentRuntimeProvider, type IdentityReading, type LoginCommand, type ProbeOptions, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage,
-  accountIdOf, identityHmac, maskEmail, observe, probeIn,
+  accountIdOf, identityHmac, maskEmail, observe, probeIn, titleOf,
 } from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
@@ -100,6 +100,13 @@ export function agentRuntimeProviderConformance(name: string, make: () => AgentR
       expect(evidence.sandboxes.every((s) => s === 'read-only' || s === 'workspace-write')).toBe(true)
       // The scripted agent's test wires a working confinement, so a ready provider proves it (ADR-0024).
       expect(evidence.readsConfined).toBe(evidence.available)
+    })
+
+    it('gives a title for people that is plain text on one line of at most 64 characters, or none (shown only, never a routing input)', () => {
+      const runtime = make()
+      if (runtime.title === undefined) return
+      expect(titleOf(runtime), `${name}'s title is usable`).toBe(runtime.title)
+      expect(runtime.title, 'a title is not the kind').not.toBe(runtime.kind)
     })
 
     it('runs a task to its terminal event and reports the native handle as soon as it exists', async () => {

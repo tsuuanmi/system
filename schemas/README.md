@@ -27,7 +27,7 @@ each field, which a schema cannot fully express, is documented in
 | [event.v1.json](event.v1.json) | one entry of the append-only event log (`ctx.eventLog`); event types are dotted names such as `ui.heal` |
 | [lease.v1.json](lease.v1.json) | a held lease (`ctx.leases`): resource, owner, token, monotonic generation, expiry |
 | [account.v1.json](account.v1.json) | provider account vault record (portable state; never leaves the provider runtime) |
-| [agent-account.v1.json](agent-account.v1.json) | one enrollment slot of an agent runtime: its home, the account id derived from the verified login by a keyed hash, its status, and why it is quarantined |
+| [agent-account.v1.json](agent-account.v1.json) | one enrollment slot of an agent runtime: its home, the account id derived from the verified login by a keyed hash, its status, and why it is quarantined; 1.1 adds what the quarantining reading found (`quarantine.detail`) |
 | [provider-answer.v1.json](provider-answer.v1.json) | body of a `report` artifact holding one website Worker answer (the prompt by hash only) |
 | [plan.v1.json](plan.v1.json) | body of a `plan` artifact: nodes a planner proposes to append to its run's DAG |
 | [approval.v1.json](approval.v1.json) | body of an `approval` artifact: an operator's verdict bound to one exact subject |
@@ -61,7 +61,7 @@ each field, which a schema cannot fully express, is documented in
 | [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools; `mcp-board` 1.1 adds the operator's `board_pause`, `board_resume`, and `board_close` |
 | [mcp-report.v1.json](mcp-report.v1.json) | input and output of the `report` MCP tool: the baseline report of a period; 1.1 adds what a cap counts as 0 (records without a figure, runs whose usage the ledger could not count); 1.2 adds the agent runs whose liveness asked for the operator |
 | [mcp-roster.v1.json](mcp-roster.v1.json) | input and output of the `roster` MCP tool: every Worker in one read model, projected on read, each fact a source could not give `unknown` with why; 1.2 adds each Worker's runs whose liveness needs a look |
-| [mcp-agent-accounts.v1.json](mcp-agent-accounts.v1.json) | input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents`; 1.1 adds `account_migrate` |
+| [mcp-agent-accounts.v1.json](mcp-agent-accounts.v1.json) | input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents`; 1.1 adds `account_migrate`; 1.2 a plan role's `kinds` and `description`, an account's `label`, and a runtime's `title` |
 | [mcp-agent-runs.v1.json](mcp-agent-runs.v1.json) | input and output of the operator's agent run tool `agent_run_free`: free what a run that ended with its liveness unknown holds, on the operator's word that its agent is gone |
 
 Schemas still to come, added with their milestone: the domain artifact bodies

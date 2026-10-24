@@ -65,8 +65,27 @@ describe('claude-agent-sdk identity reader (ADR-0051, REQ-ACC-11)', () => {
     const at = home()
     signIn(at, 'alice@example.test')
     const before = statuses.length
-    expect(await runtime({ version: async () => '2.2.0' }).identity(at, KEY)).toMatchObject({ status: 'unverified', reader: IDENTITY_READER, runtimeVersion: '2.2.0' })
+    // The reason says which version was found, at which executable, and which the reader admits.
+    expect(await runtime({ version: async () => '2.2.0' }).identity(at, KEY)).toMatchObject({
+      status: 'unverified', reader: IDENTITY_READER, runtimeVersion: '2.2.0',
+      reason: `found Claude Code 2.2.0 (/usr/bin/claude); its identity reader admits only ${VERIFIED_IDENTITY_VERSIONS.join(', ')}: pin an admitted version (runtime-claude-agent-sdk executable)`,
+    })
     expect(statuses.length).toBe(before)
+  })
+
+  it('names a pinned executable that is no longer there (pruned by an updater), and how to keep one, as unverified and unavailable', async () => {
+    const at = home()
+    signIn(at, 'alice@example.test')
+    const pruned = join(root, 'versions', '2.1.308')
+    const failing = { executable: pruned, version: async () => { throw new Error(`spawn ${pruned} ENOENT`) } }
+    expect(await runtime(failing).identity(at, KEY)).toMatchObject({
+      status: 'unverified', reason: expect.stringMatching(new RegExp(`the Claude Code executable ${pruned} is not there .*~/\\.dsh/system/tools/claude/<version>/.*; its identity reader admits only 2\\.1\\.308`)),
+    })
+    expect(await runtime(failing).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/is not there \(an updater may have pruned it\)/) })
+    // One that is there (any file stands for it) and fails says so as it came.
+    expect(await runtime({ executable: process.execPath, version: async () => { throw new Error('exec format error') } }).identity(at, KEY)).toMatchObject({
+      status: 'unverified', reason: `claude --version failed (${process.execPath}): exec format error; its identity reader admits only ${VERIFIED_IDENTITY_VERSIONS.join(', ')}`,
+    })
   })
 
   it('reads the account and organization ids, never the email alone, and gives the email only masked (INV-8)', async () => {

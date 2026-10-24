@@ -310,6 +310,12 @@ export function observe(observer: RunObserver | undefined, event: { process: { p
 export interface AgentRuntimeProvider {
   readonly kind: string
   /**
+   * Its name for people (optional; at most {@link MAX_TITLE} characters, plain text on one line), such
+   * as the agent's product name: the roster and the operator's listings show it before an account's
+   * label and a Worker's role. Only a provider names its tool; never a routing input (INV-11).
+   */
+  readonly title?: string | undefined
+  /**
    * Its own configured home (an absolute path), where a run that names none runs. Optional: a Worker
    * source adopts it, without moving it, as slot 1 of the runtime's accounts (ADR-0051).
    */
@@ -327,6 +333,15 @@ export interface AgentRuntimeProvider {
   identity?(home: string, key: Uint8Array): Promise<IdentityReading>
   /** The runtime's own sign-in command for `home` ({@link LoginCommand}); optional, with `identity`. */
   loginCommand?(home: string): LoginCommand
+}
+
+/** The most characters of a runtime's {@link AgentRuntimeProvider.title}. */
+export const MAX_TITLE = 64
+
+/** A provider's title when it gives a usable one (1 to {@link MAX_TITLE} characters, no control character); otherwise none. */
+export function titleOf(provider: Pick<AgentRuntimeProvider, 'title'> | undefined): string | undefined {
+  const title = provider?.title
+  return typeof title === 'string' && /^[^\p{Cc}]{1,64}$/u.test(title) ? title : undefined
 }
 
 /**

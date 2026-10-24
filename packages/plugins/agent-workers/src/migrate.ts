@@ -37,6 +37,7 @@ export interface HandNamedRow {
   family?: string | undefined
   reviewMember?: boolean | undefined
   kinds?: string[] | undefined
+  description?: string | undefined
 }
 
 /** What becomes of one hand-named Worker. */
@@ -66,8 +67,8 @@ export interface PlanInput {
   rows: readonly HandNamedRow[]
   providers: readonly AgentProviderConfig[]
   accounts: readonly AgentAccount[]
-  /** Each runtime kind registered now, with its own configured home. */
-  runtimes: ReadonlyMap<string, { home?: string | undefined }>
+  /** Each runtime kind registered now, with its own configured home, and whether it reads who is signed in (`identity`; absent: it does). */
+  runtimes: ReadonlyMap<string, { home?: string | undefined; identity?: boolean | undefined }>
   /** The ledger's pools, or undefined with no ledger. */
   pools: readonly PoolState[] | undefined
   /** Runtimes whose Workers the operator stops at the cutover, their account not ready (PROP-0012 open question 1). */
@@ -79,16 +80,19 @@ const DEFAULT_COOLDOWN = 3600
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
 /**
- * The move from the hand-named rows (a pure rule, `agent-workers.migration` version 2):
+ * The move from the hand-named rows (a pure rule, `agent-workers.migration` version 3):
  * - **Roles.** Rows that agree on what the work needs (workspace, sandbox, tier, quota class,
  *   `worktreePerRun`, `reviewMember`, `kinds`) are one role, with what each runtime sets (`tools`, `model`,
  *   `maxTurns`, `family`) under `runtimes`; a second row of one runtime in such a group starts another
  *   role, since one account has one Worker per role. A read-only role is `review`, a writing one
- *   `develop`, and later ones of a kind `review-2`, … in the order of their first row's id.
+ *   `develop`, and later ones of a kind `review-2`, … in the order of their first row's id. A role
+ *   keeps its rows' `description` when every one of them gives the same one, and has none otherwise
+ *   (a role's description is every one of its Workers').
  * - **Assignments.** Each runtime's configured home is slot 1 of its provider: the account enrolled
  *   there serves the roles of that runtime's rows, by the id it was verified as. An account not
  *   `ready` stops the move, unless the operator stops that runtime (`stop`): its rows then become no
- *   Worker, and its roles keep what they set for it, for the assignment the operator adds later.
+ *   Worker, and its roles keep what they set for it, for the assignment the operator adds later. A
+ *   runtime that reads no identity has no account to enroll, so its rows stop the move the same way.
  * - **Providers.** The row's provider entries, kept, with what derived Workers draw on: an old `pool`
  *   becomes the provider's pool template (with its windows and cooldown), and
  *   `maxConcurrentRunsPerAccount` is the number of its rows, so as many of its runs run at once as did.
@@ -129,11 +133,15 @@ export function planMigration(input: PlanInput): MigrationPlan {
       }
       if (Object.keys(own).length) runtimes[runtime] = own
     }
+    // Every row of the role gives the same description, or the role has none: it is every Worker's.
+    const descriptions = new Set([...layer.values()].map((row) => row.description))
+    const description = descriptions.size === 1 ? [...descriptions][0] : undefined
     return {
       id, workspace: first.workspace, sandbox: first.sandbox, tier: first.tier,
       ...(first.quotaClass && first.quotaClass !== 'agent-plan' ? { quotaClass: first.quotaClass } : {}),
       ...(first.worktreePerRun ? { worktreePerRun: true } : {}), ...(first.reviewMember ? { reviewMember: true } : {}),
       ...(first.kinds ? { kinds: [...first.kinds].sort(byString) } : {}),
+      ...(description !== undefined ? { description } : {}),
       ...(Object.keys(runtimes).length ? { runtimes } : {}),
     }
   })
@@ -184,6 +192,9 @@ export function planMigration(input: PlanInput): MigrationPlan {
     if (!registered) {
       why = `no ${runtime} runtime is registered (its row is off), so the account in its home cannot be read`
       if (!stopping) blockers.push(`${why}: turn its row on, or stop its Workers at the cutover (--stop ${runtime})`)
+    } else if (!slot1 && registered.identity === false) {
+      why = `${runtime} has no verified way to read who is signed in (no identity reader), so no account of it can be enrolled and its Workers have no ready account to move to`
+      if (!stopping) blockers.push(`${why}: the cutover waits until its identity can be verified, or stop its Workers at the cutover (--stop ${runtime}; PROP-0012 open question 1)`)
     } else if (!slot1) {
       why = `no account is enrolled in ${runtime}'s home`
       if (!stopping) blockers.push(`${why}: enroll it first (system account login ${runtime}, which adopts the home as slot 1 and verifies who is signed in)`)
@@ -233,13 +244,21 @@ export const CUTOVER_MIGRATION = {
   CREATE TABLE agent_cutover_moves (kind TEXT NOT NULL, key TEXT NOT NULL, old_worker TEXT NOT NULL, new_worker TEXT NOT NULL, PRIMARY KEY (kind, key));`,
 }
 
-/** Version 2: rows that differ in `kinds` (ADR-0057) are different roles, and a role keeps its rows' kinds. */
-const DECIDER = { type: 'rule' as const, id: 'agent-workers.migration', version: '2' }
+/**
+ * Version 2: rows that differ in `kinds` (ADR-0057) are different roles, and a role keeps its rows'
+ * kinds. Version 3: a role keeps its rows' description when they agree on it, and a runtime with no
+ * identity reader stops the move until the operator stops its Workers.
+ */
+const DECIDER = { type: 'rule' as const, id: 'agent-workers.migration', version: '3' }
 const PRODUCER = { producer: { type: 'system' as const, ref: 'agent-workers' } }
 const now = (): string => new Date().toISOString()
 
 /** How many agent sessions and runs a cutover moved, or a rollback moved back. */
 export interface Moved { sessions: number; runs: number }
+/** What applying a plan did: the cutover in force, whether it was applied now, and what it moved. */
+export interface Applied { cutover: CutoverRecord; applied: boolean; moved: Moved }
+/** What a rollback did: whether it undid a cutover (and which), what it moved back, and its decision. */
+export interface RolledBack { rolledBack: boolean; moved: Moved; decision?: ContentId; cutover?: CutoverRecord }
 
 /** The applied cutover of one install, on `ctx.store` (one daemon owns it, INV-1). */
 export class Cutover {
@@ -256,9 +275,11 @@ export class Cutover {
    * (drain first); applied already, nothing changes and the cutover in force is returned. Otherwise, in
    * one transaction: an `enrollment` decision per old Worker (`migrated` to its new id, or `stopped`),
    * its agent sessions and runs moved to its new id, and the cutover's own decision, whose inputs are
-   * theirs. `inputs` gives each account's latest enrollment decision.
+   * theirs. `inputs` gives each account's latest enrollment decision. `check` sees what the cutover
+   * would return once every write is made, before the transaction commits: a check that throws rolls
+   * all of it back, so nothing is decided or moved (the caller's output, refused, changes nothing).
    */
-  apply(plan: MigrationPlan, inputs: (account: string) => ContentId | undefined): { cutover: CutoverRecord; applied: boolean; moved: Moved } {
+  apply(plan: MigrationPlan, inputs: (account: string) => ContentId | undefined, check?: (applied: Applied) => void): Applied {
     return this.ctx.store.transaction((db) => {
       const current = this.state()
       if (current) return { cutover: current, applied: false, moved: { sessions: 0, runs: 0 } }
@@ -313,7 +334,9 @@ export class Cutover {
         deterministic: true, rationale: 'agent Workers are account × role (PROP-0012 phase F, ADR-0051); the hand-named rows are refused once this applies',
       }, PRODUCER)
       db.prepare('INSERT INTO agent_cutover (id, plan, decision, applied_at) VALUES (1, ?, ?, ?)').run(JSON.stringify(plan), decision.id, at)
-      return { cutover: { decision: decision.id as ContentId, appliedAt: at, plan }, applied: true, moved }
+      const applied: Applied = { cutover: { decision: decision.id as ContentId, appliedAt: at, plan }, applied: true, moved }
+      check?.(applied)
+      return applied
     })
   }
 
@@ -321,9 +344,11 @@ export class Cutover {
    * Undo the cutover: refused while a run of a Worker it moved to is queued or running (drain first);
    * with none in force, nothing changes. Otherwise, in one transaction: each session and run it moved
    * back to its old Worker (one moved again since is left as it is), the refusal of the hand-named rows
-   * lifted, and a `rolled-back` decision whose input is the cutover's.
+   * lifted, and a `rolled-back` decision whose input is the cutover's. `check` sees what the rollback
+   * would return, with the cutover it undid, before the transaction commits: a check that throws rolls
+   * all of it back, as {@link apply}'s does.
    */
-  rollback(): { rolledBack: boolean; moved: Moved; decision?: ContentId } {
+  rollback(check?: (rolledBack: RolledBack) => void): RolledBack {
     return this.ctx.store.transaction((db) => {
       const current = this.state()
       if (!current) return { rolledBack: false, moved: { sessions: 0, runs: 0 } }
@@ -353,7 +378,9 @@ export class Cutover {
       }, PRODUCER)
       db.prepare('DELETE FROM agent_cutover_moves').run()
       db.prepare('DELETE FROM agent_cutover WHERE id = 1').run()
-      return { rolledBack: true, moved, decision: decision.id as ContentId }
+      const undone: RolledBack = { rolledBack: true, moved, decision: decision.id as ContentId, cutover: current }
+      check?.(undone)
+      return undone
     })
   }
 }

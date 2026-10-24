@@ -156,7 +156,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
   it('names each Worker for people, provider · account · role or tier, the label for the operator only, and counts a Worker running a step as busy whatever its source reports (T97)', async () => {
     const roster = await readRoster(services(), { scope: 'operator', now: NOW })
     valid(roster)
-    expect(entry(roster, `agent:${CLAUDE}/review`).name).toBe('Claude · t***@example.com · review')
+    expect(entry(roster, `agent:${CLAUDE}/review`).name).toBe('Claude · t***@example.com, slot 1 · review')
     expect(entry(roster, `agent:${CODEX}/review`).name).toBe('Codex · slot 2 · review')
     expect(entry(roster, 'worker:plus/standard').name).toBe('Chatgpt · Studio Plus · standard')
     const client = await readRoster(services(), { scope: 'client', now: NOW })
@@ -347,7 +347,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     const roster = await readRoster(services({ board: undefined }), { scope: 'operator', now: NOW })
     const text = formatRoster(roster)
     expect(text.split('\n')[0]).toBe('Roster as of 2026-10-24T09:30:00.000Z: 4 Worker(s): 0 ready, 2 busy, 1 resting, 0 unavailable, 1 quarantined')
-    expect(text).toContain(`Claude · t***@example.com · review (agent:${CLAUDE}/review)  busy 1 of 2`)
+    expect(text).toContain(`Claude · t***@example.com, slot 1 · review (agent:${CLAUDE}/review)  busy 1 of 2`)
     expect(text).toContain('Chatgpt · Studio Plus · standard (worker:plus/standard)  resting at a limit until 2026-10-24T11:00:00Z')
     expect(text).toContain(`Codex · slot 2 · review (agent:${CODEX}/review)  quarantined: changed, since 2026-10-24T08:00:00Z`)
     expect(text).toContain('Working on task task-42: agent-review run run_2, step review:1, for 4 min')
@@ -355,6 +355,57 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(text).toContain('  is         chatgpt-web Worker, standard tier, subscription-chat, remote (derived: no description is configured)')
     expect(text).toContain('    window   weekly: unknown, used unknown (no reading yet), resets unknown (no reading yet)')
     expect(text).toContain('unknown usage 1 run(s)')
+  })
+
+  it('names each Worker for people, <runtime> · <account> · <role or tier> [<kinds>]: the runtime\'s title, the account\'s label for the operator only, its role and kinds; the id stays the key (mcp-roster@1.2, T103)', async () => {
+    const workers = [
+      descriptor(`agent:${CLAUDE}/develop`, { account: agentAccount(CLAUDE), kinds: ['code'] }),
+      descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE) }),
+      descriptor(`agent:${CODEX}/develop-2`, { provider: 'codex-sdk', family: 'codex-sdk', account: agentAccount(CODEX), kinds: ['docs', 'tests'], state: 'unavailable' }),
+      descriptor('worker:plus/standard', { provider: 'chatgpt-web', family: 'chatgpt-web', quotaClass: 'subscription-chat', locality: 'remote', account: { id: 'plus', group: 'chatgpt-web', mode: 'assigned' } }),
+      descriptor('model:local', { provider: 'openai-compatible', family: 'openai-compatible', quotaClass: 'local' }),
+    ]
+    const base = services({}, workers)
+    const slots = base.agentWorkers!.agentAccounts!
+    const labelled = services({
+      agentWorkers: {
+        agentAccounts: {
+          ...slots,
+          labelOf: (a: { accountId?: string }) => (a.accountId === CLAUDE ? 'science' : undefined),
+          providers: () => [{ provider: 'claude-agent-sdk', title: 'Claude Code' }, { provider: 'codex-sdk', title: 'Codex' }],
+        },
+      },
+    }, workers)
+    const operator = await readRoster(labelled, { scope: 'operator', now: NOW })
+    valid(operator)
+    expect(entries(operator).map((e) => [e.worker, e.name])).toEqual([
+      [`agent:${CLAUDE}/develop`, 'Claude Code · science · develop [code]'],
+      [`agent:${CLAUDE}/review`, 'Claude Code · science · review'],
+      // No label: the masked hint and the slot (none here: the slot only).
+      [`agent:${CODEX}/develop-2`, 'Codex · slot 2 · develop-2 [docs, tests]'],
+      // No title: the provider's first word (a model Worker's, its family's); no account, the rest of its id.
+      ['model:local', 'Openai · local · standard'],
+      ['worker:plus/standard', 'Chatgpt · Studio Plus · standard'],
+    ])
+    // Without a label, the operator reads the masked hint and the slot; a runtime with no title, its provider's first word.
+    const plain = await readRoster(base, { scope: 'operator', now: NOW })
+    expect(entry(plain, `agent:${CLAUDE}/develop`).name).toBe('Claude · t***@example.com, slot 1 · develop [code]')
+    // A client (the lead) gets no label in the name either: the slot, or the account id.
+    const client = await readRoster(labelled, { scope: 'client', now: NOW })
+    valid(client)
+    expect(entries(client).map((e) => e.name)).toEqual(['Claude Code · slot 1 · develop [code]', 'Claude Code · slot 1 · review', 'Codex · slot 2 · develop-2 [docs, tests]', 'Openai · local · standard', 'Chatgpt · plus · standard'])
+    expect(JSON.stringify(client)).not.toMatch(/science|Studio Plus|t\*\*\*@example\.com/)
+    expect(formatRoster(operator)).toContain(`Claude Code · science · develop [code] (agent:${CLAUDE}/develop)  ready\n`)
+  })
+
+  it('says what the reading that quarantined an agent account found, in the availability and its summary (agent-account@1.1, T103)', async () => {
+    const detail = 'slot 1 of claude-agent-sdk cannot be verified: found Claude Code 2.1.310 (/usr/bin/claude); its identity reader admits only 2.1.308'
+    const roster = await readRoster(services({
+      agentWorkers: { agentAccounts: { list: () => [{ accountId: CLAUDE, provider: 'claude-agent-sdk', slot: 1, status: 'quarantined', quarantine: { reason: 'unverified', since: AT, decision: DECISION, detail } }], workersIn: () => [] } },
+    }, [descriptor(`agent:${CLAUDE}/review`, { state: 'unavailable', account: agentAccount(CLAUDE) })]), { scope: 'operator', now: NOW })
+    valid(roster)
+    expect(entry(roster, `agent:${CLAUDE}/review`).availability).toEqual({ state: 'quarantined', summary: `quarantined: unverified (${detail}), since ${AT}`, reason: 'unverified', since: AT, decision: DECISION, detail })
+    expect(entry(roster, `agent:${CLAUDE}/review`).account).toMatchObject({ value: { record: { value: { quarantine: { reason: 'unverified', detail } } } } })
   })
 
   it('the example validates against mcp-roster@1.3, and a record that is not one is refused', async () => {

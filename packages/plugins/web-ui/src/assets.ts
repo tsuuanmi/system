@@ -747,7 +747,7 @@ export const APP_JS = `'use strict'
       if (a.state === 'ready') return 'Idle: it takes work now'
       if (a.state === 'resting') return 'At a limit: ' + (isKnown(a.until) ? 'back ' + when(a.until.value) : 'no reset is known (' + a.until.unknown + ')')
       if (a.state === 'unavailable') return 'Unavailable: ' + text(a.reason)
-      return 'Quarantined: its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + ', since ' + when(a.since)
+      return 'Quarantined: its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + (a.detail ? ' (' + a.detail + ')' : '') + ', since ' + when(a.since)
     }
     const accountOf = (w) => known(w.account, (a) => el('span', {},
       isKnown(a.record) && a.record.value.label ? text(a.record.value.label) + ' ' : '',
@@ -771,9 +771,10 @@ export const APP_JS = `'use strict'
           p.windows.map((win) => el('div', { class: 'muted' }, win.id + ': ' + text(win.used, (n) => n + ' % used') + ', resets ' + text(win.resets, when))),
           isKnown(p.unknownUsage) ? (p.unknownUsage.value.runs ? el('div', { class: 'unknown' }, p.unknownUsage.value.runs + ' run(s) with usage it could not count') : null) : el('div', { class: 'unknown' }, 'usage not counted: unknown (' + p.unknownUsage.unknown + ')')))) : (lines.length ? null : el('span', { class: 'muted' }, 'No pool on its account.'))))
     }
-    const card = (w) => el('article', { class: 'panel request', 'aria-labelledby': 'worker-' + w.worker },
+    // Its display name heads the card; the id, the key every record uses, stays under it.
+    const card = (w) => el('article', { class: 'panel request', 'aria-labelledby': 'worker-' + w.worker + ' worker-id-' + w.worker },
       el('h4', { id: 'worker-' + w.worker }, w.name),
-      el('p', { class: 'muted' }, 'Worker id ', el('code', {}, w.worker)),
+      el('p', { class: 'muted', id: 'worker-id-' + w.worker }, 'Worker id ', el('code', {}, w.worker)),
       isKnown(w.description) ? el('p', {}, w.description.value)
         : el('p', { class: 'muted' }, el('span', { class: 'tag' }, 'derived'), ' ' + w.derived + ' (no description is configured)'),
       el('p', { class: 'state ' + w.availability.state }, statusOf(w)),

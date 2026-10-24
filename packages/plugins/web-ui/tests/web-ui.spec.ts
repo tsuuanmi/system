@@ -258,9 +258,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(roster).toMatchObject({
       counts: { busy: 1, resting: 1 },
       workers: { value: [
-        { worker: 'worker:plus/frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
+        { worker: 'worker:plus/frontier', name: 'Chatgpt · Studio Plus · frontier', availability: { state: 'resting', summary: 'resting at a limit until 2026-10-24T11:00:00.000Z' } },
         // The stand-in engine's run is not running this Worker now; no ledger, so its pools are unknown.
-        { worker: 'worker:plus/standard', description: { value: 'The studio\'s chat subscription for quick questions (standard tier)' }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } },
+        { worker: 'worker:plus/standard', name: 'Chatgpt · Studio Plus · standard', description: { value: 'The studio\'s chat subscription for quick questions (standard tier)' }, availability: { summary: 'busy 1 of 2' }, account: { value: { record: { value: { label: { value: 'Studio Plus' } } } } },
           work: { value: { items: [{ runId: 'run_xyz', nodeId: 'review:m1:propose', since: { unknown: 'the event log (ctx.eventLog) is not mounted' }, summary: 'Running review run run_xyz, step review:m1:propose, since an unknown time' }], more: 0 } }, pools: { unknown: 'the resource ledger (ctx.resources) is not mounted' },
           liveness: { value: [{ execution: 'arun_00000000000000a2', state: 'unknown', since: AT, runId: 'run_old', summary: expect.stringContaining('ended without being known to be gone, holding session ses_9') }] } },
       ] },
@@ -288,6 +288,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const working = page.getByRole('region', { name: 'Working' })
     const busy = working.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
     const card = await busy.innerText()
+    // Its display name heads the card, its id under it.
+    expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('Chatgpt · Studio Plus · standard')
     for (const said of ['Worker id worker:plus/standard', 'The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
       'Running review run run_xyz, step review:m1:propose, since an unknown time', 'Studio Plus', 'plus · website account, ready', 'standard tier, subscription-chat, remote',
       // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013).

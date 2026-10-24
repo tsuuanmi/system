@@ -94,20 +94,23 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **The move from hand-named rows** (`src/migrate.ts`, `system account
   migrate`, MCP `account_migrate`, operator scope;
   [runbook](../../../docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)):
-  - `planMigration` (rule `agent-workers.migration` version 2, pure) gives the new row
+  - `planMigration` (rule `agent-workers.migration` version 3, pure) gives the new row
     from the loaded hand-named rows: rows that agree on the work's settings
     (their `kinds` included, which the role keeps) are one role (`review` when read-only, `develop` when writing, then `review-2`,
     …; a second row of one runtime starts another role), what each runtime set
-    goes under `runtimes`; slot 1 of each runtime (its configured home, adopted
+    goes under `runtimes`, and the rows' `description` when every row of the
+    role gives the same one (none otherwise); slot 1 of each runtime (its configured home, adopted
     where it is) is assigned that runtime's roles by its verified id; an old
     `pool` becomes the provider's template (with its windows, `unknown`, and
     the cooldown), and `maxConcurrentRunsPerAccount` the number of the
     runtime's rows, so as many runs run at once as did;
-  - blockers stop it: a runtime not registered, no account in slot 1, slot 1
-    not the runtime's own home, an account not `ready` (an `unverified` one
-    waits for its reader, PROP-0012 open question 1, unless the operator
-    stops that runtime's Workers: `stop`), rows of one runtime on different
-    pools, windows, or cooldowns, or a pool the ledger does not configure;
+  - blockers stop it: a runtime not registered, no account in slot 1 (for a
+    runtime with no identity reader, which cannot enroll one, the cutover waits
+    for a reader), slot 1 not the runtime's own home, an account not `ready` (an
+    `unverified` one waits for its reader, PROP-0012 open question 1, unless
+    the operator stops that runtime's Workers: `stop`), rows of one runtime on
+    different pools, windows, or cooldowns, or a pool the ledger does not
+    configure;
   - planning changes nothing. `apply` is refused while it has blockers or a run
     of an old Worker is queued or running (drain first); otherwise, in one
     transaction: an `enrollment` decision per old Worker (`migrated` to its new
@@ -115,18 +118,27 @@ The **`agents` Worker source**: agent runtimes as Workers
     agent session and run of the old Worker moved to its new id (each move kept,
     table `agent_cutover_moves`, migration 11), and the cutover's own
     `enrollment` decision (`applied`, its inputs the moves'), kept in
-    `agent_cutover`. Applying again changes nothing (`already-applied`);
+    `agent_cutover`; the tool's output is checked against its schema after
+    those writes and before the commit (`Cutover.apply`'s `check`), so a defect
+    refuses the apply with nothing decided or moved. Applying again changes
+    nothing (`already-applied`);
   - once applied, hand-named Workers already loaded are `unavailable` and start
     nothing, and a row with hand-named Workers is refused at the next load
     (`config_error`, naming `system account migrate --rollback`);
   - `rollback` (refused while a run of a moved-to Worker is queued or running)
     moves each moved session and run back unless it moved again since, lifts
-    the refusal, and records `rolled-back` (its input the cutover's decision).
+    the refusal, and records `rolled-back` (its input the cutover's decision),
+    its output checked before the commit as an apply's is.
     Records already written (results, usage, decisions) keep the ids they were
     written with; the `workerSessions` records of team members are not moved.
 - **Description** (`capability-descriptor@1.7`): a hand-named Worker's `description`, or its
   role's for a derived Worker, is carried on its descriptor for the roster; plain text on one
   line, at most 200 characters (refused at load otherwise); never a routing input.
+- **An account's label** (`assignments[].label`, T103): the operator's display name of an
+  account, such as `science`; plain text on one line, at most 64 characters (refused at load
+  otherwise). `AgentAccounts.labelOf` gives it to `account_agents` and the roster
+  ([display names](../../../docs/design/roster.md#display-names)); it is never a routing input,
+  never part of a Worker id, and never on the account's record.
 - **Accounts** (`providers`, ADR-0052): a hand-named Worker runs on its
   runtime's one home, so every hand-named Worker of a runtime names the account
   `{ id: <runtime>, group: <runtime> }` (`capability-descriptor@1.5`); a derived
@@ -143,8 +155,14 @@ The **`agents` Worker source**: agent runtimes as Workers
   - Each runtime has `slots` (its `providers` entry, default 1, at most 64),
     each an owner-only home: slot 1 adopts the runtime's own home (`home` on its
     provider) where it is, slot `n` is `<accountHomes>/<runtime>/<n>` (default
-    `<DSH_HOME>/system/agent-homes`). A slot is kept as an `agent-account@1.0`
-    record (store table `agent_accounts`, migration 10), validated on every write.
+    `<DSH_HOME>/system/agent-homes`). A slot is kept as an `agent-account@1.x`
+    record (store table `agent_accounts`, migration 10), validated on every write;
+    a quarantined one is `@1.1`, with what its reading found (`quarantine.detail`),
+    which health, the roster, `system account list`, and a refused run name.
+  - A runtime with no identity reader (the Antigravity CLI) takes no free slot
+    (`config_error`, nothing made or recorded): its account could only be
+    `unverified`, and adopting its home would hold the hand-named Workers there.
+    A slot taken before can still be signed in again and verified.
   - The account id is `<runtime>:<16 hex>` of the runtime's `identity(home, key)`
     HMAC, keyed by 32 bytes made once in the credential vault
     (`system-agent-workers/identity-key`); no vault, and nothing is read.
@@ -154,12 +172,15 @@ The **`agents` Worker source**: agent runtimes as Workers
     change is an `enrollment` decision (`decision@1.8`) recorded first, its
     input the slot's earlier decision, never the principal.
   - The operator's tools, operator scope, checked against
-    `mcp-agent-accounts@1.1`: `account_enroll` (step `begin` takes a slot and
+    `mcp-agent-accounts@1.2`: `account_enroll` (step `begin` takes a slot and
     returns the runtime's sign-in command for its home; step `verify` records
     who signed in; `accept` takes a `changed` slot's new principal as a new
     account), `account_remove` (frees a slot, keeping its home),
-    `account_agents` (every slot with the Workers that run on its account, and
-    each runtime's slots), and `account_migrate` (above). Only the operator's
+    `account_agents` (every slot with the Workers that run on its account and
+    its label, and each runtime's slots and title), and `account_migrate`
+    (above). A call that changes anything checks the output it would give
+    before its change commits (each change in one store transaction, the check
+    last), so a defect refuses it with nothing changed. Only the operator's
     `verify` lifts a quarantine or a sign-out.
   - Each probe re-reads the runtime's `ready` accounts, and each run the
     account of its home: a different principal is quarantined `changed`, none

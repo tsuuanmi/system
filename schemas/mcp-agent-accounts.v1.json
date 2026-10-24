@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-agent-accounts:v1",
   "title": "MCP agent account tools",
-  "description": "Input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents` (proposals/0012-agent-accounts.md phase E, ADR-0051). The root describes one call (tool, input, structured output); the provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. No principal and no token is in any of them (INV-8). 1.1 adds `account_migrate`, the move from hand-named agent Workers to Workers derived as account × role (phase F).",
+  "description": "Input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents` (proposals/0012-agent-accounts.md phase E, ADR-0051). The root describes one call (tool, input, structured output); the provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. No principal and no token is in any of them (INV-8). 1.1 adds `account_migrate`, the move from hand-named agent Workers to Workers derived as account × role (phase F). 1.2 adds a plan role's `kinds` and `description`, an account's operator `label` and a runtime's `title` in `account_agents`.",
   "type": "object",
   "required": [
     "tool",
@@ -150,6 +150,12 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 200
+    },
+    "label": {
+      "description": "@1.2: the operator's display label of an account (agent-workers `assignments[].label`), such as `science`: plain text on one line, for people only, never a routing input.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
     },
     "role-id": {
       "type": "string",
@@ -383,6 +389,9 @@
               },
               "workers": {
                 "$ref": "#/$defs/workers"
+              },
+              "label": {
+                "$ref": "#/$defs/label"
               }
             },
             "additionalProperties": false
@@ -420,6 +429,12 @@
               "login": {
                 "description": "Whether its runtime gives a sign-in command, so it can be enrolled.",
                 "type": "boolean"
+              },
+              "title": {
+                "description": "@1.2: the runtime's name for people, as its provider gives it (for example the agent's product name); never a routing input.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
               }
             },
             "additionalProperties": false
@@ -560,6 +575,22 @@
               },
               "reviewMember": {
                 "type": "boolean"
+              },
+              "kinds": {
+                "description": "@1.2: the kinds of work the role's Workers take (ADR-0057), its rows' kinds.",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workKind"
+                }
+              },
+              "description": {
+                "description": "@1.2: what the role's Workers are for, in the operator's words: its rows' description, when every row of the role gives the same one.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
               },
               "runtimes": {
                 "type": "object",

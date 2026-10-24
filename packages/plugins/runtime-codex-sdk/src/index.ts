@@ -147,6 +147,7 @@ export const IDENTITY_READER = 'codex-auth-json'
 
 export class CodexRuntime implements AgentRuntimeProvider {
   readonly kind = 'codex-sdk'
+  readonly title = 'Codex'
 
   /** Its own configured home: where a run that names none runs, and slot 1 of its accounts. */
   readonly home: string

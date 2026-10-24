@@ -9,7 +9,7 @@
  */
 import { isAbsolute, resolve } from 'node:path'
 import type { SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
-import { DESCRIPTION, MAX_DESCRIPTION, type ProviderAccounts } from '@tsuuanmi/system-libs'
+import { DESCRIPTION, LABEL, MAX_DESCRIPTION, MAX_LABEL, type ProviderAccounts } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { templatePool } from '@tsuuanmi/system-resources-core'
 import { type QuotaClass, type Tier, WORK_KIND } from '@tsuuanmi/system-workers-core'
@@ -58,6 +58,8 @@ export interface AgentRoleConfig {
 export interface AgentAssignmentConfig {
   account: string
   roles: string[]
+  /** Its display label in the operator's words, such as `science`: for people only, never a routing input or part of a Worker id. */
+  label?: string | undefined
 }
 
 /** A Worker derived from one assignment of one role: the account it runs on, and the role. */
@@ -187,6 +189,7 @@ export function deriveWorkers(roles: readonly AgentRoleConfig[], assignments: re
     seen.add(assignment.account)
     if (!Array.isArray(assignment.roles) || !assignment.roles.length) fail(`${at} (${assignment.account}).roles: at least one role`)
     if (new Set(assignment.roles).size !== assignment.roles.length) fail(`${at} (${assignment.account}).roles: a role is named twice`)
+    if (assignment.label !== undefined && (typeof assignment.label !== 'string' || !LABEL.test(assignment.label))) fail(`${at} (${assignment.account}).label must be plain text on one line, 1 to ${MAX_LABEL} characters`)
     const runtime = providerOfAccount(assignment.account)
     const provider = meteredBy.get(runtime)
     for (const name of assignment.roles) {

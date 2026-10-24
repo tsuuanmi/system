@@ -151,6 +151,7 @@ export interface RuntimeOptions {
 
 export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   readonly kind = 'claude-agent-sdk'
+  readonly title = 'Claude Code'
   private readonly query: QueryFn
   /** Its own configured home: where a run that names none runs, and slot 1 of its accounts. */
   readonly home: string
@@ -172,7 +173,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     try {
       version = await (this.options.version ?? claudeVersion)(executable)
     } catch (error) {
-      return unavailable(`claude --version failed: ${firstLine(error)}`)
+      return unavailable(versionFailed(executable, error))
     }
     // Every pre-approved tool is scoped to the workspace, and Claude Code runs under the host's
     // read confinement, proven here (ADR-0024, ADR-0038). A run's tool gate is a PreToolUse hook on
@@ -316,17 +317,18 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
    */
   async identity(home: string, key: Uint8Array): Promise<IdentityReading> {
     const reader = IDENTITY_READER
+    const admitted = `its identity reader admits only ${VERIFIED_IDENTITY_VERSIONS.join(', ')}`
     const executable = this.executable()
-    if (!executable) return { status: 'unverified', reason: 'Claude Code is not installed (no claude executable on PATH)', reader }
+    if (!executable) return { status: 'unverified', reason: `Claude Code is not installed (no claude executable on PATH); ${admitted}`, reader }
     let runtimeVersion: string
     try {
       runtimeVersion = await (this.options.version ?? claudeVersion)(executable)
     } catch (error) {
-      return { status: 'unverified', reason: `claude --version failed: ${firstLine(error)}`, reader }
+      return { status: 'unverified', reason: `${versionFailed(executable, error)}; ${admitted}`, reader }
     }
     const pinned = { reader, runtimeVersion }
     if (!VERIFIED_IDENTITY_VERSIONS.includes(runtimeVersion)) {
-      return { status: 'unverified', reason: `no identity reader is verified for Claude Code ${runtimeVersion} (verified: ${VERIFIED_IDENTITY_VERSIONS.join(', ')})`, ...pinned }
+      return { status: 'unverified', reason: `found Claude Code ${runtimeVersion} (${executable}); ${admitted}: pin an admitted version (runtime-claude-agent-sdk executable)`, ...pinned }
     }
     const problem = homeProblem(home)
     if (problem) return { status: 'missing', reason: problem, ...pinned }
@@ -431,6 +433,23 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false, homes: true })
 
 const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 160)
+
+/**
+ * Why `claude --version` failed: an executable that is no longer there (Claude Code's updater prunes
+ * old versions under `~/.local/share/claude/versions`, which a pin there points into) is named as
+ * such, with how to keep one that stays; any other failure as it came.
+ */
+function versionFailed(executable: string, error: unknown): string {
+  let present = true
+  try {
+    lstatSync(executable)
+  } catch {
+    present = false
+  }
+  return present
+    ? `claude --version failed (${executable}): ${firstLine(error)}`
+    : `the Claude Code executable ${executable} is not there (an updater may have pruned it): keep a checked copy under ~/.dsh/system/tools/claude/<version>/ and pin it (docs/operations/runbooks.md#keep-claude-codes-pinned-version)`
+}
 
 /** What `claude auth status` output says of the sign-in (`"loggedIn"`), or undefined when it says nothing it can be read as. */
 function loggedIn(stdout: string): boolean | undefined {

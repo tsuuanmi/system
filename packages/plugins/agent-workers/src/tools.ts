@@ -3,35 +3,58 @@
  * `account_enroll` (take a slot and get its sign-in command, then verify who signed in),
  * `account_remove` (free a slot), `account_agents` (every slot and what it holds), and
  * `account_migrate` (plan, apply, or undo the move from hand-named Workers to account × role). Input
- * and output are checked against `mcp-agent-accounts@1.1` (ADR-0037); nothing in them holds a
- * principal or a token (INV-8). Beside them, `agent_run_free` (`mcp-agent-runs@1.0`): the operator
- * frees what a run that ended with its liveness unknown holds (PROP-0013).
+ * and output are checked against `mcp-agent-accounts@1.2` (ADR-0037), the output of a call that
+ * changes anything before its change commits; nothing in them holds a principal or a token (INV-8).
+ * Beside them, `agent_run_free` (`mcp-agent-runs@1.0`): the operator frees what a run that ended
+ * with its liveness unknown holds (PROP-0013).
  * @module
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { outline } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import zod from 'zod'
-import type { AgentAccounts, SlotRef } from './accounts.ts'
+import type { AgentAccount, AgentAccounts, Begun, SlotRef } from './accounts.ts'
 
-const TAG = 'mcp-agent-accounts@1.1'
+const TAG = 'mcp-agent-accounts@1.2'
 const RUNS_TAG = 'mcp-agent-runs@1.0'
 const schemas = new SchemaRegistry()
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** One call of a tool of schema `tag`: its input checked, the work done, its output checked; a refusal does nothing more. */
-async function checked(tag: string, tool: string, args: Record<string, unknown>, work: () => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) {
+/**
+ * Checks the output a call would give: a call that changes anything runs it on that output before
+ * its change commits, so an output its schema refuses (a defect) leaves everything as it was.
+ */
+export type OutputCheck = (out: Record<string, unknown>) => void
+
+/** The output a call would give, refused by its schema before its change committed. */
+class RefusedOutput extends Error {}
+
+/**
+ * One call of a tool of schema `tag`: its input checked, the work done, its output checked; a
+ * refusal does nothing more. Work that changes anything is given `check` and runs it on the output
+ * it would give before it commits (fail closed, INV-2): a defect then refuses the call with nothing
+ * changed. The output is checked once more at the end, which is all a read-only call needs.
+ */
+async function checked(tag: string, tool: string, args: Record<string, unknown>, work: (check: OutputCheck) => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) {
   const def = tool.replaceAll('_', '-')
   try {
     schemas.assertDef(tag, `${def}-input`, args)
   } catch (error) {
     return refused(`invalid input, nothing done: ${(error as Error).message}`)
   }
+  const check: OutputCheck = (out) => {
+    try {
+      schemas.assertDef(tag, `${def}-output`, out)
+    } catch (error) {
+      throw new RefusedOutput((error as Error).message)
+    }
+  }
   let out: Record<string, unknown>
   try {
-    out = await work()
+    out = await work(check)
   } catch (error) {
+    if (error instanceof RefusedOutput) return refused(`${tool} would make an output its schema refuses (a defect), so nothing changed: ${error.message}`)
     const kind = (error as { kind?: unknown }).kind
     return refused(`${typeof kind === 'string' ? `${kind}: ` : ''}${(error as Error).message}`)
   }
@@ -43,7 +66,7 @@ async function checked(tag: string, tool: string, args: Record<string, unknown>,
   return { content: [{ type: 'text' as const, text: text(out) }], structuredContent: out }
 }
 
-const call = (tool: string, args: Record<string, unknown>, work: () => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) => checked(TAG, tool, args, work, text)
+const call = (tool: string, args: Record<string, unknown>, work: (check: OutputCheck) => Promise<Record<string, unknown>>, text: (out: Record<string, unknown>) => string) => checked(TAG, tool, args, work, text)
 
 const refOf = (args: Record<string, unknown>): SlotRef => (typeof args.accountId === 'string'
   ? { accountId: args.accountId }
@@ -80,9 +103,9 @@ export function registerRunTools(ctx: Context, freer: Freer): void {
   }))
 }
 
-/** The move from hand-named rows to derived Workers, as the `agents` source runs it. */
+/** The move from hand-named rows to derived Workers, as the `agents` source runs it; an apply or a rollback runs `check` on its output before it commits. */
 export interface Migrator {
-  migrate(options: { apply?: boolean; rollback?: boolean; stop?: readonly string[] }): Promise<Record<string, unknown>>
+  migrate(options: { apply?: boolean; rollback?: boolean; stop?: readonly string[] }, check: OutputCheck): Promise<Record<string, unknown>>
 }
 
 export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migrator: Migrator): void {
@@ -95,14 +118,12 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
     scope: 'operator',
     description: 'Operator tool: enroll an agent account (ADR-0051). step begin takes the lowest free slot of a provider (or the slot named; a taken slot or an accountId is signed in again in its own home) and returns the runtime\'s own sign-in command for the slot\'s home, which you run in your own terminal without D-Bus; step verify then reads who signed in and records the account: ready, signed-out, or quarantined (changed, ambiguous, duplicate, unverified) with why. accept takes a changed slot\'s new principal as a new account.',
     inputSchema: { step: zod.enum(['begin', 'verify']).describe('begin, then verify after the sign-in'), ...slotShape, accept: zod.boolean().optional().describe('verify only: accept a changed slot\'s new principal as a new account') },
-  }, async (args) => call('account_enroll', args, async () => {
+  }, async (args) => call('account_enroll', args, async (check) => {
     const ref = refOf(args)
-    if (args.step === 'begin') {
-      const begun = await accounts.begin(ref)
-      return { account: begun.account, workers: accounts.workersIn(begun.account), login: begun.login, adopted: begun.adopted }
-    }
-    const account = await accounts.verify(ref, { accept: args.accept === true })
-    return { account, workers: accounts.workersIn(account) }
+    const begunOutput = (begun: Begun) => ({ account: begun.account, workers: accounts.workersIn(begun.account), login: begun.login, adopted: begun.adopted })
+    if (args.step === 'begin') return begunOutput(await accounts.begin(ref, (begun) => check(begunOutput(begun))))
+    const verifiedOutput = (account: AgentAccount) => ({ account, workers: accounts.workersIn(account) })
+    return verifiedOutput(await accounts.verify(ref, { accept: args.accept === true, check: (account) => check(verifiedOutput(account)) }))
   }, (out) => {
     const account = out.account as { provider: string; slot: number; status: string; accountId?: string; quarantine?: { reason: string } }
     const login = out.login as { command: string; args: string[]; env: Record<string, string> } | undefined
@@ -113,7 +134,7 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
     scope: 'operator',
     description: 'Operator tool: free an agent account\'s slot (ADR-0051), by its account id or by provider and slot. Recorded as an enrollment decision; its home and the sign-in in it are kept as they are, and a later sign-in in that slot replaces it.',
     inputSchema: slotShape,
-  }, async (args) => call('account_remove', args, async () => ({ removed: await accounts.remove(refOf(args)) }), (out) => {
+  }, async (args) => call('account_remove', args, async (check) => ({ removed: await accounts.remove(refOf(args), (removed) => check({ removed })) }), (out) => {
     const removed = out.removed as { provider: string; slot: number; accountId?: string }
     return `freed slot ${removed.slot} of ${removed.provider}${removed.accountId ? ` (was ${removed.accountId})` : ''}`
   }))
@@ -122,7 +143,10 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
     description: 'Operator tool: list agent accounts (ADR-0051): each enrollment slot with its account id, masked hint, status and why, home, and the Workers that run there; and each runtime with its slots, how many are taken, and whether it can read identity.',
     inputSchema: {},
   }, async (args) => call('account_agents', args, async () => ({
-    accounts: accounts.list().map((account) => ({ account, workers: accounts.workersIn(account) })),
+    accounts: accounts.list().map((account) => {
+      const label = accounts.labelOf(account)
+      return { account, workers: accounts.workersIn(account), ...(label !== undefined ? { label } : {}) }
+    }),
     providers: accounts.providers(),
   }), outline))
   ctx.mcp.tool('account_migrate', {
@@ -133,9 +157,9 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migr
       rollback: zod.boolean().optional().describe('Undo an applied move: sessions and runs moved back, the hand-named rows load again'),
       stop: zod.array(zod.string().max(64)).max(64).optional().describe('Runtimes whose Workers stop at the cutover, their account not ready'),
     },
-  }, async (args) => call('account_migrate', args, async () => migrator.migrate({
+  }, async (args) => call('account_migrate', args, async (check) => migrator.migrate({
     apply: args.apply === true, rollback: args.rollback === true, stop: Array.isArray(args.stop) ? args.stop.map(String) : [],
-  }), (out) => {
+  }, check), (out) => {
     const plan = out.plan as { workers: Array<{ from: string; to?: string; why: string }>; blockers: string[] }
     return [
       `${out.outcome}:`,

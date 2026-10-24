@@ -31,7 +31,7 @@ that change what runs).
 | Source | Read through | What it gives |
 |---|---|---|
 | Worker registry | `ctx.workers.list()` (every source's `describe`, under the router's bound), `sources()`, `siblings(worker)`, `liveness()` (optional) | each Worker's descriptor (`capability-descriptor@1.x`): provider, family, the operator's description (`@1.7`), account, tier, quota class, state, load, cooldowns; how each source answered its last read; the Workers of its account; the runs whose liveness needs a look ([what the operator sees](agent-runtimes.md#what-the-operator-sees)) |
-| agent accounts | `ctx.agentWorkers.agentAccounts`: `list()`, `workersIn(account)` | each enrollment slot (`agent-account@1.0`): its account id, status, quarantine, masked hint, and the Workers that run on it ([enrollment](agent-runtimes.md#enrollment-and-quarantine)) |
+| agent accounts | `ctx.agentWorkers.agentAccounts`: `list()`, `workersIn(account)`, and, when it has them, `labelOf(account)` and `providers()` | each enrollment slot (`agent-account@1.x`): its account id, status, quarantine (and what its reading found, `@1.1`), masked hint, and the Workers that run on it ([enrollment](agent-runtimes.md#enrollment-and-quarantine)); the operator's label of its account (`assignments[].label`); each agent runtime's title for people |
 | website accounts | `ctx.accounts`: `list()`, `duplicateIdentities()` | each catalog account's secret-free view: label and status; the accounts signed in as one person |
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
 | event log | `ctx.eventLog.query({ type: 'usage.unknown' })`; `ctx.eventLog.query({ type: 'workflow.node.started', runId, nodeId })` | the runs whose usage the ledger could not count ([D25](resources.md#usage-the-ledger-cannot-count)); when a running step's current attempt started |
@@ -47,8 +47,8 @@ manifest names each one it consumes (optional): the roster works with any subset
 |---|---|---|
 | `worker`, `provider`, `tier`, `quotaClass`, `locality`, `state`, `observedAt` | its descriptor | never: a listed Worker has them |
 | `description` | its descriptor's `description` (`@1.7`): the operator's words from the configuration row that defines it (agent-workers `workers[]` or `roles[]`, models `models[]`; a website Worker's is its accounts `accounts[]` entry's, with its tier), plain text on one line, at most 200 characters | no description is configured for it |
-| `name` | `@1.3`: `<provider> · <account> · <role or tier>`: its provider's first word capitalised (a model's, its family's); its account's label (**operator scope only**), else its account's id or slot, else the rest of its own id; its role, else its tier. For people only, never an id to route by | never |
 | `derived` | its provider, role, tier, quota class, and locality, as one line; a surface shows it, marked as derived, when `description` is unknown | never |
+| `name` | its display name, `<runtime> · <account> · <role or tier> [<kinds>]` ([below](#display-names)) | never |
 | `family` | its descriptor | its source declares none |
 | `account` | its descriptor's `account` (`@1.5`): `id`, `group`, `mode`, `limitUntil` | its source names no account |
 | `account.record` | the enrolled agent account with that id, or the one that lists the Worker among its Workers (a hand-named Worker in slot 1); else the website account with that id. `kind` (`agent`, `website`), `status`, `slot`, `quarantine`, `sameAs` (website accounts signed in as the same person), `label` | no record has that id, or the list that would hold it could not be read (named) |
@@ -67,13 +67,41 @@ A fact a source could not give is `{ "unknown": "<why>" }`, never a default
 `unknown` means it could not be asked or did not answer. A source that throws leaves only its own
 fields unknown; the others are still read.
 
+## Display names
+
+A Worker id is a key that records keep for good, so it stays stable and opaque
+(`agent:<accountId>/<role>`); the meaning goes in a display name, `name`, which the roster makes on
+each read and nothing routes on (`mcp-roster@1.2`):
+
+```text
+<runtime> · <account> · <role or tier> [<kinds>]
+Claude Code · science · develop [code]
+Codex · c…@example.com, slot 2 · develop-2 [docs, tests]
+Chatgpt · Studio Plus · standard
+Openai · fast · standard
+```
+
+- **Runtime:** the agent runtime's title as its provider gives it (`title`,
+  [seam contract](agent-runtimes.md#seam-contract)), else its provider's first word, capitalised
+  (a model Worker's, its family's): a website or model Worker is named so.
+- **Account:** for the operator, the account's label: an agent account's
+  `assignments[].label` in the agent-workers row, else its masked hint and slot (or the slot); a
+  website account's catalog label, else its id. For a client (the lead), who gets no label, an
+  agent account's slot, or the account id. With no account record read, its account's id; a
+  Worker that names no account (a model), the rest of its own id (`model:fast`, `fast`).
+- **Work:** its role (account × role), else its tier, and the kinds of work it takes
+  (`capability-descriptor@1.6`).
+
+The CLI heads each Worker's block with it, the id beside it, and the Workers tab heads each card
+with it, the id under it. It is at most 200 characters.
+
 ## Availability
 
 One of five states, each with a one-line `summary` the CLI and the page show:
 
 | State | When | Carries |
 |---|---|---|
-| `quarantined` | its account is an enrolled agent account in quarantine (`changed`, `ambiguous`, `duplicate`, `unverified`), and the Worker takes no work | the reason, since when, and the `enrollment` decision that quarantined it |
+| `quarantined` | its account is an enrolled agent account in quarantine (`changed`, `ambiguous`, `duplicate`, `unverified`), and the Worker takes no work | the reason, since when, the `enrollment` decision that quarantined it, and what its reading found (`detail`, when its record says it: for `unverified`, the version found and the ones admitted), also in the summary |
 | `resting` | its source describes it `quota-exhausted` | `until`: the account's `limitUntil`, else the latest `until` of its account's closed pools when every one of them names one (the account is back only once each is), else `unknown` (no reset is known) |
 | `unavailable` | `unavailable` or `reauth-required` | `reason`: from its account (signed out, enrolled and not verified, must sign in again, a site challenge, disabled, never signed in, signed in as the same person as another account), else `unknown`: its source gives no reason (`system explain` on a run it was refused for shows the route's) |
 | `busy` | `busy`, or any run in its slots (`load.running > 0`), or a step the engine runs on it (its `work`), whatever load its source reports (`mcp-roster@1.3`) | `running` of `slots`: "busy N of M". A Worker below its slots still takes work; routing orders it after a less busy one ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). With no load, how many is unknown |
@@ -113,11 +141,18 @@ The schema bounds every string and list as well
   record.
 - **The Workers page** (`/ui/?view=workers`, the **Workers** tab, [web UI API](../reference/web-ui.md#roster)):
   the counts (working, idle, at a limit and when the first is back, unavailable), then one card per
-  Worker grouped by status, under the page's security headers and the operator token, built with
-  DOM methods and text only. **Doing now** lists its steps, then its runs whose liveness needs a
+  Worker grouped by status, headed by its display name with its id under it, under the page's
+  security headers and the operator token, built with DOM methods and text only. **Doing now** lists its steps, then its runs whose liveness needs a
   look (a held one marked as failed), each with a link to its run.
 
 ## Rejected alternatives
+
+- **A Worker id that carries its meaning** (`worker:<provider>:<capabilities>`, say). Two accounts
+  of one runtime in one role would share it, it would change with each probe's capabilities, and
+  every record keeps the id it was written with; the display name carries the meaning instead.
+- **A label on the capability descriptor.** The descriptor is a guarantee seam's input, and every
+  client reads it; an account's label is the operator's, so the roster reads it from the agent
+  accounts and shows it to the operator only.
 
 - **A roster table kept up to date by events.** It would be a second copy of each fact, which
   drifts on a missed event or a restart, and a new guarantee to keep. Reading on demand costs a few
