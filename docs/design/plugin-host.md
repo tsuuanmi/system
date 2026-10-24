@@ -108,9 +108,9 @@ whose rows are all off does not run, so it is neither checked nor counted as a p
 
 | Finding | When |
 |---|---|
-| `no-manifest` (`absent`) | its package ships no manifest, or cannot be found, and the host's `allowWithoutManifest` does not name it |
+| `no-manifest` (`absent`) | its package ships no manifest, or cannot be found, and the host's `allowWithoutManifest` does not name it; or its manifest was not read at all, which no configuration allows |
 | `no-manifest` (`refused`) | the host refused its manifest; no configuration allows that |
-| `unsatisfied`, with the `provider` and its `version` | a seam it consumes is provided by a mounted plugin whose manifest declares a version its caret range does not accept, or a range the host cannot read (not `^major.minor.patch`, or a major of 0); each mounted provider of the seam is checked |
+| `unsatisfied`, with the `provider` and its `version` | a seam it consumes is provided by a mounted plugin whose manifest declares a version its caret range does not accept (as semver: a pre-release, such as `1.2.0-rc.1`, satisfies no caret range), or a range the host cannot read (not `^major.minor.patch`, or a major of 0); each mounted provider of the seam is checked |
 | `unsatisfied`, with no provider | a seam it requires is declared by no mounted plugin's manifest, so it is taken at contract 1.0 (a seam of DSH or of the launcher), which its range does not accept |
 
 An optional seam no mounted plugin declares is not checked: it may be absent, which an optional
@@ -127,7 +127,7 @@ its `findings`, the outcome it comes `from` (`null` the first time), and, for a 
 `version` and `manifestDigest`. Its input is the plugin's previous check decision.
 
 **Recorded once** (INV-4). The host keeps each plugin's last check (its findings and decision). A
-start whose findings for a plugin equal its record, reasons aside, records nothing; another finding
+start whose findings for a plugin equal its record, reasons and order aside, records nothing; another finding
 is a new `fail`; a finding cleared, by a fix, by the allowance, or because no row mounts the plugin
 any more, is one `pass`. A plugin never found records no check at all.
 
