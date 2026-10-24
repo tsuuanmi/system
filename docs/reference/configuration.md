@@ -71,6 +71,7 @@
 | `assignments` | object[] | `[]` | Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker |
 | `assignments[].account` (required) | string |  | An enrolled agent account, by the id system account list shows |
 | `assignments[].roles` (required) | string[] | `[]` | The roles it serves: one Worker agent:<account>/<role> each |
+| `assignments[].label` | string (…64) |  | Its display label in your words, such as science or lead: plain text on one line, at most 64 characters; shown in the roster's and the Workers tab's names (Claude Code · science · develop [code]) and system account list, never a routing input, never part of a Worker id |
 | `providers` | object[] | `[]` | How each agent runtime's accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052) |
 | `providers[].provider` (required) | string |  | The agent runtime kind, as its provider registers it (the runtime of its Workers) |
 | `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
