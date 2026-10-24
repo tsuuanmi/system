@@ -24,7 +24,8 @@ import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, 
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
-import type { TaskLanding } from '@tsuuanmi/system-workflow'
+import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
+import { type CapabilityDescriptor, takesKind, TIERS } from '@tsuuanmi/system-workers-core'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
 export interface Config {
@@ -44,6 +45,13 @@ const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-sr
 const MAX_BODY = 16_384
 /** A proposed policy record is larger than a verdict: up to 64 rules and 200 commands of 200 characters. */
 const MAX_POLICY_BODY = 131_072
+/** Items of each part of "since you last looked", the latest first; pages of events one read goes through; running runs the live view shows. */
+export const ACTIVITY_SHOWN = 50
+const ACTIVITY_PAGES = 5
+const ACTIVITY_STATES: TaskState[] = ['done', 'review', 'waiting-for-input', 'waiting-for-approval', 'cancelled']
+export const LIVE_RUNS = 50
+/** Workers named per step of a start's preview, free and busy each. */
+export const LIKELY_WORKERS = 8
 /** Accepted results on their way into the repository that the reviews list, the latest first. */
 export const ACCEPTED_SHOWN = 20
 const LANDING_OPEN: ReadonlySet<string> = new Set(['watch', 'commit', 'committed', 'asked', 'merging'])
@@ -424,7 +432,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (!task.template) return json(res, 409, { error: `task ${taskId} names no template, so it cannot start from here: the lead starts it with a template it chooses (MCP run with task); nothing was started` })
       const steps = ctx.workflow.templateSteps(task.template)
       if (!steps) return json(res, 409, { error: `task ${taskId} names template ${task.template}, which is not served now (${ctx.workflow.refusedTemplates().find((t) => t.name === task.template)?.reason ?? 'no such template'}); nothing was started` })
-      if (!body) return json(res, 200, { task: { taskId, title: task.title, revision: task.revision, template: task.template, attempts: task.attempts }, steps })
+      if (!body) return json(res, 200, { task: { taskId, title: task.title, revision: task.revision, template: task.template, attempts: task.attempts }, steps: await likelyWorkers(steps) })
       // The start binds to the task the operator confirmed: one changed since is refused (INV-5).
       if (task.revision !== body.revision) return json(res, 409, { error: `task ${taskId} changed since the page showed it (revision ${task.revision}, not ${String(body.revision)}); nothing was started` })
       if (task.template !== body.template) return json(res, 409, { error: `task ${taskId} runs template ${task.template}, not ${String(body.template)}; nothing was started` })
@@ -434,6 +442,143 @@ export function apply(ctx: Context, config: Config = {}): void {
     } catch (error) {
       return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
     }
+  }
+
+  /**
+   * Which Workers could likely take each step now (T124), for the operator to read before a start:
+   * a Worker whose descriptor proves every capability the step needs (an offer of no scope), at the
+   * step's tier or above, that takes its kind of work; \`free\` when it takes work now (ready, or busy
+   * with a slot free), else \`busy\`. Read from \`ctx.workers.list()\`; it routes nothing and records
+   * no decision: routing decides when the run starts. Each step without a registry gets \`unknown\`.
+   */
+  const likelyWorkers = async (steps: TemplateStep[]): Promise<Array<TemplateStep & { workers: { free: string[]; busy: string[] } | { unknown: string } }>> => {
+    const registry = ctx.get('workers' as never) as { list(): Promise<CapabilityDescriptor[]> } | undefined
+    let listed: CapabilityDescriptor[] | string
+    try {
+      listed = registry ? await registry.list() : 'the Worker registry (ctx.workers) is not mounted'
+    } catch (error) {
+      listed = `the Workers could not be read: ${(error as Error).message.slice(0, 200)}`
+    }
+    return steps.map((step) => {
+      if (typeof listed === 'string') return { ...step, workers: { unknown: listed } }
+      if (step.source) return { ...step, workers: { free: [], busy: [] } }
+      const able = listed.filter((d) => step.capabilities.every((c) => d.capabilities.some((o) => o.capability === c && o.scope === undefined))
+        && TIERS.indexOf(d.tier) >= TIERS.indexOf(step.tier) && takesKind(d, step.kind !== undefined ? { kind: step.kind } : {}))
+      const free = (d: CapabilityDescriptor): boolean => d.state === 'ready' || (d.state === 'busy' && !!d.load && d.load.running < d.load.slots)
+      const ids = (list: CapabilityDescriptor[]): string[] => list.map((d) => d.worker).sort().slice(0, LIKELY_WORKERS)
+      return { ...step, workers: { free: ids(able.filter(free)), busy: ids(able.filter((d) => !free(d) && (d.state === 'busy' || d.state === 'quota-exhausted'))) } }
+    })
+  }
+
+  /**
+   * What happened since a time (\`GET activity?since=<ISO time>\`, T124), for Home's "since you last
+   * looked": the runs that ended since (completed or failed), the board tasks that moved since into a
+   * state the operator cares about (done, in review, waiting, cancelled) or whose accepted result
+   * moved on its way in, and the approval requests that expired unanswered (\`approvals.resolved\`
+   * events). Each part is bounded and the latest first; one that cannot be read is \`{unknown}\`.
+   */
+  const activity = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+    const raw = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since') ?? ''
+    const since = new Date(raw)
+    if (!raw || Number.isNaN(since.getTime())) return json(res, 400, { error: 'since must be an ISO time' })
+    const at = since.toISOString()
+    const latest = <T extends { at: string }>(list: T[]): T[] => list.sort((a, b) => b.at.localeCompare(a.at)).slice(0, ACTIVITY_SHOWN)
+    const runs = latest(ctx.workflow.usage(100).filter((r) => r.status !== 'running' && r.updatedAt > at).map((r) => ({
+      runId: r.runId, template: r.template, status: r.status, at: r.updatedAt, ...(r.task ? { taskId: r.task.taskId } : {}), ...(r.error ? { error: r.error.message.slice(0, 300) } : {}),
+    })))
+    const board = ctx.get('board')
+    let tasks: Record<string, unknown>
+    if (!board) tasks = { unknown: 'the board is not running' }
+    else {
+      try {
+        const moved: Array<Record<string, unknown> & { at: string }> = []
+        for (const project of await board.projects()) {
+          for (const task of await board.tasks({ projectId: project.projectId, states: ACTIVITY_STATES })) {
+            const landing = task.state === 'done' && task.run ? ctx.workflow.landing(task.run.runId) : undefined
+            const changed = task.updatedAt ?? task.createdAt
+            const landed = landing && landing.state !== 'none' && landing.at > at ? landing.at : undefined
+            if (changed <= at && !landed) continue
+            moved.push({ taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, state: task.state, at: landed && landed > changed ? landed : changed,
+              ...(task.waiting ? { waiting: { reason: task.waiting.reason, ...(task.waiting.approvalRequest ? { approvalRequest: task.waiting.approvalRequest } : {}) } } : {}),
+              ...(task.run ? { run: { runId: task.run.runId } } : {}), ...landingCard(landing) })
+          }
+        }
+        tasks = { value: latest(moved) }
+      } catch (error) {
+        tasks = { unknown: `the board could not be read: ${(error as Error).message.slice(0, 200)}` }
+      }
+    }
+    const eventLog = ctx.get('eventLog' as never) as { query(filter: { type: string; since: string; afterSeq: number; limit: number }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
+    const approvals = ctx.get('approvals')
+    let expired: Record<string, unknown>
+    if (!eventLog) expired = { unknown: 'the event log (ctx.eventLog) is not mounted' }
+    else {
+      const found: Array<{ requestId: string; at: string; summary?: string }> = []
+      let after = 0
+      for (let page = 0; page < ACTIVITY_PAGES; page++) {
+        const entries = eventLog.query({ type: 'approvals.resolved', since: at, afterSeq: after, limit: 1000 })
+        for (const e of entries) {
+          const data = e.data as { requestId?: unknown; cause?: unknown } | undefined
+          if (data?.cause === 'expired' && typeof data.requestId === 'string') found.push({ requestId: data.requestId, at: e.at })
+        }
+        if (entries.length < 1000) break
+        after = entries.at(-1)!.seq
+      }
+      const shown = latest(found)
+      for (const item of shown) {
+        const request = await approvals?.get(item.requestId).catch(() => undefined)
+        if (request) item.summary = request.action.summary
+      }
+      expired = { value: shown }
+    }
+    return json(res, 200, { since: at, asOf: new Date().toISOString(), runs, tasks, expired })
+  }
+
+  /**
+   * The running runs as they move (\`GET runs/live\`, T124): each running step, its Worker, when its
+   * attempt started, the run's last event and when, and whether the Worker's source says it stalled
+   * (\`ctx.workers.liveness\`, its own bound). A read only, bounded.
+   */
+  const live = async (res: ServerResponse): Promise<void> => {
+    const eventLog = ctx.get('eventLog' as never) as { query(filter: { type?: string; runId?: string; nodeId?: string; since?: string; afterSeq: number; limit: number }): Array<{ seq: number; at: string; type: string; nodeId?: string; data?: unknown }> } | undefined
+    const registry = ctx.get('workers' as never) as { liveness?: () => Promise<{ runs: Array<{ runId?: string; state: string; since: string }> }> } | undefined
+    let stalled: Map<string, string> | string = new Map()
+    if (registry?.liveness) {
+      try {
+        for (const r of (await registry.liveness()).runs) if (r.runId && r.state === 'stalled') (stalled as Map<string, string>).set(r.runId, r.since)
+      } catch (error) {
+        stalled = `the Workers' liveness could not be read: ${(error as Error).message.slice(0, 200)}`
+      }
+    } else stalled = 'no Worker source tells liveness'
+    const runs = ctx.workflow.usage(100).filter((r) => r.status === 'running').slice(0, LIVE_RUNS).map((r) => {
+      const steps = r.nodes.filter((n) => n.state === 'RUNNING').map((n) => {
+        const started = eventLog?.query({ type: 'workflow.node.started', runId: r.runId, nodeId: n.nodeId, afterSeq: 0, limit: 100 })
+          .filter((e) => (e.data as { attempt?: unknown } | undefined)?.attempt === n.attempt).at(-1)?.at
+        return { nodeId: n.nodeId, attempt: n.attempt, ...(n.worker ? { worker: n.worker } : {}), ...(started ? { since: started } : {}) }
+      })
+      // The run's latest event, read forward from its oldest running step's start, a bounded number of pages.
+      let last: { type: string; at: string; nodeId?: string } | undefined
+      let more = false
+      if (eventLog) {
+        let after = 0
+        const from = steps.map((s) => s.since).filter((x): x is string => !!x).sort()[0] ?? r.createdAt
+        for (let page = 0; page < ACTIVITY_PAGES; page++) {
+          const entries = eventLog.query({ runId: r.runId, since: from, afterSeq: after, limit: 1000 })
+          const end = entries.at(-1)
+          if (end) last = { type: end.type, at: end.at, ...(end.nodeId ? { nodeId: end.nodeId } : {}) }
+          if (entries.length < 1000) break
+          after = end!.seq
+          more = page === ACTIVITY_PAGES - 1
+        }
+      }
+      return {
+        runId: r.runId, template: r.template, startedAt: r.createdAt, ...(r.task ? { taskId: r.task.taskId } : {}), steps,
+        lastEvent: !eventLog ? { unknown: 'the event log (ctx.eventLog) is not mounted' } : more ? { unknown: 'the run has more events than a page reads' } : last ? { value: last } : { unknown: 'no event of it since its step started' },
+        stalled: typeof stalled === 'string' ? { unknown: stalled } : { value: stalled.has(r.runId) ? { since: stalled.get(r.runId)! } : null },
+      }
+    })
+    return json(res, 200, { asOf: new Date().toISOString(), runs })
   }
 
   /**
@@ -504,6 +649,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path)
     if (path === 'projects' || path.startsWith('projects/')) return projects(req, res, path)
     if (path.startsWith('tasks/')) return tasks(req, res, path)
+    if (path === 'activity') return activity(req, res)
+    if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue|review))?$/.exec(path)

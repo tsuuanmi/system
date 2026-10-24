@@ -546,6 +546,7 @@ export const APP_JS = `'use strict'
           el('p', { class: 'meta' }, 'Project ' + (a.project.title || a.project.projectId) + ' · task ' + a.taskId), landingLine(a.landing),
           a.run ? el('p', {}, el('a', { href: '?run=' + encodeURIComponent(a.run.runId), onclick: (e) => { e.preventDefault(); go(a.run.runId) } }, 'open its run')) : null))) : null)
     if (first) section.dataset.firstExpires = first
+    section.dataset.count = String(listed.length)
     return section
   }
 
@@ -566,6 +567,90 @@ export const APP_JS = `'use strict'
   const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.kind === 'tool-call' ? 'a Worker\\'s tool call waits for your verdict' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
     : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
   const RECENT = 15
+  // How many things wait for the operator, named in the window's title ("(3) system — Home"), on every page.
+  let waitingCount = 0
+  const countWaiting = async () => {
+    let n = 0
+    try { n += (await api('approvals')).batches.reduce((m, b) => m + b.requests.length, 0) } catch {}
+    try { n += (await api('reviews')).reviews.length } catch {}
+    try { n += (await api('runs')).runs.filter(needsLook).length } catch {}
+    return n
+  }
+
+  // "Since you last looked" (T124): kept in this browser only (localStorage), never on the server: when
+  // the operator last marked Home as seen, and each Worker's status then, to tell what changed since.
+  const SEEN_KEY = 'system.seen'
+  const seenOf = () => { try { const v = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null'); return v && typeof v.at === 'string' && !Number.isNaN(Date.parse(v.at)) ? v : null } catch { return null } }
+  const markSeen = (workers) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify({ at: new Date().toISOString(), workers })) } catch {} }
+  const statusSnapshot = (roster) => Object.fromEntries(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.availability.state]) : [])
+  const SINCE_SHOWN = 20
+  // One line each, newest first: what happened to runs, tasks, Workers, and requests since then.
+  const sinceItems = (activity, roster, seen, titles) => {
+    const items = []
+    const task = (id) => titles.get(id)
+    for (const r of activity.runs) {
+      const what = task(r.taskId) ? '"' + task(r.taskId) + '"' : 'a ' + r.template + ' run'
+      items.push({ at: r.at, line: el('span', { class: r.status === 'failed' ? 'state failed' : '' }, r.status === 'failed' ? 'Failed: ' + what + (r.error ? ' — ' + r.error : '') + ' ' : 'Finished: ' + what + ' '), link: runLink({ runId: r.runId }, 'open the run') })
+    }
+    if ('value' in activity.tasks) for (const t of activity.tasks.value) {
+      const l = t.landing
+      const line = t.state === 'done' ? (l && l.state === 'merged' ? 'Merged into ' + (l.base || 'its base') + ': "' + t.title + '"' : l && l.state === 'asked' ? 'Accepted, waiting for you to merge: "' + t.title + '"' : l && l.state === 'refused' ? 'Accepted, not merged (' + (l.reason || 'refused') + '): "' + t.title + '"' : 'Accepted: "' + t.title + '"')
+        : t.state === 'review' ? 'Waits for your review: "' + t.title + '"'
+          : t.state === 'waiting-for-approval' ? 'Waits for your approval: "' + t.title + '"'
+            : t.state === 'waiting-for-input' ? 'Waits for input: "' + t.title + '"' + (t.waiting ? ' (' + t.waiting.reason + ')' : '')
+              : 'Cancelled: "' + t.title + '"'
+      const request = l && l.state === 'asked' && l.requestId ? l.requestId : t.waiting && t.waiting.approvalRequest
+      items.push({ at: t.at, line: el('span', {}, line + ' '), link: request ? decideLink(request, 'decide it') : t.state === 'review' ? el('a', { href: '#reviews', onclick: (e) => { e.preventDefault(); const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } } }, 'review it') : t.run ? runLink({ runId: t.run.runId }, 'open its run') : null })
+    }
+    if ('value' in activity.expired) for (const x of activity.expired.value) items.push({ at: x.at, line: el('span', { class: 'soon' }, 'Expired unanswered, so counted as denied: ' + (x.summary || 'request ' + x.requestId)), link: null })
+    // The Workers whose status moved since then: started resting, back, unavailable, or available again.
+    if (roster && 'value' in roster.workers) for (const w of roster.workers.value) {
+      const then = seen.workers && seen.workers[w.worker]
+      const now = w.availability.state
+      if (!then || then === now) continue
+      const back = (s) => s === 'ready' || s === 'busy'
+      const line = now === 'resting' ? w.name + ' started resting' + ('value' in w.availability.until ? ' until ' + clockOf(w.availability.until.value) : '')
+        : (then === 'resting' && back(now)) ? w.name + ' is back from its rest: ' + (now === 'ready' ? 'free' : 'working')
+          : now === 'unavailable' || now === 'quarantined' ? w.name + ' became ' + now + ': ' + w.availability.summary
+            : back(now) && (then === 'unavailable' || then === 'quarantined') ? w.name + ' is available again' : null
+      if (line) items.push({ at: roster.asOf, line: el('span', {}, line), link: null })
+    }
+    return items.sort((a, b) => b.at.localeCompare(a.at))
+  }
+  const sinceView = async (roster, titles) => {
+    const seen = seenOf()
+    const snapshot = statusSnapshot(roster)
+    if (!seen) {
+      markSeen(snapshot)
+      return el('section', { class: 'panel', 'aria-label': 'Since you last looked' }, el('h3', {}, 'Since you last looked'),
+        el('p', { class: 'muted' }, 'This is your first look from this browser: from now on, what happens while you are away is listed here.'))
+    }
+    let activity
+    try { activity = await api('activity?since=' + encodeURIComponent(seen.at)) } catch (error) {
+      return el('section', { class: 'panel', 'aria-label': 'Since you last looked' }, el('h3', {}, 'Since you last looked'), el('p', { class: 'state failed' }, 'What happened since could not be read: ' + error.message + '.'))
+    }
+    const items = sinceItems(activity, roster, seen, titles)
+    const mark = el('button', {}, 'Mark as seen')
+    mark.addEventListener('click', () => { markSeen(snapshot); refresh() })
+    return el('section', { class: 'panel', 'aria-label': 'Since you last looked' },
+      el('h3', {}, 'Since you last looked ', el('span', { class: 'muted' }, relative(seen.at) + ' (' + clockOf(seen.at) + ')')),
+      items.length ? el('ul', { class: 'since' }, items.slice(0, SINCE_SHOWN).map((i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at))))) : el('p', { class: 'muted' }, 'Nothing happened that needs you.'),
+      items.length > SINCE_SHOWN ? el('p', { class: 'muted' }, (items.length - SINCE_SHOWN) + ' older not shown.') : null,
+      'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
+      'value' in activity.expired ? null : el('p', { class: 'unknown' }, 'The requests that expired are unknown (' + activity.expired.unknown + ').'),
+      el('div', { class: 'actions' }, mark, el('span', { class: 'muted' }, 'kept in this browser only')))
+  }
+
+  // A running run as it moves (T124): its steps, their Workers and for how long, its last event, and a stall its source told.
+  const EVENT_WORDS = {
+    'workflow.node.started': 'a step started', 'workflow.node.completed': 'a step finished', 'workflow.node.retry': 'a step is tried again', 'workflow.node.waiting': 'a step waits',
+    'workflow.node.blocked': 'a step waits for you', 'agent-workers.tool.notified': 'a tool call ran', 'agent-workers.tool.checks-pending': 'a tool call ran, its checks pending',
+    'agent-workers.tool.denied': 'a tool call was denied', 'agent-workers.tool.deferred': 'a tool call waits for your verdict', 'agent-workers.run.stalled': 'its agent stalled',
+  }
+  const liveOf = async () => { try { return new Map((await api('runs/live')).runs.map((r) => [r.runId, r])) } catch { return undefined } }
+  const lastText = (r) => 'value' in r.lastEvent ? 'last event: ' + (EVENT_WORDS[r.lastEvent.value.type] || r.lastEvent.value.type) + ', ' + relative(r.lastEvent.value.at) : 'last event unknown (' + r.lastEvent.unknown + ')'
+  const stalledOf = (r) => 'value' in r.stalled && r.stalled.value ? el('div', { class: 'state failed', role: 'alert' }, 'Stalled since ' + clockOf(r.stalled.value.since) + ': no activity past its source\\'s bound. Stop run ends it.') : null
+
 
   // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
   async function list() {
@@ -574,10 +659,17 @@ export const APP_JS = `'use strict'
     const reviewed = await reviews()
     let roster = null
     try { roster = await api('roster') } catch {}
-    const ready = await readyTasks()
+    let projects
+    try { ({ projects } = await api('projects')) } catch {}
+    const ready = projects ? projects.reduce((n, p) => n + (p.open.ready || 0), 0) : undefined
+    // A run's task by its title, from the Board's cards.
+    const titles = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, t.title])))
+    const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
     const asked = queued ? queued.querySelectorAll('article.request').length : 0
-    const toReview = reviewed ? reviewed.querySelectorAll('article.request').length : 0
+    const toReview = reviewed ? Number(reviewed.dataset.count || 0) : 0
     const look = runs.filter(needsLook)
+    waitingCount = asked + toReview + look.length
+    const since = await sinceView(roster, titles)
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
     const waiting = [
       asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
@@ -591,6 +683,7 @@ export const APP_JS = `'use strict'
     show(pageHead('home'),
       el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
         waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now.')),
+      since,
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
         c ? el('p', {}, c.busy + ' working · ' + c.ready + ' free · ' + c.resting + ' resting · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
           + (describing.length ? ' (so far: ' + describing.join(', ') + ' still describing its Workers)' : '') + ' ',
@@ -608,11 +701,11 @@ export const APP_JS = `'use strict'
           el('p', {}, 'Started ', ago(run.createdAt), ': ' + needsLook(run) + '.'),
           el('p', {}, runLink(run, run.status === 'failed' ? 'Open it to continue it or let it be' : 'Open it to decide'))))) : null,
       el('h2', {}, 'Recent runs'),
-      runs.length ? table(['Run', 'Template', 'Status', 'Steps', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
-        el('td', { class: 'nowrap' }, runLink(run)),
-        el('td', { class: 'nowrap' }, run.template),
+      // Each run by its task's title (else its template), its steps with the Worker of each by its display name (T124).
+      runs.length ? table(['Run', 'Status', 'Steps and their Workers', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
+        el('td', {}, el('div', {}, runLink(run, run.task && titles.get(run.task.taskId) ? titles.get(run.task.taskId) : run.template + ' run')), el('div', { class: 'muted' }, run.runId + (run.task ? ' · ' + run.template : ''))),
         el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
-        el('td', {}, stepsText(run)),
+        el('td', {}, el('div', {}, stepsText(run)), run.nodes.filter((n) => n.worker).map((n) => el('div', { class: 'muted' }, n.nodeId + ': ' + (names.get(n.worker) || n.worker)))),
         el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
       ))) : el('p', { class: 'muted' }, 'No run yet. A run starts when the lead or a client asks for one.'),
       runs.length > RECENT ? el('p', { class: 'muted' }, (runs.length - RECENT) + ' older run(s) are not listed here; open one by its link, or ask with system status.') : null)
@@ -633,6 +726,8 @@ export const APP_JS = `'use strict'
     // Its change, its reviewers' verdicts, and its report, read again only when the run moved (T122).
     const evidence = run.status === 'running' ? undefined : await reviewOf(runId, run.updatedAt)
     const landing = evidence && !evidence.error ? evidence.landing : undefined
+    const moving = run.status === 'running' ? await liveOf() : undefined
+    const now = moving && moving.get(runId)
     let roster = null
     try { roster = await api('roster') } catch {}
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
@@ -681,6 +776,10 @@ export const APP_JS = `'use strict'
       run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions' },
         run.status === 'running' ? [el('button', { onclick: act('stop', () => ({ reason: 'stopped from the web UI' })) }, 'Stop run'), el('span', { class: 'muted' }, 'ends it now: nothing more of it runs')] : null,
         run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Continue run'), el('span', { class: 'muted' }, 'runs its failed step again as a new attempt; the steps that are done are kept')] : null) : null,
+      // Where it is now, refreshed with the page: each running step on its Worker and for how long, its last event, and a stall.
+      now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now'),
+        now.steps.map((st) => el('div', {}, 'Step ' + st.nodeId + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
+        el('div', { class: 'muted' }, lastText(now)), stalledOf(now)) : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
@@ -769,6 +868,7 @@ export const APP_JS = `'use strict'
     // Who works on a task: the Worker the engine runs its run's step on, by its name, and since when.
     let roster = null
     try { roster = await api('roster') } catch {}
+    const moving = await liveOf()
     const working = new Map()
     if (roster && 'value' in roster.workers) for (const w of roster.workers.value) if ('value' in w.work) for (const i of w.work.value.items) working.set(i.runId, { name: w.name, worker: w.worker, since: i.since })
     const shownProjects = boardProject === 'all' ? projects : projects.filter((p) => p.projectId === boardProject)
@@ -791,6 +891,22 @@ export const APP_JS = `'use strict'
     const needs = (step) => step.source ? 'the system reads it itself, on no Worker'
       : (step.team ? 'a team of ' + step.team.members + ' Workers, each of another provider, each' : 'a Worker') + ' of ' + step.tier + ' tier or above that can ' + step.capabilities.join(', ')
         + (step.kind ? ', for ' + step.kind + ' work' : '') + (step.plans ? '; it plans further steps, which may ask for your approval' : '')
+    // Who would likely take a step now, by display name with its account's 5 h quota, from the Workers
+    // that can do it (the preview's): routing decides when the run starts, so it reads "likely".
+    const entries = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w]) : [])
+    const quotaOf = (w) => {
+      const pools = w && 'value' in w.pools ? w.pools.value : []
+      const win = pools.flatMap((p) => p.windows.filter((x) => x.seconds)).sort((a, b) => a.seconds - b.seconds)[0]
+      return !win ? '' : ' — ' + span(win.seconds) + ' ' + ('value' in win.used ? 'used ' + win.used.value + ' %' : 'no reading yet')
+    }
+    const nameOf = (id) => (entries.get(id) ? entries.get(id).name : id) + quotaOf(entries.get(id))
+    const likely = (step) => {
+      if (step.source) return null
+      const w = step.workers
+      if (!w || !('free' in w)) return el('div', { class: 'unknown' }, 'Who would take it is unknown (' + (w ? w.unknown : 'not read') + ')')
+      if (w.free.length) return el('div', { class: 'likely' }, 'Likely: ' + w.free.slice(0, 3).map(nameOf).join('; ') + (w.free.length > 3 ? '; or ' + (w.free.length - 3) + ' more' : ''))
+      return el('div', { class: 'soon' }, w.busy.length ? 'None free: it waits for ' + w.busy.slice(0, 3).map(nameOf).join('; ') : 'No Worker can take it now: it waits until one can')
+    }
     const start = (t) => async () => {
       confirming = true
       const close = el('button', { onclick: () => { confirming = false; shown.replaceChildren() } }, 'Cancel')
@@ -820,7 +936,7 @@ export const APP_JS = `'use strict'
         el('ul', {},
           el('li', {}, 'It runs the ' + task.template + ' template for this task, its attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ': the run claims the task, which moves to Working.'),
           el('li', {}, steps.length === 1 ? 'Its step, and the kind of Worker it runs on:' : 'Its ' + steps.length + ' steps, in order, and the kind of Worker each runs on:',
-            el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step) + '.')))),
+            el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step) + '.', likely(step))))),
           el('li', {}, (idle === undefined ? 'How many Workers are free is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' free now') + '; a step no free Worker can take waits for one.'),
           el('li', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
         yes, close))
@@ -837,6 +953,7 @@ export const APP_JS = `'use strict'
         t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
         t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
+        (t.state === 'running' || t.state === 'claimed') && t.run && moving && moving.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.get(t.run.runId))), stalledOf(moving.get(t.run.runId))] : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
         t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
         t.landing ? landingLine(t.landing) : null,
@@ -1244,12 +1361,15 @@ export const APP_JS = `'use strict'
       if (name === page || (page === 'run' && name === 'home')) link.setAttribute('aria-current', 'page')
       else link.removeAttribute('aria-current')
     }
-    document.title = 'system: ' + PAGES[page][0] + (current ? ' ' + current : '')
+    document.title = (waitingCount ? '(' + waitingCount + ') ' : '') + 'system — ' + PAGES[page][0] + (current ? ' ' + current : '')
   }
   async function refresh() {
     mark()
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
+    // Home counts what waits as it renders; any other page asks.
+    if (view || current) waitingCount = await countWaiting()
+    mark()
   }
   refresh()
   // The policy page holds an edit in progress, and an open confirmation a move not yet made: neither is refreshed away.
