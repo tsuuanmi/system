@@ -312,7 +312,7 @@ describe('limitReadSeconds (ADR-0059): checked at load', () => {
   it('takes 0 (off) or 60 s to a day, with a pool only, and only with roles and assignments', () => {
     for (const ok of [0, 60, 600, 86_400]) expect(checkConfig(roles({ limitReadSeconds: ok })), String(ok)).toEqual([])
     for (const bad of [30, 59, 86_401, 1.5]) expect(checkConfig(roles({ limitReadSeconds: bad }))[0], String(bad)).toMatch(/limitReadSeconds: 0 \(off\) or 60 to 86400/)
-    expect(checkConfig({ providers: [{ provider: A, limitReadSeconds: 600 }], roles: roles({}).roles, assignments: roles({}).assignments })[0]).toMatch(/limitReadSeconds: the usage report is read into an account's pool, and no pool is set/)
+    expect(checkConfig({ ...roles({}), providers: [{ provider: A, limitReadSeconds: 600 }] })[0]).toMatch(/limitReadSeconds: the usage report is read into an account's pool, and no pool is set/)
     expect(checkConfig({ workers: [{ id: 'reviewer', runtime: A, workspace: '/srv/ws', sandbox: 'read-only', tier: 'standard' }], providers: [{ provider: A, pool: 'plan', limitReadSeconds: 600 }] })[0]).toMatch(/limitReadSeconds apply to Workers derived from roles and assignments/)
   })
 })
