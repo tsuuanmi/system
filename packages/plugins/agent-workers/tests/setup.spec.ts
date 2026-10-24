@@ -184,6 +184,12 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
       expect(again).toMatchObject({ status: 'completed' })
       expect(again.decisions).toContain(done.decisions.find((id) => (ctx.artifacts.get(id)?.body as Gate | undefined)?.decider?.id === 'agent-workers.worktree-setup'))
       expect(ctx.eventLog.query({ type: 'agent-workers.worktree.setup' }).map((e) => (e.data as { outcome: string }).outcome)).toEqual(['ran'])
+      // Retired (its ignored dependencies go with it), then added again from its branch: set up again.
+      expect(await ctx.agentWorkers.sweepWorktrees(Date.now() + 169 * 60 * 60_000)).toEqual({ removed: [worktree], kept: [] })
+      expect(existsSync(worktree)).toBe(false)
+      expect(await run('run_ok')).toMatchObject({ status: 'completed' })
+      expect(readFileSync(join(worktree, 'node_modules', 'dep', 'index.js'), 'utf8')).toContain('dep ok')
+      expect(ctx.eventLog.query({ type: 'agent-workers.worktree.setup' }).map((e) => (e.data as { outcome: string }).outcome)).toEqual(['ran', 'ran'])
     })
 
     it('fails the run at start when a setup command fails: unsent, the command, its exit code, and its output named; the agent never runs (INV-2)', async () => {
