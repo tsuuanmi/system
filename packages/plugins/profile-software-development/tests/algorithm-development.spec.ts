@@ -200,8 +200,9 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     await digested(task.taskId)
     expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
     const worktreeOf = (runId: string): string => agent.runs.find((r) => r.role === 'develop' && basename(r.workspace) === runId)!.workspace
-    // Both are finished. The rejected attempt's work is uncommitted; the accepted one's was committed on
-    // its branch when it was accepted (landing, ADR-0060: its merge waits for the operator, from the branch).
+    // Both are finished. The rejected attempt's work is uncommitted; the accepted one's is committed on
+    // its branch once the engine lands it (ADR-0060: its merge then waits for the operator, from the branch).
+    await until(() => (ctx.workflow.get(second.runId)?.task?.landing?.state === 'asked' ? true : undefined), 'the accepted result committed and its merge asked')
     const listed = await ctx.agentWorkers.runWorktrees()
     expect(listed.worktrees.map((w) => [w.runId, w.state, w.changes])).toEqual([[first.runId, 'finished', 'uncommitted'], [second.runId, 'finished', 'clean']])
     // The operator's removal never discards: without the commit flag, the uncommitted one stays; the
