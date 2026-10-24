@@ -124,6 +124,10 @@ It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
   - **WAIT** looks again every 5 s with an abortable sleep, so an operator
     cancel or a runtime stop ends the wait at once. Consecutive WAITs are one
     decision (`turnReceipts.reconcile`).
+  - A look that a cancel, a stop, or a lost lease cuts short (the abort closes
+    its page, which then reads as not observed) decides nothing: the turn ends as
+    that abort, so a cancelled one fails as `aborted`, never as
+    `reconciliation_failed`.
   - A page that no longer shows the answer the turn followed may still be
     loading: it is looked at again, up to three times 5 s apart, before the turn
     fails closed.

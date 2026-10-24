@@ -120,6 +120,43 @@ describe.runIf(canRunBrowser)('ctx.turns: across a restart, within its bounds, a
     expect(Date.now() - started).toBeLessThan(5000)
   }, 240_000)
 
+  it('ends a restarted turn cancelled while it looks at its conversation as aborted: the look the cancel cut short is no evidence, never AMBIGUOUS (INV-4, REQ-WRK-4)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, fake: { thinkMs: 60_000, answer: 'never taken' } })
+    const turn = await ask(first.ctx, { prompt: 'cancelled mid-look', persist: true })
+    await vi.waitFor(() => {
+      if (first.ctx.turns.get(turn.turnId)?.binding === undefined) throw new Error('not bound yet')
+    }, { timeout: 30_000, interval: 100 })
+    await first.stop()
+    // A crash: the dead process's lease holds the turn until the restarted runtime is set up below.
+    const deadUntil = Date.now() + 5000
+    const db = new DatabaseSync(join(dir, 'system.db'))
+    db.prepare("UPDATE leases SET owner = 'dead:1:x', token = 'dead', expires_at = ? WHERE resource = ?").run(deadUntil, `turn:${turn.turnId}`)
+    db.close()
+    const second = await boot({ dir, shared: first.fake })
+    // The look is open when the operator cancels; the abort closes its page, which then reads as
+    // not observed (the driver's answer when no user turn rendered).
+    const driver = second.ctx.providers.get('chatgpt-web') as unknown as { snapshot: (...args: unknown[]) => Promise<unknown> }
+    let looking!: () => void
+    const looked = new Promise<void>((resolve) => { looking = resolve })
+    let cut!: () => void
+    const cancelled = new Promise<void>((resolve) => { cut = resolve })
+    driver.snapshot = async () => {
+      looking()
+      await cancelled
+      return { text: '', running: false, observable: false }
+    }
+    expect(Date.now()).toBeLessThan(deadUntil)
+    await looked
+    expect(second.ctx.turns.cancel(turn.turnId)).toBe(true)
+    cut()
+    expect(await second.ctx.turns.wait(turn.turnId, 30_000)).toMatchObject({ status: 'failed', error: { kind: 'aborted' } })
+    // No reconciliation was decided on that look, and the prompt was never resent.
+    expect(second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' })).toEqual([])
+    expect(first.fake.sent).toHaveLength(1)
+  }, 120_000)
+
   it('keeps a completed turn completed when a later step fails (closing its browser turn), never rewriting it as failed', async () => {
     const { ctx } = await boot({ fake: { answer: 'Done' } })
     const browser = ctx.browser as unknown as { openTurn: (...args: unknown[]) => Promise<{ close: () => Promise<void> }> }

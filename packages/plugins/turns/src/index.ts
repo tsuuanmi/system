@@ -1209,6 +1209,9 @@ export class Turns extends Service {
           await turn.close()
         }
       }
+      // A look that a cancel, a stop, or a lost lease cut short is no evidence: the abort closed
+      // its page under it, so it reads as unobservable. The turn ends as that abort, not AMBIGUOUS.
+      signal.throwIfAborted()
       const { outcome, decision } = this.ctx.store.transaction(() => {
         this.ctx.leases.fence(lease())
         return this.ctx.turnReceipts.reconcile(identity, snapshot, { prompt: row.prompt })

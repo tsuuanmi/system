@@ -163,6 +163,8 @@ a provider snapshot and decides:
 
 A snapshot counts only on positive evidence. A conversation that has not
 rendered a user turn was not observed, and it is never read as "nothing new".
+A look that a cancel or a stop cuts short (the abort closes its page) is no
+evidence at all: no decision is recorded, and a cancelled turn fails as `aborted`.
 For Deep research, only the run that follows the last prompt counts, and never
 its acknowledgement or plan. A reopened Gemini conversation whose plan was never
 started shows the prompt with no research after it, so it is never resent.
