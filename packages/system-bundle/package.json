@@ -23,6 +23,7 @@
     "@tsuuanmi/system-digest": "workspace:*",
     "@tsuuanmi/system-digest-extractive": "workspace:*",
     "@tsuuanmi/system-report": "workspace:*",
+    "@tsuuanmi/system-notify": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",

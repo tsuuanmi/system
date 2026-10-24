@@ -578,6 +578,25 @@ guesses.
   [`usage-unknown.not-reported.json`](../../schemas/examples/usage-unknown.not-reported.json),
   [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json).
 
+### `notification`
+
+- One notice the [notify](../design/notifications.md) plugin makes from one event-log entry: the
+  body of its webhook's `POST` and the text of a desktop notification. Never persisted: the store
+  keeps only the window each `(kind, subject)` was last told in. Its outcome is a
+  `notify.delivery` event, which names its `id`.
+- `kind` and `subject` are what deduplication counts by: at most one notice per subject and kind in
+  the configured window. `subject` is the request id (`approval.*`), the workflow run id
+  (`run.*`), the pool id, or the agent account id (`<provider>:slot-<n>` for a slot with no id
+  yet). `id` is `<kind>:<subject>:<event seq>`; an `approval.expiring` notice names the
+  `approvals.requested` entry it reminds of.
+- `title`, `text`, and `act` are made by code from ids, classes, kinds, and times the producer's
+  event names; a value that is not an id or a word is left out, never quoted. It carries no
+  secret, prompt, answer, request summary, consequences, or command a request would run, and no
+  token: `link` is the `/ui` page without one. Its egress classification is `operator-shared`.
+- Validated before it is queued; one that fails its schema is not sent (a defect, logged).
+  Examples: [`notification.approval-opened.json`](../../schemas/examples/notification.approval-opened.json),
+  [`notification.run-user-action.json`](../../schemas/examples/notification.run-user-action.json).
+
 ### `limit-state`
 
 - The body of an `evidence` artifact: one reading of one window of a resource pool. Pools and

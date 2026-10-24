@@ -1,0 +1,79 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-notify",
+  "version": "0.0.0",
+  "description": "Out-of-band notifications to the operator (B5), from recorded events only: an approval request opened or close to its expiry, a run failed for the operator or escalated, a step waiting for an account's limit, a pool closed at its limit, an agent account quarantined; a desktop notification, or an opt-in webhook behind the egress gate; deduplicated, bounded, its outcomes in health; its row off",
+  "class": {
+    "kind": "family",
+    "family": "surface"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "credentials",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "egress",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "config": [
+    {
+      "key": "kinds",
+      "sensitive": false
+    },
+    {
+      "key": "expiryLeadMinutes",
+      "sensitive": false
+    },
+    {
+      "key": "dedupMinutes",
+      "sensitive": false
+    },
+    {
+      "key": "maxQueue",
+      "sensitive": false
+    },
+    {
+      "key": "pollSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "timeoutSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "maxAgeMinutes",
+      "sensitive": false
+    },
+    {
+      "key": "link",
+      "sensitive": false
+    },
+    {
+      "key": "desktop",
+      "sensitive": false
+    },
+    {
+      "key": "webhook",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED"
+}

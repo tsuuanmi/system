@@ -1,0 +1,44 @@
+{
+  "name": "@tsuuanmi/system-notify",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Out-of-band notifications to the operator (B5), from recorded events only: an approval request opened or close to its expiry, a run failed for the operator or escalated, a step waiting for an account's limit, a pool closed at its limit, an agent account quarantined; a desktop notification, or an opt-in webhook behind the egress gate; deduplicated, bounded, its outcomes in health; its row off",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "plugin-manifest.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-approvals": "workspace:*",
+    "@tsuuanmi/system-approvals-core": "workspace:*",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-credentials-vault": "workspace:*"
+  }
+}

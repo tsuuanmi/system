@@ -24,6 +24,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `agentWorkers` (optional), `artifacts` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `resources` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core`, `resources-core` |
+| [notify](../../packages/plugins/notify/README.md) | gateways | — | `notify` | `store`, `eventLog`, `credentials` (optional), `egress` (optional), `mcp` (optional) | `gateway-core`, `libs` |
 | [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `libs`, `resources-core` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
@@ -41,7 +42,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
-| [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
+| [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
 | [resources-core](../../packages/resources-core/README.md) | routing | defines `resources` | — | — | — |
 | [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts` | `libs`, `workers-core` |
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
@@ -93,6 +94,7 @@ flowchart TB
     gateway_anthropic["gateway-anthropic"]
     gateway_responses["gateway-responses"]
     mcp_server["mcp-server<br/>ctx.mcp"]
+    notify["notify"]
     report["report"]
     web_ui["web-ui"]
   end
@@ -216,6 +218,11 @@ flowchart TB
   models -.-> credentials_vault
   models -.-> event_log
   models -.-> mcp_server
+  notify --> store
+  notify --> event_log
+  notify -.-> credentials_vault
+  notify -.-> egress
+  notify -.-> mcp_server
   plugin_host --> store
   plugin_host --> artifacts
   profile_scientific_research --> workflow
@@ -238,6 +245,7 @@ flowchart TB
   report -.-> resources
   resources --> store
   resources --> artifacts
+  resources -.-> event_log
   resources -.-> mcp_server
   runtime_acp --> agent_runtimes
   runtime_antigravity_cli --> agent_runtimes
@@ -321,6 +329,7 @@ flowchart TB
     gateway_responses["gateway-responses"]
     gateway_turns["gateway-turns"]
     mcp_server["mcp-server<br/>ctx.mcp"]
+    notify["notify"]
     report["report"]
     web_ui["web-ui"]
   end
@@ -424,6 +433,7 @@ flowchart TB
   models --> provider_core
   models --> workers_core
   models_core --> workers_core
+  notify --> gateway_core
   plugin_host --> plugin_host_core
   provider_chatgpt_web --> provider_core
   provider_chatgpt_web --> ui_ops

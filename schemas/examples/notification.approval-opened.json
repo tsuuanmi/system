@@ -1,0 +1,12 @@
+{
+  "schema": "notification@1.0",
+  "id": "approval.opened:apr_5f3c2a1b9e:4812",
+  "kind": "approval.opened",
+  "subject": "apr_5f3c2a1b9e",
+  "at": "2026-10-24T09:12:03.000Z",
+  "event": { "seq": 4812, "type": "approvals.requested" },
+  "title": "Approval needed: merge",
+  "text": "Request apr_5f3c2a1b9e of project p1 (merge, asked by board) waits for your verdict. Unanswered, it is denied at 2026-10-25T09:12:03.000Z.",
+  "act": ["system ui", "MCP approvals_get {\"requestId\":\"apr_5f3c2a1b9e\"}", "MCP approvals_decide"],
+  "link": "http://127.0.0.1:47317/ui/"
+}
