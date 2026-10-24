@@ -31,6 +31,11 @@
       "range": "^1.1.0"
     },
     {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "mcp",
       "range": "^1.0.0",
       "optional": true
@@ -51,6 +56,10 @@
     },
     {
       "key": "maxAttempts",
+      "sensitive": false
+    },
+    {
+      "key": "templateAttempts",
       "sensitive": false
     },
     {
