@@ -10,7 +10,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import { expect } from 'vitest'
+import { expect, vi } from 'vitest'
 import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import type { Lease } from '../src/index.ts'
 
@@ -206,6 +206,26 @@ export const leasesSuite = defineSuite<Boot>({
         return { renewed, lost: holding.lost.aborted, reason: reason instanceof Error ? reason.name : String(reason) }
       })
       expect(outcome).toEqual({ held: true, value: { renewed: true, lost: true, reason: 'LeaseLost' } })
+    }),
+    scenario('hold-renews-granted-ttl', 'renews a held lease within the TTL it was granted, not the one its holder asked for: a holder asking for more than maxTtlMs keeps its lease across three granted TTLs, no one else takes it, and its commit passes (INV-4, INV-9)', async (ctx) => {
+      // Fake time: the hold outlasts the cap three times over, which real time cannot afford here.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      try {
+        const outcome = await ctx.leases.hold(R, LEASE_MAX_TTL_MS * 6, async (holding) => {
+          const first = holding.lease()
+          const granted = first.expiresAt - Date.now()
+          await vi.advanceTimersByTimeAsync(LEASE_MAX_TTL_MS * 3)
+          const lease = holding.lease()
+          return {
+            granted, lost: holding.lost.aborted, live: lease.expiresAt > Date.now(), same: lease.token === first.token && lease.generation === first.generation,
+            other: ctx.leases.acquire(R, 1000, 'host-b:2:bbb') === undefined ? 'refused' : 'granted', commit: commit(ctx, lease, Date.now(), 'held'),
+          }
+        })
+        expect(outcome).toEqual({ held: true, value: { granted: LEASE_MAX_TTL_MS, lost: false, live: true, same: true, other: 'refused', commit: 'passed' } })
+        expect(commits(ctx)).toEqual(['held'])
+      } finally {
+        vi.useRealTimers()
+      }
     }),
     scenario('hold-renewal-error', 'keeps holding through a renewal that fails with an error other than a loss: lost stays unaborted, the lease is renewed once the store answers again, and no one else takes it meanwhile (ADR-0056)', async (ctx) => {
       const started = Date.now()

@@ -108,8 +108,9 @@ export class Leases extends Service {
   }
 
   /**
-   * Run `body` while holding `resource`: acquire, renew on a heartbeat every third of the TTL,
-   * then release (a release that fails, as the store closes, leaves the lease to expire). While
+   * Run `body` while holding `resource`: acquire, renew on a heartbeat every third of the TTL the
+   * lease was granted (the TTL asked for, capped at `maxTtlMs`: each grant sets the next beat), then
+   * release (a release that fails, as the store closes, leaves the lease to expire). While
    * another holder's lease is live, nothing runs and the caller learns when to look again: that
    * lease's expiry plus a second, at least a second. The body decides what a lost lease means.
    *
@@ -120,18 +121,23 @@ export class Leases extends Service {
    * unchanged, so a holder whose lease lapsed commits nothing whatever it was told.
    */
   async hold<T>(resource: string, ttlMs: number, body: (holding: Holding) => Promise<T>): Promise<Held<T>> {
-    let lease = this.acquire(resource, ttlMs)
+    const acquiredAt = Date.now()
+    let lease = this.acquire(resource, ttlMs, processOwner, acquiredAt)
     if (!lease) {
       const holder = this.current(resource)
       return { held: false, retryInMs: Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000) }
     }
     const lost = new AbortController()
-    const period = ttlMs / 3
+    // A third of the TTL granted, not of the one asked for: under a lower cap, a beat at a third of
+    // the asked TTL comes after the lease has expired.
+    let period = (lease.expiresAt - acquiredAt) / 3
     let heartbeat: NodeJS.Timeout | undefined
     const beat = (): void => {
       if (lost.signal.aborted) return
       try {
-        lease = this.renew(lease!, ttlMs)
+        const renewedAt = Date.now()
+        lease = this.renew(lease!, ttlMs, renewedAt)
+        period = (lease.expiresAt - renewedAt) / 3
       } catch (error) {
         if (error instanceof LeaseLost) {
           lost.abort(error)

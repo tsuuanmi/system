@@ -46,8 +46,10 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   resource and has not expired. Because it runs under the transaction's write lock, no
   successor can take over before the commit lands.
 - Every durable runner holds its lease through one loop, `ctx.leases.hold`:
-  acquire, a heartbeat at a third of the TTL, `lost` on a positive loss, and
-  release. Each runner decides what a lost lease means and when to look again.
+  acquire, a heartbeat at a third of the TTL granted (`leases.maxTtlMs` may cap
+  it below the TTL asked for, and the heartbeat follows the cap), `lost` on a
+  positive loss, and release. Each runner decides what a lost lease means and
+  when to look again.
   A positive loss is a renewal that finds the lease expired, taken over, or
   invalidated (`LeaseLost`), or the lease's own expiry passing with no renewal. A
   renewal that fails otherwise (the store busy or failing) is not a loss: it is
