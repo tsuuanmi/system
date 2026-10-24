@@ -63,6 +63,17 @@ export async function ask(ctx: Context, input: AskSpec) {
   }
 }
 
+/** The page gemini-main keeps for a session between its turns (test-only: read from the pool's state, ADR-0030). */
+export const keptPage = (ctx: Context, sessionId: string): import('patchright-core').Page => (ctx.browser as unknown as { profiles: { held: Map<string, { kept: Map<string, { page: import('patchright-core').Page }> }> } }).profiles.held.get('gemini-main')!.kept.get(sessionId)!.page
+/** How many tabs gemini-main keeps for sessions. */
+export const kept = (ctx: Context): number => ctx.browser.profileStates().find((p) => p.account === 'gemini-main')?.kept ?? 0
+export const session = (): string => `ses_${randomBytes(8).toString('hex')}`
+/** A session's turn, waited for. */
+export const turn = async (ctx: Context, prompt: string, sessionId: string) => ctx.turns.wait((await ask(ctx, { prompt, sessionId })).turnId, 60_000)
+
+/** The operator's step for a terms notice, as the runbook gives it (Account re-auth). */
+export const notice = 'gemini-web: a notice of updated terms ("Keep in mind") covers the input; system never acknowledges it: press the notice\'s own button in the login profile (system account login), then Save'
+
 /** As the live check does for the real site: the fake site's delete flow is the one its map describes. */
 export function liveChecked(ctx: Context): void {
   const map = (ctx.providers.get('chatgpt-web') as unknown as { map: { elements: Record<string, { unverified?: true }>; actions: Record<string, { unverified?: true }> } }).map
