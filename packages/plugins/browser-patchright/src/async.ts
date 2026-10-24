@@ -8,17 +8,18 @@ export const ATTACH_WAIT_MS = 10_000
 /** Pages still opening, per context. */
 const opening = new WeakMap<BrowserContext, Set<Promise<Page>>>()
 
-/** `promise`, or nothing once `ms` have passed. */
-async function boundedBy(promise: Promise<unknown>, ms: number): Promise<void> {
+/** `promise`, or nothing once `ms` have passed; whether it settled within them. */
+async function boundedBy(promise: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined
-  await Promise.race([
-    promise.then(() => undefined, () => undefined),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, ms)
+  const settled = await Promise.race([
+    promise.then(() => true, () => true),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), ms)
       timer.unref()
     }),
   ])
   clearTimeout(timer)
+  return settled
 }
 
 /**
@@ -51,10 +52,13 @@ export async function closeWithin(context: BrowserContext, ms = 5000, attachMs =
  * Close a page, never waiting more than `ms` for the browser to confirm it. Chrome acknowledges a
  * close that lands as the page's navigation commits, then drops it: the tab stays open, and
  * `page.close()` waits for it with no bound of its own (CI 2026-10-24: a runtime stop hung on the
- * page its abort closed). Such a tab closes with its context.
+ * page its abort closed). Such a tab closes with its context. A close the browser did not confirm
+ * within the bound is told to `warn`, never passed over in silence; whether it was confirmed.
  */
-export async function closePageWithin(page: Page, ms = 5000): Promise<void> {
-  await boundedBy(page.close(), ms)
+export async function closePageWithin(page: Page, warn: (message: string) => void, ms = 5000): Promise<boolean> {
+  const confirmed = await boundedBy(page.close(), ms)
+  if (!confirmed) warn(`the browser did not confirm a page's close within ${ms / 1000} s; the page no longer counts as open, and its tab closes with its context`)
+  return confirmed
 }
 
 /**

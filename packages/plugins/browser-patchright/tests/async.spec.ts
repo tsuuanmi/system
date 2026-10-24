@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BrowserContext, Page } from 'patchright-core'
-import { abortable, closeWithin, newPage } from '../src/async.ts'
+import { abortable, closePageWithin, closeWithin, newPage } from '../src/async.ts'
 
 /** A promise and the function that settles it. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
@@ -95,5 +95,20 @@ describe('closeWithin', () => {
     await closeWithin(context, 5000, 50)
     expect(Date.now() - started).toBeLessThan(2000)
     expect(events).toEqual(['newPage', 'close'])
+  })
+})
+
+describe('closePageWithin', () => {
+  it('warns when the browser does not confirm a page close within the bound, and says nothing when it does (T127 item 9, INV-9)', async () => {
+    const warned: string[] = []
+    const started = Date.now()
+    // As Chrome does with a close that lands as the page's navigation commits: acknowledged, then dropped.
+    expect(await closePageWithin({ close: () => new Promise<void>(() => undefined) } as unknown as Page, (m) => warned.push(m), 50)).toBe(false)
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(warned).toEqual(['the browser did not confirm a page\'s close within 0.05 s; the page no longer counts as open, and its tab closes with its context'])
+    expect(await closePageWithin({ close: async () => undefined } as unknown as Page, (m) => warned.push(m), 50)).toBe(true)
+    // A close that fails is settled, not a bound hit: the page is gone or going.
+    expect(await closePageWithin({ close: async () => { throw new Error('target closed') } } as unknown as Page, (m) => warned.push(m), 50)).toBe(true)
+    expect(warned).toHaveLength(1)
   })
 })

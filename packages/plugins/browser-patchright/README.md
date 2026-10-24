@@ -36,7 +36,10 @@
     longer counts as open after that. Chrome acknowledges a close that lands as the
     page's navigation commits, then drops it, and patchright waits for that close
     with no bound of its own. On 2026-10-24 in CI, a runtime stop hung on the page
-    its own abort had closed. Such a tab closes with its context.
+    its own abort had closed. Such a tab closes with its context. A close the
+    browser did not confirm within the bound is a warning in the daemon's log
+    (`browser: the browser did not confirm a page's close within 5 s; …`, naming
+    the account), never passed over in silence.
   - Page opens are spaced at least `gapMs` apart. Navigations within a page are
     not spaced.
   - Each new page is brought to the front, so it is the active tab of its window.
