@@ -5,7 +5,7 @@ name: ci
 # on main, and each release tag, through the release workflow.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   schedule:
     - cron: '23 2 * * *'

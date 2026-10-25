@@ -5,7 +5,7 @@ name: audit
 # advisory published against an unchanged lockfile is still seen.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   # The release workflow gates a tag on it too.
   workflow_call:

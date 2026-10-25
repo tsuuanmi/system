@@ -27,7 +27,7 @@ header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decora
 header nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); } header nav a:hover { color: var(--accent); }
 h2.page { margin-bottom: 0; } p.lead { color: var(--muted); margin-top: 4px; }
 #status { color: var(--muted); margin-left: auto; }
-main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+main { padding: 16px 24px; }
 table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
 th { color: var(--muted); font-weight: 500; }
@@ -42,7 +42,7 @@ input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid v
 .muted { color: var(--muted); } code { font-size: 12px; } .answer { white-space: pre-wrap; }
 table.queue td:last-child { white-space: nowrap; }
 th, td.nowrap { white-space: nowrap; }
-#outcome { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+#outcome { padding: 0 24px; }
 #outcome .panel { margin-top: 16px; } .panel.ok { border-color: var(--ok); } .panel.bad { border-color: var(--bad); }
 .panel h3, .panel h4 { margin: 0 0 4px; font-size: 16px; } .panel p { margin: 6px 0; }
 .request .meta, .request .tag { color: var(--muted); } .request .tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; margin-right: 6px; }

@@ -239,7 +239,8 @@ The rule:
 ## CI gates
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request, every
-push to `main` (every merge), nightly on `main`, and on each release tag (the
+push to `main` or `dev` (every merge; `dev` is where the lead integrates batches and the live install
+follows), nightly on `main`, and on each release tag (the
 [release workflow](releasing.md) calls it), on Node 24.18.1 (the floor), the latest 24, and the
 latest 26, with a real Xvfb, TigerVNC, bubblewrap, and Chrome installed. A pull request runs
 `pnpm check` and its affected [test groups](#test-groups); everything else runs the full gate.
