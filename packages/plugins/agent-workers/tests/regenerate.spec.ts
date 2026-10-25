@@ -114,7 +114,8 @@ async function boot(repo: string, commands: string[], setup: string[] = SETUP) {
   const config: Config = { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), worktreeSetup: [{ repository: repo, commands: setup, generated: { paths: ['generated.txt'], commands } }] }
   const fibers = [
     ctx.plugin(Store, { path: join(temp('system-regenerate-'), 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
-    ctx.plugin(StoreApprovals, { policies: [policy([...setup, ...commands])] }),
+    // Each line once: a policy's commands list holds no line twice (a setup and a generated command may be the same).
+    ctx.plugin(StoreApprovals, { policies: [policy([...new Set([...setup, ...commands])])] }),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config),
   ]
   await Promise.all(fibers)
