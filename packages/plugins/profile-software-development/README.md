@@ -23,7 +23,7 @@ holds no engine code and no rules of its own.
     Worker. It reads the task, its criteria, and the change, never the
     developer's answer (its prompt points at no step's result); a remediation
     cycle's re-review is given the same instructions, on the fixed subject;
-  - `validate:1` (`validate`, `local-data`, economy at least; `tests` work) runs the tests and
+  - `validate:1` (`validate`, `local-data`, economy at least; `validation` work) runs the tests and
     benchmarks the task's criteria name, in a one-shot conversation (no session),
     on a Worker whose commands are proven confined (`executes`). It reads the task's
     criteria, each with what checks it (`brief@1.3`), from its brief, and never the
@@ -35,12 +35,21 @@ holds no engine code and no rules of its own.
     run's result: what the task keeps, what its digest cites, and what the next
     attempt reads.
   - **Kinds of work** ([ADR-0057](../../../docs/decisions/adr/0057-route-work-by-kind.md)):
-    the writing steps name what they are, never who takes them. A Worker the
-    operator gives kinds takes only steps of those kinds, so giving one writer
-    `code` and another `docs` and `tests` routes each step by what it changes
-    ([route work by kind](../../../docs/operations/runbooks.md#route-work-by-kind));
+    the steps name what they are, never who takes them: `develop:1` is `code`
+    work (`docs` or `tests` in those variants), and `validate:1` is `validation`
+    work, apart from test writing. A Worker the operator gives kinds takes only
+    steps of those kinds, so giving one writer `code`, `docs`, and `tests` and
+    another Worker `validation` keeps the changes on the one and the checks on
+    the other ([route work by kind](../../../docs/operations/runbooks.md#route-work-by-kind));
     with no Worker given kinds, every step routes as before. The review names
     none, so its reviewer must be a Worker given no kinds.
+  - **Config `kinds`** sets the kind each step names, by step (`develop`, `docs`,
+    `tests`, `validate`), defaulting to the shipped kinds (`DEFAULT_KINDS`), so
+    which Worker takes a step is configuration
+    ([configuration](../../../docs/reference/configuration.md#profile-software-development)).
+    `checkConfig` (for `system check`) and the load refuse a key that is not a
+    step and a kind that is not a kind of work (INV-2); no key gives the review a
+    kind.
   - The project's charter and milestones are the board's, the exact-subject
     review, remediation through the approval queue, briefs, and digests the
     engine's, for any template ([workflow engine](../workflow/README.md)).
@@ -62,8 +71,13 @@ holds no engine code and no rules of its own.
   scripted (it asks the tool gate before every call). One attempt with a fix
   through the queue, held for the operator with its digest, the validator given
   the criteria and their checks but not the caller's input; validation with no
-  Worker proving `validate`; an unlisted validation command; writers given kinds,
-  each step (the fix, and the `docs` variant's) on the writer of its kind.
+  Worker proving `validate`; an unlisted validation command; Workers given kinds,
+  every writing step (the fix, and the `tests` variant's) on the writer given
+  `code`, `docs`, and `tests`, and `validate:1` alone on the Worker given
+  `validation`; validation failing closed when no Worker given kinds lists
+  `validation`; and a configured kind routing `validate:1` to the writer given
+  `tests`. [`tests/profile.spec.ts`](tests/profile.spec.ts) checks the shipped
+  and configured kinds, and refuses a bad `kinds`.
   [`tests/landing.spec.ts`](tests/landing.spec.ts) lands an accepted result (ADR-0060), and
   [`tests/carry.spec.ts`](tests/carry.spec.ts) starts a task's next attempt from the work its
   previous attempt left (ADR-0061, accepted 2026-10-25, D59): T110a's attempt, whose review's session broke after

@@ -1,9 +1,10 @@
-# Route work by kind (operator decisions D35 and D36, 2026-10-24; ADR-0057, accepted), on the live
-# install's hand-named agent Workers (runbook: Route work by kind,
-# docs/operations/runbooks.md#route-work-by-kind).
+# Route work by kind (operator decisions D35 and D36, 2026-10-24, and the operator's request of
+# 2026-10-25; ADR-0057, accepted, and its amendment), on the live install's hand-named agent Workers
+# (runbook: Route work by kind, docs/operations/runbooks.md#route-work-by-kind; on accounts x roles,
+# the same kinds go on the roles, as the runbook shows).
 #
-#   source-code updates -> Claude Code             (a writer given `code`)
-#   docs and test work  -> Codex CLI               (a writer given `docs` and `tests`)
+#   changing the codebase -> Claude Code           (a writer given `code`, `docs`, and `tests`)
+#   checks and tests      -> Codex CLI             (a Worker given `validation`: it runs them, changes nothing)
 #   brainstorm          -> website Workers         (unchanged; see the runbook for the CLIs)
 #   reviews             -> any reviewer given no kinds (Claude Code, Codex, Antigravity CLI)
 #   digests             -> claude-digest, the one read-only Worker on the economy tier (T99 D5)
@@ -13,7 +14,7 @@
 # the live patch stays as it is (accounts, login, workers, provider-gemini-web, workflow, turns,
 # llm-pi-ai, models). Then `system check`, `system shutdown`, `system start`.
 
-# D35 turns Codex back on for docs and test work (D34 had it off). Its executable is the npm install
+# D35 turns Codex back on (D34 had it off); since 2026-10-25 it runs the checks and tests. Its executable is the npm install
 # under the Workers' tools directory, which the read confinement binds back read-only.
 - id: runtime-codex-sdk
   disabled: false   # D35; was true (D34)
@@ -45,26 +46,29 @@
 - id: agent-workers
   config:
     workers:
-      # D36: writes the system repository, a worktree per run; D35: source-code work only. Its
-      # commands run in Claude Code's own sandbox, confined to the worktree with no network, once the
-      # probe proves both confinements on this host (`executes`); until then it writes nothing.
+      # D36: writes the system repository, a worktree per run; 2026-10-25: every change to it, source
+      # code, docs, and tests (algorithm-development with no variant, and its `docs` and `tests`
+      # variants). Its commands run in Claude Code's own sandbox, confined to the worktree with no
+      # network, once the probe proves both confinements on this host (`executes`); until then it
+      # writes nothing.
       - id: claude-code
         runtime: claude-agent-sdk
         workspace: /home/tan/workspaces/system
         sandbox: workspace-write
         tier: standard
         worktreePerRun: true
-        kinds: [code]
-      # D35: docs and test work: it writes them (the `docs` and `tests` variants of
-      # algorithm-development) and runs the tests (`validate:1` is `tests` work), its commands in
-      # Codex's own sandbox inside the confinement.
+        kinds: [code, docs, tests]
+      # 2026-10-25: runs the checks and tests (`validate:1` is `validation` work) and changes
+      # nothing; it takes no writing step. Its commands run in Codex's own sandbox inside the
+      # confinement. It stays workspace-write: only such a Worker proves `validate`. Give no other
+      # Worker `validation`, or list it on one more to share the validations.
       - id: codex-writer
         runtime: codex-sdk
         workspace: /home/tan/workspaces/system
         sandbox: workspace-write
         tier: standard
         worktreePerRun: true
-        kinds: [docs, tests]
+        kinds: [validation]
       # The reviewers: given no kinds, they take every step on their tier that names none (each
       # algorithm-development review, agent-review, a planner's steps), and never a kinded step they
       # cannot do (they are read-only: no develop, no validate). They are on the standard tier, so
@@ -122,5 +126,13 @@
           terms: "Not a reading that Anthropic's plan terms allow pooling. Operator decision D33 (2026-10-24): move work between the operator's own personal accounts of this provider when one is busy or at its limit; the operator accepts the risk under the personal-plan terms."
 
 # The algorithm-development template, whose steps name their kinds: on, as in the live patch (D30).
+# `kinds` here are the shipped ones, written out: change one to move that step to the Workers given
+# the new kind (`validate: tests` would hand the validation to the Workers given `tests`).
 - id: profile-software-development
   disabled: false
+  config:
+    kinds:
+      develop: code
+      docs: docs
+      tests: tests
+      validate: validation

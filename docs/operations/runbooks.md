@@ -402,8 +402,8 @@ characters) fails the same way, and so does an Antigravity turn over its
 
 ## Route work by kind
 
-Give each writing agent Worker the **kinds of work** it takes, and each step goes to a Worker of its
-kind ([work kinds](../design/routing.md#work-kinds),
+Give each agent Worker that writes or validates the **kinds of work** it takes, and each step goes
+to a Worker of its kind ([work kinds](../design/routing.md#work-kinds),
 [ADR-0057](../decisions/adr/0057-route-work-by-kind.md), accepted). This is configuration: which
 runtime takes which kind is the Worker list's, never a template's.
 
@@ -412,17 +412,50 @@ What names a kind today ([templates](../reference/workflow-templates.md#algorith
 | Step | Kind |
 |---|---|
 | `algorithm-development` `develop:1`, and the fix a review grows from it | `code`; `docs` in the `docs` variant, `tests` in the `tests` variant |
-| `algorithm-development` `validate:1` | `tests` |
+| `algorithm-development` `validate:1`: it runs the checks and tests and changes nothing | `validation` |
 | every review (`algorithm-development` `review:1` and its re-reviews, `agent-review`), a planner's steps, every website step (`ask`, `brainstorm`, `review` teams, `research`), digests | none |
 
 A Worker given kinds takes only steps of those kinds, and never a step that names none; a Worker
 given none takes any step it proves the capabilities for. With no Worker given kinds, everything
 routes as before.
 
-**The live install's split** (operator decisions D35 and D36, 2026-10-24): source-code changes on
-Claude Code, docs and test work on Codex, reviews on any reviewer, a writing Claude Code Worker on
+These are the shipped kinds. The `profile-software-development` row's `kinds` sets the kind a step
+names, by step (`develop`, `docs`, `tests`, `validate`), so moving a step to other Workers is a
+configuration change, never a code change; the review names none, whatever is set
+([configuration](../reference/configuration.md#profile-software-development)). For example,
+`kinds: { validate: tests }` makes the validation test work again, taken by the Workers given
+`tests`. `system check` refuses a key that is not a step and a kind that is not a kind of work.
+
+**Workers given kinds take validation only when they list `validation`** (since 2026-10-25;
+before, `validate:1` was `tests` work). A writer given `[docs, tests]` no longer runs the
+validation. Once every Worker that proves `validate` is given kinds, give one of them `validation`,
+or `validate:1` fails admission, nothing sent, and `system explain <runId>` says
+`no Worker that proves validate, local-data takes validation work`. Before a start, the start
+form on `/ui` already says of the step (`… for validation work`) `No Worker can take it now`. A
+Worker given no kinds takes it as before.
+
+**The live install's split** (operator decisions D35 and D36, 2026-10-24, and the operator's
+request of 2026-10-25): Claude Code changes the codebase (source code, docs, and tests), Codex runs
+the checks and tests and changes nothing, reviews on any reviewer, a writing Claude Code Worker on
 the system repository with a worktree per run. The rows are in
-[`examples/work-kinds.patch.yml`](examples/work-kinds.patch.yml).
+[`examples/work-kinds.patch.yml`](examples/work-kinds.patch.yml). On accounts × roles
+([below](#migrate-agent-workers-to-accounts--roles)) the same split is on the roles:
+
+```yaml
+- id: agent-workers
+  config:
+    roles:
+      - { id: develop, workspace: /home/tan/workspaces/system, sandbox: workspace-write, tier: standard, worktreePerRun: true, kinds: [code, docs, tests] }
+      - { id: develop-2, workspace: /home/tan/workspaces/system, sandbox: workspace-write, tier: standard, worktreePerRun: true, kinds: [validation] }
+      - { id: review, workspace: /home/tan/workspaces/system, sandbox: read-only, tier: standard, worktreePerRun: true }   # no kinds: every review
+    assignments:
+      - { account: <the Claude Code account>, roles: [develop, review] }
+      - { account: <the Codex account>, roles: [develop-2, review] }
+```
+
+Keep each role's other settings as they are; only `kinds` changes. `develop-2` keeps
+`workspace-write`: `validate:1` needs a Worker that proves `validate`, which a read-only one never
+does.
 
 1. **Before:** Claude Code's commands are proven confined on this host
    ([confined commands](#agent-workers): `bubblewrap` and `socat`); otherwise the writing Claude
@@ -432,12 +465,13 @@ the system repository with a worktree per run. The rows are in
 2. **Merge the example's rows** into `~/.dsh/profiles/system/cordis.patch.yml` by row id
    (`runtime-codex-sdk`, `runtime-antigravity-cli`, `agent-workers`,
    `profile-software-development`). What it sets:
-   - `claude-code`: `sandbox: workspace-write`, `worktreePerRun: true`, `kinds: [code]`, on
-     `/home/tan/workspaces/system` (D36). Each workflow run writes in its own worktree on the branch
+   - `claude-code`: `sandbox: workspace-write`, `worktreePerRun: true`, `kinds: [code, docs, tests]`,
+     on `/home/tan/workspaces/system` (D36): it writes every change, with no variant and in the
+     `docs` and `tests` variants. Each workflow run writes in its own worktree on the branch
      `system/run/<runId>`, never in the checkout ([a run's worktree](#a-runs-worktree)); an accepted
      task's branch is merged on your approval ([land an accepted result](#land-an-accepted-result)).
-   - `codex-writer`: the same on Codex, `kinds: [docs, tests]`: it writes in the `docs` and `tests`
-     variants and runs `validate:1`.
+   - `codex-writer`: the same on Codex, `kinds: [validation]`: it runs `validate:1`, the checks and
+     tests, and takes no writing step.
    - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
      every review. Each now sets `worktreePerRun: true`: every Worker on a workspace must
      agree, so a reviewer reads the writer's worktree, and the load refuses a row that disagrees.
@@ -468,7 +502,7 @@ the system repository with a worktree per run. The rows are in
    `task`: source-code work with no variant, docs work with `variant: docs`, test work with
    `variant: tests` (CLI: `system run algorithm-development --variant docs …`). `system explain
    <runId>` names each step's Worker; its route decision says `takes code work, one of its kinds`,
-   and a writer that lost says `takes docs, tests work only; this work is code work`.
+   and a Worker that lost says `takes validation work only; this work is code work`.
 
 What this split does not reach, and why:
 
@@ -484,12 +518,13 @@ What this split does not reach, and why:
   step that names none (a planner's `develop` step, where a template's growth policy allows one, or
   a configured template's) finds no writer and fails admission, saying `no Worker that proves
   develop … takes work that names no kind`; give one writer no kinds to take such steps.
-- **`validate:1` is test work.** With Codex unable to confine its commands on this host, it fails
-  admission; giving `claude-code` `tests` too moves both the validation and test writing to Claude
-  Code.
+- **`validate:1` is validation work, apart from test writing.** With Codex unable to confine its
+  commands on this host, it fails admission; giving `claude-code` `validation` too moves the
+  validation to Claude Code, and test writing stays where it is.
 - **After the move to accounts × roles** ([below](#migrate-agent-workers-to-accounts--roles)), the
-  kinds go on the roles (`roles: [{ id: code, …, kinds: [code] }]`), and the assignments decide which
-  accounts take them; `system account migrate` keeps each row's kinds on its role.
+  kinds go on the roles (`roles: [{ id: develop, …, kinds: [code, docs, tests] }]`, as above), and
+  the assignments decide which accounts take them; `system account migrate` keeps each row's kinds on
+  its role.
 
 To undo, remove `kinds` from the Workers (and the writers, if you no longer want them) and restart:
 every Worker then takes every step it proves the capabilities for.
@@ -1155,7 +1190,7 @@ Before you start: back up (`system backup`), and read the Antigravity note in st
    their `description` when they all give the same one (rule version 3). For the live patch: one
    role `review` (the checkout, read-only, standard; `maxTurns: 4` on Claude Code, the model on the
    Antigravity CLI), assigned to the Claude Code and Codex accounts by their ids; with the work
-   kinds patch, also `develop` (`kinds: [code]`) and `develop-2` (`kinds: [docs, tests]`).
+   kinds patch, also `develop` (`kinds: [code, docs, tests]`) and `develop-2` (`kinds: [validation]`).
    - **The Antigravity CLI** cannot be verified (no reader): no account of it can be enrolled
      (one enrolled before is `unverified`), and a derived Worker takes work only on a `ready`
      account. The move waits for its reader (PROP-0012 open question 1). To move now anyway, stop

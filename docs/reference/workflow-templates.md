@@ -154,14 +154,19 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
 | `develop:1` (variant `docs`) | `develop`, `local-data` | standard | `docs` | persistent | `acceptance.answer` |
 | `develop:1` (variant `tests`) | `develop`, `local-data` | standard | `tests` | persistent | `acceptance.answer` |
 | `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | none | temporary | `acceptance.answer` |
-| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `tests` | temporary | `acceptance.answer` |
+| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `validation` | temporary | `acceptance.answer` |
 
 - **Kinds of work** ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)). With no Worker given
-  kinds, every step routes as it always did. Once the operator gives writers kinds
+  kinds, every step routes as it always did. Once the operator gives Workers kinds
   ([route work by kind](../operations/runbooks.md#route-work-by-kind)), `develop:1` and its fix run
   on a writer given `code` (or, in the `docs` and `tests` variants, `docs` or `tests`), and
-  `validate:1` on one given `tests`; `review:1` names none, so it needs a reviewer given no kinds.
-  The variants are this template's docs work and test work; no other template carries them.
+  `validate:1`, which runs the checks and tests and changes nothing, on one given `validation`: a
+  Worker given `tests` writes tests and never runs the validation unless it is given `validation`
+  too. `review:1` names none, so it needs a reviewer given no kinds. The kinds in the table are the
+  shipped ones; the row's `kinds` configuration changes the kind a step names, by step (`develop`,
+  `docs`, `tests`, `validate`; [configuration](configuration.md#profile-software-development)),
+  never the review's. The variants are this template's docs work and test work; no other template
+  carries them.
 - `develop:1` states the hypothesis it tests, then changes the code toward the task; in the `docs`
   variant it changes documentation only, in the `tests` variant tests only. When the attempt before
   failed only after its `develop:1` completed (its review's session broke, say), no review having

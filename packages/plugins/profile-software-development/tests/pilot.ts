@@ -68,11 +68,14 @@ export interface Script {
   /** Whether the runtime proves its commands confined (default true): without it, no Worker proves `validate`. */
   executes?: boolean
   /**
-   * Route by kind of work (ADR-0057), as docs/operations/examples/work-kinds.patch.yml does: the
-   * developer is given `code` work, and a second writer, `tester`, `docs` and `tests` work; the
-   * reviewer and the digest Worker are given none.
+   * Route by kind of work (ADR-0057): the writers by id, each with the kinds the operator gives it,
+   * in place of the one `developer` given none; the reviewer and the digest Worker are given none.
+   * docs/operations/examples/work-kinds.patch.yml gives its writer `[code, docs, tests]` and its
+   * validator `[validation]`.
    */
-  kinds?: boolean
+  writers?: Record<string, string[]>
+  /** The profile row's configuration (default none: the shipped kinds). */
+  profile?: SoftwareDevelopment.Config
   /** How many reviews end on a broken session before one answers (default 0): T110a's review that reached its turn limit. */
   reviewFails?: number
   /** Whether the developer commits its change in its worktree, moving the worktree's HEAD off the commit the task writes (default false). */
@@ -204,8 +207,8 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   const worker = (id: string, sandbox: 'read-only' | 'workspace-write', tier: 'economy' | 'standard', kinds?: string[]) => ({
     id, runtime: 'scripted', workspace: repo, sandbox, tier, worktreePerRun: true, pool: POOL, account: 'plan', ...(kinds ? { kinds } : {}),
   })
-  const writers = script.kinds
-    ? [worker('developer', 'workspace-write', 'standard', ['code']), worker('tester', 'workspace-write', 'standard', ['docs', 'tests'])]
+  const writers = script.writers
+    ? Object.entries(script.writers).map(([id, kinds]) => worker(id, 'workspace-write', 'standard', kinds))
     : [worker('developer', 'workspace-write', 'standard')]
   const ctx = new Context()
   const fibers: Fiber[] = [
@@ -223,7 +226,9 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
-  for (const plugin of [SoftwareDevelopment, ...extra]) {
+  fibers.push(ctx.plugin(SoftwareDevelopment, script.profile ?? {}))
+  await fibers.at(-1)
+  for (const plugin of extra) {
     fibers.push(ctx.plugin(plugin))
     await fibers.at(-1)
   }
