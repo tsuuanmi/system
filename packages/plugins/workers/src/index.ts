@@ -290,6 +290,7 @@ export class WorkerRouter extends Workers {
         requirement: requirementRef,
         workers: described.map((d) => ({ worker: d.worker, source: d.source, failed: failures.get(d.worker.worker)! })),
         unheard: silent.map((source) => ({ source, reason: SILENT })),
+        order: { quota: this.quotaOrder(requirement), priority: [...(this.config.priority ?? [])] },
       }
     })
   }

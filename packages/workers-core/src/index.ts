@@ -574,6 +574,11 @@ export interface Candidates {
   workers: Candidate[]
   /** Sources that did not describe their Workers within the router's bound: none of theirs is listed, never read as having none. */
   unheard: Array<{ source: string; reason: string }>
+  /**
+   * The router's own order after tier, for this requirement: its quota classes (`budget.preferQuota`,
+   * then the configured preference) and its configured priority list of Worker ids.
+   */
+  order: { quota: QuotaClass[]; priority: string[] }
 }
 
 export interface AdmittedWorker {

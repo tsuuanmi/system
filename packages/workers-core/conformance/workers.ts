@@ -642,6 +642,10 @@ export function workersConformance(name: string, boot: Boot): void {
         ])
         expect(looked.workers.find((c) => c.worker.worker === 'w:g-b')!.failed[0]!.reason).toBe(`w:g-a is at its limit until ${later}; assigned accounts do not take another account's work at its limit`)
         expect(looked.unheard).toEqual([])
+        // Routing's own order after tier: every quota class once, the requirement's preference first.
+        expect(new Set(looked.order.quota)).toEqual(new Set(['subscription-chat', 'local', 'agent-plan', 'metered']))
+        expect((await ctx.workers.candidates(requirement({ budget: { preferQuota: ['metered'] } }))).order.quota[0]).toBe('metered')
+        expect(looked.order.priority).toEqual([])
         // The stored requirement, no decision, and no pending admission on any Worker.
         expect(ctx.artifacts.get(looked.requirement)?.body).toEqual(develop)
         expect(ctx.artifacts.list({ kind: 'decision', limit: 1000 })).toHaveLength(decisions)
