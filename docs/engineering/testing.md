@@ -173,8 +173,12 @@ absence of automation leaks are properties of the real browser.
   up (a conversation that never renders, a send nothing confirms) sets that bound small rather than
   waiting out the production default.
 - The turn runtime's and the workflow engine's browser specs are split by theme the same way
-  (turns: asks, sessions, sign-in, routing, limits; workflow: static DAGs, acceptance, plans, plan
-  approval, the operator's stop and supersede, deletion), each file on its own Xvfb through its
+  (turns: asks, sessions, sign-in, routing, limits, the session-bound login profile, the ChatGPT
+  one, kept tabs, a site's notice or check; workflow: static DAGs, acceptance, plans, plan
+  approval, the operator's stop and supersede, deletion, team votes, ties and their deciding vote,
+  runs that wait on a vote, review findings, where a member runs and what it may be sent,
+  provider families), each file on
+  its own Xvfb through its
   package's `tests/stack.ts`. Those stacks do not pace page opens (the drivers' `pageGapMs` and the
   runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
