@@ -315,13 +315,17 @@ second execution path (INV-1).
     member over every other family's input bound fails as `invalid_input`,
     naming the bound to change.
   - No member, the first included, joins on a Worker the operator's
-    `teams.excludeWorkers` leaves out (a Worker id or an account id, each with
-    every other Worker on its account): each routes only to the Workers listed
-    then, less those, and its route decision gives each one left out the reason
-    `left out of teams by the operator's teams.excludeWorkers`.
-    `allowSameFamily` never lifts it. When it leaves fewer families ready than
-    the team has members, the member's message says so; the Workers still take
-    every other node, and a member already in its conversation keeps it
+    `teams.excludeWorkers` leaves out (a Worker id, or an account as
+    `<group>/<id>` or its bare id, each with every other Worker on its
+    account): each routes only to the Workers listed then, less those, and its
+    route decision gives each one left out the reason `left out of teams by the
+    operator's teams.excludeWorkers`. `allowSameFamily` never lifts it. When it
+    leaves fewer families ready than the team has members, every member fails
+    `config_error` before anything is sent, `allowSameFamily` or not. The
+    Workers still take every other node; a member already in its team's
+    conversation in that run keeps it, recorded, and one resuming another
+    run's session on a Worker left out is refused. Entries that match nothing
+    are recorded (`workflow.team.unmatched-exclusions`)
     ([Workers left out of teams](../../../docs/design/teams.md#workers-left-out-of-teams)).
     `ctx.workflow.teamExclusion()` reads them for a surface, deciding nothing: the
     entries and every Worker they leave out now (the roster's `teams`).

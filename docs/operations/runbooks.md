@@ -822,10 +822,12 @@ To keep a website account (or any Worker) out of brainstorm and review teams whi
 takes single asks and research, for example while the site is unstable
 ([Workers left out of teams](../design/teams.md#workers-left-out-of-teams)):
 
-1. `system roster` lists every Worker id and, for a Worker on an account, its account id. Pick
-   the Worker ids or account ids to leave out. A Worker id leaves out every other Worker of its
-   account too (a website account's other tiers, an agent account's other roles); an account id
-   leaves out every Worker on it; a model Worker is left out by its own id.
+1. `system roster` lists every Worker id and, for a Worker on an account, its account's group and
+   id. Pick the Worker ids or accounts to leave out. A Worker id leaves out every other Worker of
+   its account too (a website account's other tiers, an agent account's other roles); an account,
+   written `<group>/<id>`, leaves out every Worker on it; a bare account id does the same when only
+   one group has an account by that id, and is refused when several do (two providers' `default`
+   accounts, say); a model Worker is left out by its own id.
 2. Add them on the `workflow` row of `cordis.patch.yml` (a targeted patch replaces the row's whole
    config: keep its other settings):
 
@@ -837,18 +839,28 @@ takes single asks and research, for example while the site is unstable
          excludeWorkers: [gemini-main]
    ```
 
-3. `system check` (it refuses an option under `teams` it does not know), then restart
-   (`system shutdown`, then `system start`).
+3. `system check`, then restart (`system shutdown`, then `system start`). It refuses an option
+   under `teams` it does not know, a `teams` that is not an object, an `excludeWorkers` that is not
+   a list, an entry with whitespace or over 200 characters, more than 64 entries, and an entry
+   listed twice. It cannot tell a typo from a Worker that is not configured: see step 4.
 4. Check: start a `system brainstorm "…"`, then `system explain <runId>`: each member's `route`
    line names another Worker, and the route decision gives each Worker left out the reason `left
-   out of teams by the operator's teams.excludeWorkers`.
+   out of teams by the operator's teams.excludeWorkers`. An entry that matches no Worker or account
+   listed when a member routes leaves nothing out, and each member's routing records it as a
+   `workflow.team.unmatched-exclusions` event with the entries (`system events --type
+   workflow.team.unmatched-exclusions`): fix the spelling, or remove it.
 
 - **What the team runs on instead.** Members still differ by provider family, so another family
   must be admitted for each member: with a website left out, another provider's website, an API
   model Worker of the same family as the one left out (a model entry's `family`), or for a review
-  an agent Worker under the review-member profile. When none is admitted, the member fails as
-  `config_error`, and the message says that your exclusion leaves too few families; with
-  `allowSameFamily` on, the members share one family's accounts instead.
+  an agent Worker under the review-member profile.
+- **When your exclusion leaves too few families**, the team fails at its first member, before
+  anything is sent, as `config_error`: `team T needs N provider families, one per member; M is
+  ready outside the operator's teams.excludeWorkers, which leaves K more out of teams …`, or, with
+  every Worker left out, `… leaves out every Worker listed now …`. `allowSameFamily` does not run
+  the team on one family instead: that would be a team your exclusion made single-provider. Add a
+  Worker of another family, or leave out less. `allowSameFamily` still applies when the roster has
+  too few families without the exclusion; its re-routes keep the exclusion.
 - **Which one it gets** is routing's order among the Workers admitted: the lowest tier, then the
   quota class in `quotaPreference` order (default `subscription-chat`, `local`, `agent-plan`,
   `metered`), then the least busy, then `priority` ([routing](../design/routing.md#algorithm)). So
@@ -863,8 +875,13 @@ takes single asks and research, for example while the site is unstable
   with no findings JSON, so its step was rejected. Raise that catalog entry's `maxTokens` (for
   example to 16384) before teams use it ([API and local models](#api-and-local-models)); a longer
   answer also takes longer, within `callTimeoutMs`.
-- **Teams in flight** keep the members they formed with: a member already in its conversation
-  stays on its Worker. Start the run again to form the team under the option.
+- **Teams in flight** keep the members they formed with: a member already in its team's
+  conversation in that run stays on its Worker, also when you `system continue` the run, and the
+  route decision says `… which the operator's teams.excludeWorkers leaves out of teams, is kept as
+  team T's own conversation in this run (Model A)`. A member that would resume a conversation not
+  started for its team in that run (a later run resuming an earlier one's session) on a Worker
+  left out fails as `config_error`, nothing sent. Start the run again to form the team under the
+  option.
 - **Undo:** remove the entries (or the `teams` key), `system check`, restart.
 
 ## A review member fails on a website
@@ -961,7 +978,8 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
   than the team has members (Workers ready or busy that prove the step): see
   [one provider family](#one-provider-family). With enough of them the message does not say this,
   and the admission's own reasons are why. `M is ready outside the operator's
-  teams.excludeWorkers, which leaves K more out of teams`: your own exclusion leaves too few
+  teams.excludeWorkers, which leaves K more out of teams`: your own exclusion leaves too few, and
+  the team failed before anything was sent, `allowSameFamily` or not
   ([keep a Worker out of teams](#keep-a-worker-out-of-teams)).
 
 ## Pool a provider's accounts
