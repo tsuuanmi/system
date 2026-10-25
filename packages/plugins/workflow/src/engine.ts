@@ -637,7 +637,7 @@ export class Engine {
         done()
         return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: restricting.problem }, { sent: false, decisions: [] }, lease)
       }
-      const { distinctAccounts, ...restricted } = restricting
+      const { distinctAccounts, teams, ...restricted } = restricting
       // The prompt as its source will render and send it, in characters (ADR-0032): a Worker that takes less is not admitted.
       const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
@@ -659,7 +659,8 @@ export class Engine {
           if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
           // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
           // A session's own Worker still binds it; only the family and distinct-account rules are
-          // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused.
+          // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and
+          // so does one the operator's teams.excludeWorkers leaves out of teams.
           // First the family rule alone: a team on one provider keeps distinct accounts while it can
           // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
           // When nothing passes even then, the first refusal, with what the team needs, stands.
@@ -668,10 +669,10 @@ export class Engine {
             admitted = kept
             sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
           } else {
-            admitted = await route(distinctAccounts ? {} : restricted).catch(() => {
+            admitted = await route(distinctAccounts ? (teams ? { restrict: teams } : {}) : restricted).catch(() => {
               throw error
             })
-            const rules = [exclude?.reason, distinctAccounts ? restricted.restrict?.reason : undefined].filter((r): r is string => !!r)
+            const rules = [exclude?.reason, distinctAccounts].filter((r): r is string => !!r)
             sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
           }
         }
@@ -680,7 +681,7 @@ export class Engine {
         if (!(error instanceof AdmissionFailure)) throw error
         const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
         // A team member short of provider families: say what the team needs, beside why this one failed.
-        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec, record.requirement) : ''
+        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec, record.requirement, teams?.workers) : ''
         // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
         const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
         if (waiting && 'waited' in waiting) return
@@ -810,15 +811,19 @@ export class Engine {
   /**
    * A team's need for provider families, as the start of a member's admission failure, when fewer
    * are ready now than it has members: the families of the Workers ready or busy that prove what
-   * the member's step needs. With enough of them, the shortage is not why it failed: empty.
+   * the member's step needs, and of those only the ones `allowed` (what the operator's
+   * `teams.excludeWorkers` leaves teams), naming the exclusion when it is what leaves too few. With
+   * enough of them, the shortage is not why it failed: empty.
    */
-  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement): Promise<string> {
-    const ready = new Set((await this.ctx.workers.list())
+  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement, allowed?: readonly string[]): Promise<string> {
+    const proving = (await this.ctx.workers.list())
       .filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined
         && requirement.capabilities.every((c) => w.capabilities.some((o) => o.capability === c && provesFor(o, requirement))))
-      .map((w) => w.family))
+    const ready = new Set(proving.filter((w) => !allowed || allowed.includes(w.worker)).map((w) => w.family))
     if (ready.size >= spec.team!.members) return ''
-    return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready (ADR-0027). `
+    const left = new Set(proving.map((w) => w.family)).size - ready.size
+    const why = left ? ` outside the operator's teams.excludeWorkers, which leaves ${left} more out of teams` : ''
+    return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready${why} (ADR-0027). `
   }
 
   /** Wait for this run's turn to route; the returned function ends it. */

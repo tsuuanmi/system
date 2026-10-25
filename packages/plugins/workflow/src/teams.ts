@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { canonicalJson, extractJson, sha256 } from '@tsuuanmi/system-libs'
 import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
-import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, CapabilityDescriptor, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { sameFamilyOf } from './recovery.ts'
@@ -736,18 +736,52 @@ function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], roun
   return lines.join('\n')
 }
 
+/** Which Workers a node may be routed to, and the rules that say so: see {@link restriction}. */
+export interface Restriction {
+  /** Only these Workers may take the node, and why. */
+  restrict?: { workers: string[]; reason: string }
+  /** The distinct-account rule (REQ-TEAM-4), when `restrict` holds it: `allowSameFamily` may lift it, and the record names it (ADR-0029, ADR-0035). */
+  distinctAccounts?: string
+  /** The Workers the operator's `teams.excludeWorkers` leaves a member, alone: what still binds it once the distinct-account rule is lifted. */
+  teams?: { workers: string[]; reason: string }
+}
+
+/**
+ * The Workers the operator keeps out of teams (`teams.excludeWorkers`): each entry is a Worker id
+ * or an account id, and leaves out that Worker, or every Worker whose descriptor names that account
+ * id, with their accounts as distinct accounts count them: each one's siblings, and every Worker
+ * whose descriptor names the same account (docs/design/teams.md#workers-left-out-of-teams). Ids
+ * are compared for equality only (INV-11).
+ */
+export function leftOutOfTeams(entries: readonly string[], listed: readonly CapabilityDescriptor[], siblings: (worker: string) => string[]): Set<string> {
+  const named = new Set(entries)
+  // A Worker id leaves out its account's Workers as its source names them, described now or not.
+  const out = new Set(entries.flatMap((entry) => siblings(entry)))
+  for (const w of listed) {
+    if (named.has(w.worker) || (w.account && named.has(w.account.id))) for (const s of [w.worker, ...siblings(w.worker)]) out.add(s)
+  }
+  const accountOf = (w: CapabilityDescriptor): string => (w.account ? JSON.stringify([w.account.group, w.account.id]) : '')
+  const accounts = new Set(listed.filter((w) => out.has(w.worker)).map(accountOf).filter((a) => a))
+  for (const w of listed) if (accounts.has(accountOf(w))) out.add(w.worker)
+  return out
+}
+
 /**
  * Which Workers may take a node: a session stays on its Worker; a member of a team avoids every
  * account another member already holds (REQ-TEAM-4), on top of its provider family (ADR-0027).
  * An account is every Worker on it: each held Worker's siblings, and every Worker whose descriptor
  * names the same account (docs/design/teams.md#distinct-accounts). When a held Worker's account
  * cannot be told apart, the member is refused with the cause (`problem`), never admitted beside it.
+ * A member joins on none of the Workers the operator's `teams.excludeWorkers` leaves out: the
+ * allowed set is the Workers listed now, less those, so one described later is refused too.
  */
-export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string }; distinctAccounts?: true } | { problem: string }> {
+export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<Restriction | { problem: string }> {
   const own = spec.session.sessionId ? e.ctx.workers.affinity(spec.session.sessionId) : undefined
+  // A member already in its conversation keeps it (Model A): `teams.excludeWorkers` decides who joins.
   if (own) return { restrict: { workers: own, reason: `session ${spec.session.sessionId} stays on its Worker` } }
   if (!spec.team?.member) return {}
   const team = spec.team
+  const excluded = e.config.teams?.excludeWorkers ?? []
   // What each other member holds: its session's Workers, from the source that owns the session,
   // else the Worker it joined the team on.
   const held = new Map<string, number>()
@@ -756,8 +790,11 @@ export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): P
     const joined = e.ctx.workerSessions.session(s.session.sessionId)
     for (const worker of e.ctx.workers.affinity(s.session.sessionId) ?? (joined ? [joined.worker] : [])) if (!held.has(worker)) held.set(worker, s.team.member)
   }
-  if (!held.size) return {}
+  if (!held.size && !excluded.length) return {}
   const listed = await e.ctx.workers.list()
+  const out = leftOutOfTeams(excluded, listed, (w) => e.ctx.workers.siblings(w))
+  const teams = excluded.length ? { workers: listed.map((w) => w.worker).filter((w) => !out.has(w)), reason: `team ${team.id}: left out of teams by the operator's teams.excludeWorkers` } : undefined
+  if (!held.size) return teams ? { restrict: teams, teams } : {}
   const described = new Map(listed.map((w) => [w.worker, w]))
   // An account a descriptor names, as one comparable value; none for a Worker that names none.
   const accountOf = (worker: string): string => {
@@ -782,6 +819,7 @@ export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): P
   }
   // A Worker that names an account a member holds is on it, whichever source describes it.
   for (const w of listed) if (accounts.has(accountOf(w.worker))) taken.add(w.worker)
-  const workers = listed.map((w) => w.worker).filter((w) => !taken.has(w))
-  return { restrict: { workers, reason: `team ${team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` }, distinctAccounts: true }
+  const workers = listed.map((w) => w.worker).filter((w) => !taken.has(w) && !out.has(w))
+  const rule = `team ${team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account`
+  return { restrict: { workers, reason: teams ? `${rule}, or it is left out of teams by the operator's teams.excludeWorkers` : rule }, distinctAccounts: rule, ...(teams ? { teams } : {}) }
 }
