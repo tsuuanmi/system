@@ -1,7 +1,7 @@
 ---
 id: PROP-0015
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-25
 summary: System gives each piece of work to the right Worker on an account with quota to spare, measures what each Worker is good at, asks the operator less and more clearly, lets one Worker hand a test or a research to another through typed artifacts, and may take advice from the Jev decision model, all under the hard gates that exist today. The first increment needs no new vendor and is buildable now. It makes the quota reading one implementation: the roster's capacity summary (T152) reads `accountQuotaOf` and orders free Workers by the quota score's keys, so "free" means the same in capacity and in dispatch, the operator's reserve included. Later increments record the quota each attempt actually drew, refuse a start the draw would not fit, project acceptance by Worker and kind from recorded decisions, gather everything waiting on the operator into one list, let a step end with typed handoffs that become child board tasks with fresh context, and put Jev behind PROP-0002's `ctx.decisions` seam as an advisor. Jev answers one query per decision with a whole probability distribution per question, runs in shadow first, and may never widen what the gates allow.
 owners: [operator]
@@ -215,7 +215,7 @@ given as configuration and not hard-coded (T177 found no evidence for a fixed ba
 
 - E3 ships in **shadow** first: the `dispatch.choice` decision says "would not fit: 5 h headroom 6,
   p90 draw of docs work 9 (n 14); weekly headroom 40, p90 3 (n 14), fits", and nothing is refused. The gate is turned on per configuration
-  after the shadow period ([open question 4](#open-questions)).
+  after the shadow period ([open question 4](#open-questions-answered)).
 - A fit is a forecast from recorded draws, so it lowers the risk of a limit mid-task and does not
   remove it. The measure is limit interruptions per 100 dispatched attempts, before and after.
 - Unknown is never capacity. An unknown window is still not free, and a missing draw history takes
@@ -321,7 +321,7 @@ from E2. `decisions-jev` is the vendor adapter, version-pinned. The seam's calle
 Advice is an input, never authority.
 
 **One query per decision point.** For a dispatch choice (J1's first and only point), after the hard
-gates, the engine sends one request. Its state is features, not text, by default ([open question 3](#open-questions)):
+gates, the engine sends one request. Its state is features, not text, by default ([open question 3](#open-questions-answered)):
 the template and step, the kind, each free candidate under an alias (`A`, `B`, …) with its quota
 line from `quota-score`, its E4 figures, and its kind's E2 draws. The questions
 (`dispatch-advice@1`) are:
@@ -391,7 +391,7 @@ the operator's go-ahead.
 | **E4** Measured strengths | the outcome projection by Worker and kind, with counts; on the Worker card and in the report | — |
 | **E5** Needs you | Home's single list with controls; `board.question` notifications; the report's "decided for you" | — |
 | **E6** Handoffs | `handoff@1.0`; the `handoffs` result; child tasks; the `handoff` wait; fresh-context briefs; its ADR | E5 (questions on the same surface) |
-| **J0** Jev feasibility | synthetic calls only: the request and response contract, latency, price, and data terms checked; no System data sent | the operator's answer to [open question 3](#open-questions) |
+| **J0** Jev feasibility | synthetic calls only: the request and response contract, latency, price, and data terms checked; no System data sent | — (the operator answered [open question 3](#open-questions-answered): features only, D73) |
 | **J1** Advisor in shadow | the `decisions` seam, `decisions-rules`, `decisions-jev`; one query per dispatch choice; the full distribution recorded; calibration scored | J0, E2, E4 |
 | **J2** Visible advice | the advice beside each dispatch ask on Home; calibration per question in the report | J1 and its shadow period |
 | **J3** Bounded advice | reorder among equal tier and quota class, after a preregistered evaluation; its ADR | J2, PROP-0011 F4 |
@@ -450,7 +450,7 @@ whose advice never widens a gate (J1).
   `advice unavailable` and the deterministic choice; every answer kept in `modelAnswers`; advice
   never changes the chosen Worker in shadow; calibration over a fixture.
 - **Live:** E1 on the live host, the lead's capacity read beside dispatch for a working day, no
-  disagreement. The shadow periods of E3 and J1 run on one project ([open question 4](#open-questions)).
+  disagreement. The shadow periods of E3 and J1 run on one project ([open question 4](#open-questions-answered)).
 
 ## Rollout and rollback
 
@@ -487,32 +487,73 @@ whose advice never widens a gate (J1).
 `handoff` wait reason and the `decisions` seam come with their ADRs. No migration: E2 starts
 recording from its first run, and nothing is back-filled.
 
-## Open questions
+## Open questions (answered)
+
+The operator answered every question on 2026-10-25, each as proposed. The answer follows each
+question, with its decision number.
 
 1. **The 80 % threshold.** Keep D63's 20 % reserve as the hard line for starts, and add a light band
    (proposed: 15 points, so 65 % to 80 %, measured work only)? Or change the reserve itself, or keep
    one line only?
+   **Answered (D71):** the 20 % reserve stays the hard line for starts, and a light band of 15
+   points (65 % to 80 % used with the defaults) takes only light work whose draw is measured and
+   fits (E3).
 2. **The reserve beyond dispatch.** Once PROP-0014's D3 puts the score in every route, should the
    reserve also keep the lead's starts and a run's later steps out of the operator's share
    (proposed: no for a start the operator or lead makes by hand, yes for later steps of a dispatched
    run)?
+   **Answered (D72):** yes for the later steps of a dispatched run, which the reserve keeps out of
+   the operator's share; no for a start the operator or the lead makes by hand.
 3. **What Jev may see.** Features only (proposed: kind, template, step, candidates by alias, quota
    lines, counts), or also the task's title and goal, which may be in Vietnamese and may be private?
+   **Answered (D73):** features only. Jev never sees a task's title or goal.
 4. **Shadow length.** How long do E3's fit and J1's advice run in shadow before J2 or the gate:
    a number of decisions (proposed: 100 dispatched attempts with outcomes) or a number of days?
+   **Answered (D74):** a number of decisions: 100 dispatched attempts with outcomes.
 5. **Which fronts first.** Proposed: E1, then E2 and E5, then E4 and E3, then E6; J0 in parallel
    once question 3 is answered.
+   **Answered (D75):** E1, then E2 and E5, then E4 and E3, then E6; J0 in parallel (question 3 is
+   answered by D73).
 6. **Handoffs without the lead.** May a Worker's step propose child tasks itself, under the board's
    gate (proposed: yes, depth 1, at most 3 per attempt), or should the lead approve each?
+   **Answered (D76):** yes. A Worker's step may propose child tasks itself under the board's gate,
+   depth 1, at most 3 per attempt.
 7. **The declared split.** Confirm the mapping in front 2. What should the Antigravity CLI take when
    it is back: `validation` only once it proves `validate`, or also `tests` writing?
+   **Answered (D77):** the mapping is confirmed. Claude Code writes code, docs, and tests; Codex
+   validates and reviews; website Workers research; the Antigravity CLI takes `validation` only,
+   and only once it proves `validate`.
 8. **Fresh-context review.** Use the goldfish review (spec and evidence, no transcript) on every
    task, or selectively, as T177 suggests (proposed: selectively, on tasks the lead marks, measured
    against today's review)?
+   **Answered (D78):** selectively, on tasks the lead marks, measured against today's review.
 
 ## Decision
 
-Pending: proposed to the operator on 2026-10-25.
+Accepted by the operator on 2026-10-25, each answer as the proposal recommends. Each increment
+starts on the operator's go-ahead; none is built yet.
+
+- **D71** (open question 1): D63's 20 % reserve stays the hard line for starts. A light band of
+  `quota.lightBandPercent` (default 15, so 65 % to 80 % used with the defaults) takes only light
+  work, that is a step whose draw in that window is measured (E2) and fits (E3). Unmeasured work
+  does not go there. The band is configuration, not a hard-coded number.
+- **D72** (open question 2): once PROP-0014's D3 puts the quota score in every route, the reserve
+  also keeps the later steps of a dispatched run out of the operator's share. It does not hold back
+  a start the operator or the lead makes by hand. A running step is never moved (as D63, the reserve
+  decides at a start or a step boundary only).
+- **D73** (open question 3): Jev sees features only (kind, template, step, candidates by alias,
+  quota lines, counts), never a task's title or goal.
+- **D74** (open question 4): E3's fit and J1's advice each run in shadow for 100 dispatched
+  attempts with outcomes before the gate or J2.
+- **D75** (open question 5): the order is E1, then E2 and E5, then E4 and E3, then E6; J0 runs in
+  parallel.
+- **D76** (open question 6): a Worker's step may propose child tasks itself under the board's gate
+  (`board_propose`), depth 1, at most 3 per attempt (`handoffs.maxPerAttempt`).
+- **D77** (open question 7): the declared split is confirmed: Claude Code writes code, docs, and
+  tests; Codex validates and reviews; website Workers research; the Antigravity CLI takes
+  `validation` only, once it proves `validate`.
+- **D78** (open question 8): fresh-context (goldfish) review is selective, on tasks the lead marks,
+  and measured against today's review.
 
 ## Implementation
 
