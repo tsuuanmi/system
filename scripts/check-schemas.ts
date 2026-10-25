@@ -143,7 +143,8 @@ const newer = (a: string, b: string): boolean => {
 export function schemaVersion(name: string, major: number, schema: unknown): string {
   let best = `${major}.0`
   const consider = (minor: string): void => { if (newer(`${major}.${minor}`, best)) best = `${major}.${minor}` }
-  const own = new RegExp(`(?<![\\w-])${name.replace(/-/g, '\\-')}@${major}\\.(\\d+)(?![\\d.])`, 'g')
+  // Every regular-expression character of the name escaped, backslash included, not only '-'.
+  const own = new RegExp(`(?<![\\w-])${name.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&')}@${major}\\.(\\d+)(?![\\d.])`, 'g')
   const note = new RegExp(`(?<![@\\w.])${major}\\.(\\d+)(?![\\d.]*\\w)`, 'g')
   const visit = (value: unknown, key?: string): void => {
     if (typeof value === 'string') {

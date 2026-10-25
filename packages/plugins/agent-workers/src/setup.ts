@@ -522,11 +522,11 @@ const LAUNCHER = [
   "const { spawn } = require('node:child_process')",
   "const { openSync, writeSync } = require('node:fs')",
   "const { signals } = require('node:os').constants",
-  `const argv = process.argv.slice(process.argv.indexOf(${JSON.stringify(LAUNCHED)}) + 1)`,
+  "const argv = process.argv.slice(process.argv.indexOf('system-check') + 1)",
   'const say = (text) => { try { writeSync(3, text) } catch {} }',
   "const child = spawn(argv[0], argv.slice(1), { stdio: [0, 1, 2, openSync('/dev/null', 'r'), 4] })",
   'let spawned = false',
-  `child.once('spawn', () => { spawned = true; say(${JSON.stringify(STARTED)}) })`,
+  "child.once('spawn', () => { spawned = true; say('started') })",
   "child.on('error', (error) => {",
   '  if (spawned) return',
   "  say(`exec-failed ${/^[A-Z0-9_]+$/.test(String(error.code)) ? error.code : 'EUNKNOWN'}`)",
@@ -535,6 +535,8 @@ const LAUNCHER = [
   '})',
   "child.once('exit', (code, signal) => process.exit(code ?? 128 + (signals[signal] ?? 0)))",
 ].join('\n')
+// The launcher names its marker and its start word as literals (no value is spliced into code); they must be these.
+if (!LAUNCHER.includes(`indexOf('${LAUNCHED}')`) || !LAUNCHER.includes(`say('${STARTED}')`)) throw new Error('agent-workers: the check launcher and its constants disagree')
 
 /**
  * The confinement a repository's commands run in, in its worktree `worktree` (its real path): the
