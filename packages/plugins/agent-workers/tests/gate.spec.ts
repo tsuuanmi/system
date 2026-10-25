@@ -522,6 +522,20 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toHaveProperty('refused')
   })
 
+  it('classifies a probe that can do nothing as read: echo with any plain words, pwd with no argument, true, false (T187)', () => {
+    for (const command of ['echo', 'echo noop', 'echo -n x', 'echo -e a', 'echo -E -n', 'echo --help', 'echo #x', 'echo a=b /etc/passwd ../x', 'pwd', 'true', 'false']) {
+      expect(classify(bash(command), ws), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('reads and changes nothing') })
+    }
+    // A metacharacter is still refused, an empty word too.
+    for (const command of ['echo $HOME', 'echo `id`', 'echo a;id', 'echo a|id', 'echo >x', 'echo *', 'echo ~', 'echo "a"', 'echo a\\nb', 'echo  a', 'echo ', 'true;id', 'pwd&&id']) {
+      expect(classify(bash(command), ws), command).toHaveProperty('refused')
+    }
+    // Anything else of these programs stays a command, by its exact argv.
+    for (const command of ['pwd -P', 'pwd -L', 'pwd /tmp', 'true x', 'false --help', '/bin/echo x', 'printf x', 'Echo x', 'sh -c true']) {
+      expect(classify(bash(command), ws), command).toMatchObject({ class: 'command', command: command.split(' ') })
+    }
+  })
+
   describe('read-only inspection commands', () => {
     // A workspace that holds its own .git.
     const repo = join(tree, 'git-repo')

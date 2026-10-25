@@ -319,6 +319,17 @@ const READ_COMMANDS: Record<string, (args: string[], workspace: string) => boole
   find: findRule,
 }
 
+/**
+ * Probes that can do nothing but print (T187): `echo` with any words (none holds a metacharacter,
+ * so the shell expands nothing, and with no backslash `-e` or `-n` changes only how the words are
+ * printed), `pwd` with no argument, and `true` and `false` with none. Each is a shell builtin that
+ * reads no file and changes nothing; `pwd` shows only the name of the directory the command runs in.
+ */
+function noopCommand(argv: string[]): boolean {
+  const [program, ...args] = argv
+  return program === 'echo' || ((program === 'pwd' || program === 'true' || program === 'false') && args.length === 0)
+}
+
 /** Whether `argv` is a read-only inspection command inside the workspace (`READ_COMMANDS`). */
 function readCommand(argv: string[], workspace: string): boolean {
   const [program, ...args] = argv
@@ -388,8 +399,11 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  *   git's own data;
  * - `Bash`: an empty word (a doubled, leading, or trailing space) or a word with a shell
  *   metacharacter is refused here first, before the policy is asked (which forbids the latter
- *   too). Then a read-only inspection command inside the workspace is `read` (summary the command,
- *   no argv): `cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file` with a few options each and every
+ *   too). Then a probe that can do nothing is `read` (summary the command, no argv): `echo` with
+ *   zero or more words (any word, `-e` and `-n` included: with no metacharacter it only prints
+ *   them), `pwd` with no argument, and `true` and `false` with none; they read no file and change
+ *   nothing, so a Worker's probe never waits on the operator. A read-only inspection command inside
+ *   the workspace is `read` too (summary the command, no argv): `cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file` with a few options each and every
  *   other word a path inside the workspace; `sed -n <a>[,<b>]p <path>` exactly; `rg` and `grep`
  *   with allowed options only (never `--pre`, `-f`, `-z`, `-L`, …), a free-text pattern, and paths
  *   inside the workspace; `find <paths>` with only `-name`, `-iname`, `-path`, `-type`,
@@ -459,6 +473,7 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
     if (empty >= 0) return { refused: `${tool}: argv word ${empty + 1} is empty (a doubled, leading, or trailing space); a command is words split on single spaces` }
     const unsafe = argv.findIndex((word) => SHELL_METACHARACTER.test(word))
     if (unsafe >= 0) return { refused: `${tool}: argv word ${unsafe + 1} holds a shell metacharacter; a command is never parsed by a shell` }
+    if (noopCommand(argv)) return { class: 'read', summary: clamp(command), consequences: `Prints its words or the working directory, or nothing, and reads and changes nothing: ${clamp(command)}. ${ANSWER}` }
     if (readCommand(argv, workspace)) return { class: 'read', summary: clamp(command), consequences: `Reads inside the run's workspace: ${clamp(command)}. ${ANSWER}` }
     return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
   }

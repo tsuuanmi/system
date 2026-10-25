@@ -300,6 +300,17 @@
       non-default `shell`, which the hook does not see, is the program that
       runs the words, inside Codex's sandbox and the read confinement, as
       above;
+    - a probe that can do nothing is a `read` too, so it never stalls a run on
+      the operator: `echo` with any words, `pwd` with no argument, and `true`
+      and `false` with none, matched exactly. They are safe because each is a
+      shell builtin that opens no file, runs no program, and changes nothing:
+      with no metacharacter the shell expands nothing (no variable, command
+      substitution, glob, or redirection), so `echo` prints its words as
+      written (`-e` and `-n` only change how, and with no backslash there is no
+      escape to interpret); `pwd` prints only the name of the directory the
+      command runs in, which the run's confinement already shows the agent;
+      `true` and `false` print nothing. Any argument to `pwd`, `true`, or
+      `false`, `/bin/echo`, or `printf` stays a `command`;
     - a process inside Codex's sandbox that could read the socket's path cannot
       present the key, and the gate only answers: no call runs because of it;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
@@ -366,7 +377,8 @@
   Claude Code itself starts, live. Each command still passes the tool gate by its
   exact argv, so a shell metacharacter is forbidden and an unlisted command asks
   the operator; only the fixed read-only inspection commands inside the workspace
-  (as for Codex, above) are reads. What remains:
+  and the probes that can do nothing (`echo`, `pwd`, `true`, `false`; as for
+  Codex, above) are reads. What remains:
   - a kernel escape from the namespaces, which neither bubblewrap nor the
     sandbox runtime claims to stop;
   - reads inside the confinement: a command can read what Claude Code itself
