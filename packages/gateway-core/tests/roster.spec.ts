@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.5', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.6', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -454,7 +454,26 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, `agent:${CLAUDE}/review`).account).toMatchObject({ value: { record: { value: { quarantine: { reason: 'unverified', detail } } } } })
   })
 
-  it('the example validates against mcp-roster@1.5, and a record that is not one is refused', async () => {
+  it('says which Workers the operator keeps out of teams, as the engine tells it, and unknown on every Worker when it cannot tell (mcp-roster@1.6, D58, T141)', async () => {
+    const runs = services().workflow!.usage(500)
+    // No teamExclusion: no Worker carries the fact.
+    const none = await readRoster(services(), { scope: 'operator', now: NOW })
+    expect(entries(none).some((e) => 'teams' in e)).toBe(false)
+    // The engine leaves out the Claude account's Workers (one named, its sibling with it) and the website account by its id.
+    const told = await readRoster(services({ workflow: { usage: () => runs, teamExclusion: async () => ({ entries: [`agent:${CLAUDE}/review`, 'plus'], workers: [`agent:${CLAUDE}/develop`, `agent:${CLAUDE}/review`, 'worker:plus/standard'] }) } }), { scope: 'operator', now: NOW })
+    valid(told)
+    expect(entry(told, `agent:${CLAUDE}/review`).teams).toEqual({ value: { excluded: true, summary: 'Kept out of teams by the operator: it is named in teams.excludeWorkers, so it is never a team member; it takes every other step' } })
+    expect(value(entry(told, `agent:${CLAUDE}/develop`).teams!).summary).toContain('another Worker of its account is named')
+    expect(value(entry(told, 'worker:plus/standard').teams!).summary).toContain('its account is named')
+    expect(entry(told, `agent:${CODEX}/review`)).not.toHaveProperty('teams')
+    expect(formatRoster(told)).toContain('  teams      Kept out of teams by the operator: it is named in teams.excludeWorkers')
+    // An engine that cannot tell: unknown on every Worker, never read as none left out (INV-2).
+    const failed = await readRoster(services({ workflow: { usage: () => runs, teamExclusion: async () => { throw new Error('the router is busy') } } }), { scope: 'operator', now: NOW })
+    valid(failed)
+    for (const e of entries(failed)) expect(e.teams, e.worker).toEqual({ unknown: 'it could not be read: the router is busy' })
+  })
+
+  it('the example validates against mcp-roster@1.6, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)

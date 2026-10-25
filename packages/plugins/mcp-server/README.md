@@ -115,7 +115,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     [`gateway-core`](../../gateway-core/README.md#the-roster) from the mounted
     `workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, `workflow`,
     and `board`, each one absent or failing read as unknown with why. Its
-    structured content is the `mcp-roster@1.5` record, checked before it is
+    structured content is the `mcp-roster@1.6` record, checked before it is
     sent; its text content is the rendering `system roster` prints. A client
     (the lead) gets it without account labels, in its records and in each
     Worker's display name.

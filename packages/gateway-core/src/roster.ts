@@ -10,8 +10,8 @@
  */
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 
-/** The schema of the roster (`mcp-roster@1.5`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.5'
+/** The schema of the roster (`mcp-roster@1.6`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.6'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -128,6 +128,9 @@ export interface RosterLivenessRun {
 /** What `ctx.workers.liveness()` tells: the runs, the latest first, and each source that could not tell. */
 export interface RosterLivenessRead { runs: RosterLivenessRun[]; counts: Record<RosterLivenessRun['state'], number>; unread: Array<{ source: string; detail: string }> }
 
+/** What the engine's `teamExclusion()` tells: the operator's `teams.excludeWorkers` entries, and every Worker they leave out of teams now. */
+export interface RosterTeamExclusion { entries: string[]; workers: string[] }
+
 export interface RosterServices {
   workers?: { list(): Promise<RosterDescriptor[]>; sources?(): RosterSourceRead[]; siblings(worker: string): string[]; liveness?(): Promise<RosterLivenessRead> } | undefined
   accounts?: { list(): Promise<RosterWebsiteAccount[]>; duplicateIdentities(): Promise<string[][]> } | undefined
@@ -145,7 +148,11 @@ export interface RosterServices {
   } | undefined
   resources?: { pools(): Promise<RosterPool[]>; usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }> } | undefined
   eventLog?: { query(filter: { type: string; since?: string; afterSeq: number; limit: number; runId?: string; nodeId?: string }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
-  workflow?: { usage(limit: number): RosterRun[] } | undefined
+  workflow?: {
+    usage(limit: number): RosterRun[]
+    /** The Workers the operator keeps out of teams (`teams.excludeWorkers`, D58): the entries configured, and the Workers listed now that they leave out. */
+    teamExclusion?(): Promise<RosterTeamExclusion>
+  } | undefined
   board?: { task(taskId: string): Promise<RosterTask | undefined> } | undefined
 }
 
@@ -175,6 +182,8 @@ export interface RosterInput {
   starts?: ReadonlyMap<string, Known<string>>
   /** The runs whose liveness needs a look; absent when the router tells none (no `liveness`). */
   liveness?: Known<RosterLivenessRead>
+  /** The Workers the operator keeps out of teams; absent when the engine tells none (no `teamExclusion`). */
+  teams?: Known<RosterTeamExclusion>
 }
 
 /** The key of one step's start in {@link RosterInput}.starts. */
@@ -247,6 +256,11 @@ export interface RosterEntry {
   work: Known<{ items: RosterWork[]; more: number; unread?: string }>
   /** Its runs whose liveness needs a look, each in one sentence; only when it has any, or they could not be told. */
   liveness?: Known<RosterLiveness[]>
+  /**
+   * `@1.6`: that the operator keeps it out of teams (`teams.excludeWorkers`, D58), in one sentence;
+   * only when the engine tells it and leaves this Worker out, or could not tell.
+   */
+  teams?: Known<{ excluded: true; summary: string }>
   pools: Known<RosterPoolView[]>
 }
 /** A run of a Worker whose liveness needs a look, as the roster shows it (PROP-0013). */
@@ -450,6 +464,19 @@ function livenessFor(input: RosterInput, worker: string, now: Date): Pick<Roster
   return unread.length ? { liveness: unknown(`${unread.map((u) => `source ${u.source} could not tell (${u.detail})`).join('; ')}`) } : {}
 }
 
+/**
+ * Whether the operator keeps a Worker out of teams, as its entry gives it: absent when the engine
+ * tells none or does not leave it out; unknown on every Worker when the engine could not tell (INV-2).
+ */
+function teamsFor(input: RosterInput, d: RosterDescriptor): Pick<RosterEntry, 'teams'> {
+  const told = input.teams
+  if (!told) return {}
+  if (!isKnown(told)) return { teams: unknown(told.unknown) }
+  if (!told.value.workers.includes(d.worker)) return {}
+  const named = told.value.entries.includes(d.worker) ? 'it is named' : d.account && told.value.entries.includes(d.account.id) ? 'its account is named' : 'another Worker of its account is named'
+  return { teams: known({ excluded: true, summary: clip(`Kept out of teams by the operator: ${named} in teams.excludeWorkers, so it is never a team member; it takes every other step`) }) }
+}
+
 /** A Worker's siblings without itself, in id order, at most {@link ROSTER_BOUNDS}.siblings. */
 function siblingsOf(siblings: Known<string[]>, worker: string): Known<string[]> {
   if (!isKnown(siblings)) return siblings
@@ -499,6 +526,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         siblings: siblingsOf(siblings, d.worker),
         work,
         ...livenessFor(input, d.worker, options.now),
+        ...teamsFor(input, d),
         pools,
       }
     }))
@@ -646,7 +674,9 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
   }
   // The runs whose liveness needs a look, once, when the router tells them (PROP-0013).
   const liveness = workers?.liveness ? await read(undefined, () => workers.liveness!()) : undefined
-  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, titles, pools, unknownUsage, runs, tasks, starts, ...(liveness ? { liveness } : {}) }, { scope: options.scope, now })
+  // The Workers the operator keeps out of teams, once, when the engine tells them (D58).
+  const teams = workflow?.teamExclusion ? await read(undefined, () => workflow.teamExclusion!()) : undefined
+  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, titles, pools, unknownUsage, runs, tasks, starts, ...(liveness ? { liveness } : {}), ...(teams ? { teams } : {}) }, { scope: options.scope, now })
   schemas().assertDef(ROSTER_SCHEMA, 'roster-output', roster)
   return roster
 }
@@ -674,6 +704,7 @@ export function formatRoster(roster: Roster): string {
         ...(work.more ? [`${work.more} more`] : []), ...(work.unread ? [work.unread] : []),
       ].join('; '))}`)
       if (w.liveness) lines.push(`  liveness   ${text(w.liveness, (runs) => runs.map((r) => r.summary).join('; '))}`)
+      if (w.teams) lines.push(`  teams      ${text(w.teams, (t) => t.summary)}`)
       if (!isKnown(w.pools)) lines.push(`  pools      unknown (${w.pools.unknown})`)
       else if (!w.pools.value.length) lines.push('  pools      none on its account')
       for (const p of isKnown(w.pools) ? w.pools.value : []) {

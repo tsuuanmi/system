@@ -89,7 +89,10 @@ Tests: `tests/guard.spec.ts`.
   liveness (`workers.liveness`, PROP-0013) it is read once, and each Worker with
   a run stalled, looked at, or held for want of a verdict gets `liveness`, each
   run in one sentence (`unknown` on every Worker without one listed when a
-  source could not tell). The record is checked against `mcp-roster@1.5`
+  source could not tell). With an engine that tells its `teams.excludeWorkers`
+  (`workflow.teamExclusion`, D58) it is read once, and each Worker it leaves out
+  gets `teams`, in one sentence (`unknown` on every Worker when it could not
+  tell). The record is checked against `mcp-roster@1.6`
   before it is returned; one its schema refuses throws (a defect).
 - **`projectRoster(input, { scope, now })`** is the pure projection of what was
   read: Workers in id order, each with its description (or `unknown`), a
