@@ -104,7 +104,9 @@ provider family than the Workers that served those nodes
   A node that routes again forgets its old Worker, so no peer differs from a stale one.
 - With `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)), a
   node that no Worker of another family admits routes again without the exclusion (a team
-  member, also without the distinct-account rule; a session's own Worker still binds it). The
+  member, also without the distinct-account rule; a session's own Worker still binds it, and
+  the operator's `teams.excludeWorkers` still keeps a member off the Workers it leaves out of
+  teams, [teams](teams.md#workers-left-out-of-teams)). The
   fallback is an `admission` decision (`workflow.same-family`, outcome `same-family`) kept among
   the node's decisions, and the run's answer starts with a line naming those steps (`Same
   provider family (allowSameFamily): …`; a team says it in its own answer). Off by default:

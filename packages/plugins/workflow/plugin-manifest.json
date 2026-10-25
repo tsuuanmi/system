@@ -98,6 +98,10 @@
       "sensitive": false
     },
     {
+      "key": "teams",
+      "sensitive": false
+    },
+    {
       "key": "retainRunsDays",
       "sensitive": false
     },

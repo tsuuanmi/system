@@ -91,7 +91,8 @@ the Worker another member runs on (PROP-0012 phase C,
 
 With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),
 [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)), such a member routes
-again in up to two more steps:
+again in up to two more steps, both still off the Workers the operator leaves out of teams
+([below](#workers-left-out-of-teams)):
 
 1. Without the family rule, **keeping distinct accounts**: on a provider with several accounts,
    members spread over accounts of their own (the least busy first, ADR-0033). This is a
@@ -104,6 +105,43 @@ again in up to two more steps:
 The team's final decision records `members: same provider family, on accounts of their own` or
 `…, sharing an account`, and its answer's second line says which, and that no other provider
 judged it.
+
+### Workers left out of teams
+
+The operator may keep Workers out of team membership while they still take every other node:
+the workflow's `teams.excludeWorkers` (operator decision D58, 2026-10-25: while a website is
+unstable, teams run on the other providers, and the site still takes single asks and research).
+Each entry is a Worker id or an account id, as `system roster` lists them, compared for equality
+only ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)):
+
+- **A Worker id** leaves out that Worker and its account, counted as
+  [distinct accounts](#distinct-accounts) count one: its siblings, whether a source describes them
+  now or not, and every Worker whose descriptor names the same `account`.
+- **An account id** leaves out every Worker whose descriptor names that account id, in any group,
+  with each one's account counted the same way. A Worker that names no account (a model Worker) is
+  left out by its Worker id only.
+- An id that names no Worker leaves nothing out. `system check` refuses an option under `teams`
+  it does not know, so a misspelt `excludeWorkers` is not taken for an empty one.
+
+Every member, the first included, routes to the Workers listed when it routes, less the ones left
+out (and, for a later member, less the accounts the others hold). A Worker described only after
+that is refused too, so nothing the option names reaches a team by appearing late (INV-2). The
+member's `route` decision gives each Worker it left out the reason
+`team T: left out of teams by the operator's teams.excludeWorkers`; beside the distinct-account
+rule, one reason holds both, `…; another member holds this account, or it is left out of teams by
+the operator's teams.excludeWorkers`.
+
+- **`allowSameFamily` never lifts it.** Its re-routes lift the family rule, then the
+  distinct-account rule, and keep this one, so a one-family team shares an account before it
+  reaches a Worker left out. The same-family decision names only the rules it lifted.
+- **Too few families.** A member that then finds no Worker of another family fails as
+  `config_error`, with nothing sent. When the exclusion leaves fewer families ready than the team
+  has members, its message starts `team T needs N provider families, one per member; M is ready
+  outside the operator's teams.excludeWorkers, which leaves K more out of teams (ADR-0027).`
+- **It decides who joins.** A member already in its conversation keeps it (Model A): its ballot
+  and debate turns, and an escalation to another tier of its account. A team that formed before
+  the option changed finishes on its Workers; start it again to form it under the option.
+- **Only team members.** Every other step, a single `ask` or a research step, routes as before.
 
 ## Procedure
 

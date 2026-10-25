@@ -541,6 +541,8 @@ No options.
 | `maxWaitingRuns` | number (0…) | `16` | Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused |
 | `retainDays` | number (1…) | `30` | Days a finished run keeps its input text and prompts |
 | `allowSameFamily` | boolean | `false` | When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035) |
+| `teams` | object | `{}` | Team membership (docs/design/teams.md#workers-left-out-of-teams) |
+| `teams.excludeWorkers` | string[] (…64) | `[]` | Worker ids and account ids (as system roster lists them) that no team member joins on, the first member included: a Worker id leaves out that Worker, an account id every Worker naming it, each with every other Worker on its account. They still take every other node, and a member already in its conversation keeps it |
 | `retainRunsDays` | number (0…) | `30` | Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session's latest run always stays |
 | `maxLimitWaitHours` | number (0…720) | `24` | Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
