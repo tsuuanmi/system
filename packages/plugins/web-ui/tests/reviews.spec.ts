@@ -327,7 +327,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await decisionsIn(card)).toEqual([
       { label: 'Accept', description: 'marks it done' },
       { label: 'Send back', description: 'sends it back for another attempt, if it has one left' }])
-    expect(await card.locator('.actions').innerText()).toMatch(/Accept\s+marks it done\s+Send back\s+sends it back for another attempt, if it has one left/)
+    expect(await card.locator('.actions').first().innerText()).toMatch(/Accept\s+marks it done\s+Send back\s+sends it back for another attempt, if it has one left/)
     await card.getByRole('button', { name: 'Accept', exact: true }).click()
     await expect.poll(async () => (await ctx.board.task(task.taskId))?.state).toBe('done')
     // Where the accepted result stands (ADR-0060), as its landing moves: committed on its branch, then its merge asked, linked.

@@ -237,7 +237,7 @@ describe('web UI: the policy page in a real browser', () => {
     await page.getByRole('link', { name: 'system' }).click()
     const queue = page.getByRole('region', { name: 'Approval queue' })
     const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
-    // Show change and what a verdict does are under the card's Details (T186).
+    // What a verdict does is under the card's Details (T186); Show change is beside the two verdicts, never folded.
     await expect.poll(() => entry.locator('details.card-details > summary').count()).toBe(1)
     await entry.locator('details.card-details > summary').click()
     await queue.getByRole('button', { name: `Show the change of ${request!.requestId}` }).click()
@@ -247,8 +247,8 @@ describe('web UI: the policy page in a real browser', () => {
     // Show change names what it does too, by itself: decisionsIn lists only described buttons (T191).
     expect(await descriptionOf(entry.getByRole('button', { name: `Show the change of ${request!.requestId}` }))).toBe('shows what this request changes, below; decides nothing')
     expect(await decisionsIn(entry)).toEqual([
-      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' },
-      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' }])
+      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' },
+      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' }])
     await entry.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request!.requestId)
@@ -297,8 +297,8 @@ describe('web UI: the policy page in a real browser', () => {
     // The same Approve / Deny as on Home, each described by its effect (T191).
     expect(await descriptionOf(card.getByRole('button', { name: `Show the change of ${request.requestId}` }))).toBe('shows what this request changes, below; decides nothing')
     expect(await decisionsIn(card)).toEqual([
-      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' },
-      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' }])
+      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' },
+      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' }])
     await card.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     expect((await booted.ctx.approvals.policy()).set?.changeId).toBe(change.changeId)

@@ -472,7 +472,6 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await third.innerText()).toContain('Asked by the board, for task task-apr-3 of project p1')
     expect(await third.innerText()).toContain('task apr-3 of project p1, attempt 1')
     expect(await third.innerText()).toContain('request apr-3')
-    expect(await third.innerText()).toContain('Approve: allow this deploy · Deny: hold the task')
     expect(await page.locator('main').innerText()).not.toContain('null')
     // T191: every decision is Approve / Deny (a batch's Approve all 2 / Deny all 2), its effect its accessible
     // description, never its label.
@@ -483,8 +482,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const thirdDeny = third.getByRole('button', { name: 'Deny', exact: true })
     expect(await descriptionOf(third.getByRole('button', { name: 'Approve', exact: true }))).toBe('allows this deploy')
     expect(await descriptionOf(thirdDeny)).toBe('holds the task')
-    // The effect is said beside each button too, for every reader.
-    expect(await third.locator('.actions').innerText()).toMatch(/Approve\s+allows this deploy\s+Deny\s+holds the task/)
+    // The effect is said beside each button too, for every reader, in sight with the buttons (never under Details).
+    expect(await third.locator('.actions').first().innerText()).toMatch(/Approve\s+allows this deploy\s+Deny\s+holds the task/)
     await queue.getByRole('textbox', { name: 'Note for all (optional)' }).fill('ship it')
     await queue.getByRole('button', { name: 'Approve all 2' }).click()
     await expect.poll(() => approvals().calls.length).toBe(1)
@@ -573,10 +572,13 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await expect.poll(() => cards.count()).toBe(3)
     for (const id of ['apr-1', 'apr-2', 'apr-3']) {
       const card = page.locator(`#request-${id}`)
-      // In sight: one line and two buttons, Approve and Deny, each named by its effect for assistive technology.
+      // In sight: one line and two buttons, Approve and Deny, named by that one wording and described by their effect (T191).
       expect(await card.getByRole('button').allInnerTexts(), id).toEqual(['Approve', 'Deny'])
-      expect(await card.getByRole('button', { name: /^Approve: / }).count(), id).toBe(1)
-      expect(await card.getByRole('button', { name: /^Deny: / }).count(), id).toBe(1)
+      expect(await card.getByRole('button', { name: 'Approve', exact: true }).count(), id).toBe(1)
+      expect(await card.getByRole('button', { name: 'Deny', exact: true }).count(), id).toBe(1)
+      const described = await decisionsIn(card)
+      expect(described.map((d) => d.label), id).toEqual(['Approve', 'Deny'])
+      for (const d of described) expect(d.description, `${id}: ${d.label}`).not.toBe('')
       expect(await card.locator('.line').innerText(), id).toMatch(/·\s*(Expires|Expired) .+ · No response: denied$/)
       // Every other fact folded, never dropped: who asked, what it is about, its exact subject, what each verdict does, its id and expiry.
       const details = card.locator('details.card-details')
@@ -595,7 +597,10 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // Keyboard: from the top of the page, Tab reaches every button in sight.
     await page.locator('main').focus()
     const marked = await page.locator('main button:visible').evaluateAll((list) => list.map((b, i) => { b.setAttribute('data-k', String(i)); return (b.getAttribute('aria-label') ?? b.textContent ?? '') }))
-    expect(marked).toEqual(expect.arrayContaining(['Approve all 2', 'Deny all 2', 'Approve: allow this merge', 'Deny: hold the task', 'Approve: allow this deploy']))
+    expect(marked).toEqual(expect.arrayContaining(['Approve all 2', 'Deny all 2']))
+    // Each of the three cards' Approve and Deny is in sight.
+    expect(marked.filter((m) => m === 'Approve').length).toBe(3)
+    expect(marked.filter((m) => m === 'Deny').length).toBe(3)
     const reached = new Set<string>()
     for (let i = 0; i < 400 && reached.size < marked.length; i++) {
       await page.keyboard.press('Tab')

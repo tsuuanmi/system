@@ -139,9 +139,11 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const card = page.getByRole('article', { name: 'Found project project p1 (charter version 1)' })
     await expect.poll(() => card.count()).toBe(1)
-    // In sight (T186): one line, for which project and until when with what no response does, an irreversible denial as a chip, and two short buttons.
+    // In sight (T186): one line, for which project and until when with what no response does, an irreversible denial as a chip, and two
+    // short buttons, each with what it does said beside it (T191).
     const text = await card.innerText()
-    for (const said of ['Found project project p1 (charter version 1)', 'for project project p1', 'Expires in', 'No response: denied', 'Deny cannot be undone']) expect(text, said).toContain(said)
+    for (const said of ['Found project project p1 (charter version 1)', 'for project project p1', 'Expires in', 'No response: denied', 'Deny cannot be undone',
+      'activates the project', 'abandons the project']) expect(text, said).toContain(said)
     expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     // Who asked, what it is about, what each verdict does, the request's id, its exact expiry, and the board's sweep are under one closed Details, never dropped (T171, T186).
     for (const folded of ['Asked by', 'charter version 1 of project p1', 'Cannot be undone.', 'request ' + approvalRequest]) expect(text, folded).not.toContain(folded)
@@ -150,7 +152,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const opened = await card.innerText()
     for (const said of ['Asked by the board of project project p1', 'charter version 1 of project p1',
       '2 proposed task(s) go through the autonomy policy. No run starts by itself.', 'is closed as abandoned, and 2 open task(s) are cancelled. Cannot be undone.',
-      'request ' + approvalRequest, 'The board activates it on its next sweep, within a minute', 'Approve: activate project · Deny: abandon project']) expect(opened, said).toContain(said)
+      'request ' + approvalRequest, 'The board activates it on its next sweep, within a minute']) expect(opened, said).toContain(said)
     expect(await card.locator('button.copy', { hasText: 'Copy request ID' }).getAttribute('data-copy')).toBe(approvalRequest)
     await card.getByRole('textbox', { name: 'Note (optional)' }).fill('go')
     // Approve / Deny, each described by what it does to the project (T191).
