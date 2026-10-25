@@ -2156,7 +2156,7 @@ projects with their open tasks per state (the **Board** page), not each task.
 | `rejected` | an approval was denied or expired, or none could be asked (a lost or spent run under a policy that does not ask, or a funding ask past `fundingMaxPercent`) | nothing revives it (see below) |
 | `retries-spent` | every attempt is used (`attempts.count` equals `max`: what the proposal named, else the board's `templateAttempts` for its template, else its `maxAttempts`, 3; [attempts](../design/board.md#attempts)): a review rejected the last one, a run failed with none left (also a last attempt whose budget was spent: its run failed as `budget_spent` and asked you for no funding, since no approval could start another attempt), or an approval to go on or an answered question had none left to start | nothing revives it. The last result stays on the task, to read or to take. For a spent budget, see what was spent with MCP `resources_usage` (`taskId`) and propose the work again with larger lines or more attempts |
 | `review-expired` | no accepting decision came: the reviewer's lease lapsed, or the review held for you reached its expiry | nothing revives it. The work is still on its run's branch ([worktree](#a-runs-worktree)) |
-| `operator-review` (in `review`) | the result waits for your acceptance: the checks its class requires have not passed, or the policy forbids the class | Accept or Reject on `/ui` ([review](#accept-or-reject-a-review)) until `expiresAt`; then `review-expired`. Home, the Reviews list, `system status`, and the report say when each expires; with the notify row on, `review.expiring` tells you `expiryLeadMinutes` (60) before ([get notified](#get-notified)) |
+| `operator-review` (in `review`) | the result waits for your acceptance: the checks its class requires have not passed, the policy forbids the class, or, under `board.autoAccept`, a condition of System's own acceptance failed ([let System accept](#let-system-accept-a-branchs-results)) | Accept or Reject on `/ui` ([review](#accept-or-reject-a-review)) until `expiresAt`; then `review-expired`. Home, the Reviews list, `system status`, and the report say when each expires; with the notify row on, `review.expiring` tells you `expiryLeadMinutes` (60) before ([get notified](#get-notified)) |
 | `budget-spent` (waiting for approval) | a line of the task's `budget` is reached: the ledger refused the reservation of the next step of its run (failed as `budget_spent`, no step started after the refusal, outcome `blocked`; the steps that ran before it keep their results, and the next attempt's brief points at them; [a task's budget](../design/workflow-engine.md#a-tasks-budget)): a `funding` request, which always asks. On the task's last attempt there is none: the task waits for input (`retries-spent`). The request names the lines it would add (its summary, and `waiting.funding` on `board_task`): for each spent line, what the task overdrew plus one attempt's share of the line, from the ledger's count | see what was spent with MCP `resources_usage` (`taskId`), and read the request's summary and consequences on `/ui`. Approve: the board adds exactly those lines to the task's `budget` (recorded in its `funding`, with your approval), and the next attempt goes through the gate. Deny or expiry: `rejected`, the budget unchanged. A request with no lines (the ledger could not count the task's usage) only lets it go on, and the ledger refuses the next run again while a line is reached: propose the work again with larger lines. A request whose consequences say the resource ledger did not release a step's reservation (its run, step, and `until` time; the run's failure in `system explain <runId>` names it too) was refused by a hold that still counts, not by recorded usage: check the ledger with `system health` and `resources_pools`, wait past the `until` time, then approve; approved sooner, the next attempt's first step may be refused again on the same hold. An ask past the board's `fundingMaxPercent` (default 100% of the lines the task declared, over all its raises) opens no request: the task waits for input (`rejected`, see below); raise `fundingMaxPercent` in the `board` row for later tasks, or propose the work again |
 | `reconciliation-failed` (waiting for approval) | the run's holder was lost mid-run and its outcome is not known: a `remediation` request, which always asks | look at the run first (`run.runId`, then `system explain <runId>`). When the engine can report the run's outcome it does, and withdraws the request itself. Approve: another attempt, through the gate; the old run is never started again. Deny or expiry: `rejected` |
 
@@ -2178,7 +2178,10 @@ board holds the review for the operator while one is pending
 ([board](../design/board.md#required-checks-bind-at-acceptance)).
 A task of a class that needs no check (`read`) or that the policy asked about before its attempt
 is accepted by the engine's own decision and never shows here. A run whose own check failed is
-rejected by the engine as another attempt, also without you.
+rejected by the engine as another attempt, also without you. On a project and branch you listed
+in `board.autoAccept`, System accepts a result itself only when its run's last review approved it
+and its required checks passed on it; every other one stops here, with the reason
+([let System accept a branch's results](#let-system-accept-a-branchs-results)).
 
 1. `system ui` prints the link: open it on the host, or over `ssh -L <port>:127.0.0.1:<port>
    host`. **Reviews** lists every task in review, those held for you first, by expiry. Each row
@@ -2212,6 +2215,44 @@ rejected by the engine as another attempt, also without you.
      never degrades health), and `system report` lists those held as it is made; with the `notify`
      row on, a notice comes `expiryLeadMinutes` before one expires
      ([get notified](#get-notified)).
+
+## Let System accept a branch's results
+
+By default you accept every result held for you. To have System accept a project's results that
+land on a branch you name (D80,
+[ADR-0067](../decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md)),
+list both in the `board` row of your configuration and restart the daemon:
+
+```yaml
+board:
+  autoAccept:
+    projects: [system]
+    branches: [dev]
+```
+
+1. Names are exact: a project id, a plain branch name (no `*`), at most 64 each, no repeats. A
+   malformed setting stops the board from starting; a list left empty turns the setting off.
+2. Make sure the checks can pass on their own first: the policy's required checks that are
+   commands must run on the result
+   ([let a run pass the required checks](#let-a-run-pass-the-required-checks)), and the template
+   must review the change (`algorithm-development` does). A check that cannot run stays pending,
+   and the result is held for you as before.
+3. What happens to a listed project's result on a run's worktree:
+   - **Accepted by System** when the run's last review approved that exact tree with no blocking
+     finding left, each required check's `check-run` record shows it passed on that tree, and the
+     worktree was cut from a listed branch. The task is `done`; `system explain` on its
+     `lastDecision` shows the `board.auto-accept` decision naming the review, the check-run record,
+     and the run's acceptance. The landing still asks you to merge
+     ([land an accepted result](#land-an-accepted-result)).
+   - **Held for you** otherwise, as before. **Reviews** on `/ui` lists it; the hold's decision
+     (`system artifact <lastDecision>`) says which conditions failed: no review, a review that did
+     not approve or left a blocking finding (at the review cycle bound, say), a check pending or not
+     passed on that tree, or another branch. Run what is pending and decide as in
+     [accept or reject a review](#accept-or-reject-a-review).
+   - A review of the result that asked for changes is a failed check of the run's own: the engine
+     sends the work back as another attempt, as before.
+4. To turn it off, remove the setting (or empty a list) and restart: every result is held for you
+   again.
 
 ## Pause, resume, or close a project
 

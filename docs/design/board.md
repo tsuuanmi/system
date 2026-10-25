@@ -179,6 +179,7 @@ policy change; the other cases only the store-backed provider checks.
   outcome is `accept` or `reject`; anything else is refused (`invalid`, rule 5). A run owner's
   report is checked the same way before anything moves, so a refused report changes nothing.
 - [Required checks bind at acceptance](#required-checks-bind-at-acceptance).
+- [System accepts a listed branch's result](#system-accepts-a-listed-branchs-result) (`autoAccept`, D80).
 - One approval covers one attempt. Every return to ready for a new attempt goes through the
   gate again: after a rejected review, a run its owner reports failed or rejected, an approval to
   go on after a spent budget or a lost run, and an answered question, the board asks the policy
@@ -245,7 +246,7 @@ policy change; the other cases only the store-backed provider checks.
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
 | review → review (held for the operator) | `accept` (or a run owner's completed report) with an accepting decision that is not the operator's, while the class's required checks have not passed or the policy forbids the class | a `board` decision naming the acceptance and the `autonomy` decision; the lease released; `waiting` (`operator-review`, the checks still pending, and the policy's wait for the class) | only the operator's acceptance accepts it now: another such decision is refused (`invalid`); a rejection, or one with the checks passed, applies |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision, or a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
-| review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
+| review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay; under `autoAccept`, a `board` decision of rule `board.auto-accept` naming the acceptance, the review, and the check-run record ([System accepts a listed branch's result](#system-accepts-a-listed-branchs-result)) | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed, and under `autoAccept` the rule's conditions met, else it is held for the operator |
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
 | waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt, a `funding` ask's lines added to the budget first, in the same transaction); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, the board withdrew it, or the queue no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open; a raise: `funding` and its `board` decision, which the gate's decision names | rejection and expiry never start work, and raise nothing: the task waits for input (`rejected`) |
 | waiting-for-approval → ready / waiting-for-approval / cancelled (`approval-needed`), or waiting-for-approval / waiting-for-input (`budget-spent`, `reconciliation-failed`) | `sweep`, on a request the queue withdrew on a policy change (decider rule `approvals.policy`): the wait's gate runs again under the policy loaded now, as when it first asked (the class: the task's, `funding`, or `remediation`) | a `board` decision naming the withdrawal and the `autonomy` decision, a reason on every outcome the wait has; `approval-needed`: ready on `auto` or `notify` (pending checks recorded), a new request on the same exact subject on `ask` (an open one adopted), `forbidden` on `forbid`; a spent budget or a lost run: a new request on `ask`, else a wait for input (`rejected`), the run kept | a move that cannot commit withdraws the new request; the run's owner may still report a lost run |
@@ -362,6 +363,36 @@ when the result is accepted:
   `submit`), so the acceptance that reports them binds to it; nothing about the board changes.
 - A class the policy asks about needs no check here: the operator approved the attempt before it
   started.
+
+### System accepts a listed branch's result
+
+Under the store-backed provider's `autoAccept: { projects, branches }` (off by default; D80,
+[ADR-0067](../decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md)),
+an accepting decision that is not the operator's, for a task of a listed project whose result is on
+a git working tree, applies only when, besides the policy letting it apply as above, every condition
+holds, each read from the record the decision names, never from its own account:
+
+| Condition | Read from | Holds when |
+|---|---|---|
+| the run owner's | the decision's envelope | a rule's decision the system produced |
+| the last review approved | `outcome.detail.review.assessment`, among its inputs | an `assessment@1.0` of the result's exact tree, verdict `approve`, no blocking finding |
+| the checks passed | `outcome.detail.checkRun.evidence`, among its inputs | a `check-run@1.0` of the result's exact tree showing each command check the decision reports passed as `passed` (every one the policy requires, since it saw none failed) |
+| it lands on a listed branch | `outcome.detail.landing.branch` | a branch `autoAccept.branches` names |
+
+- Met, the task is `done` on a `board` decision of rule `board.auto-accept`, which names the
+  acceptance, the review, the check-run record, and the autonomy decision (INV-13);
+  `result.acceptance` is the acceptance it applied. Its landing then asks for the merge as any other
+  ([landing an accepted result](workflow-engine.md#landing-an-accepted-result)).
+- Not met, the review is held for the operator as above, with `pendingChecks` the policy's (none
+  when only the rule held it), and the hold's `board` decision lists every condition that failed
+  (`outcome.detail.autoAccept`), a blocking finding left at the review cycle bound among them. Only
+  the operator's acceptance accepts it then.
+- A rejection, the operator's decision, another project's task, and a result on no working tree go as
+  without the setting. The workflow engine's task acceptance names the run's last review and its
+  landing target (`workflow.task-acceptance` version 3,
+  [a board task's run](workflow-engine.md#a-runs-required-checks)).
+- The setting is validated when the board starts: project ids, plain branch names (no patterns), at
+  most 64 each, no repeats; off unless both lists name one.
 
 A `done` task is terminal here. What happens to its result outside the board is the run owner's:
 the workflow engine lands a result made in a run's worktree, committing it on the run's branch and

@@ -3,7 +3,10 @@
 - **Status:** Accepted (2026-10-25, by the operator, D67; proposed 2026-10-25, T151, and built on the
   operator's go-ahead for T151). It changes what
   the core accepts only for a repository whose checks the operator configures: with none
-  configured, every result is accepted as before.
+  configured, every result is accepted as before. Amended by
+  [ADR-0067](0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md) (D80): for the
+  projects and branches `board.autoAccept` lists, the board also reads the run's last review, the
+  `check-run` record, and the landing target before it accepts, and the task acceptance is version 3.
 - **Date:** 2026-10-25
 - **Related:** T151, [PROP-0013](../../proposals/0013-feedback-from-work.md) (C3, open question 9),
   [PROP-0010](../../proposals/0010-base-version.md) (B5, B8),
@@ -108,7 +111,9 @@ What constrains a fix:
   `review`, gives each `error` as a reason, and keeps what was asked in `outcome.detail.checkRun`.
 - **What the board does with it** is unchanged: no check failed and none pending, the result is
   accepted without the operator; a failed one is another attempt; a pending one holds the review for
-  the operator. A plain run records them and is never blocked.
+  the operator. A plain run records them and is never blocked. (Amended by ADR-0067: on a project
+  and branch `board.autoAccept` lists, the result is accepted only when, besides, the run's last
+  review approved it and the `check-run` record shows each check passed on it.)
 - **Restart** (INV-4), as amended by T164: a check is never run again to replace what it came to.
   The source stores each check that ran (`agent_check_runs`), keyed by the run, the worktree, the
   subject, the check, its argv, and the setup's hash: `started` before its command starts, `done`

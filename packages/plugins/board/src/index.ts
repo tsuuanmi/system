@@ -47,6 +47,21 @@ export interface Config {
   projectionMaxTasks?: number
   /** How often the board sweeps on its own, in seconds, and once at start (a restart is a sweep); 0: only when called (default 60). */
   sweepSeconds?: number
+  /**
+   * The projects and landing branches whose results System accepts without holding them for the
+   * operator (D80, ADR-0067; default off: none). For a task of a listed project whose result is on a
+   * git working tree, the run owner's accepting decision applies only when the run's last review
+   * approved the exact result with no blocking finding left, every required check the policy names
+   * that is a command ran on the exact result and passed (its `check-run` record), and the result
+   * lands on a listed branch; otherwise the review is held for the operator, with the reasons.
+   */
+  autoAccept?: AutoAccept
+}
+
+/** Where System accepts a result without the operator (D80): project ids, and the branches a result may land on. */
+export interface AutoAccept {
+  projects: string[]
+  branches: string[]
 }
 
 /** A page of a listing, and the cursor of the next one (absent on the last). */
@@ -126,8 +141,15 @@ interface StoredProject { project: Project; request?: string; version?: number; 
 interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
 /** The policy's verdict for a task's next attempt, and the approval request it opened on ask. */
 interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
-/** An accepting decision only the operator's can replace now: the verdict, the checks still pending, and how long the operator has. */
-interface Held { verdict: AutonomyVerdict; pendingChecks: Check[]; seconds: number }
+/**
+ * An accepting decision only the operator's can replace now: the verdict, the checks still pending,
+ * how long the operator has, and, when the auto-accept rule held it, why it did not apply.
+ */
+interface Held { verdict: AutonomyVerdict; pendingChecks: Check[]; seconds: number; autoAccept?: string[] }
+/** An accepting decision the auto-accept rule applies (D80): the records it stands on. */
+interface AutoAccepted { verdict: AutonomyVerdict; review: ArtifactRef; evidence?: ArtifactRef; checks: Check[]; branch: string }
+/** What the board does with an acceptance decision: hold it for the operator, apply it by the auto-accept rule, or apply it as it is (neither). */
+interface Gate { held?: Held; auto?: AutoAccepted }
 /** A `board_client_requests` row: what a retry-safe call made. */
 interface PriorRequest { project_id: string; task_id: string | null; approval_request: string | null; charter_version: number | null }
 /** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
@@ -143,10 +165,33 @@ interface Why {
   also?: Array<{ option: string; whyNot: string }>
   /** The question, when the default (from → to, or to → instead) does not say it. */
   question?: string
+  /** The rule that decided it, when not the transition table's (`board.transition`). */
+  rule?: string
 }
 
 /** The checks a policy rule can require (`autonomy-policy@1.0`). */
 const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+/** The required checks that are commands, which a run runs on its exact result (ADR-0063) and records as `check-run@1.0`. */
+const COMMAND_CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint']
+/** A project id in `autoAccept` (`common@1` `id`). */
+const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
+/** A branch name in `autoAccept`: a plain git branch name, never a pattern. */
+const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}$/
+/** The most projects and branches `autoAccept` lists, each. */
+const AUTO_ACCEPT_MAX = 64
+/** `autoAccept` as configured, refused (TypeError) unless each list holds distinct valid names within the bound; undefined when off. */
+export function autoAcceptOf(config: AutoAccept | undefined): AutoAccept | undefined {
+  if (config === undefined) return undefined
+  for (const [key, pattern] of [['projects', PROJECT_ID], ['branches', BRANCH]] as const) {
+    const list = config[key]
+    if (!Array.isArray(list) || list.length > AUTO_ACCEPT_MAX) throw new TypeError(`board.autoAccept.${key} is a list of at most ${AUTO_ACCEPT_MAX} names`)
+    const bad = list.find((v) => typeof v !== 'string' || !pattern.test(v))
+    if (bad !== undefined) throw new TypeError(`board.autoAccept.${key}: ${JSON.stringify(bad)} is not a ${key === 'projects' ? 'project id' : 'branch name'}`)
+    if (new Set(list).size !== list.length) throw new TypeError(`board.autoAccept.${key} names one twice`)
+  }
+  // Both lists are needed: a project with no branch, or a branch with no project, accepts nothing.
+  return config.projects.length && config.branches.length ? { projects: [...config.projects], branches: [...config.branches] } : undefined
+}
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const resourceOf = (taskId: string): string => `board-task:${taskId}`
 const charterRef = (projectId: string, version: number): string => `project:${projectId}:charter:${version}`
@@ -215,12 +260,20 @@ export class StoreBoard extends Board {
     pageBound: z.natural().min(1).max(100).default(100).description('The most items one page of board_projects or board_tasks holds'),
     projectionMaxTasks: z.natural().min(1).max(10_000).default(200).description('The most tasks the TASKS.md projection lists, open ones first'),
     sweepSeconds: z.natural().max(3600).default(60).description('Seconds between the board\'s own sweeps, and one at start; 0 sweeps only when called'),
+    autoAccept: z.object({
+      projects: z.array(z.string().pattern(PROJECT_ID)).default([]).description('Project ids whose results System accepts without the operator when the conditions hold'),
+      branches: z.array(z.string().pattern(BRANCH)).default([]).description('Branches such a result may land on (the repository\'s checked-out branch the landing merges into)'),
+    }).description('System accepts a result without holding it for the operator when the run\'s last review approved it, its required checks passed on it, and it lands on a listed branch (D80, ADR-0067); default off'),
   })
 
   private readonly schemas = new SchemaRegistry()
+  /** `config.autoAccept`, validated; undefined when off. */
+  private readonly autoAccept: AutoAccept | undefined
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx)
+    // Refused before anything starts: a malformed setting never accepts anything (INV-2).
+    this.autoAccept = autoAcceptOf(config.autoAccept)
     ctx.store.migrate('board', MIGRATIONS)
     ctx.effect(() => {
       const seconds = config.sweepSeconds ?? 60
@@ -630,15 +683,16 @@ export class StoreBoard extends Board {
     const before = this.taskOf(taskId).task
     this.expectState(before, 'review')
     const read = this.readAcceptance(before, before.result!, acceptance)
-    const held = await this.held(before, read)
+    const { held, auto } = await this.acceptanceGate(before, before.result!, acceptance, read)
     if (held) {
       if (before.waiting?.reason === 'operator-review') {
-        throw new BoardError('invalid', `${acceptance} is not the operator's, and the class's required checks have not passed (autonomy decision ${held.verdict.decision}): the review is the operator's`)
+        const why = held.autoAccept ? `the auto-accept rule does not apply (${held.autoAccept.join('; ')})` : `the class's required checks have not passed (autonomy decision ${held.verdict.decision})`
+        throw new BoardError('invalid', `${acceptance} is not the operator's, and ${why}: the review is the operator's`)
       }
       return this.commitLater(before, at, undefined, (current) => this.holdMove(current.task, current.task.result!, acceptance, held, at))
     }
     const next = read.option === 'reject' && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
-    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, next, at)))
+    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, next, at, auto)))
   }
 
   async reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at: Date = new Date()) {
@@ -651,16 +705,19 @@ export class StoreBoard extends Board {
     // Checked before anything moves, so a report that is refused changes nothing.
     let read: Acceptance | undefined
     let held: Held | undefined
+    let auto: AutoAccepted | undefined
     if (outcome.status === 'completed') {
       this.writesWhatItHolds(before, outcome.result.subject)
       read = this.readAcceptance(before, outcome.result, outcome.acceptance)
-      held = await this.held(before, read)
+      const gate = await this.acceptanceGate(before, outcome.result, outcome.acceptance, read)
+      held = gate.held
+      auto = gate.auto
     }
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
     const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
     const moved = await this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
-      if (outcome.status === 'completed') return held ? this.holdMove(current.task, outcome.result, outcome.acceptance, held, at) : this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at)
+      if (outcome.status === 'completed') return held ? this.holdMove(current.task, outcome.result, outcome.acceptance, held, at) : this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at, auto)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
       const why = `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`
@@ -1518,14 +1575,85 @@ export class StoreBoard extends Board {
    * the operator's applies only when the policy, given the checks the decision reports, leaves none
    * of the task's class's required checks failed, and does not forbid the class. Otherwise only the
    * operator's acceptance accepts the result now, and the review is held for the operator, for the
-   * policy's wait for the class (undefined when the decision applies); a reject applies either way.
+   * policy's wait for the class; a reject applies either way. Under `autoAccept`, a listed project's
+   * result on a git working tree that the policy lets apply is held too unless the auto-accept rule
+   * applies ({@link autoAccepted}), and then it is accepted on that rule's own decision.
    */
-  private async held(task: BoardTask, read: Acceptance): Promise<Held | undefined> {
-    if (read.option !== 'accept' || read.operator) return undefined
+  private async acceptanceGate(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance): Promise<Gate> {
+    if (read.option !== 'accept' || read.operator) return {}
     const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId, ...(read.checks ? { checks: read.checks } : {}) })
-    if (verdict.mode !== 'forbid' && !verdict.failedChecks?.length) return undefined
-    const { policies } = await this.ctx.approvals.policy(task.projectId)
-    return { verdict, pendingChecks: verdict.mode === 'forbid' ? [] : verdict.failedChecks!, seconds: waitSeconds(policies, task.actionClass) }
+    const seconds = async (): Promise<number> => waitSeconds((await this.ctx.approvals.policy(task.projectId)).policies, task.actionClass)
+    if (verdict.mode === 'forbid' || verdict.failedChecks?.length) {
+      return { held: { verdict, pendingChecks: verdict.mode === 'forbid' ? [] : verdict.failedChecks!, seconds: await seconds() } }
+    }
+    // The auto-accept rule (D80, ADR-0067) is for a listed project's results that land: on a git working tree.
+    if (!this.autoAccept?.projects.includes(task.projectId) || result.subject.type !== 'git-head') return {}
+    const judged = this.autoAccepted(result, acceptance, read)
+    if ('reasons' in judged) return { held: { verdict, pendingChecks: [], seconds: await seconds(), autoAccept: judged.reasons } }
+    return { auto: { verdict, ...judged } }
+  }
+
+  /**
+   * The auto-accept rule (D80, ADR-0067), on an accepting decision the policy lets apply, for a task
+   * of a listed project whose result is on a git working tree. It applies only when every condition
+   * holds, each read from the records the decision names, never from its own account:
+   * - it is the run owner's: a rule's decision in an envelope the system produced (INV-6);
+   * - **review**: `outcome.detail.review.assessment`, among its inputs, is an `assessment@1.0` of the
+   *   result's exact tree whose verdict is `approve` with no blocking finding left: the run's last
+   *   review (a blocking finding left at the cycle bound never passes);
+   * - **checks**: every command check it reports passed (which covers every one the policy
+   *   requires, since the policy saw none failed) is `passed` in its `check-run@1.0` record
+   *   (`outcome.detail.checkRun.evidence`, among its inputs) on the result's exact tree (ADR-0063);
+   * - **landing**: `outcome.detail.landing.branch`, the branch the result would be merged into, is
+   *   listed.
+   * Otherwise every condition that does not hold, as a reason.
+   */
+  private autoAccepted(result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance): Omit<AutoAccepted, 'verdict'> | { reasons: string[] } {
+    const envelope = this.ctx.artifacts.get(acceptance)!
+    const body = envelope.body as { inputs?: string[]; decider?: { type?: string }; outcome?: { detail?: Record<string, unknown> } }
+    const detail = body.outcome?.detail ?? {}
+    const inputs = body.inputs ?? []
+    const onResult = (subject: unknown): boolean => isObject(subject) && (subject['type'] ?? 'git-head') === 'git-head' && subject['ref'] === result.subject.ref && subject['version'] === result.subject.version
+    const tree = `git:${result.subject.ref}:${result.subject.version ?? ''}`
+    const reasons: string[] = []
+    if (envelope.producer.type !== 'system' || body.decider?.type !== 'rule') reasons.push(`${acceptance} is not the run owner's (a rule's decision the system produced)`)
+
+    const named = isObject(detail['review']) ? detail['review'] : undefined
+    const reviewRef = typeof named?.['assessment'] === 'string' ? named['assessment'] as ArtifactRef : undefined
+    const review = reviewRef && inputs.includes(reviewRef) ? this.ctx.artifacts.get(reviewRef) : undefined
+    const assessment = review?.kind === 'assessment' ? review.body as { schema?: string; subject?: unknown; verdict?: string; findings?: Array<{ severity?: string }> } : undefined
+    if (!reviewRef) reasons.push('it names no review of the run (outcome.detail.review)')
+    else if (!assessment?.schema?.startsWith('assessment@')) reasons.push(`the review ${reviewRef} it names is not an assessment among its inputs`)
+    else {
+      const blocking = (assessment.findings ?? []).filter((f) => f.severity === 'blocking').length
+      const [at, bound] = [named!['cycle'], named!['maxCycles']]
+      const cycle = typeof at === 'number' && typeof bound === 'number' ? ` (review cycle ${at} of ${bound}${at >= bound ? ', the cycle bound' : ''})` : ''
+      if (!onResult(assessment.subject)) reasons.push(`the run's last review ${reviewRef} is not of the result's exact tree ${tree}`)
+      if (assessment.verdict !== 'approve') reasons.push(`the run's last review ${reviewRef} did not approve (${String(assessment.verdict)})${blocking ? ` and left ${blocking} blocking finding(s)` : ''}${cycle}`)
+      else if (blocking) reasons.push(`the run's last review ${reviewRef} left ${blocking} blocking finding(s)${cycle}`)
+    }
+
+    const passed = COMMAND_CHECKS.filter((c) => read.checks?.[c] === true)
+    const checkRun = isObject(detail['checkRun']) ? detail['checkRun'] : undefined
+    const evidenceRef = typeof checkRun?.['evidence'] === 'string' ? checkRun['evidence'] as ArtifactRef : undefined
+    if (passed.length) {
+      const record = evidenceRef && inputs.includes(evidenceRef) ? this.ctx.artifacts.get(evidenceRef) : undefined
+      const run = record?.kind === 'evidence' ? record.body as { schema?: string; subject?: unknown; checks?: Array<{ check?: string; outcome?: string }> } : undefined
+      if (!run?.schema?.startsWith('check-run@')) reasons.push(`its passed check(s) ${passed.join(', ')} have no check-run record among its inputs (outcome.detail.checkRun.evidence)`)
+      else if (!onResult(run.subject)) reasons.push(`the check-run record ${evidenceRef} is not of the result's exact tree ${tree}`)
+      else {
+        const unproven = passed.filter((c) => !run.checks?.some((r) => r.check === c && r.outcome === 'passed'))
+        if (unproven.length) reasons.push(`the check-run record ${evidenceRef} does not show ${unproven.join(', ')} passed`)
+      }
+    }
+
+    const landing = isObject(detail['landing']) ? detail['landing'] : undefined
+    const branch = typeof landing?.['branch'] === 'string' ? landing['branch'] : undefined
+    if (branch === undefined) reasons.push('no landing target is known for the result (outcome.detail.landing.branch)')
+    else if (!this.autoAccept!.branches.includes(branch)) reasons.push(`it lands on ${branch}, not on a listed branch (${this.autoAccept!.branches.join(', ')})`)
+
+    if (reasons.length) return { reasons }
+    return { review: reviewRef!, ...(passed.length ? { evidence: evidenceRef! } : {}), checks: passed, branch: branch! }
   }
 
   /**
@@ -1537,7 +1665,9 @@ export class StoreBoard extends Board {
   private holdMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, held: Held, at: Date): Move {
     const { project } = this.projectOf(task.projectId)
     const expiresAt = new Date(at.getTime() + held.seconds * 1000).toISOString()
-    const why = held.verdict.mode === 'forbid' ? `the policy forbids ${task.actionClass}` : `required check(s) ${held.pendingChecks.join(', ')} not passed`
+    const why = held.verdict.mode === 'forbid' ? `the policy forbids ${task.actionClass}`
+      : held.autoAccept ? `the auto-accept rule (board.autoAccept, D80) does not apply: ${held.autoAccept.join('; ')}`
+        : `required check(s) ${held.pendingChecks.join(', ')} not passed`
     return {
       changes: {
         state: 'review', result, holder: undefined,
@@ -1548,14 +1678,30 @@ export class StoreBoard extends Board {
           whyNot: task.state === 'review'
             ? 'the board never accepts by default, and the reviewer\'s lease would end the operator\'s review when the run that holds it ends'
             : 'the run\'s owner reported a result the board never accepts by default',
-          inputs: [acceptance, held.verdict.decision], detail: { reason: 'operator-review', pendingChecks: held.pendingChecks, expiresAt },
+          inputs: [acceptance, held.verdict.decision],
+          detail: { reason: 'operator-review', pendingChecks: held.pendingChecks, expiresAt, ...(held.autoAccept ? { autoAccept: held.autoAccept } : {}) },
         }, at),
       },
     }
   }
 
-  /** The move an `acceptance` decision read by {@link readAcceptance} makes: done when it accepts, else another attempt or a wait for input. */
-  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance, next: NextAttempt | undefined, at: Date): Move {
+  /**
+   * The move an `acceptance` decision read by {@link readAcceptance} makes: done when it accepts, else
+   * another attempt or a wait for input. One the auto-accept rule applies (`auto`) is done on a `board`
+   * decision of rule `board.auto-accept` naming the acceptance, the review, the check-run record, and
+   * the autonomy decision (INV-13); `result.acceptance` stays the acceptance it applied.
+   */
+  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance, next: NextAttempt | undefined, at: Date, auto?: AutoAccepted): Move {
+    if (read.option === 'accept' && auto) {
+      const decision = this.decision(this.projectOf(task.projectId).project, task, {
+        from: task.state, to: 'done', rule: 'board.auto-accept',
+        why: `the auto-accept rule (board.autoAccept, D80) applies to ${acceptance}: the run's last review ${auto.review} approved the exact result with no blocking finding left; ${auto.checks.length ? `its required check(s) ${auto.checks.join(', ')} passed on it (check-run ${auto.evidence})` : 'the policy requires no command check of it'}, and the policy left none pending (autonomy decision ${auto.verdict.decision}); it lands on ${auto.branch}, a listed branch`,
+        whyNot: 'every condition of the auto-accept rule holds, so the review is not held for the operator; the merge still asks the operator as the policy says',
+        inputs: [acceptance, auto.review, ...(auto.evidence ? [auto.evidence] : []), auto.verdict.decision],
+        detail: { reason: 'auto-accept', acceptance, review: auto.review, ...(auto.evidence ? { checkRun: auto.evidence } : {}), checks: auto.checks, branch: auto.branch },
+      }, at)
+      return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: decision } }
+    }
     if (read.option === 'accept') return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance } }
     if (attemptLeft(task)) {
       return this.nextAttemptMove(this.projectOf(task.projectId).project, task, next!, {
@@ -1581,7 +1727,7 @@ export class StoreBoard extends Board {
         move.instead ? { option: move.instead, selected: false, reasons: [`not ${move.instead}: ${move.whyNot}`] } : { option: move.from, selected: false, reasons: [`not kept ${move.from}: ${move.whyNot}`] },
         ...(move.also ?? []).map((o) => ({ option: o.option, selected: false, reasons: [`not ${o.option}: ${o.whyNot}`] })),
       ],
-      decider: { type: 'rule', id: 'board.transition', version: '1' },
+      decider: { type: 'rule', id: move.rule ?? 'board.transition', version: '1' },
       outcome: { option: move.to, detail: { projectId: project.projectId, ...(task ? { taskId: task.taskId } : {}), from: move.from, at: at.toISOString(), ...move.detail } },
       deterministic: true,
     }, { producer: { type: 'system', ref: 'board' }, classification: project.classification ?? 'operator-shared' }).id as ArtifactRef

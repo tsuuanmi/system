@@ -73,6 +73,10 @@
     {
       "key": "sweepSeconds",
       "sensitive": false
+    },
+    {
+      "key": "autoAccept",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED"

@@ -12,7 +12,7 @@ import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
-import { checksFor } from './checks.ts'
+import { checksFor, landingTargets } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
@@ -366,8 +366,11 @@ export class Engine {
             // gets the same outcomes back, never a check run again in place of one that ended.
             const ran = await checksFor(this, run, nodes, signal)
             if (signal.aborted) return
+            // Where a task's result would land, for the board's auto-accept rule (D80): read before its acceptance is decided.
+            const targets = this.tasks.bound(runId) ? await landingTargets(this, runId) : []
+            if (signal.aborted) return
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
-            const unbound = this.tasks.complete(run, nodes, final, ran)
+            const unbound = this.tasks.complete(run, nodes, final, ran, targets)
             if (unbound) return this.finish(run, 'failed', { error: JSON.stringify(unbound) }, current)
             // A plain run that wrote records the policy's checks still pending; it applies nothing, so they never block it.
             if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final, ran)

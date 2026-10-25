@@ -348,9 +348,11 @@ second execution path (INV-1).
     the board refuses the generation, the run starts nothing new (`workflow.task-holder`
     `wind-down`), reconciles what is in flight, and fails the rest as `holder_lost`;
   - a completed run's result is bound to the subject the task writes (else `stale_subject`),
-    with an `acceptance` decision (`workflow.task-acceptance`, version 2) naming the task, the
+    with an `acceptance` decision (`workflow.task-acceptance`, version 3) naming the task, the
     subject, and the checks the run ran (`schema`, `review`, and the required checks it ran on
-    that subject, below), then submitted and accepted; one only the
+    that subject, below), the run's last review (`review`, its assessment among the inputs) and
+    where the result would land (`landing`, the base branch of its worktree as `ctx.workers.changes`
+    tells it), which the board's auto-accept rule reads (D80, ADR-0067), then submitted and accepted; one only the
     operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
