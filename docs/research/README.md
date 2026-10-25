@@ -11,6 +11,7 @@ decisions, architecture, or design.
 | [internet-analysis.md](internet-analysis.md) | [tsuuanmi/internet](https://github.com/tsuuanmi/internet): browser providers + durable workflow | `main` @ 2026-10-11 |
 | [dsh-analysis.md](dsh-analysis.md) | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness): Everything Is A Plugin, Cordis, seams | `main` @ 2026-10-11 |
 | [jev-decision-model.md](jev-decision-model.md) | TypeSafe Jev decision model: routing decisions, prior art, brainstorm D1–D8 | 2026-10-11 (early access) |
+| [efficient-system-inputs-2026-10-25.md](efficient-system-inputs-2026-10-25.md) | System's own research, brainstorm and audit runs on quota-aware assignment, Worker strengths, operator communication, handoffs, and Jev (inputs to PROP-0015) | 2026-10-25 |
 | [reference-architectures.md](reference-architectures.md) | Claude (Anthropic), ChatGPT/OpenAI, Devin (Cognition): agent architecture patterns and verdicts | 2026-10-11 |
 | [agent-protocols-a2a-acp.md](agent-protocols-a2a-acp.md) | A2A 1.0 vs ACP (Agent Client Protocol) vs native mailbox for direct Worker messaging and long-running work | 2026-10-11 |
 | [chatgpt-login-and-remote-browser.md](chatgpt-login-and-remote-browser.md) | existing projects for ChatGPT email/password/TOTP login; remote browser components for Linux (noVNC over SSH) | 2026-10-11 |
