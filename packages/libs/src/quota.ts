@@ -184,12 +184,13 @@ export function accountQuotaOf(pools: readonly QuotaPool[] | { unknown: string }
   const read = [...list].sort((a, b) => compare(a.pool, b.pool)).map((p) => ({ pool: p, windows: p.windows.map((w) => windowOf(p, w, settings, at)) }))
   const windows = read.flatMap((p) => p.windows)
   const why: string[] = []
+  // Each window's own reason first: a pool's unavailability follows from it.
+  for (const w of windows) if (!w.known) why.push(`${windowName(w)} window of ${w.pool}: ${w.unknown}`)
   for (const { pool, windows: ws } of read) {
     if (!ws.length) why.push(`pool ${pool.pool} has no window, so its quota is unknown`)
     if (!pool.available) why.push(`pool ${pool.pool} is not available${pool.until ? ` until ${pool.until}` : ''}`)
   }
   const assumed = read.some(({ pool, windows: ws }) => pool.unknown === 'available' && ws.some((w) => !w.known))
-  for (const w of windows) if (!w.known) why.push(`${windowName(w)} window of ${w.pool}: ${w.unknown}`)
   if (assumed) why.push('a pool is available only because it is configured unknown: available; its windows are not known, so it is never read as having headroom')
   const allKnown = windows.length > 0 && windows.every((w) => w.known) && read.every((p) => p.windows.length > 0)
   for (const w of allKnown ? windows : []) {
