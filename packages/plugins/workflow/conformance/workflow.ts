@@ -479,8 +479,12 @@ export const workflowSuite = defineSuite<Boot>({
   // the revision of its task the caller read is refused once the task moved (T127). 1.8: a team
   // member's first step that the site answered with its own error after the send (an execution's
   // optional `error.siteError`) is resent once, in a new conversation of its session (`reset`), as a
-  // recovery decision `resend`; nothing else sent is ever started again (D60, ADR-0062).
-  contract: '1.8',
+  // recovery decision `resend`; nothing else sent is ever started again (D60, ADR-0062). 1.9: the dispatch
+  // pass (ADR-0063): a ready task of an active project is asked about once on a free Worker chosen by
+  // quota, adopted across passes and restarts, and started on the operator's approval exactly as asked;
+  // `dispatch.enabled: false` starts nothing; `sweepDispatch`, `dispatchStatus`, `pauseDispatch`, and
+  // `resumeDispatch` on the seam. Since 1.9 the context's approval queue gives `dispatch` its default, ask.
+  contract: '1.9',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1380,8 +1384,61 @@ export const workflowSuite = defineSuite<Boot>({
       expect(proposals(h.workers, 'm1')).toHaveLength(2)
       expect(h.workers.resets).toHaveLength(1)
     }, {}, '1.8'),
+
+    scenario('dispatch-asks-once-and-starts-the-approved-worker', 'asks once to start a ready task of an active project on a free Worker chosen by quota, a pass repeated or restarted adopting its ask, and on the operator\'s approval starts exactly that attempt with its step on exactly that Worker, its admission naming why (ADR-0063, INV-4, INV-5, INV-13)', async (h) => {
+      h.workers.reply = () => 'hold'
+      await activeProject(h.ctx)
+      // One Worker on the account the ledger has a pool for, idle, its window read just now.
+      h.workers.extra = [DISPATCHABLE]
+      await poolRead(h.ctx)
+      const task = await readyTask(h.ctx, 'dispatched', { template: 'solo' })
+      await h.ctx.workflow.sweepDispatch()
+      const ask = h.ctx.workflow.dispatchStatus().asks.find((a) => a.taskId === task.taskId)
+      expect(ask).toMatchObject({ state: 'asked', worker: 'w:max', attempt: 1 })
+      const asked = async () => (await h.ctx.approvals.list({ states: ['open', 'batched', 'approved'] })).filter((r) => r.action.class === 'dispatch')
+      expect(await asked()).toHaveLength(1)
+      // A repeated pass, and a restarted engine's first pass, ask nothing new.
+      await h.ctx.workflow.sweepDispatch()
+      await h.restart()
+      await h.ctx.workflow.sweepDispatch()
+      const [request] = await asked()
+      expect(await asked()).toHaveLength(1)
+      expect(request).toMatchObject({ requestId: ask!.requestId, subject: { type: 'content', ref: `dispatch:${task.taskId}:attempt:0` }, requester: { component: 'workflow', taskId: task.taskId } })
+      const [verdict] = await h.ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'approved' }])
+      expect(verdict?.refused).toBeUndefined()
+      await h.ctx.workflow.sweepDispatch()
+      await until(() => h.workers.started.length === 1, 'the dispatched run\'s step started')
+      expect(h.workers.started[0]!.worker).toBe('w:max')
+      const runId = (await h.ctx.board.task(task.taskId))!.run!.runId
+      expect(h.workers.started[0]!.runId).toBe(runId)
+      const admission = decisionsOf(h.ctx, runId, 'admission').find((d) => d.decider.id === 'workflow.task-admission')!
+      expect(admission.inputs).toEqual(expect.arrayContaining(ask!.decisions))
+      expect(decisionOf(h.ctx, ask!.decisions[1])).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice' }, outcome: { option: 'w:max' } })
+      expect(h.ctx.workflow.dispatchStatus().asks).toEqual([])
+    }, {}, '1.9'),
+
+    scenario('dispatch-off-starts-nothing', 'asks for and starts nothing with dispatch.enabled false, whatever is ready and free (ADR-0063)', async (h) => {
+      await activeProject(h.ctx)
+      h.workers.extra = [DISPATCHABLE]
+      await poolRead(h.ctx)
+      await readyTask(h.ctx, 'not dispatched', { template: 'solo' })
+      expect(await h.ctx.workflow.sweepDispatch()).toMatchObject({ state: 'off', took: [] })
+      expect((await h.ctx.approvals.list()).filter((r) => r.action.class === 'dispatch')).toEqual([])
+      expect(h.workers.started).toEqual([])
+    }, { dispatch: { enabled: false } }, '1.9'),
   ],
 })
+
+/** Since 1.9: a Worker on the account of the ledger's pool {@link POOLS} names, idle, which dispatch may choose once its window reads ok. */
+const DISPATCHABLE: CapabilityDescriptor = worker('w:max', {
+  schema: 'capability-descriptor@1.5', tier: 'standard', quotaClass: 'agent-plan', proves: ['reason', 'develop'],
+  account: { id: 'max', group: 'g', mode: 'assigned' }, load: { running: 0, queued: 0, pending: 0, slots: 1 },
+})
+
+/** Since 1.9: the pool {@link POOLS} configures reads 0 % used now, so its account's Worker is free by its quota. */
+async function poolRead(ctx: Context): Promise<void> {
+  await ctx.resources.observe({ schema: 'limit-state@1.0', pool: 'max.programmatic', account: 'max', window: { id: 'monthly', kind: 'credit' }, state: 'ok', usedPercentage: 0, source: 'runtime-result', observedAt: new Date().toISOString() })
+}
 
 /** Since 1.8: the site answered the sent input with its own error in place of an answer (ADR-0062). */
 const SITE_ERROR = { fail: 'overloaded', disposition: 'BACKOFF', sent: true, siteError: true } as const

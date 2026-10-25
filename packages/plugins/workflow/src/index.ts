@@ -19,6 +19,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-store'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { sweepDeferrals } from './continuations.ts'
+import { dispatchProblems, type DispatchPass, type DispatchStatus } from './dispatch.ts'
 import { checkTemplate, Engine } from './engine.ts'
 import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
@@ -34,7 +35,9 @@ import { explain, usage } from './views.ts'
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskCarry, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
+export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStatus, DispatchWindow } from './dispatch.ts'
+export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -58,7 +61,7 @@ export function checkConfig(config: Config = {}): string[] {
     }
   })
   const teams = Object.keys(config.teams ?? {}).filter((key) => key !== 'excludeWorkers').map((key) => `teams.${key} is not an option; teams takes excludeWorkers`)
-  return [...templates, ...teams]
+  return [...templates, ...teams, ...dispatchProblems(config)]
 }
 
 export class Workflow extends Service {
@@ -106,6 +109,18 @@ export class Workflow extends Service {
       maxChars: z.natural().min(1024).max(1_048_576).default(65_536).description('Characters it holds at most; past it, it is cut at a line with a note'),
     }).description('The board\'s TASKS.md projection a board task\'s run is given in its own worktree (INV-9)'),
     digestsPerHour: z.natural().max(1000).default(6).description('Digests of board task results the engine asks ctx.digests for in any hour, one per attempt, after its result reached the board (INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why'),
+    dispatch: z.object({
+      enabled: z.boolean().default(true).description('System asks to start ready board tasks on free Workers chosen by quota (ADR-0063); false: nothing is asked or started'),
+      sweepSeconds: z.natural().min(10).max(3600).default(60).description('Seconds between dispatch passes; one runs at start too, after the runs are reconciled'),
+      maxPerPass: z.natural().min(1).max(16).default(2).description('Starts or asks one pass makes at most'),
+      maxRunning: z.natural().min(1).max(10_000).description('Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less)'),
+      maxRunningPerProject: z.natural().min(1).max(16).default(2).description('The same, per project'),
+      maxRunningPerAccount: z.natural().min(1).max(16).default(1).description('The same, per account of the chosen Worker; and the most its account\'s load may be for it to be free'),
+      maxRunningPerRepository: z.natural().min(1).max(16).default(4).description('The same, per repository (the chosen writing Worker\'s workspace): tasks without a write subject on one repository run in parallel up to this (D64)'),
+      leaveRunsFree: z.natural().max(10_000).description('Active runs dispatch leaves for the lead\'s and your own starts (at most maxActiveRuns less 1; default 4, or that when less)'),
+      maxOpenAsks: z.natural().min(1).max(32).default(4).description('Dispatch requests open at once, waiting for your go'),
+      approvedHoldMinutes: z.natural().min(1).max(240).default(30).description('Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again'),
+    }).description('Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself)'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
       maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),
@@ -128,9 +143,14 @@ export class Workflow extends Service {
         engine.recover()
         void sweepDeferrals(engine)
         void engine.tasks.landings.sweep()
+        // A restart is a pass (INV-4): dispatch looks once its runs are reconciled.
+        void engine.dispatch.sweep()
       })
       const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
+      // Dispatch (ADR-0063): every dispatch.sweepSeconds; with dispatch.enabled false, no timer runs.
+      const dispatching = engine.dispatch.settings.enabled ? setInterval(() => void engine.dispatch.sweep(), engine.dispatch.settings.sweepSeconds * 1000) : undefined
+      dispatching?.unref()
       // The requests deferred tool calls wait on: an approved one continues its session, once. Then
       // the sessions whose mail waited because they took no input are looked at again, and the
       // landings of accepted results move on (ADR-0060).
@@ -142,6 +162,7 @@ export class Workflow extends Service {
       return async () => {
         clearInterval(daily)
         clearInterval(deferrals)
+        clearInterval(dispatching)
         await engine.close()
       }
     })
@@ -240,6 +261,43 @@ export class Workflow extends Service {
   landing(runId: string): TaskLanding | undefined {
     const row = this.engine.tasks.row(runId)
     return row ? this.engine.tasks.landings.view(row) : undefined
+  }
+
+  /**
+   * Where dispatch stands (ADR-0063; contract 1.9): its settings, the operator's pause, the last pass
+   * with its reason for each ready task it looked at, each bound and how much of it is used, and the
+   * starts waiting for the operator's go or for their Worker. A read of the engine's rows only.
+   */
+  dispatchStatus(): DispatchStatus {
+    return this.engine.dispatch.status()
+  }
+
+  /**
+   * The operator pauses dispatch entirely (contract 1.9; INV-6: from the operator's channel only): a
+   * `gate` decision (rule `dispatch.pause`) kept on a durable row across restarts. Nothing more is
+   * asked or started by dispatch, and a pass, run at once, withdraws its open asks; the lead's and the
+   * operator's own starts go on. Pausing a paused dispatch changes nothing.
+   */
+  pauseDispatch(reason?: string): DispatchStatus {
+    const status = this.engine.dispatch.pause(reason)
+    void this.engine.dispatch.sweep()
+    return status
+  }
+
+  /** The operator resumes dispatch (contract 1.9): a `gate` decision; the next pass runs at once. */
+  resumeDispatch(): DispatchStatus {
+    const status = this.engine.dispatch.resume()
+    void this.engine.dispatch.sweep()
+    return status
+  }
+
+  /**
+   * One dispatch pass now (contract 1.9), at `at`: a test seam, as the board's `sweep(at)` is; the
+   * engine's own timer passes the wall clock every `dispatch.sweepSeconds`. A pass already running is
+   * returned, not doubled.
+   */
+  sweepDispatch(at?: Date): Promise<DispatchPass> {
+    return this.engine.dispatch.sweep(at)
   }
 
   /**

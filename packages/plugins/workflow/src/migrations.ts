@@ -109,4 +109,19 @@ export const MIGRATIONS = [{
   // ADR-0061): whether the run's worktree holds it, as JSON `TaskCarry`. A run admitted before it carries nothing.
   version: 19,
   sql: 'ALTER TABLE workflow_tasks ADD COLUMN carry TEXT;',
+}, {
+  // Dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself, ADR-0063): each
+  // start the pass chose, asked, approved, and started, at most one live per task attempt; the pause
+  // and the last pass; and on a run it started, what chose it.
+  version: 20,
+  sql: `CREATE TABLE workflow_dispatch (
+    ask_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, attempt INTEGER NOT NULL, project_id TEXT NOT NULL, state TEXT NOT NULL,
+    worker TEXT NOT NULL, account TEXT, repository TEXT, node_id TEXT NOT NULL, version TEXT NOT NULL, request_id TEXT, run_id TEXT,
+    choice TEXT NOT NULL, outcome TEXT, approved_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX workflow_dispatch_live ON workflow_dispatch (task_id, attempt) WHERE state IN ('asking', 'asked', 'approved', 'starting');
+  CREATE INDEX workflow_dispatch_state ON workflow_dispatch (state, created_at);
+  CREATE INDEX workflow_dispatch_task ON workflow_dispatch (task_id, attempt);
+  CREATE TABLE workflow_dispatch_control (id TEXT PRIMARY KEY, paused TEXT, last_pass TEXT, updated_at TEXT NOT NULL);
+  ALTER TABLE workflow_tasks ADD COLUMN dispatch TEXT;`,
 }]

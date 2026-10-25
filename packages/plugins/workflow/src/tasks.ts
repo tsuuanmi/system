@@ -37,7 +37,7 @@ import { routedDecisions } from './recovery.ts'
 import { heldWhy } from './sessions.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
-  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
+  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskDispatch, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
 import { view } from './views.ts'
 
@@ -179,7 +179,7 @@ export class TaskRuns {
    * run), writes the run `starting`, and has the board record it before anything runs. A refusal
    * at any step leaves no run behind, and nothing is sent.
    */
-  async start(input: TaskStartInput): Promise<RunView> {
+  async start(input: TaskStartInput, options: { dispatch?: TaskDispatch } = {}): Promise<RunView> {
     const e = this.e
     const { task: claim, ...plain } = input
     const prepared = e.prepare(plain)
@@ -212,14 +212,15 @@ export class TaskRuns {
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
-    const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
+    // A start dispatch chose names its decisions in the run's admission (ADR-0063).
+    const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId, options.dispatch?.decisions ?? [])
     // Whether its worktree starts from the work the previous attempt left, carried at its first turn
     // (ADR-0061): decided once the run holds the task, so a refused claim decides nothing for a run
     // that never exists; a record of the earlier attempt it cannot read starts the run from HEAD, recorded.
     const carry = this.carries.plan(task, runId)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
-      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}),
+      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}), ...(options.dispatch ? { dispatch: options.dispatch } : {}),
     }
     // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
     // and the claim it took lapses back to ready on its own.
@@ -505,10 +506,10 @@ export class TaskRuns {
    * board fences by generation, or claim the ready task as the run. The choice is an `admission`
    * decision made before the board is asked; a refusal is one too, and refuses the start.
    */
-  private async take(board: Board, task: BoardTask, claim: TaskStartInput['task'], runId: string): Promise<{ option: 'adopt' | 'claim'; generation: number; expiresAt: string; decision: ArtifactRef }> {
+  private async take(board: Board, task: BoardTask, claim: TaskStartInput['task'], runId: string, chosen: readonly ArtifactRef[] = []): Promise<{ option: 'adopt' | 'claim'; generation: number; expiresAt: string; decision: ArtifactRef }> {
     const adopting = claim.holder !== undefined
     const refuse = (why: string, inputs: ArtifactRef[] = []): never => {
-      const refused = this.admission(task, undefined, 'refuse', claim, why, inputs)
+      const refused = this.admission(task, undefined, 'refuse', claim, why, [...chosen, ...inputs])
       throw new WorkflowFailure('invalid_input', `${why}; nothing was started (decision ${refused})`)
     }
     if (adopting) {
@@ -516,7 +517,7 @@ export class TaskRuns {
       if (task.holder?.owner !== claim.holder || task.holder?.generation !== claim.generation) {
         refuse(`a stale claim: task ${task.taskId} is held by ${task.holder?.owner ?? 'no one'} at generation ${task.holder?.generation ?? '(none)'}, not by ${claim.holder} at ${claim.generation}`)
       }
-      const decision = this.admission(task, runId, 'adopt', claim, `${claim.holder} hands its live claim (generation ${claim.generation}) to the run`)
+      const decision = this.admission(task, runId, 'adopt', claim, `${claim.holder} hands its live claim (generation ${claim.generation}) to the run`, [...chosen])
       try {
         const renewed = await board.renew(task.taskId, claim.generation!, TASK_LEASE_TTL_MS)
         return { option: 'adopt', generation: claim.generation!, expiresAt: renewed.leaseExpiresAt, decision }
@@ -526,7 +527,8 @@ export class TaskRuns {
       }
     }
     if (task.state !== 'ready') refuse(`task ${task.taskId} is ${task.state}, not ready to claim`)
-    const decision = this.admission(task, runId, 'claim', claim, `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`)
+    const how = chosen.length ? `dispatch chose its start (decisions ${chosen.join(', ')}), and the run claims the ready task ${task.taskId} as ${ownerOf(runId)}` : `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`
+    const decision = this.admission(task, runId, 'claim', claim, how, [...chosen])
     try {
       const taken = await board.claim(task.taskId, ownerOf(runId), TASK_LEASE_TTL_MS)
       return { option: 'claim', generation: taken.generation, expiresAt: taken.leaseExpiresAt, decision }
@@ -534,6 +536,22 @@ export class TaskRuns {
       if (!(error instanceof BoardError)) throw error
       return refuse(`the board refuses the claim (${refusal(error)})`, [decision])
     }
+  }
+
+  /**
+   * The Worker dispatch chose for this node (ADR-0063): only the run's writing step, on its first
+   * execution (no retry, escalation, or `continue` is pinned back to it); undefined for any other.
+   */
+  preferred(runId: string, node: Pick<NodeRow, 'node_id' | 'attempt' | 'escalations'>): TaskDispatch['prefer'] | undefined {
+    const dispatch = this.dispatchOf(runId)
+    if (!dispatch || dispatch.prefer.node !== node.node_id || node.attempt !== 0 || node.escalations) return undefined
+    return dispatch.prefer
+  }
+
+  /** What dispatch kept on a run it started (its ask, decisions, and preferred Worker); undefined for any other run. */
+  dispatchOf(runId: string): TaskDispatch | undefined {
+    const raw = this.row(runId)?.dispatch
+    return raw ? JSON.parse(raw) as TaskDispatch : undefined
   }
 
   /** The engine's choice of how a run takes its task: adopt the caller's claim, claim it, or refuse (INV-13). */

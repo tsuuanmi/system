@@ -129,14 +129,17 @@ function withUnknownUsage(e: Engine, run: RunView): RunView {
 }
 
 /**
- * The decision chain of a run (REQ-ART-3): the engine's decisions on the run as a whole (a board
- * task's admission and session, its holder, the result's subject and acceptance, the report, the
- * funding gate, the digest), then per node: egress, tier, route (or admission), acceptance.
+ * The decision chain of a run (REQ-ART-3): the engine's decisions on the run as a whole (for a run
+ * dispatch started, its dispatch decisions first; a board task's admission and session, its holder,
+ * the result's subject and acceptance, the report, the funding gate, the digest), then per node:
+ * egress, tier, route (or admission), acceptance.
  */
 export function explain(e: Engine, runId: string): Explanation | undefined {
   const run = e.runRow(runId)
   if (!run) return undefined
-  const own = runDecisions(e, runId)
+  // A run dispatch started: why it started and on what come first (ADR-0063).
+  const chosen = (e.tasks.dispatchOf(runId)?.decisions ?? []).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d)
+  const own = [...chosen, ...runDecisions(e, runId)]
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(own.length ? { decisions: own } : {}),
