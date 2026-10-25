@@ -9,7 +9,7 @@ import { boot, OPERATOR, reviewed } from './store-backed.ts'
 // states that say what would appear and how it gets there.
 vi.setConfig({ testTimeout: 120_000 })
 
-const GLOSSARY = ['worker', 'account', 'role', 'tier', 'kind', 'quota', 'window', 'resting', 'project', 'task', 'run', 'step', 'attempt', 'review', 'checks', 'landing', 'merge', 'branch', 'approval', 'action-class', 'batch', 'policy', 'mode', 'always-ask', 'policy-change', 'quarantine', 'stalled', 'held', 'derived']
+const GLOSSARY = ['worker', 'account', 'role', 'tier', 'kind', 'quota', 'window', 'resting', 'project', 'task', 'run', 'step', 'attempt', 'review', 'checks', 'landing', 'merge', 'branch', 'approval', 'action-class', 'batch', 'policy', 'mode', 'always-ask', 'policy-change', 'quarantine', 'stalled', 'held', 'derived', 'team', 'carry', 'resend']
 
 describe('web UI: help in plain words (T126)', () => {
   it.runIf(canRunBrowser)('has Help in the navigation: how System works, with links into the real pages, and a glossary whose entries are anchors a link focuses; it shows without a token too', async () => {

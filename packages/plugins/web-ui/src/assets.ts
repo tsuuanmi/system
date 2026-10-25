@@ -58,7 +58,8 @@ ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 
 .column h3 { font-size: 14px; margin: 0 0 8px; } .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0 0 8px; overflow-wrap: anywhere; }
 .card > * { margin: 2px 0; } .folded details { margin: 8px 0; } .folded .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
 @media (max-width: 900px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .kanban { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .kanban { grid-template-columns: 1fr; } .kanban .column.waits { order: -1; } }
+p.glance { margin: 6px 0; } .card .tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; } p.teams { border-left: 3px solid var(--accent); padding-left: 8px; } .card .actions.decide button { margin: 4px 8px 0 0; }
 button:disabled { opacity: 0.6; cursor: progress; } button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 textarea { font: 12px/1.4 ui-monospace, monospace; width: 100%; min-height: 320px; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
 select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
@@ -91,7 +92,7 @@ export const APP_JS = `'use strict'
       else if (key.startsWith('on')) node.addEventListener(key.slice(2), value)
       else node.setAttribute(key, value)
     }
-    for (const child of children.flat()) if (child !== null && child !== undefined) node.append(child instanceof Node ? child : String(child))
+    for (const child of children.flat(Infinity)) if (child !== null && child !== undefined) node.append(child instanceof Node ? child : String(child))
     return node
   }
   const api = async (path, body) => {
@@ -212,6 +213,9 @@ export const APP_JS = `'use strict'
     stalled: ['stalled', 'A stalled run showed no activity for longer than its limit; nothing is sent to it, and Stop run ends it.'],
     held: ['not known to be gone', 'A run not known to be gone may still be working somewhere; what it holds stays held until it is freed.'],
     derived: ['derived', 'A derived line is what the system could tell about a Worker when no one wrote what it is for.'],
+    team: ['team', 'A team is two or more Workers, each of another provider, that answer one step on their own and then vote; you can keep a Worker out of teams in the configuration.'],
+    carry: ['started from earlier work', 'When a task\\'s attempt fails after its code was already changed, the next attempt starts from that change instead of doing it again.'],
+    resend: ['sent again', 'When a website answers a team member\\'s question with its own error instead of an answer, the question is sent once more, in a new conversation; never twice.'],
   }
   const openTerms = new Set()
   let explained = 0
@@ -254,6 +258,7 @@ export const APP_JS = `'use strict'
       section('help-workers', 'Who does the work',
         el('p', {}, 'The work is done by ', termLink('worker', 'Workers'), ': AI helpers, each one ', termLink('account', 'account'), ' of a tool set up for one ', termLink('role', 'role'), ', such as developing or reviewing. The Workers of one account share its ', termLink('quota', 'quota'), '.'),
         el('p', {}, 'When an account has used its quota for the current ', termLink('window', 'window'), ' (5 hours, say), its Workers are ', termLink('resting', 'resting'), ': they take no work until the time shown, then come back by themselves. You do nothing.'),
+        el('p', {}, 'Some steps are done by a ', termLink('team', 'team'), ': Workers of different providers answer on their own, then vote. A Worker you keep out of teams still takes every other step; its card says ', el('em', {}, 'Kept out of teams by you'), '.'),
         el('p', {}, 'See every account, its quota, and what each Worker does now on ', pageLink('workers', 'Workers'), '; Home shows each account\\'s quota in one line.')),
       section('help-flow', 'How a task goes from idea to merged',
         el('ol', { class: 'flow' },
@@ -279,6 +284,7 @@ export const APP_JS = `'use strict'
       section('help-stuck', 'When something is stuck',
         el('ul', {},
           el('li', {}, el('strong', {}, 'A run failed. '), 'Open it from Home: it says why. ', el('em', {}, 'Continue run'), ' tries the failed step again; the finished steps are kept.'),
+          el('li', {}, el('strong', {}, 'A task is tried again. '), 'Its next run says under ', el('em', {}, 'What happened'), ' whether it ', termLink('carry', 'started from the earlier work'), ' or started over, and whether a step was ', termLink('resend', 'sent again'), '.'),
           el('li', {}, el('strong', {}, 'A run seems to do nothing. '), 'Its page says its last event and how long ago. A ', termLink('stalled', 'stalled'), ' run is flagged; ', el('em', {}, 'Stop run'), ' ends it.'),
           el('li', {}, el('strong', {}, 'Nothing starts. '), 'On ', pageLink('workers', 'Workers'), ', see whether a Worker is free, or resting until when. On the ', pageLink('board', 'Board'), ', a ready task waits for Start.'),
           el('li', {}, el('strong', {}, 'An account is quarantined or signed out. '), 'Its Workers take no work: ask whoever set up the system to sign it in again or check it (', termLink('quarantine', 'quarantined'), ').'),
@@ -364,6 +370,8 @@ export const APP_JS = `'use strict'
     const titleOf = (taskId) => { for (const p of projects.values()) { const t = (p.tasks || []).find((x) => x.taskId === taskId); if (t) return t.title } return undefined }
     const taskOf = (taskId) => titleOf(taskId) ? 'the task "' + titleOf(taskId) + '"' : 'task ' + taskId
     const Task = (taskId) => { const t = taskOf(taskId); return t.charAt(0).toUpperCase() + t.slice(1) }
+    // The board task a run serves, by its run, when the board lists it.
+    const runTask = (runId) => { if (!runId) return undefined; for (const p of projects.values()) { const t = (p.tasks || []).find((x) => x.run && x.run.runId === runId); if (t) return t } return undefined }
     let d
     if (r.action.class === 'charter' && charter) {
       const [, id, v] = charter
@@ -419,7 +427,10 @@ export const APP_JS = `'use strict'
         yes: 'Approve: put the change in force', no: 'Deny: keep the policy in force', next: 'See the Autonomy policy page.' }
     } else if (r.action.class === 'merge' && r.requester.component === 'workflow') {
       const landing = /^landing:merge:([0-9a-f]+):([0-9a-f]+)$/.exec(r.subject.version || '')
+      const what = runTask(r.requester.runId) ? 'The accepted change of the task "' + runTask(r.requester.runId).title + '"' : 'The accepted change'
       d = { title: r.action.summary, subject: 'branch ' + ref + (landing ? ' at ' + landing[2].slice(0, 12) + ', onto the base at ' + landing[1].slice(0, 12) : ''),
+        approve: what + ' is merged into the main line of the code, as one merge commit. Nothing is pushed anywhere.',
+        deny: 'Nothing is merged: the change stays on its own branch, and the task stays done.',
         yes: 'Approve: merge it', no: 'Deny: do not merge',
         next: 'The run\\'s branch is merged within a few seconds, as one merge commit; a conflict or a moved branch changes nothing. Nothing is pushed: see the task on the Board page.' }
     } else if (r.action.class === 'remediation' && r.requester.component === 'workflow') {
@@ -430,7 +441,7 @@ export const APP_JS = `'use strict'
     }
     const by = r.requester.component === 'board' ? 'the board' + (r.requester.taskId ? ', for ' + taskOf(r.requester.taskId) : '') + projectText
       : r.requester.component === 'worker' ? 'agent run ' + (r.requester.runId || '?') + (r.requester.sessionId ? ' (session ' + r.requester.sessionId + ')' : '')
-      : r.requester.component === 'workflow' ? 'run ' + (r.requester.runId || '?') + (r.requester.nodeId ? ', step ' + r.requester.nodeId : '')
+      : r.requester.component === 'workflow' ? (runTask(r.requester.runId) ? 'the run of the task "' + runTask(r.requester.runId).title + '"' : 'run ' + (r.requester.runId || '?') + (r.requester.nodeId ? ', step ' + r.requester.nodeId : ''))
       : r.requester.component === 'approvals' ? 'the approval queue, for policy change ' + (r.requester.policyChangeId || '?') + ' (Show change says who proposed it)'
       : r.requester.component + projectText
     return Object.assign({ yes: 'Approve', no: 'Deny', next: '' }, d, { by })
@@ -447,7 +458,7 @@ export const APP_JS = `'use strict'
     const requests = batches.flatMap((b) => b.requests)
     // The board's projects name what a charter or a task request is about; without a board, ids only.
     const projects = new Map()
-    if (requests.some((r) => r.requester.component === 'board')) {
+    if (requests.some((r) => r.requester.component === 'board' || (r.requester.component === 'workflow' && r.requester.runId))) {
       try { for (const p of (await api('projects')).projects) projects.set(p.projectId, p) } catch {}
     }
     const described = new Map(requests.map((r) => [r.requestId, describe(r, projects)]))
@@ -511,7 +522,10 @@ export const APP_JS = `'use strict'
         el('dl', {},
           d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
           el('dt', {}, 'About'), el('dd', {}, d.subject, el('details', {}, el('summary', {}, 'Exact subject'), el('code', {}, subjectText(r.subject)))),
-          r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
+          // A merge says what each verdict does in words first; the requester's own text, with its paths and hashes, is folded (T141).
+          r.action.consequences && d.approve && r.action.class === 'merge' ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny),
+            el('dt', {}, 'In detail'), el('dd', {}, el('details', {}, el('summary', {}, 'what the system will do, exactly'), el('code', { class: 'exact' }, r.action.consequences)))]
+            : r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
             : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
             : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
           r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null),
@@ -522,8 +536,7 @@ export const APP_JS = `'use strict'
     return { batches, requests, described, card, decide, noteFor, noteOf }
   }
 
-  async function approvals() {
-    const q = await queue()
+  async function approvals(q) {
     if (!q) return null
     if (q.error) return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
       el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. What waits for you is unknown; the page tries again every 5 seconds.'))
@@ -557,6 +570,16 @@ export const APP_JS = `'use strict'
           : l.state === 'committed' ? el('div', {}, 'Accepted and committed on ' + (l.branch || 'its run\\'s branch') + (l.head ? ' as ' : ''), l.head ? el('code', {}, l.head.slice(0, 12)) : null, '; its merge request comes next')
             : l.state === 'merging' ? el('div', {}, 'Accepted — merging into ' + (l.base || 'its base') + ' now')
               : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
+
+  // Where a task's run started its work (ADR-0061), in words: from the change its previous attempt left, or over from the code.
+  const carryLine = (c) => {
+    const from = c.from ? 'attempt ' + c.from.attempt : 'the previous attempt'
+    const link = c.from ? [' (', runLink({ runId: c.from.runId }, 'its run'), ')'] : []
+    return c.state === 'carried' ? el('li', {}, 'It started from the work ' + from + ' left', link, ': that change was already in its worktree' + (c.commit ? ', saved as ' : ''), c.commit ? el('code', {}, c.commit.slice(0, 12)) : null,
+      ', so its writing step built on it instead of starting over.', whatIs('carry'))
+      : c.state === 'due' ? el('li', {}, 'It starts from the work ' + from + ' left', link, ', before its first step.', whatIs('carry'))
+        : el('li', {}, 'It started over from the code' + (c.from ? ': the work ' + from + ' left was not reused' : ''), link, (c.reason ? ', because ' + c.reason.replace(/\\.$/, '') : '') + '.', whatIs('carry'))
+  }
 
   // What the operator reads before a review verdict (T122): the run's change, each reviewer's
   // verdict, and the run's report, read once per run and result (runs/<id>/review). A read that
@@ -655,7 +678,7 @@ export const APP_JS = `'use strict'
       no.addEventListener('click', decide(r, 'reject', [yes, no], no))
       const key = 'review-' + r.taskId
       const input = el('input', { id: 'note-' + key, value: notes.get(key) || '', oninput: () => notes.set(key, input.value) })
-      return el('article', { class: 'panel request', 'aria-labelledby': 'review-title-' + r.taskId },
+      return el('article', { class: 'panel request', id: 'review-' + r.taskId, tabindex: '-1', 'aria-labelledby': 'review-title-' + r.taskId },
         el('h3', { id: 'review-title-' + r.taskId }, r.title),
         el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.actionClass), ' Project ' + (r.project.title || r.project.projectId) + ' · task ' + r.taskId + ' · ',
           r.expiresAt ? (r.heldFor === 'operator' ? 'yours until ' : 'its reviewer\\'s until ') + relative(r.expiresAt) + ' (' + absolute(r.expiresAt) + ')' : 'no expiry known'),
@@ -683,6 +706,8 @@ export const APP_JS = `'use strict'
           a.run ? el('p', {}, el('a', { href: '?run=' + encodeURIComponent(a.run.runId), onclick: (e) => { e.preventDefault(); go(a.run.runId) } }, 'open its run')) : null))) : null)
     if (first) section.dataset.firstExpires = first
     section.dataset.count = String(listed.length)
+    // Home's "Waiting for you" names each review held for the operator.
+    section.held = mine
     return section
   }
 
@@ -697,12 +722,28 @@ export const APP_JS = `'use strict'
   }
   // What a failure asks of the operator, in words.
   const DISPOSITION = { USER_ACTION: 'it needs you', BACKOFF: 'it is tried again later', CODE_FIX: 'it needs a fix in the code or configuration', NONE: 'nothing more happens' }
-  const failureText = (error) => error.message + (DISPOSITION[error.disposition] ? ' (' + DISPOSITION[error.disposition] + ')' : '')
+  // What a failure's kind means, in words, before the system's own message (T141).
+  const KIND_WORDS = {
+    reauth_required: 'its account must sign in again', quota_exhausted: 'its account used up its quota', overloaded: 'the site was busy, or answered with its own error',
+    timeout: 'it took longer than its limit', session_broken: 'its conversation broke off', provider_stalled: 'its Worker stopped answering', network: 'the network failed',
+    challenge: 'the site asked for a human check', config_error: 'something is set up wrong', no_worker: 'no Worker could take it', stopped: 'you stopped it',
+    plan_rejected: 'its plan was rejected', budget_spent: 'its budget is spent', holder_lost: 'it lost its hold on the task', internal: 'the system failed inside',
+  }
+  const failureText = (error) => (KIND_WORDS[error.kind] ? KIND_WORDS[error.kind] + ' — ' : '') + error.message + (DISPOSITION[error.disposition] ? ' (' + DISPOSITION[error.disposition] + ')' : '')
+  // A step's id as a person reads it: a team's steps by member ("member 1's answer"), the id beside it.
+  const stepWords = (nodeId) => {
+    const m = /^(.+):m(\\d+):(propose|ballot:\\d+)$/.exec(nodeId)
+    if (m) return 'team member ' + m[2] + (m[3] === 'propose' ? '\\'s answer' : '\\'s vote')
+    const t = /^(.+):tally:\\d+$/.exec(nodeId)
+    return t ? 'the team\\'s count of the votes' : null
+  }
   const runLink = (run, text) => el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, text || run.runId)
   // Why a run needs the operator's look, or nothing when it does not.
   const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.kind === 'tool-call' ? 'a Worker\\'s tool call waits for your verdict' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
     : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
   const RECENT = 15
+  // Things "Waiting for you" names one per line; past them it says how many more, and where.
+  const WAITING_NAMED = 5
   // What waits for the operator and they can act on, from one read on every page (GET waiting, T127): the
   // window's title counts it ("(3) system — Home"), and Home's "Waiting for you" lists it. A failed run counts
   // until the operator marks Home as seen; a count that could not be read whole is shown as at least, or "?".
@@ -798,7 +839,8 @@ export const APP_JS = `'use strict'
   // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
   async function list() {
     const { runs } = await api('runs')
-    const queued = await approvals()
+    const q = await queue()
+    const queued = await approvals(q)
     const reviewed = await reviews()
     let roster = null
     try { roster = await api('roster') } catch {}
@@ -816,11 +858,22 @@ export const APP_JS = `'use strict'
     const unread = ['requests', 'reviews', 'runs'].filter((name) => 'unknown' in part(name))
     const since = await sinceView(roster, titles)
     const jump = (id) => (e) => { e.preventDefault(); const target = document.getElementById(id); if (target) { target.scrollIntoView({ block: 'start' }); target.focus({ preventScroll: true }) } }
+    // Each thing that waits, by name under its count, one link from where it is decided (T141): the operator
+    // reads the names and acts, never counts first and searches after. At most WAITING_NAMED names a group.
+    const expiry = (iso) => el('span', { class: Date.parse(iso) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' · expires ' + relative(iso))
+    const nameList = (items, total, more) => items.length ? el('ul', { class: 'named' }, items.slice(0, WAITING_NAMED).map((line) => el('li', {}, line)),
+      total > Math.min(items.length, WAITING_NAMED) ? el('li', { class: 'muted' }, 'and ' + (total - Math.min(items.length, WAITING_NAMED)) + ' more: ', more) : null) : null
+    const requestNames = q && !q.error ? [...q.requests].sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : 1)).map((r) => [el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, q.described.get(r.requestId).title), expiry(r.expiresAt)]) : []
+    const reviewNames = reviewed && reviewed.held ? reviewed.held.map((r) => [el('a', { href: '#review-' + r.taskId, onclick: jump('review-' + r.taskId) }, r.title), el('span', { class: 'muted' }, ' · project ' + (r.project.title || r.project.projectId)), expiry(r.expiresAt)]) : []
+    const runNames = look.map((run) => [runLink(run, (run.task && titles.get(run.task.taskId)) || (/^[aeiou]/.test(run.template) ? 'an ' : 'a ') + run.template + ' run'), el('span', { class: 'muted' }, ' · ' + needsLook(run))])
     const waiting = [
-      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict')) : null,
+      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict'),
+        nameList(requestNames, asked, el('a', { href: '#approvals', onclick: jump('approvals') }, 'see every request'))) : null,
       toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review'
-        + (part('reviews').firstExpires ? '; the first held for you expires ' + relative(part('reviews').firstExpires) : ''))) : null,
-      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look' + (part('runs').more ? ', and more' : ''))) : null,
+        + (part('reviews').firstExpires ? '; the first held for you expires ' + relative(part('reviews').firstExpires) : '')),
+        nameList(reviewNames, toReview, el('a', { href: '#reviews', onclick: jump('reviews') }, 'see every review'))) : null,
+      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look' + (part('runs').more ? ', and more' : '')),
+        nameList(runNames, look.length, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'see every run'))) : null,
       unread.length ? el('li', { class: 'unknown' }, 'What else waits is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts
@@ -878,6 +931,11 @@ export const APP_JS = `'use strict'
     try { roster = await api('roster') } catch {}
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
     const nameOf = (worker) => names.get(worker) || worker
+    // The board task it serves, by title and project, from the Board's cards (T141).
+    let served
+    if (run.task) {
+      try { for (const p of (await api('projects')).projects) { const t = (p.tasks || []).find((x) => x.taskId === run.task.taskId); if (t) served = { title: t.title, project: p.title, attempts: t.attempts } } } catch {}
+    }
     const act = (action, body) => async () => {
       try { await api('runs/' + encodeURIComponent(runId) + '/' + action, body()) } catch (error) {
         report(false, 'Not done: ' + action + ' of run ' + runId, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing changed.'])
@@ -895,11 +953,27 @@ export const APP_JS = `'use strict'
     const sentence = run.status === 'completed' ? 'It finished: every step is done.'
       : run.status === 'failed' ? 'It failed' + (failed ? ' at step ' + failed.nodeId : '') + ': ' + (run.error ? failureText(run.error) : failed && failed.error ? failureText(failed.error) : 'no reason was recorded') + '.'
       : run.blocked ? 'It waits for you: ' + needsLook(run) + '.'
-      : running.length ? 'It is running: ' + running.map((n) => 'step ' + n.nodeId + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ') + '.'
+      : running.length ? 'It is running: ' + running.map((n) => (stepWords(n.nodeId) || 'step ' + n.nodeId) + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ') + '.'
       : 'It is ' + run.status + '.'
+    // What happened to it, in plain words (T141): where its worktree started (ADR-0061), a step sent again
+    // after a site's own error (ADR-0062), and where its accepted result stands (ADR-0060).
+    const carry = run.task && run.task.carry
+    const resent = (explain ? explain.nodes : []).flatMap((n) => n.decisions.filter((d) => d.type === 'recovery' && d.outcome === 'resend').map(() => n.nodeId))
+    const happened = [
+      carry ? carryLine(carry) : null,
+      ...resent.map((nodeId) => {
+        const node = run.nodes.find((x) => x.nodeId === nodeId)
+        return el('li', {}, (stepWords(nodeId) ? 'T' + stepWords(nodeId).slice(1) : 'Step ' + nodeId) + ': the site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker'
+          + (node && node.state === 'FAILED' ? '. It failed again, and is never sent a third time.' : '.'), whatIs('resend'))
+      }),
+      // The run view's landing names its base as {branch, sha}; a card's names the branch.
+      run.task && run.task.landing && run.task.landing.state !== 'none' ? el('li', {}, landingLine(Object.assign({}, run.task.landing, { base: run.task.landing.base && run.task.landing.base.branch }))) : null,
+    ].filter(Boolean)
     show(
-      pageHead('run', 'Run ' + run.runId, run.runId),
+      pageHead('run', served ? 'Run of "' + served.title + '"' : 'Run ' + run.runId, run.runId),
+      served ? el('p', { class: 'muted' }, 'Task "' + served.title + '" of project ' + served.project + (carry && carry.from ? ' · attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '') + ' · run ' + run.runId) : null,
       el('p', {}, el('span', { class: 'state ' + run.status }, run.status), ' · ' + run.template + ' run, started ', ago(run.createdAt), ', last changed ', ago(run.updatedAt), '. ' + sentence),
+      happened.length ? el('section', { class: 'panel', 'aria-label': 'What happened' }, el('h3', {}, 'What happened'), el('ul', {}, happened)) : null,
       tie ? el('div', { class: 'panel' },
         el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + relative(tie.until) + ' (' + absolute(tie.until) + ') it waits for your deciding vote, then ends inconclusive.'),
         el('ul', {}, tie.options.map((o) => el('li', {}, el('strong', {}, o.option + ': '), o.summary))),
@@ -924,21 +998,22 @@ export const APP_JS = `'use strict'
         run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Continue run'), el('span', { class: 'muted' }, 'runs its failed step again as a new attempt; the steps that are done are kept')] : null) : null,
       // Where it is now, refreshed with the page: each running step on its Worker and for how long, its last event, and a stall.
       now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now', whatIs('step')),
-        now.steps.map((st) => el('div', {}, 'Step ' + st.nodeId + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
+        now.steps.map((st) => el('div', {}, (stepWords(st.nodeId) ? 'T' + stepWords(st.nodeId).slice(1) : 'Step ' + st.nodeId) + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
         el('div', { class: 'muted' }, lastText(now)), stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
       moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
         : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
-        ? el('section', { class: 'panel request', 'aria-label': 'What it changed' }, el('h3', {}, 'What it changed, and what its reviewers said'), landing ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
+        ? el('section', { class: 'panel request', 'aria-label': 'What it changed' }, el('h3', {}, 'What it changed, and what its reviewers said'), landing && !(run.task && run.task.landing) ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
       el('h3', {}, 'Steps'),
       el('ol', { class: 'timeline' }, run.nodes.map((n) => {
         const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
         const made = decisions.get(n.nodeId) || []
         return el('li', { class: 'step' },
-          el('div', {}, el('strong', {}, n.nodeId), ' ', el('span', { class: 'state ' + cls }, word),
+          el('div', {}, el('strong', {}, stepWords(n.nodeId) || n.nodeId), stepWords(n.nodeId) ? el('span', { class: 'muted' }, ' (' + n.nodeId + ')') : null, ' ', el('span', { class: 'state ' + cls }, word),
             n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (names.has(n.worker) ? '' : ' · ' + (n.tier || n.minTier) + ' tier') + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
-          n.error ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
+          // An earlier attempt's error on a step that goes on is history, never shown as its failure now.
+          n.error ? (n.state === 'FAILED' ? el('div', { class: 'state failed' }, failureText(n.error)) : el('div', { class: 'muted' }, 'An earlier attempt failed: ' + failureText(n.error))) : null,
           made.length ? el('details', {}, el('summary', {}, 'How it was decided (' + made.length + ')'),
             made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))) : null)
       })),
@@ -951,7 +1026,9 @@ export const APP_JS = `'use strict'
   // is refused and nothing moves. The page does not refresh while a confirmation is open.
   const OPEN = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
   let confirming = false
-  let boardProject = 'all'
+  // The project the Board shows, kept in the address (?view=board&project=<id>) so a reload or a link keeps it.
+  let boardProject = new URLSearchParams(location.search).get('project') || 'all'
+  const READY_PREVIEWS = 8
   async function boardView() {
     let projects
     try { ({ projects } = await api('projects')) } catch (error) {
@@ -999,6 +1076,16 @@ export const APP_JS = `'use strict'
         cancelButton))
       ;(refused ? cancelButton : confirmButton).focus()
     }
+    // A project's state at a glance, in words with counts (T141): what waits for the operator (reviews, answers,
+    // approvals, merges), what works, what is ready, and what is proposed.
+    const glanceOf = (p) => {
+      const merges = (p.tasks || []).filter((t) => t.state === 'done' && t.landing && t.landing.state === 'asked').length
+      const yours = [[p.open.review, 'review'], [p.open['waiting-for-approval'], 'approval'], [p.open['waiting-for-input'], 'answer'], [merges, 'merge']].filter(([n]) => n)
+      const total = yours.reduce((n, [k]) => n + k, 0)
+      return el('p', { class: 'glance', 'aria-label': 'State of ' + p.title },
+        el('strong', {}, total ? 'Waiting for you: ' + total : 'Nothing waits for you'), total ? ' (' + yours.map(([n, w]) => n + ' ' + w + (n === 1 ? '' : 's')).join(', ') + ')' : '',
+        ' · Working: ' + count(p, ['claimed', 'running']) + ' · Ready: ' + (p.open.ready || 0) + ' · Proposed: ' + (p.open.proposed || 0))
+    }
     const moves = (p) => p.state === 'active' ? ['pause', 'close'] : p.state === 'paused' ? ['resume', 'close'] : []
     const label = { pause: 'Pause', resume: 'Resume', close: 'Close' }
     // What waits for the operator in each project, each linked to the card it is decided on.
@@ -1018,14 +1105,20 @@ export const APP_JS = `'use strict'
     const moving = await liveOf()
     const working = new Map()
     if (roster && 'value' in roster.workers) for (const w of roster.workers.value) if ('value' in w.work) for (const i of w.work.value.items) working.set(i.runId, { name: w.name, worker: w.worker, since: i.since })
+    if (boardProject !== 'all' && !projects.some((p) => p.projectId === boardProject)) boardProject = 'all'
     const shownProjects = boardProject === 'all' ? projects : projects.filter((p) => p.projectId === boardProject)
-    const pick = el('select', { id: 'board-project', onchange: () => { boardProject = pick.value; boardView() } },
+    const pick = el('select', { id: 'board-project', onchange: () => {
+      boardProject = pick.value
+      history.replaceState(null, '', '?view=board' + (boardProject === 'all' ? '' : '&project=' + encodeURIComponent(boardProject)))
+      boardView()
+    } },
       el('option', { value: 'all' }, 'All projects (' + projects.length + ')'), projects.map((p) => el('option', { value: p.projectId }, p.title)))
     pick.value = shownProjects.length === projects.length ? 'all' : boardProject
     const ready = shownProjects.reduce((n, p) => n + (p.open.ready || 0), 0)
     const head = (p) => el('article', { class: 'panel request', 'aria-labelledby': 'project-' + p.projectId },
       el('h3', { id: 'project-' + p.projectId }, p.title),
       el('p', { class: 'meta' }, el('span', { class: 'tag' }, p.state), ' project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ', amendment ' + p.amendment + ' waits' : '') + ' · ' + count(p, OPEN) + ' open task(s)' + (p.closure ? ' · closed (' + p.closure.outcome + ')' : '')),
+      glanceOf(p),
       stateOf(p),
       moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))) : null)
     const WAITS = {
@@ -1053,6 +1146,28 @@ export const APP_JS = `'use strict'
       if (!w || !('free' in w)) return el('div', { class: 'unknown' }, 'Who would take it is unknown (' + (w ? w.unknown : 'not read') + ')')
       if (w.free.length) return el('div', { class: 'likely' }, 'Likely: ' + w.free.slice(0, 3).map(nameOf).join('; ') + (w.free.length > 3 ? '; or ' + (w.free.length - 3) + ' more' : ''))
       return el('div', { class: 'soon' }, w.busy.length ? 'None free: it waits for ' + w.busy.slice(0, 3).map(nameOf).join('; ') : 'No Worker can take it now: it waits until one can')
+    }
+    // Who a ready card's first step would likely go to (T141), from its start's preview, read for the
+    // first READY_PREVIEWS ready cards shown; a preview that cannot be read leaves the card as it was.
+    const previews = new Map()
+    const readyShown = shownProjects.flatMap((p) => (p.tasks || []).filter((t) => t.state === 'ready' && t.template)).slice(0, READY_PREVIEWS)
+    await Promise.all(readyShown.map(async (t) => { try { previews.set(t.taskId, await api('tasks/' + encodeURIComponent(t.taskId) + '/start')) } catch {} }))
+    const goesTo = (preview) => {
+      const step = preview.steps.find((s) => !s.source)
+      const w = step && step.workers
+      if (!w || !('free' in w) || !w.free.length) return step ? likely(step) : null
+      return el('div', { class: 'likely' }, 'Likely goes to: ' + nameOf(w.free[0]) + (w.free.length > 1 ? ' (or ' + (w.free.length - 1) + ' other' + (w.free.length > 2 ? 's' : '') + ')' : ''))
+    }
+    // A request the queue lists, decided on the card with its own buttons (approve by button, T141).
+    const askOf = (requestId) => open.find((r) => r.requestId === requestId)
+    const decideHere = (r) => {
+      const d = q.described.get(r.requestId)
+      const yes = el('button', { class: 'primary', 'aria-label': d.yes + ' (' + d.title + ')' }, d.yes)
+      const no = el('button', { 'aria-label': d.no + ' (' + d.title + ')' }, d.no)
+      const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
+      yes.addEventListener('click', verdict('approved', yes))
+      no.addEventListener('click', verdict('rejected', no))
+      return el('div', { class: 'actions decide' }, yes, no)
     }
     const start = (t) => async () => {
       confirming = true
@@ -1089,6 +1204,8 @@ export const APP_JS = `'use strict'
           el('li', {}, (idle === undefined ? 'How many Workers are free is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' free now') + '; a step no free Worker can take waits for one.'),
           el('li', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
         yes, close))
+      // On a narrow screen the confirmation is far above the card pressed: bring it into sight.
+      shown.scrollIntoView({ block: 'nearest' })
       yes.focus()
     }
     const cardOf = (p, t) => {
@@ -1097,15 +1214,19 @@ export const APP_JS = `'use strict'
       return el('article', { class: 'card', 'aria-label': t.title },
         el('strong', {}, t.title),
         boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
-        el('div', { class: 'muted' }, el('span', { class: 'tag' }, t.actionClass), ' ', ago(since)),
+        el('div', { class: 'muted' }, 'Changed ', ago(since), ' · ', el('span', { class: 'tag' }, t.actionClass)),
         t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
         t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
+        t.state === 'ready' && previews.has(t.taskId) ? goesTo(previews.get(t.taskId)) : null,
         t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
         (t.state === 'running' || t.state === 'claimed') && t.run && moving.runs && moving.runs.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.runs.get(t.run.runId))), stalledOf(moving.runs.get(t.run.runId))] : null,
         t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
-        t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · until ' + relative(t.waiting.expiresAt))) : null,
-        t.landing ? landingLine(t.landing) : null,
+        t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest && !askOf(t.waiting.approvalRequest) ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · the wait ends ' + relative(t.waiting.expiresAt))) : null,
+        t.landing ? (t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? el('div', {}, 'Accepted — waiting for you to merge it into ' + (t.landing.base || 'its base') + ':') : landingLine(t.landing)) : null,
+        // Approve by button where the operator sees it (T141): the request's own verdict buttons, on its exact subject.
+        t.waiting && t.waiting.approvalRequest && askOf(t.waiting.approvalRequest) ? decideHere(askOf(t.waiting.approvalRequest)) : null,
+        t.landing && t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? decideHere(askOf(t.landing.requestId)) : null,
         t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'open its run')) : null)
     }
     // A done task whose merge waits for the operator is also shown where the operator looks for what waits (ADR-0060).
@@ -1114,7 +1235,7 @@ export const APP_JS = `'use strict'
     const moreIn = (states) => shownProjects.reduce((n, p) => n + states.reduce((m, s) => m + ((p.more || {})[s] || 0), 0), 0)
     const column = (name, states, hint) => {
       const cards = tasksIn(states)
-      return el('section', { class: 'column', 'aria-label': name },
+      return el('section', { class: 'column' + (states.includes('waiting-for-approval') ? ' waits' : ''), 'aria-label': name },
         el('h3', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
         cards.length ? cards.map(([p, t]) => cardOf(p, t)) : el('p', { class: 'muted' }, hint),
         moreIn(states) ? el('p', { class: 'muted' }, moreIn(states) + ' older not shown') : null)
@@ -1218,9 +1339,9 @@ export const APP_JS = `'use strict'
     const resting = g.account && g.account.limitUntil ? g.account.limitUntil : pools.filter((p) => !p.available && p.until).map((p) => p.until).sort().at(-1)
     return el('li', { class: 'capacity', 'aria-label': 'Capacity of ' + g.name },
       pick && 'value' in pick.win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(pick.win.used.value), 'aria-hidden': 'true' }) : el('span', { class: 'no-bar', 'aria-hidden': 'true' }),
-      el('span', {}, g.name + ': ' + [resting ? restingText(resting) : null,
+      el('span', {}, g.name + ': ' + ([resting ? restingText(resting) : null,
         pick ? span(pick.win.seconds) + ' ' + (pick.win.state === 'limited' ? 'at its limit, ' : '') + ('value' in pick.win.used ? 'used ' + pick.win.used.value + ' %' + ('value' in pick.win.resets ? ', resets ' + clockOf(pick.win.resets.value) : '') : /^no reading yet/.test(pick.win.used.unknown) ? 'no reading yet' : 'used unknown') : null,
-      ].filter(Boolean).join('; ') || 'no quota is read for it'))
+      ].filter(Boolean).join('; ') || (poolsOf(g) ? 'no quota is tracked for it' : 'its quota is unknown'))))
   }
   // A Worker's status in plain words, with the reason; one that blocks work is never folded.
   const statusOf = (w) => {
@@ -1231,6 +1352,12 @@ export const APP_JS = `'use strict'
     if (a.state === 'unavailable') return 'Unavailable: ' + textOf(a.reason)
     return 'Quarantined: its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + (a.detail ? ' (' + a.detail + ')' : '') + ', since ' + when(a.since)
   }
+  // One step it runs, in words (T141): the task by its title, else the run's template and the step; for how long. The roster's own sentence stays in its details.
+  const doingText = (i) => {
+    const task = i.task && 'value' in i.task.board ? i.task.board.value : undefined
+    const long = 'value' in i.since ? ', for ' + relative(i.since.value).replace(/ ago$/, '') : ''
+    return task ? 'Working on "' + task.title + '"' + long : 'Running ' + (stepWords(i.nodeId) ? stepWords(i.nodeId) + ' in a team run' : 'step ' + i.nodeId + ' of a ' + i.template + ' run') + long
+  }
   const runOpen = (runId) => el('a', { href: '?run=' + encodeURIComponent(runId), onclick: (e) => { e.preventDefault(); go(runId) }, 'aria-label': 'Open run ' + runId }, 'open run')
   // What it does now, when it does something; its runs whose liveness needs a look (PROP-0013) are never folded.
   const doingOf = (w) => {
@@ -1238,7 +1365,7 @@ export const APP_JS = `'use strict'
     const live = w.liveness && isKnown(w.liveness) ? w.liveness.value : []
     if (!items.length && !live.length) return null
     return el('div', { class: 'doing' },
-      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', {}, i.summary, ' ', runOpen(i.runId)))) : null,
+      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', {}, doingText(i), ' ', runOpen(i.runId)))) : null,
       isKnown(w.work) && w.work.value.more ? el('div', { class: 'muted' }, w.work.value.more + ' more step(s) not listed') : null,
       live.length ? el('ul', { 'aria-label': 'Runs whose liveness needs a look' }, live.map((r) => el('li', { class: r.state === 'unknown' ? 'state failed' : 'unknown' }, r.summary, r.runId ? [' ', runOpen(r.runId)] : null, whatIs(r.state === 'unknown' ? 'held' : 'stalled')))) : null)
   }
@@ -1251,6 +1378,26 @@ export const APP_JS = `'use strict'
   // The facts of a Worker or an account a person rarely needs, folded: what could not be read stays here, with why.
   const detailsOf = (rows) => el('details', { class: 'facts' }, el('summary', {}, 'details'), el('dl', {}, rows.filter(Boolean).flatMap(([term, value]) => [el('dt', {}, term), el('dd', {}, value)])))
   const recordText = (a) => a.id + (isKnown(a.record) ? ' · ' + a.record.value.kind + ' account, ' + a.record.value.status + (a.record.value.slot !== undefined ? ', slot ' + a.record.value.slot : '') : ' · its record is unknown (' + a.record.unknown + ')')
+  // Right now, by name (T141): who is free, who is stuck, and which accounts have no quota left, each said
+  // in words (never by colour alone); a free Worker while tasks are ready is waste the operator can end on the Board.
+  const glanceView = (workers, ready) => {
+    const few = (list) => list.slice(0, 6).join('; ') + (list.length > 6 ? '; and ' + (list.length - 6) + ' more' : '')
+    const free = workers.filter((w) => w.availability.state === 'ready').map((w) => w.name)
+    const stalled = workers.flatMap((w) => w.liveness && isKnown(w.liveness) ? w.liveness.value.filter((r) => r.state === 'stalled').map((r) => ({ w, r })) : [])
+    const spent = accountsOf(workers).filter((g) => g.account).flatMap((g) => {
+      const pools = poolsOf(g) || []
+      const limited = pools.some((p) => !p.available || p.windows.some((x) => x.state === 'limited'))
+      const until = g.account.limitUntil || pools.filter((p) => !p.available && p.until).map((p) => p.until).sort().at(-1)
+      return g.account.limitUntil || limited ? [g.name + (until ? ' until ' + clockOf(until) + ' (' + relative(until) + ')' : ', no reset known')] : []
+    })
+    const out = workers.filter((w) => w.availability.state === 'unavailable' || w.availability.state === 'quarantined').map((w) => w.name + ' (' + w.availability.summary + ')')
+    return el('section', { class: 'panel', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'),
+      el('ul', {},
+        el('li', {}, el('strong', {}, 'Free: '), free.length ? [few(free), ready ? ['. ' + ready + (ready === 1 ? ' task is' : ' tasks are') + ' ready: start one on the ', pageLink('board', 'Board'), '.'] : '.'] : 'none.'),
+        el('li', {}, el('strong', {}, 'Stalled: '), stalled.length ? stalled.map(({ w, r }, i) => [i ? '; ' : '', w.name + ' ', r.runId ? runOpen(r.runId) : null]) : 'none.', stalled.length ? whatIs('stalled') : null),
+        el('li', {}, el('strong', {}, 'No quota left: '), spent.length ? few(spent) : 'none.'),
+        out.length ? el('li', {}, el('strong', {}, 'Cannot work: '), few(out)) : null))
+  }
   async function workersView() {
     const roster = await api('roster')
     const ready = await readyTasks()
@@ -1261,8 +1408,12 @@ export const APP_JS = `'use strict'
       el('p', { class: 'state ' + w.availability.state }, statusOf(w), w.availability.state === 'resting' ? whatIs('resting') : w.availability.state === 'quarantined' ? whatIs('quarantine') : null),
       doingOf(w),
       w.limits.length ? el('div', {}, w.limits.map((l) => el('div', { class: 'state resting' }, l.capability + ' is held off until ' + clockOf(l.until) + ' (' + relative(l.until) + ')'))) : null,
+      // The operator's own choice (D58): said where they look for the Worker, never folded.
+      w.teams && isKnown(w.teams) ? el('p', { class: 'teams' }, el('strong', {}, 'Kept out of teams by you: '), 'it is never a team member; it takes every other step.', whatIs('team')) : null,
       detailsOf([
         ['Worker id', el('code', {}, w.worker)],
+        isKnown(w.work) && w.work.value.items.length ? ['Steps, as recorded', el('div', {}, w.work.value.items.map((i) => el('div', {}, i.summary)))] : null,
+        w.teams && isKnown(w.teams) ? ['Teams', w.teams.value.summary] : w.teams ? ['Teams', el('span', { class: 'unknown' }, 'unknown (' + w.teams.unknown + ')')] : null,
         isKnown(w.description) ? null : ['What it is', el('span', {}, el('span', { class: 'tag' }, 'derived'), ' ' + w.derived + ' (no description is configured)', whatIs('derived'))],
         isKnown(w.work) ? (w.work.value.unread ? ['Doing now', el('span', { class: 'unknown' }, w.work.value.unread)] : null) : ['Doing now', el('span', { class: 'unknown' }, 'unknown (' + w.work.unknown + ')')],
         w.liveness && !isKnown(w.liveness) ? ['Liveness', el('span', { class: 'unknown' }, 'unknown (' + w.liveness.unknown + ')')] : null,
@@ -1283,6 +1434,7 @@ export const APP_JS = `'use strict'
         record && record.status !== 'ready' ? el('p', { class: 'state ' + (record.status === 'quarantined' || record.status === 'signed-out' ? 'unavailable' : 'unknown') }, 'Its account is ' + record.status.replace('-', ' ') + (record.quarantine ? ' (' + record.quarantine.reason + (record.quarantine.detail ? ': ' + record.quarantine.detail : '') + ')' : '')) : null,
         record && record.sameAs ? el('p', { class: 'state failed' }, 'Signed in as the same person as ' + record.sameAs.join(', ')) : null,
         pools && pools.length ? el('div', { class: 'quota' }, el('div', { class: 'muted' }, 'Quota', whatIs('quota')), poolsView(pools, !!a.limitUntil)) : null,
+        pools && !pools.length ? el('p', { class: 'muted' }, 'No quota is tracked for this account: what it has left is not shown.') : null,
         detailsOf([
           ['Account', recordText(a)],
           pools ? (pools.length ? null : ['Quota', 'no pool on its account']) : ['Quota', el('span', { class: 'unknown' }, 'unknown (' + (unknownPools ? unknownPools.pools.unknown : 'not read') + ')')],
@@ -1296,6 +1448,7 @@ export const APP_JS = `'use strict'
     show(
       pageHead('workers'),
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
+      isKnown(roster.workers) && roster.workers.value.length ? glanceView(roster.workers.value, ready) : null,
       ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
