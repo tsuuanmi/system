@@ -784,8 +784,13 @@ export class AgentWorkers extends Service {
       const proof = admits(evidence, worker) && (!repository || 'repository' in repository)
       // A Worker takes work only while its account does (INV-2): no Worker of it while its runtime
       // cools down from a limit no ledger reading holds, or while the pool of any of them is closed.
-      const { state: pool, until } = proof ? await this.accountGate(worker, true) : { state: 'ready' as const, until: undefined }
+      const { state: pool, until, why: gateWhy } = proof ? await this.accountGate(worker, true) : { state: 'ready' as const, until: undefined, why: undefined }
       const ready = proof && pool !== 'unavailable'
+      // Why it takes no work, for the roster and its readers (`@1.9`): the probe's detail, the
+      // repository's problem, or the account's or pool's gate (the live incident of 2026-10-26).
+      const refusal = refusalOf(evidence, worker)
+      const why = ready ? undefined
+        : refusal ?? (repository && 'problem' in repository ? `it works in a worktree per run, and ${repository.problem}` : undefined) ?? gateWhy ?? 'its account or pool cannot be read'
       const probed = { kind: 'probe' as const, at: observedAt }
       const proven: CapabilityOffer[] = ready
         ? [
@@ -815,8 +820,9 @@ export class AgentWorkers extends Service {
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
         // the operator gives it, so it takes no other (ADR-0057).
-        schema: worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        schema: why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         ...(worker.description ? { description: worker.description } : {}),
+        ...(why !== undefined ? { unavailableReason: boundedReason(why) } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state, observedAt,
       }
@@ -974,7 +980,7 @@ export class AgentWorkers extends Service {
       if (sibling.pool === undefined || seen.has(meter(sibling))) continue
       seen.add(meter(sibling))
       const gate = await this.poolGate(id, sibling)
-      if (gate.state === 'unavailable') return { state: 'unavailable', why: `the pool ${sibling.pool} of ${id}, on the same sign-in, cannot be read` }
+      if (gate.state === 'unavailable') return { state: 'unavailable', why: `the pool ${sibling.pool} of ${id}, on the same sign-in, cannot be read${gate.why ? ` (${gate.why})` : ''}` }
       if (gate.state === 'quota-exhausted') closed.push({ id, pool: sibling.pool, until: gate.until })
     }
     if (!closed.length) return { state: 'ready' }
@@ -1017,20 +1023,22 @@ export class AgentWorkers extends Service {
    * Whether a metered Worker's pool takes work now: `ready`, `quota-exhausted` while it is
    * unavailable (with `until`, when the ledger expects it back), or `unavailable` when it cannot be read.
    */
-  private async poolGate(id: string, worker: WorkerSpec): Promise<{ state: 'ready' | 'quota-exhausted' | 'unavailable'; until?: string | undefined }> {
+  private async poolGate(id: string, worker: WorkerSpec): Promise<{ state: 'ready' | 'quota-exhausted' | 'unavailable'; until?: string | undefined; why?: string }> {
     try {
       const meter = this.meter(id, worker)
       if (!meter) return { state: 'ready' }
       await this.declareAccounts(meter.resources)
       const pool = (await meter.resources.pools({ account: meter.account })).find((p) => p.pool === meter.pool)
       if (!pool) {
-        this.warnOnce(`agent Workers: ${id} draws on pool ${meter.pool} of ${meter.account}, which the resource ledger does not configure`)
-        return { state: 'unavailable' }
+        const why = `${id} draws on pool ${meter.pool} of ${meter.account}, which the resource ledger does not configure`
+        this.warnOnce(`agent Workers: ${why}`)
+        return { state: 'unavailable', why }
       }
       return pool.available ? { state: 'ready' } : { state: 'quota-exhausted', until: pool.until }
     } catch (error) {
-      this.warnOnce(`agent Workers: the pool of ${id} cannot be read: ${(error as Error).message}`)
-      return { state: 'unavailable' }
+      const why = `the pool of ${id} cannot be read: ${(error as Error).message}`
+      this.warnOnce(`agent Workers: ${why}`)
+      return { state: 'unavailable', why }
     }
   }
 
@@ -2621,6 +2629,31 @@ function closedUntil(pool: PoolState | undefined, windowId: string): number | un
 /** Whether a runtime's evidence admits a Worker: available, reads confined, its sandbox enforced, and a gate asked before each tool call. */
 function admits(evidence: RuntimeEvidence, worker: AgentWorkerConfig): boolean {
   return evidence.available && evidence.readsConfined && evidence.gatesToolCalls === true && evidence.sandboxes.includes(worker.sandbox)
+}
+
+/** The longest reason an unavailable Worker's descriptor carries (`capability-descriptor@1.9`). */
+const MAX_UNAVAILABLE_REASON = 300
+
+/**
+ * Why a runtime's evidence does not admit a Worker, for people: the probe's own detail, and what of
+ * {@link admits} it misses beyond being unavailable. Undefined when it admits it.
+ */
+function refusalOf(evidence: RuntimeEvidence, worker: AgentWorkerConfig): string | undefined {
+  if (admits(evidence, worker)) return undefined
+  if (!evidence.available) return `its ${worker.runtime} probe failed: ${evidence.detail}`
+  const missing = [
+    ...(evidence.readsConfined ? [] : ['cannot keep host state unreadable']),
+    ...(evidence.gatesToolCalls === true ? [] : ["cannot ask the run's gate before each tool call"]),
+    ...(evidence.sandboxes.includes(worker.sandbox) ? [] : [`cannot enforce its ${worker.sandbox} sandbox`]),
+  ]
+  return `its ${worker.runtime} runtime ${missing.join(', and ')} (${evidence.detail})`
+}
+
+/** A reason as a descriptor carries it: one line, at most {@link MAX_UNAVAILABLE_REASON} characters. */
+function boundedReason(text: string): string {
+  const line = text.replace(/\p{Cc}+/gu, ' ').replace(/\s+/g, ' ').trim() || 'its Worker source gave no detail'
+  const chars = [...line]
+  return chars.length <= MAX_UNAVAILABLE_REASON ? line : `${chars.slice(0, MAX_UNAVAILABLE_REASON - 1).join('')}…`
 }
 
 /**

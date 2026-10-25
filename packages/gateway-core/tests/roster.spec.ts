@@ -264,6 +264,13 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(roster.counts).toEqual({ ready: 2, busy: 3, resting: 3, unavailable: 2, quarantined: 1 })
   })
 
+  it('says why an unavailable Worker takes no work as its source says it (capability-descriptor@1.9, T214)', async () => {
+    const why = 'its codex probe failed: the workspace reads server cannot start its sandbox'
+    const roster = await readRoster(services({}, [descriptor('l:probe-failed', { state: 'unavailable', unavailableReason: why })]), { scope: 'operator', now: NOW })
+    valid(roster)
+    expect(entry(roster, 'l:probe-failed').availability).toEqual({ state: 'unavailable', summary: `unavailable: ${why}`, reason: { value: why } })
+  })
+
   it('reads an unavailable Worker\'s reason from its account: signed out, enrolled and not verified, or one person on two website accounts', async () => {
     const workers = [
       descriptor(`agent:${CLAUDE}/review`, { state: 'unavailable', account: agentAccount(CLAUDE) }),

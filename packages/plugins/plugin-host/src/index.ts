@@ -12,7 +12,7 @@
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
+import { type Context, type Exporter, Logger, type Message } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
@@ -110,6 +110,44 @@ export function packageManifest(name: string, bases: readonly string[]): Manifes
   return readManifest(text, name)
 }
 
+/** The most severe levels the daemon's log takes: errors, info, and warnings (Cordis' 0, 1, 2), never debug. */
+export const LOG_LEVEL = 2
+
+/** One message as a line of the daemon's log: when, how severe, whose, and what; each line of a long one so marked. */
+export function logLines(message: Message): string {
+  const head = `${new Date(message.ts).toISOString()} ${message.type} ${message.name}:`
+  return Logger.format({ colors: false, export: () => {} }, message).split('\n').map((line) => `${head} ${line}\n`).join('')
+}
+
+/**
+ * The last message written to a log, by the logger service's exporters (one map per service, however
+ * a context reaches it), so a host started again does not repeat what it wrote.
+ */
+const written = new WeakMap<object, number>()
+
+/**
+ * Write what the plugins log, from errors to warnings, to `write`, from now until `ctx` is disposed:
+ * DSH gives the Cordis logger no sink but its memory, so without this a plugin's warning (a Worker
+ * whose probe failed, a store callback that threw) reached no log (live, 2026-10-26). What the logger
+ * kept before this started is written first. A write that fails is dropped: logging never stops the host.
+ */
+export function exportLog(ctx: Context, write: (text: string) => void): void {
+  const service = ctx.logger as unknown as { buffer?: Message[]; exporters: object }
+  const key = service.exporters
+  const put = (message: Message): void => {
+    if (message.level > LOG_LEVEL || message.sn <= (written.get(key) ?? 0)) return
+    written.set(key, message.sn)
+    try {
+      write(logLines(message))
+    } catch {
+      // the log is gone (a closed stream): the host goes on without it
+    }
+  }
+  for (const message of service.buffer ?? []) put(message)
+  const exporter: Exporter = { colors: false, levels: { default: LOG_LEVEL }, export: put }
+  ctx.logger.exporter(exporter)
+}
+
 interface LifecycleRow { name: string; state: RecordedLifecycle['state']; since: string; decision: string; version: string; rows: string }
 interface CheckRow { name: string; findings: string; since: string; decision: string }
 
@@ -130,6 +168,8 @@ export class StorePluginHost extends PluginHost {
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx)
+    // The daemon's log: its stderr, which the unit appends to daemon.log (docs/operations/runbooks.md).
+    exportLog(ctx, (text) => process.stderr.write(text))
     ctx.store.migrate('plugin-host', [{
       version: 1,
       sql: `CREATE TABLE plugin_lifecycle (

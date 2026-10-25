@@ -26,6 +26,10 @@ on.
   `allowWithoutManifest` names), or with a consumed seam its mounted providers' manifests do not
   satisfy, is listed with its findings; each plugin's findings are recorded once, again only when
   they change or clear.
+- **The daemon's log:** while it runs, it writes what every plugin logs, errors, info and warnings
+  (never debug), to the daemon's stderr, one line each with its time, severity, and plugin
+  (`daemon.log` under the [systemd unit](../../../docs/operations/runbooks.md)); what the logger
+  kept from before it started first. DSH gives the logger no other sink.
 - **Read by:** MCP `status` ([mcp-server](../mcp-server/README.md)): the plugins that need a
   look and their findings for the operator (every plugin with `plugins: true`), and the
   `manifests` health check; `system plugins`.

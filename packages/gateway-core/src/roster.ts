@@ -63,6 +63,8 @@ export interface RosterDescriptor {
   description?: string | undefined
   /** `@1.8`: its name for people, as its source gives it (a website provider's own, a model's from the operator's catalog). */
   title?: string | undefined
+  /** `@1.9`: why an unavailable Worker takes no work, as its source knows it (a failed probe, a workspace problem, a gate). */
+  unavailableReason?: string | undefined
   /** `@1.6`: the kinds of work the operator gives it. */
   kinds?: string[] | undefined
   account?: { id: string; group: string; mode: 'assigned' | 'pooled'; limitUntil?: string | undefined } | undefined
@@ -372,7 +374,7 @@ function availabilityOf(d: RosterDescriptor, record: Known<RosterAccountRecord>,
   return { state: 'ready', summary: 'ready' }
 }
 
-/** Why an unavailable Worker takes no work, from what its account says; unknown when nothing does. */
+/** Why an unavailable Worker takes no work, from what its account says, else its source; unknown when nothing does. */
 function reasonOf(d: RosterDescriptor, rec: RosterAccountRecord | undefined, record: Known<RosterAccountRecord>): Known<string> {
   if (rec?.sameAs?.length) return known(`its account is signed in as the same person as ${rec.sameAs.join(', ')}, so none of them takes work`)
   if (rec && rec.status !== 'ready') {
@@ -387,6 +389,8 @@ function reasonOf(d: RosterDescriptor, rec: RosterAccountRecord | undefined, rec
     return known(what[rec.status] ?? `its account is ${rec.status}`)
   }
   if (d.state === 'reauth-required') return known('its account must sign in again (system account login)')
+  // Its source's own reason (`capability-descriptor@1.9`): a failed probe, a workspace problem, a gate.
+  if (d.unavailableReason) return known(d.unavailableReason)
   return unknown(`its Worker source gives no reason${isKnown(record) ? '' : `, and its account could not be read (${record.unknown})`}; system explain on a run it was refused for shows the route's reasons`)
 }
 

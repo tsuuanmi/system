@@ -8,10 +8,11 @@
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
 > the [CLI](../reference/cli.md#operations) (`system roster`), and
-> [`web-ui`](../../packages/plugins/web-ui/README.md) (the Workers page); differs from target: a
-> Worker source states no reason for an `unavailable` Worker beyond its account's, so such a
-> reason is often `unknown`; a website account's usage has no pool yet, so its windows are not
-> shown.
+> [`web-ui`](../../packages/plugins/web-ui/README.md) (the Workers page); differs from target: only
+> the agent Workers' source states its own reason for an `unavailable` Worker
+> (`capability-descriptor@1.9` `unavailableReason`), so another source's such Worker without an
+> account reason reads `unknown`; a website account's usage has no pool yet, so its windows are
+> not shown.
 
 The roster is the operator's and the lead's one place to see every Worker: who it is and what the
 operator set it up for, which account it runs on and in what state that account is, what role and tier it serves, whether it
@@ -114,7 +115,7 @@ One of five states, each with a one-line `summary` the CLI and the page show:
 |---|---|---|
 | `quarantined` | its account is an enrolled agent account in quarantine (`changed`, `ambiguous`, `duplicate`, `unverified`), and the Worker takes no work | the reason, since when, the `enrollment` decision that quarantined it, and what its reading found (`detail`, `@1.4`, when its record says it: for `unverified`, the version found and the ones admitted), also in the summary |
 | `resting` | its source describes it `quota-exhausted` | `until`: the account's `limitUntil`, else the latest `until` of its account's closed pools when every one of them names one (the account is back only once each is), else `unknown` (no reset is known) |
-| `unavailable` | `unavailable` or `reauth-required` | `reason`: from its account (signed out, enrolled and not verified, must sign in again, a site challenge, disabled, never signed in, signed in as the same person as another account), else `unknown`: its source gives no reason (`system explain` on a run it was refused for shows the route's) |
+| `unavailable` | `unavailable` or `reauth-required` | `reason`: from its account (signed out, enrolled and not verified, must sign in again, a site challenge, disabled, never signed in, signed in as the same person as another account), else its source's own (`unavailableReason`, `capability-descriptor@1.9`: a failed probe's detail, a workspace problem, a gate), else `unknown`: its source gives no reason (`system explain` on a run it was refused for shows the route's) |
 | `busy` | `busy`, or any run in its slots (`load.running > 0`), or a step the engine runs on it (its `work`), whatever load its source reports (`mcp-roster@1.3`) | `running` of `slots`: "busy N of M". A Worker below its slots still takes work; routing orders it after a less busy one ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). With no load, how many is unknown |
 | `ready` | `ready`, nothing running, and no step running on it | — |
 

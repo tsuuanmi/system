@@ -1,0 +1,14 @@
+{
+  "schema": "capability-descriptor@1.9",
+  "worker": "agent:runtime-a:0123456789abcdef/review",
+  "provider": "runtime-a",
+  "family": "runtime-a",
+  "unavailableReason": "its runtime-a probe failed: the workspace reads server cannot start its sandbox on this host",
+  "account": { "id": "runtime-a:0123456789abcdef", "group": "runtime-a", "mode": "assigned" },
+  "tier": "standard",
+  "quotaClass": "agent-plan",
+  "locality": "local",
+  "capabilities": [],
+  "state": "unavailable",
+  "observedAt": "2026-10-26T09:00:00Z"
+}

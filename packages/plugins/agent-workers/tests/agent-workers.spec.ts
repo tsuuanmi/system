@@ -40,6 +40,20 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })
   })
 
+  it('says why an unavailable Worker takes no work on its descriptor, at most 300 characters on one line, and nothing on a ready one (capability-descriptor@1.9, T214)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ resume: true }), {
+      workers: [worker(), worker({ id: 'writer', sandbox: 'workspace-write' }), worker({ id: 'ghost', runtime: 'missing' })],
+    })
+    const workers = Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w]))
+    expect(workers['agent:reviewer']).not.toHaveProperty('unavailableReason')
+    expect(workers['agent:writer']).toMatchObject({ schema: 'capability-descriptor@1.9', state: 'unavailable', unavailableReason: expect.stringContaining('cannot enforce its workspace-write sandbox') })
+    expect(workers['agent:ghost']).toMatchObject({ schema: 'capability-descriptor@1.9', state: 'unavailable', unavailableReason: expect.stringContaining('no missing runtime is registered') })
+    const unconfined = await boot(new ScriptedAgent({ readsConfined: false }), { workers: [worker()] })
+    const [refused] = await unconfined.ctx.workers.list()
+    expect(refused).toMatchObject({ state: 'unavailable', unavailableReason: expect.stringContaining('cannot keep host state unreadable') })
+    for (const w of Object.values(workers)) expect([...(w.unavailableReason ?? '')].length).toBeLessThanOrEqual(300)
+  })
+
   it('never admits a Worker whose runtime cannot ask the run\'s gate before each tool call (docs/design/approvals.md)', async () => {
     const { ctx } = await boot(new ScriptedAgent({ gatesToolCalls: false }), { workers: [worker()] })
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })

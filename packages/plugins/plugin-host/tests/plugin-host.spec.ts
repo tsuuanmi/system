@@ -6,9 +6,9 @@ import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import { type CompositionRow, MANIFEST_MAX_BYTES } from '@tsuuanmi/system-plugin-host-core'
 import Store from '@tsuuanmi/system-store'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
-import StorePluginHost, { compositionOf, type LoaderView, packageBases, packageDir, packageManifest } from '../src/index.ts'
+import StorePluginHost, { compositionOf, exportLog, type LoaderView, logLines, packageBases, packageDir, packageManifest } from '../src/index.ts'
 import { install, stubLoader } from './composition.ts'
 
 const dirs: string[] = []
@@ -194,6 +194,50 @@ describe('recording', () => {
     await ctx.artifacts.collect()
     expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'lifecycle' })).toHaveLength(3)
     await stop()
+  })
+})
+
+describe('the daemon\'s log', () => {
+  it('writes what any plugin logs, from errors to warnings, to the daemon\'s stderr (the unit\'s daemon.log) while the host runs; what came before it once, debug never (live, 2026-10-26)', async () => {
+    const dir = temp()
+    const profile = join(dir, 'profile')
+    install(profile, { '@x/a': manifestText('@x/a') })
+    const ctx = new Context()
+    const kernel = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {})]
+    await Promise.all(kernel)
+    const loader = ctx.plugin({ name: 'loader', apply: (c: Context) => void c.provide('loader', stubLoader(profile, [{ id: 'a', name: '@x/a', mounted: true }])) })
+    await loader
+    ctx.logger('store').info('opened before the host')
+    const written: string[] = []
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation((text: string | Uint8Array) => { written.push(String(text)); return true })
+    onTestFinished(() => write.mockRestore())
+    const host = ctx.plugin(StorePluginHost)
+    await host
+    ctx.logger('agent-workers').warn('Codex · main · review: unavailable: %s', 'the probe failed: bwrap: Can\'t mount proc')
+    ctx.logger('agent-workers').debug('a debug line')
+    ctx.logger('agent-workers').error(new Error('a failed round'))
+    await host.dispose()
+    ctx.logger('agent-workers').warn('after the host')
+    const log = written.join('')
+    expect(log).toMatch(/^\S+Z info store: opened before the host$/m)
+    expect(log).toMatch(/^\S+Z warn agent-workers: Codex · main · review: unavailable: the probe failed: bwrap: Can't mount proc$/m)
+    expect(log).toMatch(/^\S+Z error agent-workers: Error: a failed round$/m)
+    expect(log).not.toContain('a debug line')
+    expect(log).not.toContain('after the host')
+    // Started again, it does not write what it wrote before.
+    const again = ctx.plugin(StorePluginHost)
+    await again
+    expect(written.join('').match(/opened before the host/g)).toHaveLength(1)
+    for (const fiber of [again, loader, ...kernel.reverse()]) await fiber.dispose()
+  })
+
+  it('drops a write that fails: logging never stops the host', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin({ name: 'log', apply: (c: Context) => exportLog(c, () => { throw new Error('EPIPE') }) })
+    await fiber
+    expect(() => ctx.logger('x').warn('lost')).not.toThrow()
+    expect(logLines({ sn: 1, ts: 0, name: 'x', type: 'warn', level: 2, args: ['two\nlines'] })).toBe('1970-01-01T00:00:00.000Z warn x: two\n1970-01-01T00:00:00.000Z warn x: lines\n')
+    await fiber.dispose()
   })
 })
 

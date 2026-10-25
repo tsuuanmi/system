@@ -728,7 +728,23 @@ async function main(argv: string[]): Promise<number> {
   return 2
 }
 
-main(process.argv.slice(2)).then((code) => process.exit(code), (error: unknown) => {
+/**
+ * Exit once stdout and stderr have handed everything on: `process.exit` drops what a pipe has not
+ * taken yet, so a JSON answer piped to a reader was cut at the pipe's 64 KiB (live, 2026-10-26).
+ * Each stream's empty write calls back after every write before it, or with the error of a stream
+ * that is gone.
+ */
+function exitWhenWritten(code: number): void {
+  process.exitCode = code
+  let open = 2
+  const done = (): void => {
+    if (--open === 0) process.exit(code)
+  }
+  process.stdout.write('', done)
+  process.stderr.write('', done)
+}
+
+main(process.argv.slice(2)).then(exitWhenWritten, (error: unknown) => {
   console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
+  exitWhenWritten(1)
 })

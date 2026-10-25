@@ -92,7 +92,7 @@ export interface WorkerAccount {
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -114,6 +114,12 @@ export interface CapabilityDescriptor {
    * routing never reads it, and only a provider plugin or the operator names a tool in it (INV-11).
    */
   title?: string
+  /**
+   * Why it takes no work (`@1.9`), when its state is `unavailable` and its source knows: a failed
+   * probe's detail, a workspace problem, a gate's reason. Plain text on one line, at most 300
+   * characters. For people only (the roster, capacity, health): routing never reads it.
+   */
+  unavailableReason?: string
   /**
    * The longest input this Worker takes, in characters (code points) of what it is sent, when its
    * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.

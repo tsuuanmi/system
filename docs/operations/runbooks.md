@@ -1462,7 +1462,9 @@ environment](../reference/cli.md#the-daemons-environment)). systemd expands noth
 write absolute paths. `system check --env-file ~/.config/system/daemon.env` checks it against
 the profile and prints names, never values. A clean `system shutdown` exits 0, so the unit is
 not restarted; a crash is. The daemon's output goes to `~/system-backups/daemon.log`, the unit's
-own messages to the journal: `journalctl --user -u system`.
+own messages to the journal: `journalctl --user -u system`. What the plugins log, errors, info and
+warnings (a Worker whose probe failed, a failed round), reaches `daemon.log` as one line each,
+`<time> <warn|info|error> <plugin>: <message>`, written to stderr by the plugin host while it runs.
 
 **Health.** `system health` exits 0 healthy, 1 degraded, 2 down (or not
 answering), and prints what to do for each check that is not ok. Run it on a

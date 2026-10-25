@@ -377,6 +377,13 @@ guesses.
   ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)). A record carrying it below
   `@1.8` is refused. Readers accept 1.0 to 1.8. Example:
   [`capability-descriptor.title.json`](../../schemas/examples/capability-descriptor.title.json).
+- `capability-descriptor@1.9` adds the optional `unavailableReason`: why a Worker whose `state` is
+  `unavailable` takes no work, as its source knows it (a failed probe's detail, a workspace that
+  cannot hold a worktree, an account's or pool's gate), plain text on one line of at most 300
+  characters. The [roster](../design/roster.md) shows it as the Worker's reason when its account
+  gives none, so capacity, health, and the Workers page say why; routing never reads it. A record
+  carrying it below `@1.9`, or with another state, is refused. Readers accept 1.0 to 1.9. Example:
+  [`capability-descriptor.unavailable-reason.json`](../../schemas/examples/capability-descriptor.unavailable-reason.json).
 
 ### `plan`
 

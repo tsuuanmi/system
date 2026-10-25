@@ -594,7 +594,7 @@ describe('agents source: every Worker of one runtime is one account, its sibling
     const { ctx } = await boot(agent, { workers: [metered({ pool: 'nope' }), worker({ id: 'second' })] }, undefined, LEDGER)
     // Before, the unmetered role took work whatever the account's metering said.
     expect(await states(ctx)).toEqual({ 'agent:reviewer': 'unavailable', 'agent:second': 'unavailable' })
-    expect(await run(ctx, 'k1', 'agent:second')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: 'agent:second: the pool nope of agent:reviewer, on the same sign-in, cannot be read; nothing was run' } })
+    expect(await run(ctx, 'k1', 'agent:second')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: 'agent:second: the pool nope of agent:reviewer, on the same sign-in, cannot be read (agent:reviewer draws on pool nope of max, which the resource ledger does not configure); nothing was run' } })
     expect(agent.runs).toEqual([])
   })
 })
