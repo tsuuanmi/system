@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster,parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -105,6 +105,9 @@ const USAGE = `Usage: system <command>
   roster [--json]           every Worker: its account (and its enrolled or quarantined state), role, tier, quota class,
                             availability (ready, busy N of M, resting until its reset, unavailable with why, quarantined),
                             the steps and board tasks it serves now, its load, and its account's pools and windows
+  capacity [--json]         right now: the free Workers, the quota lost soonest unused first; whose quota is unknown;
+                            stalled runs; accounts with no quota left; Workers that cannot work; ready tasks and the
+                            Worker each would likely go to (the roster's now)
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
                             class, rows, why a manifest is absent or refused, and what the manifest check found
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
@@ -664,6 +667,11 @@ async function main(argv: string[]): Promise<number> {
     case 'roster': {
       if (rest.some((arg) => arg !== '--json')) break
       console.log(await hostRoster(rest.includes('--json')))
+      return 0
+    }
+    case 'capacity': {
+      if (rest.some((arg) => arg !== '--json')) break
+      console.log(await hostCapacity(rest.includes('--json')))
       return 0
     }
     case 'plugins': {

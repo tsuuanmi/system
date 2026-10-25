@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.6', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.7', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -473,11 +473,16 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     for (const e of entries(failed)) expect(e.teams, e.worker).toEqual({ unknown: 'it could not be read: the router is busy' })
   })
 
-  it('the example validates against mcp-roster@1.6, and a record that is not one is refused', async () => {
+  it('the example validates against mcp-roster@1.7, its now included, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)
     expect(() => valid({ ...example.output, workers: { value: [{ ...value(example.output.workers)[0]!, availability: { state: 'ready' } }] } } as Roster)).toThrow()
     expect(() => valid({ ...example.output, workers: { unknown: '' } })).toThrow()
+    // A free list past its bound, or a free Worker with no quota field, is not one either.
+    expect(example.output.now).toBeDefined()
+    const now = example.output.now!
+    expect(() => valid({ ...example.output, now: { ...now, free: { value: { items: Array(17).fill({ worker: 'agent:a/develop', name: 'a', tier: 'standard', load: { unknown: 'no load' }, quota: null }), more: 0 } } } })).toThrow()
+    expect(() => valid({ ...example.output, now: { ...now, free: { value: { items: [{ worker: 'agent:a/develop', name: 'a', tier: 'standard', load: { unknown: 'no load' } }], more: 0 } } } } as unknown as Roster)).toThrow()
   })
 })

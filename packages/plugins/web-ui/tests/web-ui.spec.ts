@@ -340,7 +340,13 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
           liveness: { value: [{ execution: 'arun_00000000000000a2', state: 'unknown', since: AT, runId: 'run_old', summary: expect.stringContaining('ended without being known to be gone, holding session ses_9') }] } },
       ] },
     })
-    new SchemaRegistry().assertDef('mcp-roster@1.6', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.7', 'roster-output', roster)
+    // Capacity now, made on the server (T152), which the Workers page's Right now renders as it is: no Worker free, the account at its limit until its reset.
+    new SchemaRegistry().assertDef('mcp-roster@1.7', 'capacity', roster.now)
+    expect(roster.now).toMatchObject({
+      free: { value: { items: [], more: 0 } },
+      noQuota: { value: { items: [{ account: 'plus', name: 'Chatgpt · Studio Plus', until: { value: '2026-10-24T11:00:00.000Z' } }], more: 0 } },
+    })
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { ...auth, origin: 'https://evil.example' } })).status).toBe(403)
     expect((await fetch(`${origin}/ui/api/roster`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{}' })).status).toBe(405)

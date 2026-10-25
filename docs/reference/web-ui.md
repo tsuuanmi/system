@@ -380,14 +380,20 @@ Served always; each service it reads that is not mounted reads as unknown with w
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET roster` | — | the roster, an `mcp-roster@1.6` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+| `GET roster` | — | the roster, an `mcp-roster@1.7` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included; its `now` is capacity now ([capacity now](../design/roster.md#capacity-now)). A record its schema refuses is a defect: `500` with why |
 
 - Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
   in the operator's words (working, free, resting with when the first is free again, unavailable,
-  and quarantined when any); **Right now**, by name, each said in words and never by colour alone:
-  *Free:* the Workers that take work now (and how many tasks are ready, linked to the Board), *Stalled:*
-  each Worker with a stalled run (linked), *No quota left:* each account resting or at a limit and
-  until when, and *Cannot work:* each unavailable or quarantined Worker with why (T141); then the
+  and quarantined when any); **Right now**, rendered from the roster's `now` as the server made it
+  (the page computes none of it, T152), by name, each said in words and never by colour alone:
+  *Free:* the Workers that take work now, the one whose quota would be lost unused soonest first,
+  each with what is left (*Claude Code · science · develop (90 % of 5 h left, resets 10:10)*), and
+  how many tasks are ready, linked to the Board; *Quota unknown, not counted free:* each Worker
+  whose account's quota cannot be read, with why (only when any); *Stalled:* each Worker with a
+  stalled run (linked); *No quota left:* each account resting or at a limit and until when;
+  *Cannot work:* each unavailable or quarantined Worker with why (T141); and *Ready:* each ready
+  task with the Worker its start would likely go to (only when any). The tasks ready the page counts
+  are `now`'s when it read every active project, else the board's own count; then the
   Workers by account: each account once, under a small header
   with its name and its Workers' roles (*Claude Code · science: develop [code], review, review-2*),
   what stops it (*Its account is resting until 02:16 (in 2 h)*, signed out, quarantined, signed in

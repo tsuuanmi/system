@@ -1061,7 +1061,7 @@ guesses.
 
 | Tool | Scope | Does |
 |---|---|---|
-| `roster` | client | every Worker in one read model, projected on read: its account and the account's record, role, tier, quota class, availability, the work it serves now, its load, and its account's pools and windows ([roster](../design/roster.md)) |
+| `roster` | client | every Worker in one read model, projected on read: its account and the account's record, role, tier, quota class, availability, the work it serves now, its load, and its account's pools and windows ([roster](../design/roster.md)); and `now`, capacity now ([capacity now](../design/roster.md#capacity-now)) |
 
 - Input and output: [`mcp-roster.v1.json`](../../schemas/mcp-roster.v1.json) `$defs/roster-input`
   (no arguments) and `roster-output`. The record is computed on each call and never stored, so it
@@ -1114,12 +1114,38 @@ guesses.
   read through the engine's `teamExclusion()`; absent when the engine tells none or leaves it in;
   `unknown` on every Worker when the engine could not tell. A 1.5 record stays valid. Readers
   accept 1.0 to 1.6.
+- `mcp-roster@1.7` adds `now` (`$defs/capacity`), capacity now
+  ([capacity now](../design/roster.md#capacity-now)): one summary made on the server from the
+  roster and the board, which `system capacity` and the Workers page's *Right now* render as it
+  is. `asOf`; `accounts`, each account (`account`, `name`) with its pools' `windows` (`used`,
+  `resets`, `state`), `canWork` (`{value: false}` at a limit or when none of its Workers takes work,
+  `{unknown}` when its quota cannot be read, never read as room), and a one-line `summary`; `free`,
+  the Workers that take work now (ready, the account not at a limit, its quota known), each with
+  `worker`, `name`, `account`, `role`, `kinds`, `tier`, `load`, and `quota` (the window with the
+  least left among those with a current reading: `pool`, `window`, `seconds`, `used`, `left`,
+  `resetsAt`; `null` when no account quota applies), ordered by what would be lost unused per
+  minute (`left` over the minutes to `resetsAt`), the highest first, then the most left, the
+  soonest reset, the id, those with `quota: null` last; `quotaUnknown`, the Workers ready as their
+  source says whose quota cannot be read, with `why` (never counted free, INV-2); `stalled`
+  (`worker`, `name`, `execution`, `runId`, `since`, and `unread` when a Worker's liveness could not
+  be told); `noQuota` (`account`, `name`, `until`, known or unknown); `cannotWork` (`worker`,
+  `name`, `state` `unavailable` or `quarantined`, `reason`); and `ready`, the ready tasks of the
+  active board projects (`projectId`, `taskId`, `title`, `template`), each with `likely`, the Worker
+  a start would most likely go to as the start preview tells it (the first, in the free order, that
+  could take its first step a Worker runs; `{value: null}` when none that takes work now could;
+  `{unknown}` when it names no template, its template is not served, or the steps cannot be read).
+  Each list is `{value: {items, more}}` with at most 16 items, or `{unknown}` with why (the Workers
+  or the board could not be read). Present on every record the roster makes; a 1.6 record, with no
+  `now`, stays valid. Readers accept 1.0 to 1.7.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;
   past a bound with no count, the field is `unknown` with why, never cut silently. `work.unread`
-  says the runs read were cut by their bound (500).
-- The call's text content is the record rendered for a terminal (what `system roster` prints); the
+  says the runs read were cut by their bound (500). In `now`, 16 entries per list (`more`), 16
+  windows per account (else its `windows` are `unknown`), and the ready tasks of at most 32 active
+  projects (`ready.unread` past them).
+- The call's text content is the record rendered for a terminal (what `system roster` prints, its
+  last block *Right now*, what `system capacity` prints); the
   structured content is the record, validated before it is sent: a record its schema refuses is a
   defect, and the call is an error. Example:
   [`mcp-roster.call.json`](../../schemas/examples/mcp-roster.call.json).

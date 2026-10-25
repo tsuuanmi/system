@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.6`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.7`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -36,7 +36,8 @@ that change what runs).
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
 | event log | `ctx.eventLog.query({ type: 'usage.unknown' })`; `ctx.eventLog.query({ type: 'workflow.node.started', runId, nodeId })` | the runs whose usage the ledger could not count ([D25](resources.md#usage-the-ledger-cannot-count)); when a running step's current attempt started |
 | workflow engine | `ctx.workflow.usage(500)`; `teamExclusion()`, when it has it | the newest runs, each step's Worker and state, and the board task a run serves; the Workers the operator keeps out of teams (`teams.excludeWorkers`, [Workers left out of teams](teams.md#workers-left-out-of-teams)) |
-| board | `ctx.board.task(taskId)` | the title, project, and state of a task a listed step serves |
+| board | `ctx.board.task(taskId)`; `projects({ state: 'active' })` and `tasks({ projectId, states: ['ready'] })`, when it has them | the title, project, and state of a task a listed step serves; the ready tasks of the active projects, for [capacity now](#capacity-now) |
+| workflow engine's start preview | `ctx.workflow.templateSteps(template)`, when it has it | a ready task's template's steps, to tell the Worker its start would most likely go to |
 
 Each source is read once per roster. A surface passes the services it has mounted, so its plugin
 manifest names each one it consumes (optional): the roster works with any subset.
@@ -137,20 +138,69 @@ Every read and every list is bounded
 | `usage.unknown` entries | 10,000, a page at a time (the count health shares, `countUnknownUsage` in [`libs`](../../packages/libs/README.md)) | each pool's `unknownUsage` is `unknown`, never a partial number |
 | pools of one account, windows of one pool | 64 and 16 (the ledger's own are 64 and 8) | its `pools` are `unknown` |
 | Worker sources | 64 | `sources` is `unknown` |
+| each list of `now` (`CAPACITY_BOUNDS`) | 16 | the rest are counted in its `more` |
+| windows of one account in `now` | 16 | its `windows` are `unknown` |
+| active projects whose ready tasks `now` reads | 32, by project id | `ready.unread` says a ready task of another is not listed |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.6`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.7`](../reference/schemas.md#mcp-tool-roster)).
+
+## Capacity now
+
+The Workers page's *Right now* (T141) is also data, `now` on every roster (`mcp-roster@1.7`,
+`readCapacity` beside `readRoster` in `gateway-core`), so the lead, in any session, reads it
+through MCP `roster` or `system capacity` and gives work where capacity is free. It is made once,
+on the server, from the roster just projected, the descriptors it was projected from, and the
+board's ready tasks; the page renders it as it is and computes none of it. Like the roster, it
+decides nothing and stores nothing.
+
+| List | What | Order |
+|---|---|---|
+| `accounts` | each account: its pools' windows (`used`, `resets`, `state`), whether it takes new work now (`canWork`), and why in one line | by account id |
+| `free` | the Workers that take work now: `ready`, their account not at a limit, and its quota known; each with its id, name, account, role, kinds, tier, load, and `quota`, the window with the least left among those with a current reading (`null`: no account quota applies to it, it names no account or its account has no pool) | below |
+| `quotaUnknown` | the Workers ready as their source says whose account's quota cannot be read now, with why | by id |
+| `stalled` | each stalled agent run: the Worker, the run, since when; `unread` when a Worker's liveness could not be told | the longest stalled first |
+| `noQuota` | each account at a limit (its `limitUntil`, a closed pool, or a window at its limit), and until when: its `limitUntil`, else its closed pools' latest `until` when each names one, else its limited windows' latest reset, else `unknown` | by account id |
+| `cannotWork` | each `unavailable` or `quarantined` Worker, with its availability's summary | by id |
+| `ready` | the ready tasks of the active board projects (a paused project's cannot start), each with `likely`, the Worker a start would most likely go to | by project id, each project's oldest first |
+
+**Use it or lose it.** `free` lists first the Worker whose quota would be lost unused fastest: what
+is left of its window over the minutes until that window resets, the highest first; then the most
+left, the soonest reset, and the id. Of two free accounts, one at 10 % used resetting in 40 min
+and one at 85 % used resetting in 4 h, the first comes first (2.25 % a minute against 0.06 %). A
+Worker no account quota applies to comes after every one that has a quota, by id: it loses nothing
+by waiting.
+
+**Unknown is never free** ([INV-2](../architecture/invariants.md#inv-2-fail-closed)). A window
+with no reading, no used share, no reset, or a reset already past (the reading is older than the
+window it reads) is never read as room. A Worker whose account has no current reading in any
+window, or whose pools cannot be read, is listed in `quotaUnknown`, never in `free`, and its
+account's `canWork` is `unknown`. An account is `canWork: false` when it is at a limit or none of
+its Workers takes work (ready, or busy with a slot its source says is free). With no Workers read,
+every list is `unknown`, never empty; with no board, `ready` is.
+
+**The likely Worker** is told as the board's start preview tells it (T124, the same test,
+`canTakeStep`): the first Worker, in the order of `free` and then `quotaUnknown`, whose descriptor
+offers every capability the template's first step a Worker runs needs (an offer of no scope), at
+the step's tier or above, and that takes its kind of work. `null` when none that takes work now
+could; `unknown` when the task names no template (the lead chooses one), its template is not
+served, or the engine does not preview steps. Routing decides at the start; this is a forecast.
+
+The text rendering (`formatCapacity`) is the roster text's last block, *Right now (as of …)*, one
+line per list; `system capacity` prints that block, `system capacity --json` the record.
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.6` before it is sent (a record its schema
-  refuses is a defect, reported as an error); its text content is the rendering for a terminal.
+  content is the record, validated against `mcp-roster@1.7` before it is sent (a record its schema
+  refuses is a defect, reported as an error), with `now` ([capacity now](#capacity-now)); its text
+  content is the rendering for a terminal, ending with *Right now*.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
-  record.
+  record. **`system capacity [--json]`**: its *Right now* block, or its `now`.
 - **The Workers page** (`/ui/?view=workers`, the **Workers** tab, [web UI API](../reference/web-ui.md#roster)):
-  the counts (working, free, resting and until when the first is, unavailable), then the Workers by
+  the counts (working, free, resting and until when the first is, unavailable), *Right now*
+  rendered from the roster's `now` ([capacity now](#capacity-now)), then the Workers by
   account: each account once under a header with its roles, what stops it, and its quota; then its
   Workers' cards, each calm (what it is for, its status and why, what it does now, and *Kept out of
   teams by you* when the operator keeps it out of teams), every unknown,

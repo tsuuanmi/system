@@ -1379,29 +1379,32 @@ export const APP_JS = `'use strict'
   // The facts of a Worker or an account a person rarely needs, folded: what could not be read stays here, with why.
   const detailsOf = (rows) => el('details', { class: 'facts' }, el('summary', {}, 'details'), el('dl', {}, rows.filter(Boolean).flatMap(([term, value]) => [el('dt', {}, term), el('dd', {}, value)])))
   const recordText = (a) => a.id + (isKnown(a.record) ? ' · ' + a.record.value.kind + ' account, ' + a.record.value.status + (a.record.value.slot !== undefined ? ', slot ' + a.record.value.slot : '') : ' · its record is unknown (' + a.record.unknown + ')')
-  // Right now, by name (T141): who is free, who is stuck, and which accounts have no quota left, each said
-  // in words (never by colour alone); a free Worker while tasks are ready is waste the operator can end on the Board.
-  const glanceView = (workers, ready) => {
-    const few = (list) => list.slice(0, 6).join('; ') + (list.length > 6 ? '; and ' + (list.length - 6) + ' more' : '')
-    const free = workers.filter((w) => w.availability.state === 'ready').map((w) => w.name)
-    const stalled = workers.flatMap((w) => w.liveness && isKnown(w.liveness) ? w.liveness.value.filter((r) => r.state === 'stalled').map((r) => ({ w, r })) : [])
-    const spent = accountsOf(workers).filter((g) => g.account).flatMap((g) => {
-      const pools = poolsOf(g) || []
-      const limited = pools.some((p) => !p.available || p.windows.some((x) => x.state === 'limited'))
-      const until = g.account.limitUntil || pools.filter((p) => !p.available && p.until).map((p) => p.until).sort().at(-1)
-      return g.account.limitUntil || limited ? [g.name + (until ? ' until ' + clockOf(until) + ' (' + relative(until) + ')' : ', no reset known')] : []
-    })
-    const out = workers.filter((w) => w.availability.state === 'unavailable' || w.availability.state === 'quarantined').map((w) => w.name + ' (' + w.availability.summary + ')')
+  // Right now, by name (T141), rendered as the server made it (the roster's now, T152; docs/design/roster.md#capacity-now),
+  // never computed again here: who is free, the quota that would be lost unused first; whose quota is unknown (never
+  // counted free); who is stuck; which accounts have no quota left; who cannot work; and the ready tasks with the Worker
+  // each would likely go to. Each said in words (never by colour alone); a free Worker while tasks are ready is waste the
+  // operator can end on the Board.
+  const glanceView = (now, ready) => {
+    const has = (k) => isKnown(k) && k.value.items.length > 0
+    const said = (k, line) => !isKnown(k) ? 'unknown (' + k.unknown + ').' : k.value.items.length ? k.value.items.map(line).join('; ') + (k.value.more ? '; and ' + k.value.more + ' more' : '') : 'none.'
+    const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left, resets ' + clockOf(q.resetsAt) : 'no quota tracked'
+    const likely = (t) => isKnown(t.likely) ? (t.likely.value ? 'likely ' + t.likely.value.name : 'no Worker that takes work now can take it') : 'its Worker is unknown (' + t.likely.unknown + ')'
+    const stalled = now.stalled
     return el('section', { class: 'panel', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'),
       el('ul', {},
-        el('li', {}, el('strong', {}, 'Free: '), free.length ? [few(free), ready ? ['. ' + ready + (ready === 1 ? ' task is' : ' tasks are') + ' ready: start one on the ', pageLink('board', 'Board'), '.'] : '.'] : 'none.'),
-        el('li', {}, el('strong', {}, 'Stalled: '), stalled.length ? stalled.map(({ w, r }, i) => [i ? '; ' : '', w.name + ' ', r.runId ? runOpen(r.runId) : null]) : 'none.', stalled.length ? whatIs('stalled') : null),
-        el('li', {}, el('strong', {}, 'No quota left: '), spent.length ? few(spent) : 'none.'),
-        out.length ? el('li', {}, el('strong', {}, 'Cannot work: '), few(out)) : null))
+        el('li', {}, el('strong', {}, 'Free: '), has(now.free) ? [said(now.free, (f) => f.name + ' (' + quota(f.quota) + ')'), ready ? ['. ' + ready + (ready === 1 ? ' task is' : ' tasks are') + ' ready: start one on the ', pageLink('board', 'Board'), '.'] : '.'] : said(now.free)),
+        has(now.quotaUnknown) ? el('li', {}, el('strong', {}, 'Quota unknown, not counted free: '), said(now.quotaUnknown, (u) => u.name + ' (' + u.why + ')')) : null,
+        el('li', {}, el('strong', {}, 'Stalled: '), has(stalled) ? [stalled.value.items.map((s, i) => [i ? '; ' : '', s.name + ' ', s.runId ? runOpen(s.runId) : null]), stalled.value.more ? '; and ' + stalled.value.more + ' more' : null, whatIs('stalled')] : said(stalled),
+          isKnown(stalled) && stalled.value.unread ? el('span', { class: 'unknown' }, ' ' + stalled.value.unread) : null),
+        el('li', {}, el('strong', {}, 'No quota left: '), said(now.noQuota, (n) => n.name + (isKnown(n.until) ? ' until ' + clockOf(n.until.value) + ' (' + relative(n.until.value) + ')' : ', no reset known'))),
+        has(now.cannotWork) ? el('li', {}, el('strong', {}, 'Cannot work: '), said(now.cannotWork, (w) => w.name + ' (' + w.reason + ')')) : null,
+        has(now.ready) ? el('li', {}, el('strong', {}, 'Ready: '), said(now.ready, (t) => '"' + t.title + '": ' + likely(t))) : null))
   }
   async function workersView() {
     const roster = await api('roster')
-    const ready = await readyTasks()
+    // The ready tasks as capacity now read them, when it could read every active project; else the board's own count.
+    const now = roster.now
+    const ready = now && isKnown(now.ready) && !now.ready.value.unread ? now.ready.value.items.length + now.ready.value.more : await readyTasks()
     // One Worker's card; inside its account's section it is headed by its work (its role or tier).
     const card = (w, inAccount) => el('article', { class: 'panel request worker', 'aria-label': w.name + ' (' + w.worker + ')' },
       el('h4', {}, inAccount ? cut(w.name)[1] : w.name),
@@ -1449,7 +1452,7 @@ export const APP_JS = `'use strict'
     show(
       pageHead('workers'),
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
-      isKnown(roster.workers) && roster.workers.value.length ? glanceView(roster.workers.value, ready) : null,
+      now && isKnown(roster.workers) && roster.workers.value.length ? glanceView(now, ready) : null,
       ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
