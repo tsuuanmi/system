@@ -161,5 +161,22 @@ What constrains it:
     nothing, even on a free Worker with fresh readings.
   - `maxPerPass` is one allowance a pass, shared by settlement and selection. Each run admitted and
     each request newly opened is charged to it; a row left waiting is not.
+- **A dispatched attempt that continues a session** (T215, a regression of T205 seen live on
+  2026-10-26: T213's attempts 2 and 3 were spent in seconds). Binding the writing step to dispatch's
+  Worker made a choice that ignored the step's own routing restriction fatal: when the attempt
+  resumes the previous attempt's session, the step may only run on that session's Worker, so
+  another account's Worker, chosen for its quota, failed at once with nothing sent (`USER_ACTION`).
+  We fixed it at the source:
+  - Dispatch chooses within the restriction routing will apply to the step (INV-6). It works out
+    the session the run would resume, with the same check the start records as
+    `workflow.task-session`, resolves the step as admission would, and applies the engine's own
+    restriction (the session stays on its Worker, and any team rule). A Worker outside it is
+    refused in `dispatch.choice`, giving that reason. When the session's Worker is not free, the
+    task is not started now: the pass gives "waits for its session's Worker".
+  - As a second line, a dispatched start whose chosen Worker the step's restriction leaves out
+    (things changed between the choice and the start) is refused before the run takes its task. The
+    refusal is a `workflow.task-admission` decision, and the ask closes `refused`. No attempt is
+    spent, and dispatch chooses again. We took this over having the step wait for the hold: a
+    session's Worker does not change, so waiting could only end in the same failure.
 - Still open after D2: a task's priority (the pass orders by age), withdrawing an ask whose Worker's
   pool closed mid-wait, and D3 (the score in every route, its own ADR).

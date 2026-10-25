@@ -1158,7 +1158,7 @@ flowchart TD
 | a pass | every `dispatch.sweepSeconds` (default 60), and once at start after the runs are reconciled; one at a time in the process; a test passes its own time (`sweepDispatch(at)`) | it never throws: a pass that fails starts nothing, logged, and the next tries again |
 | live asks settled | first, oldest first, at most 64: an `asking` row adopts the open request on its subject, or asks it; an `asked` one reads the queue; an `approved` one, or a `starting` one with no run admitted yet (a crash before the admission), is checked again alike and starts when it can (a `starting` one with a run admitted adopts it first); each run admitted and each request newly opened is charged to the pass's one `maxPerPass` allowance, which selection then shares | a queue or board that does not answer: the row stays as it is |
 | ready tasks looked at | the `ready` tasks of `active` projects, by `createdAt`, then id, at most 128 (`MAX_LOOKED`); each skipped one gets its reason: an ask live or denied for this attempt, its project's dispatch paused, no template or one not served, `maxPerPass` taken, the hour's starts reached, a bound reached, the subject it writes held, no free Worker, the policy | every reason is kept as the last pass (`dispatch_status`, Home) on a durable row, so a restart shows the same |
-| Worker chosen | the run's writing step (its first step that proves `develop`, else its first Worker step), its requirement as the engine would build it from the admitted spec (INV-6); `ctx.workers.candidates` (routing's checks, nothing reserved); `quotaScoreOf` (`quota-score@2`, [routing](routing.md#candidates-without-a-reservation)) over each candidate's account's pools and the ledger's `quota()`: the first free one | none free: the task's reason lists each admitted Worker with why it is not |
+| Worker chosen | the run's writing step (its first step that proves `develop`, else its first Worker step), its requirement as the engine would build it from the admitted spec (INV-6); `ctx.workers.candidates` (routing's checks, nothing reserved); `quotaScoreOf` (`quota-score@2`, [routing](routing.md#candidates-without-a-reservation)) over each candidate's account's pools and the ledger's `quota()`: the first free one within the restriction routing will apply to the step (a resumed session's Worker; see below) | none free: the task's reason lists each admitted Worker with why it is not; a session's Worker not free: `waits for its session's Worker`, and nothing starts |
 | policy | `ctx.approvals.check({ class: 'dispatch', projectId })`, once per project per pass, its `autonomy` decision recorded | `forbid`: not dispatched; a queue that cannot judge: not dispatched |
 | auto, notify (D2) | the policy's verdict is the go: the row starts `approved` (mode `auto` or `notify`) with no request and no queue entry, its decisions the select, the choice, and that `autonomy` decision, and it starts as below; under `notify` the start also appends `workflow.dispatch.notice` (task, project, attempt, Worker, run) in the row's transaction, which the notifier tells as `dispatch.started` ([notifications](notifications.md#what-each-event-tells)) | as for any approved row: it waits for its Worker within `approvedHoldMinutes`, else closes unused and a new choice is made |
 | taken | in order: an `admission` decision (rule `dispatch.select`) over the tasks looked at, each with why; a `route` decision (rule `dispatch.choice`, its `hash` the quota settings') over every Worker with its keys or routing's refusal, and the sources that did not answer; then the row (`workflow_dispatch`), and `workflow.dispatch.chosen` | another process's live ask for the attempt (the row's unique index): this pass takes nothing for it |
@@ -1199,8 +1199,22 @@ flowchart TD
   run's start; a step that waited is checked against that deadline before it is routed again, so
   the Worker free again only after it does not start it. Then, or at once when a teams restriction leaves the Worker out, the attempt fails
   for the operator (`USER_ACTION`), not retried, so the board's next attempt is dispatch's to choose
-  again. A retry, an escalation, or a `continue` is never pinned back to it. A run that resumes its task's earlier session keeps that
-  session's Worker; the preference is then not taken.
+  again. A retry, an escalation, or a `continue` is never pinned back to it.
+- **Within the step's own restriction** (T215, INV-6): dispatch chooses the writing step's Worker
+  within the restriction routing will apply to it. It asks `TaskRuns.resumes` whether the run would
+  resume the session of the task's previous attempt (or of the one task it depends on), with the
+  same check the start records as `workflow.task-session`. It then resolves the template with that
+  session, as the start does, and applies the engine's own `restriction` (`admittedRestriction` in
+  `teams.ts`: the session stays on its Worker, and any team rule). A Worker outside it is refused in
+  `dispatch.choice` (`refused by routing: outside the Workers this step may take: session <id> stays
+  on its Worker`), however much quota it has. When the session's Worker is not free, the task is not
+  started this pass. Its reason is `waits for its session's Worker: …`, naming that Worker and why it
+  is not free, and no other Worker takes it. As a second line, the start itself checks the same
+  restriction for the Worker the row names, after the session is decided and before the task is
+  taken. If the restriction leaves that Worker out (things changed since the choice), the start is
+  refused, recorded as a `workflow.task-admission` decision. The row closes `refused`, no attempt is
+  spent, and the same pass chooses again. Without this, the step failed at once (`USER_ACTION`, no
+  wait), spending the attempt (T213's attempts 2 and 3).
 - **Pause**: `pauseDispatch(reason?, projectId?)` and `resumeDispatch(projectId?)` (MCP
   `dispatch_pause`, `dispatch_resume` with an optional `projectId`, operator scope;
   `system dispatch pause|resume [--project <id>]`), each a `gate` decision (rule `dispatch.pause`) on a

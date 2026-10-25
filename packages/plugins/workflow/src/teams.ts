@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { canonicalJson, extractJson, sha256 } from '@tsuuanmi/system-libs'
 import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
-import { type ArtifactRef, type CapabilityDescriptor, provesFor, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers-core'
+import { type ArtifactRef, type CapabilityDescriptor, type Classification, provesFor, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { sameFamilyOf } from './recovery.ts'
@@ -836,7 +836,7 @@ export function proving(listed: readonly CapabilityDescriptor[], requirement?: W
  * the route decision says so, when it is this team's conversation in this run (a run continued or
  * retried after the option changed); refused otherwise, nothing sent (REQ-TEAM-8, INV-13).
  */
-async function ownConversation(e: Engine, run: RunRow, spec: ResolvedNode, own: string[]): Promise<Restriction | { problem: string }> {
+async function ownConversation(e: Engine, run: Pick<RunRow, 'run_id'>, spec: ResolvedNode, own: string[]): Promise<Restriction | { problem: string }> {
   const sessionId = spec.session.sessionId!
   const stays = `session ${sessionId} stays on its Worker`
   const excluded = e.config.teams?.excludeWorkers ?? []
@@ -886,7 +886,7 @@ function exclusionShortage(team: NonNullable<ResolvedNode['team']>, listed: read
  * never runs a team on one family the operator's exclusion made (INV-2). A member already in its
  * conversation keeps it only as this team's own in this run, recorded (see {@link ownConversation}).
  */
-export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode, requirement?: WorkRequirement): Promise<Restriction | { problem: string }> {
+export async function restriction(e: Engine, run: Pick<RunRow, 'run_id'>, spec: ResolvedNode, requirement?: WorkRequirement): Promise<Restriction | { problem: string }> {
   const own = spec.session.sessionId ? e.ctx.workers.affinity(spec.session.sessionId) : undefined
   if (own) return ownConversation(e, run, spec, own)
   if (!spec.team?.member) return {}
@@ -941,4 +941,17 @@ export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode, re
   const excludedListed = listed.map((w) => w.worker).filter((w) => out.has(w))
   const reason = teams && excludedListed.length ? `${rule}; or, for ${bounded(excludedListed)}, left out of teams by the operator's teams.excludeWorkers` : rule
   return { restrict: { workers, reason }, distinctAccounts: rule, ...(teams ? { teams } : {}), ...noted }
+}
+
+/**
+ * The restriction routing will apply to a step's first execution, for a run not admitted yet (or
+ * just being admitted) as `runId`: `node` as its run's spec resolves it (with the session the run
+ * resumes, when it resumes one), its requirement as admission records it, then {@link restriction}
+ * (INV-6). Dispatch chooses a writing step's Worker within it, and a dispatched start whose chosen
+ * Worker it leaves out is refused before it takes its task (ADR-0064), so no attempt is spent on
+ * a step that could only fail.
+ */
+export async function admittedRestriction(e: Engine, runId: string, node: ResolvedNode, classification: Classification | undefined): Promise<Restriction | { problem: string }> {
+  const persistent = node.session.sessionId !== undefined || node.session.persist === true || node.session.member !== undefined
+  return restriction(e, { run_id: runId }, node, e.requirementOf(node, persistent, classification))
 }

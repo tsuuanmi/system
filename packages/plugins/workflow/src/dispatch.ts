@@ -10,7 +10,11 @@
  *   each request newly opened is charged to it.
  * - **The Worker** of a task's writing step is chosen by `quotaScoreOf` (`quota-score@2`) among the
  *   Workers routing admits (`ctx.workers.candidates`, nothing reserved): the first free one. An unknown
- *   or stale reading, or a metered pool, is never free (INV-2, D65).
+ *   or stale reading, or a metered pool, is never free (INV-2, D65). It is chosen within the
+ *   restriction routing will apply to that step (INV-6): when the attempt resumes the session of the
+ *   one before it, that session's Worker, and when that Worker is not free the task is not started
+ *   now ("waits for its session's Worker"). A start whose chosen Worker the step's restriction leaves
+ *   out by the time it starts is refused before it takes the task, spending no attempt (T215).
  * - **The policy** for `dispatch` decides: `ask` opens one request bound to the task, its attempt, and
  *   the Worker (INV-5), recorded on a row before it is asked and adopted after a crash; an attempt the
  *   operator approved through the board's gate starts without a second button (D62); `auto` starts it
@@ -42,6 +46,7 @@ import {
 } from './advisor.ts'
 import type { Engine } from './engine.ts'
 import { type ResolvedNode, resolve } from './spec.ts'
+import { admittedRestriction } from './teams.ts'
 import { type Config, type DispatchConfig, newId, now, type TaskDispatch, WorkflowFailure } from './types.ts'
 
 /** The rules a dispatch decision names (decision@1 `decider.id`), version 1. */
@@ -669,6 +674,13 @@ export class Dispatcher {
       }
       const classification = project.classification ?? this.e.ctx.egress.defaultClassification
       const requirement = this.e.requirementOf(step.node, step.node.session.persist === true, classification)
+      // The restriction routing will apply to that step (INV-6): the session its run would resume
+      // stays on its Worker, and any other the engine derives. The Worker is chosen within it.
+      const bound = await this.restrictionOf(task, task.template, step.node.nodeId, classification)
+      if ('problem' in bound) {
+        why(bound.problem)
+        continue
+      }
       const key = JSON.stringify(requirement)
       if (!looks.has(key)) looks.set(key, await this.e.ctx.workers.candidates!(requirement, { producer: 'workflow' }).catch((error: unknown) => ({ error: errorText(error) })))
       const look = looks.get(key)!
@@ -676,7 +688,15 @@ export class Dispatcher {
         why(`the Workers could not be read, so none can be shown free: ${look.error}`)
         continue
       }
-      const scored = this.score(look, pools, settings, counts, at)
+      const scored = this.score(look, pools, settings, counts, at, bound.restrict)
+      if (!scored.score.chosen && bound.session && bound.restrict) {
+        // Its run would resume a session that stays on its Worker: only that Worker takes it, and the
+        // task is not started now rather than on a Worker its step could never route to.
+        const mine = scored.score.candidates.filter((c) => bound.restrict!.workers.includes(c.worker)).slice(0, 4)
+        const lines = mine.map((c) => `${c.worker}: ${c.reasons.filter((r) => r.startsWith('not free: ') || r.startsWith('refused by routing: ')).map((r) => r.replace(/^not free: /, '')).join(', ') || 'not listed'}`)
+        why(`waits for its session's Worker: step ${step.node.nodeId} continues session ${bound.session}, and ${bound.restrict.reason} (${bound.restrict.workers.join(', ')}), which is not free now${lines.length ? `; ${lines.join('; ')}` : ''}; no other Worker takes it`.slice(0, 2000))
+        continue
+      }
       if (!scored.score.chosen) {
         // Each of the first admitted Workers, with every reason it is not free (bounded: the decision of a take lists them all).
         const lines = scored.score.candidates.filter((c) => c.admitted).slice(0, 4).map((c) => `${c.worker}: ${c.reasons.filter((r) => r.startsWith('not free: ')).map((r) => r.slice(10)).join(', ')}`)
@@ -820,6 +840,28 @@ export class Dispatcher {
     return node ? { node } : { problem: `template ${template} has no Worker step, so no Worker can be chosen for it` }
   }
 
+  /**
+   * The restriction routing will apply to the first execution of a task's writing step `nodeId`,
+   * were its run started now (INV-6; ADR-0064): its template resolved with the session the run would
+   * resume (`TaskRuns.resumes`), as the start resolves it, then the engine's own `restriction`.
+   * `session` names that session; a `problem` is why the step could not be routed at all.
+   */
+  private async restrictionOf(task: BoardTask, template: string, nodeId: string, classification: Classification): Promise<{ restrict?: { workers: string[]; reason: string }; session?: string } | { problem: string }> {
+    let spec
+    try {
+      spec = resolve(template, this.e.templates[template]!, {})
+      const session = await this.e.tasks.resumes(task, template, spec.nodes)
+      if (session) spec = resolve(template, this.e.templates[template]!, { sessionId: session })
+      const node = spec.nodes.find((n) => n.nodeId === nodeId)
+      if (!node) return {}
+      const bound = await admittedRestriction(this.e, `dispatch:${task.taskId}`, node, classification)
+      if ('problem' in bound) return { problem: `step ${nodeId} could not be routed if it started now: ${bound.problem}` }
+      return { ...(bound.restrict ? { restrict: bound.restrict } : {}), ...(session ? { session } : {}) }
+    } catch (error) {
+      return { problem: `the Workers step ${nodeId} may take could not be told, so none is chosen: ${errorText(error)}` }
+    }
+  }
+
   /** Every pool on the ledger by account, or why they could not be read (then no Worker is free). */
   private async pools(at: Date): Promise<Map<string, PoolState[]> | { unknown: string }> {
     try {
@@ -832,8 +874,12 @@ export class Dispatcher {
     }
   }
 
-  /** The score of the candidates for one requirement, with what the caller knows of each Worker. */
-  private score(look: Candidates, pools: Map<string, PoolState[]> | { unknown: string }, settings: QuotaSettings, counts: Counts, at: Date): { score: ReturnType<typeof quotaScoreOf>; inputs: QuotaCandidate[]; accountOf: Map<string, string>; repositoryOf: Map<string, string> } {
+  /**
+   * The score of the candidates for one requirement, with what the caller knows of each Worker. A
+   * Worker outside `restrict` (the restriction routing will apply to the step, INV-6) is refused, as
+   * routing would refuse it, so it is never chosen.
+   */
+  private score(look: Candidates, pools: Map<string, PoolState[]> | { unknown: string }, settings: QuotaSettings, counts: Counts, at: Date, restrict?: { workers: string[]; reason: string }): { score: ReturnType<typeof quotaScoreOf>; inputs: QuotaCandidate[]; accountOf: Map<string, string>; repositoryOf: Map<string, string> } {
     const s = this.settings
     const accountOf = new Map<string, string>()
     const repositoryOf = new Map<string, string>()
@@ -858,8 +904,9 @@ export class Dispatcher {
       const inRepo = repository ? counts.repositories.get(repository) ?? 0 : 0
       if (repository && inRepo >= s.maxRunningPerRepository) busy.push(`repository ${repository} has ${inRepo} dispatched run(s) or ask(s) (dispatch.maxRunningPerRepository ${s.maxRunningPerRepository}, D64)`)
       const metered = w.quotaClass === 'metered' || (Array.isArray(accountPools) && accountPools.some((p) => p.kind === 'api-key'))
+      const refused = [...c.failed.map((f) => f.reason), ...(restrict && !restrict.workers.includes(w.worker) ? [`outside the Workers this step may take: ${restrict.reason}`] : [])]
       return {
-        worker: w.worker, ...(c.failed.length ? { refused: c.failed.map((f) => f.reason) } : {}), tier: w.tier, tierRank: TIERS.indexOf(w.tier), quotaClass: w.quotaClass,
+        worker: w.worker, ...(refused.length ? { refused } : {}), tier: w.tier, tierRank: TIERS.indexOf(w.tier), quotaClass: w.quotaClass,
         quotaRank: rank(look.order.quota, w.quotaClass), metered, ...(w.load ? { load: w.load } : {}), priorityRank: rank(look.order.priority, w.worker),
         pools: accountPools as readonly QuotaPool[] | { unknown: string } | undefined, ...(busy.length ? { busy } : {}),
       }
