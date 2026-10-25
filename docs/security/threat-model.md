@@ -311,6 +311,38 @@
       command runs in, which the run's confinement already shows the agent;
       `true` and `false` print nothing. Any argument to `pwd`, `true`, or
       `false`, `/bin/echo`, or `printf` stays a `command`;
+    - both of the bullets above rest on the program a word names being that
+      program, which a shell's startup code can make false: a function or an
+      alias named `echo` or `cat` in `~/.bashrc`, `~/.bash_profile`,
+      `~/.profile`, a `BASH_ENV` or `ENV` file, or an exported function
+      (`BASH_FUNC_echo%%`) would run instead, on a later call the gate passed as
+      a read (T197, T198). The gate therefore takes a `Bash` call for a read
+      only for a runtime that enforces, in the shell that actually runs each
+      call, a non-login, non-interactive shell with no startup file and no
+      startup variable (`bash --norc --noprofile`, no `BASH_ENV` or `ENV`), a
+      shell the agent cannot choose (`cleanShells`). Codex does not: each
+      `exec_command` may name its own `shell` and `login`, which the hook does
+      not show, so a Worker can run `echo probe` in a login shell or in a
+      workspace script it just changed. So under Codex every `Bash` call,
+      the inspection commands and probes above included, is the `command` it
+      is, which the policy judges by its argv, and the two bullets above
+      apply only to a runtime that reports `cleanShells`. Whatever shell and
+      login mode a call picks, no startup code the agent wrote, nor the
+      worktree's or the operator's, runs before its command: every agent's
+      environment holds no variable a shell runs code from (`BASH_ENV`, `ENV`,
+      `ZDOTDIR`, `PROMPT_COMMAND`, `PS0`, `PS4`, `SHELLOPTS`, `BASHOPTS`,
+      `INPUTRC`, exported functions: dropped from the daemon's, a forwarded,
+      and an explicit value alike) nor one that moves its startup files
+      (`XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`), and a Codex
+      `shell_environment_policy.set` naming one, or `HOME`, is refused; and
+      each run's `HOME` is a fresh, empty, owner-only directory in the run
+      directory, outside the worktree (not git-visible), bound back into the
+      confinement read-only, so no tool call can write a startup file there
+      for a later call's shell, and removed with the run. A regression under
+      the real confinement plants a function named `echo` and `cat` in every
+      startup file a call can reach, and the next call's `echo` and `cat`,
+      plain, login, and interactive, are the real ones. That still does not
+      earn `cleanShells`: the shell program itself is the call's to pick;
     - a process inside Codex's sandbox that could read the socket's path cannot
       present the key, and the gate only answers: no call runs because of it;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
@@ -376,9 +408,15 @@
   Worker may write or `validate`; the release checklist verifies the sandbox
   Claude Code itself starts, live. Each command still passes the tool gate by its
   exact argv, so a shell metacharacter is forbidden and an unlisted command asks
-  the operator; only the fixed read-only inspection commands inside the workspace
-  and the probes that can do nothing (`echo`, `pwd`, `true`, `false`; as for
-  Codex, above) are reads. What remains:
+  the operator. No `Bash` call is a read (T198): Claude Code starts its Bash
+  tool's shells its own way and runs each command after sourcing a shell
+  snapshot kept in its home, so it does not report `cleanShells`, and even the
+  fixed inspection commands and the probes that can do nothing are each the
+  `command` they are. No command can plant startup code there: the sandbox
+  denies writes to Claude Code's home, which holds the snapshot, and to the
+  shells' `HOME` (`filesystem.denyWrite`), and its runs get the same private,
+  read-only `HOME` outside the worktree and no `BASH_ENV`, `ENV`, or exported
+  function, as for Codex, above. What remains:
   - a kernel escape from the namespaces, which neither bubblewrap nor the
     sandbox runtime claims to stop;
   - reads inside the confinement: a command can read what Claude Code itself

@@ -126,6 +126,17 @@ installed.
     variables are scrubbed. Its own sign-in lives in its home. An API key or
     OAuth token it should take from the environment must be forwarded by name
     (`forwardEnv`);
+  - **no startup code from the agent, the worktree, or the operator** (T198):
+    no variable a shell runs code from (`BASH_ENV`, `ENV`, an exported
+    function) or that moves its startup files (`ZDOTDIR`, `XDG_CONFIG_HOME`,
+    `XDG_CONFIG_DIRS`) reaches Claude Code; each run's `HOME` is a fresh, empty,
+    owner-only directory in the run directory (`<DSH_HOME>/system/run`),
+    outside the worktree, bound back **read-only** and removed with the run;
+    and the commands' sandbox denies writes to Claude Code's home, which holds
+    the shell snapshot it sources before each command, and to that `HOME`
+    (`commandSandbox`'s `filesystem.denyWrite`). Claude Code still starts its
+    Bash tool's shells its own way, so it never reports `cleanShells`, and the
+    gate takes none of its shell commands for a read;
 - **Run:**
   - the SDK's session id is reported as the native handle as soon as it appears,
     and `resume` continues it;

@@ -79,6 +79,7 @@ interface RuntimeEvidence {
   executes: boolean;                        // runs commands confined to the workspace
   readsConfined: boolean;                   // host state unreadable to the agent, proven now
   gatesToolCalls: boolean;                  // asks RunSpec.toolGate before every tool call
+  cleanShells?: boolean;                    // it starts every call's shell with no startup code (T198)
   homes?: boolean;                          // runs in the home a run or probe names (ADR-0051)
 }
 
@@ -212,9 +213,13 @@ What it does with a hook was established live on the host, and the bridge is bui
   `git`, which finds its repository and the configuration it runs (`core.fsmonitor`, a diff
   driver) from the working directory. They are safe as reads because none of them writes or
   runs anything: with no metacharacter the shell expands nothing, so the absolute words name the
-  same files from any directory, under the read confinement and Codex's own sandbox. A
-  non-default `shell` argument, which the hook does not see either, runs inside the same two
-  bounds. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
+  same files from any directory, under the read confinement and Codex's own sandbox; and they
+  are reads only under a runtime that enforces shells which read no startup code
+  ([below](#an-agents-shells-read-no-startup-code), `cleanShells`), so each word runs the program
+  it names. Codex is not one: `exec_command` takes a `shell` and a `login` argument the hook does
+  not see, so a call may run its words in a login shell, or in any executable the Worker names (a
+  workspace script among them). Under Codex every `Bash` call is therefore a `command`, judged by
+  its exact argv. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
   written or on disk): it changes only by a command the operator approved, or by the operator.
 - **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
   change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
@@ -937,6 +942,61 @@ Claude Code runs them under two confinements
   ([approvals](approvals.md#a-workers-tool-calls)): a word with a shell metacharacter is
   forbidden, and with the default studio policy any other command asks the operator unless a
   rule lists it.
+
+### An agent's shells read no startup code
+
+The gate takes a few `Bash` calls for reads (the probes `echo`, `pwd`, `true`, `false`, and the
+fixed inspection commands, [Codex's gate](#codexs-gate)) on the word that names their program. A
+shell's startup code can make that word name something else: a function or an alias called `echo`
+or `cat` in `~/.bashrc`, `~/.bash_profile`, `~/.profile`, the file `BASH_ENV` or `ENV` names, or an
+exported function (`BASH_FUNC_echo%%`), would run instead on a later call the gate passed as a read
+(T197, T198).
+
+A read is a read only where startup code is kept out in the shell that actually runs the call: a
+non-login, non-interactive shell that reads no startup file and no startup variable (`bash --norc
+--noprofile`, no `BASH_ENV` or `ENV`), started by the runtime itself on every call, in a shell the
+agent cannot choose or change. A runtime that enforces that reports `cleanShells`, and only for its
+runs does the gate take a `Bash` call for a read; every other runtime's call is the `command` it
+is, judged by its exact argv (INV-2). A check run once beside the agent proves nothing about the
+shells the agent starts later, its own way, so none is taken as a substitute. Neither runtime here
+pins its shell program:
+
+- **Codex** runs `exec_command` in the user's shell, as a login shell by default, and each call may
+  name its own `shell` and `login`, which its hook does not show. A call can run in a login shell,
+  or in any executable the Worker names, a workspace script it just changed among them.
+- **Claude Code** starts its Bash tool's shells its own way and runs each command after sourcing a
+  shell snapshot it keeps in its home (`CLAUDE_CONFIG_DIR`).
+
+So neither reports `cleanShells`, and under both every `Bash` call is a `command`. What both
+enforce, whatever shell and mode a call runs in, is that no startup code the agent wrote, nor the
+worktree's or the operator's, ever runs before a command (agent-runtime-core; the regression in
+`agent-runtime-core/tests/shells.spec.ts` plants a function named `echo` and `cat` in every startup
+file a call can reach, under the real confinement, and the next call's `echo` and `cat`, plain,
+login, and interactive, are the real ones):
+
+- **No startup variable.** `childEnvironment` drops every variable a shell runs code from
+  (`SHELL_STARTUP_VARIABLES`: `BASH_ENV`, `ENV`, `ZDOTDIR`, `PROMPT_COMMAND`, `PS0`, `PS4`,
+  `SHELLOPTS`, `BASHOPTS`, `INPUTRC`; and every exported function), from the daemon's environment,
+  a forwarded name, and an explicit value alike; `agentShellEnvironment` also drops the variables
+  that move a shell's startup files out of its home (`SHELL_CONFIG_DIRECTORIES`:
+  `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, where fish reads its). Codex refuses a
+  `shell_environment_policy.set` that names one, or that sets `HOME`, which would replace the
+  private home for its commands.
+- **A private, read-only home.** Each run's `HOME` is a fresh, empty, owner-only directory
+  (`agentHome`) in the runtime's run directory (`<DSH_HOME>/system/run`, hidden by the read
+  confinement), bound back **read-only**, never in the worktree, so git never sees it. It stays
+  empty for the whole run: a login or interactive shell finds no `~/.bash_profile`, `~/.profile`,
+  `~/.bashrc`, `~/.zshenv`, or `~/.config/fish/config.fish` there, and no tool call can write one
+  for a later call's shell (`EROFS`). The only startup files left are the system's (`/etc/profile`,
+  `/etc/bash.bashrc`), which no agent writes. It is removed with the run. `XDG_CACHE_HOME` keeps
+  naming the operator's cache, where tools find what they already downloaded and no shell reads
+  startup code; Claude Code's and Codex's own state stay in their homes (`CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`).
+- **No write where a shell reads startup code.** Claude Code's command sandbox
+  (`commandSandbox`) denies writes to its home, which holds the shell snapshot it sources before
+  each command, and to the shells' `HOME` (`filesystem.denyWrite`, which wins over `allowWrite`);
+  its file tools reach the workspace only. Codex's commands and patches write the workspace only
+  (its `workspace-write` sandbox), and its home holds no shell startup code.
 
 The Antigravity CLI offers no command tool (`run_command` is denied), so its Workers never
 `validate`: agy's own terminal sandbox (`--sandbox`) has no model-free proof.

@@ -4,6 +4,7 @@
  * so the probe proves what a run gets.
  * @module @tsuuanmi/system-runtime-codex-sdk/overrides
  */
+import { SHELL_CONFIG_DIRECTORIES, isShellStartupVariable } from '@tsuuanmi/system-agent-runtime-core'
 import { GATE_ENV } from './gate.ts'
 
 /**
@@ -46,7 +47,9 @@ function flatten(config: Record<string, unknown>, prefix = ''): string[] {
 /**
  * Why the operator's configuration cannot be held exactly, or undefined: an MCP server (started
  * outside Codex's sandbox), its own hooks (the gate's hook is the run's), a feature the runtime
- * turns off turned on, hooks turned off, or an environment exclusion that is not a list of names.
+ * turns off turned on, hooks turned off, an environment exclusion that is not a list of names, or a
+ * variable set for its commands that a shell runs code from (`BASH_ENV`, `ENV`, …) or that would
+ * replace their private `HOME` (T198).
  */
 export function refused(config: Record<string, unknown>): string | undefined {
   if ('mcp_servers' in config) return 'mcp_servers in config would reach the Worker outside its sandbox'
@@ -57,6 +60,13 @@ export function refused(config: Record<string, unknown>): string | undefined {
   if (features.hooks !== undefined && features.hooks !== true) return 'features.hooks in config: the run\'s tool gate is a hook'
   const exclude = isTable(config.shell_environment_policy) ? config.shell_environment_policy.exclude : undefined
   if (exclude !== undefined && !(Array.isArray(exclude) && exclude.every((e) => typeof e === 'string'))) return 'shell_environment_policy.exclude in config is not a list of names'
+  // A shell started with one of these runs code before the command it is given (T198): a gated read would not run the program it names.
+  const set = isTable(config.shell_environment_policy) ? config.shell_environment_policy.set : undefined
+  const startup = isTable(set) ? Object.keys(set).find(isShellStartupVariable) : undefined
+  if (startup) return `shell_environment_policy.set.${startup} in config: a shell would run code from it before each command`
+  // HOME, and the XDG configuration directories, are where a shell reads its startup files: they stay the run's private, read-only home.
+  const moved = isTable(set) ? ['HOME', ...SHELL_CONFIG_DIRECTORIES].find((name) => Object.hasOwn(set, name)) : undefined
+  if (moved) return `shell_environment_policy.set.${moved} in config: its commands' shells would read their startup files there instead of the run's private home`
   try {
     flatten(config)
   } catch (error) {

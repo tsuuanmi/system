@@ -28,6 +28,8 @@ const confined = {
   confine: confinement, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), nested: async () => undefined, status: async () => undefined,
   launcher: (c: { command: string; args: string[] }) => `launcher:${[c.command, ...c.args].join(' ')}`,
 }
+/** A run's private shell home (T198): made in the run directory. */
+const SHELL_HOME = expect.stringMatching(new RegExp(`^${runDir}/agent-home-`))
 const runtime = (s = scripted(), extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) =>
   new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', runDir, hook: HOOK, client: s.client, version: async () => '0.164.0', mcpServers: async () => [], exec: probeExec(), ...confined, ...extra })
 
@@ -42,7 +44,7 @@ const command = (id: string, cmd: string): Step => ({ call: { tool: 'Bash', inpu
 describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
   it('probes the installed codex: both sandboxes, resumable, able to run confined commands, and gating every tool call', async () => {
     expect(await runtime().probe()).toMatchObject({
-      available: true, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true,
+      available: true, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, cleanShells: false,
       detail: 'Codex 0.164.0; host state hidden by /usr/bin/bwrap; tool calls gated: a PreToolUse hook answered before each tool call, its deny held, and no terminal session started',
     })
     expect(await new CodexRuntime({ findExecutable: () => undefined }).probe()).toMatchObject({ available: false, sandboxes: [] })
@@ -100,6 +102,53 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(() => new CodexRuntime({ home: 'relative' })).toThrow(/absolute/)
   })
 
+  it('gives each run\'s shells a fresh, empty, private HOME outside the workspace, removed with the run, and no variable a shell runs code from (T198)', async () => {
+    const config = process.env.XDG_CONFIG_HOME
+    Object.assign(process.env, { BASH_ENV: join(workspace, '.bashrc'), ENV: join(workspace, '.profile'), 'BASH_FUNC_cat%%': '() { id; }', XDG_CONFIG_HOME: workspace })
+    try {
+      const seen: Array<{ env: Record<string, string>; entries: string[] }> = []
+      for (const sandbox of ['read-only', 'workspace-write'] as const) {
+        const s = scripted()
+        const client = s.client
+        // What Codex is started with, as it starts: its environment, and what its HOME holds then.
+        await runtime(s, {
+          env: { ZDOTDIR: workspace }, client: (options) => (seen.push({ env: options.env as Record<string, string>, entries: readdirSync((options.env as Record<string, string>).HOME!) }), client(options)),
+        }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
+      }
+      expect(seen).toHaveLength(2)
+      for (const { env, entries } of seen) {
+        for (const name of ['BASH_ENV', 'ENV', 'ZDOTDIR', 'BASH_FUNC_cat%%', 'XDG_CONFIG_HOME']) expect(env, name).not.toHaveProperty(name)
+        expect(env.HOME).toEqual(SHELL_HOME)
+        expect(env.HOME!.startsWith(workspace)).toBe(false)
+        expect(entries).toEqual([])
+        expect(existsSync(env.HOME!)).toBe(false)
+      }
+      expect(seen[0]!.env.HOME).not.toBe(seen[1]!.env.HOME)
+    } finally {
+      delete process.env.BASH_ENV
+      delete process.env.ENV
+      delete process.env['BASH_FUNC_cat%%']
+      if (config === undefined) delete process.env.XDG_CONFIG_HOME
+      else process.env.XDG_CONFIG_HOME = config
+    }
+    // Nor does the operator's configuration set one for its commands, nor replace their HOME (the worktree's startup files would be read there).
+    for (const name of ['BASH_ENV', 'ENV', 'BASH_FUNC_ls%%', 'HOME', 'XDG_CONFIG_HOME', 'XDG_CONFIG_DIRS']) {
+      expect(() => new CodexRuntime({ config: { shell_environment_policy: { set: { [name]: workspace } } } }), name).toThrow(`shell_environment_policy.set.${name}`)
+    }
+    expect(() => new CodexRuntime({ config: { shell_environment_policy: { set: { LANG: 'C.UTF-8' } } } })).not.toThrow()
+    // The effective command environment: Codex's own HOME is the private one, and no override Codex is given sets HOME or a startup variable.
+    const s = scripted()
+    await runtime(s, { config: { shell_environment_policy: { inherit: 'all', set: { LANG: 'C.UTF-8' } } } }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
+    expect(s.lastClient.env!.HOME).toEqual(SHELL_HOME)
+    expect(s.lastClient.overrides).toContain('shell_environment_policy.set.LANG="C.UTF-8"')
+    expect(s.lastClient.overrides!.filter((o) => /^shell_environment_policy\.set\.(HOME|BASH_ENV|ENV|BASH_FUNC_)/.test(o))).toEqual([])
+  })
+
+  it('never reports cleanShells: each call picks its own shell and login mode, which its hook does not show, so no gate takes its shell command for a read (T198)', async () => {
+    expect(await runtime().probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false })
+    expect(await runtime(scripted(), { prove: async () => ({ confined: false, detail: 'no' }) }).probe()).not.toMatchObject({ cleanShells: true })
+  })
+
   it('starts Codex through bubblewrap with the host state and the terminal devices hidden, and only its own home writable (ADR-0024)', async () => {
     const s = scripted()
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
@@ -112,10 +161,10 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     if (pts) expect(s.lastClient.program).toContain(`--tmpfs ${pts}`)
     if (ptmx && !(pts && (ptmx === pts || ptmx.startsWith(`${pts}/`)))) expect(s.lastClient.program).toContain(`--ro-bind /dev/null ${ptmx}`)
     else expect(s.lastClient.program).not.toContain('--ro-bind /dev/null /dev/')
-    // Its home is bound back writable; a read-only Worker's workspace read-only.
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w'] })
+    // Its home is bound back writable; its shells' private home read-only (T198), so no startup file can be written there; a read-only Worker's workspace read-only.
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w', SHELL_HOME] })
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'workspace-write' }, new AbortController().signal)
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [SHELL_HOME] })
   })
 
   it('offers no Worker, and runs nothing, when reads cannot be confined (ADR-0024, REQ-WRK-6)', async () => {
@@ -185,7 +234,7 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     expect(hookOverrides(process.execPath, HOOK)).toEqual(hooks)
     // The channel reaches the hook through Codex's environment, kept from its commands; its directory, the hook, and node are bound back read-only.
     expect(Object.keys(s.lastClient.env!)).toEqual(expect.arrayContaining(['SYSTEM_CODEX_GATE_SOCKET', 'SYSTEM_CODEX_GATE_KEY']))
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [SHELL_HOME, expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath] })
     // Closed with the run: nothing of the channel is left.
     expect(readdirSync(runDir).filter((f) => f.startsWith('codex-gate-'))).toEqual([])
     const ungated = scripted()

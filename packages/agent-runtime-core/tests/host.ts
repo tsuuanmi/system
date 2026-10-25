@@ -38,7 +38,7 @@ function onPath(name: string): string | undefined {
  * regression in it (a wrong argument, a bad mount) into "this host cannot confine" and skip the very
  * tests that should catch it. Once these run, a production command line that fails is a test failure.
  */
-const PROBES: ReadonlyArray<{ what: string; args: readonly string[] }> = [
+export const PROBES: ReadonlyArray<{ what: string; args: readonly string[] }> = [
   // An agent child's: the host as is, its own PID namespace, /proc and session, a tmpfs over a path.
   { what: 'a PID namespace with its own /proc', args: ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc', '--tmpfs', '/tmp'] },
   // A check's: the host read-only with its own /dev, no network, a file hidden and a directory bound back.
@@ -48,16 +48,24 @@ const PROBES: ReadonlyArray<{ what: string; args: readonly string[] }> = [
   },
 ]
 
+/** Runs a probe's command line to its end; throws (with its `stderr`) when it fails. */
+export type ProbeRun = (bwrap: string, args: string[]) => void
+
+const runProbe: ProbeRun = (bwrap, args) => {
+  execFileSync(bwrap, args, { stdio: ['ignore', 'ignore', 'pipe'], timeout: 15_000 })
+}
+
 /**
  * Why `bwrap` cannot confine a command here, undefined when it can: it runs `true` under each of
- * {@link PROBES}, once per test file. Inside a run's check this is a nested bubblewrap, which a host
- * can refuse.
+ * {@link PROBES} (with `run`, by default for real), once per test file, and names the first that
+ * fails, with the first line of what bubblewrap said. Inside a run's check this is a nested
+ * bubblewrap, which a host can refuse.
  */
-function refusal(bwrap: string | undefined): string | undefined {
+export function refusal(bwrap: string | undefined, run: ProbeRun = runProbe): string | undefined {
   if (!bwrap) return 'no bwrap on PATH'
   for (const probe of PROBES) {
     try {
-      execFileSync(bwrap, [...probe.args, '--', 'true'], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 15_000 })
+      run(bwrap, [...probe.args, '--', 'true'])
     } catch (error) {
       const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n')[0]
       return `${bwrap} cannot run ${probe.what} here${stderr ? ` (${stderr.slice(0, 160)})` : ''}`

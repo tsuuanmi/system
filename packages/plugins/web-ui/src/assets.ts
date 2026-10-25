@@ -125,6 +125,9 @@ export const APP_JS = `'use strict'
     const id = 'does-' + (++doesCount)
     return [el('button', Object.assign({ type: 'button' }, props, { 'aria-describedby': id }), label), el('span', { id, class: 'does' }, consequence)]
   }
+  // What Deny does to a start System proposes (ADR-0064), the same on its request's card and under Starts awaiting
+  // approval: nothing starts, and that attempt is never asked about again (T197).
+  const DISPATCH_DENY = 'does not start it, and this attempt is not asked again'
   const api = async (path, body) => {
     const response = await fetch('/ui/api/' + path, body === undefined
       ? { headers: { authorization: 'Bearer ' + token } }
@@ -575,7 +578,7 @@ export const APP_JS = `'use strict'
       d = { title: r.action.summary, subject: 'attempt ' + (asked ? Number(asked[2]) + 1 : '?') + ' of ' + taskOf(r.requester.taskId) + projectText,
         approve: 'System starts that attempt on the Worker named, at its next look, while the task is still ready and that Worker still free.',
         deny: 'Nothing starts, and System does not ask again for this attempt; you or the lead may still start it from the Board.',
-        yes: 'starts it', no: 'does not start it',
+        yes: 'starts it', no: DISPATCH_DENY,
         next: 'System starts the run at its next look, within a minute, on the Worker named: see it under Runs.' }
     } else if (r.action.class === 'remediation' && r.requester.component === 'workflow') {
       d = { title: 'Run a fix: ' + r.action.summary, subject: 'plan ' + ref + ' of run ' + (r.requester.runId || '?'), yes: 'runs the fix', no: 'does not run it',
@@ -1101,9 +1104,11 @@ export const APP_JS = `'use strict'
     const name = (worker) => names.get(worker) || worker
     const item = (a) => {
       const r = requests.get(a.requestId)
-      // Approve / Deny, as on its request's card (T191); the item is named by its task.
+      // Approve / Deny, as on its request's card (T191); the item is named by its task. A Deny is final for
+      // this attempt (System does not ask about it again, T197): its accessible description says so, and a
+      // short note beside the buttons keeps it in sight.
       const [yes, yesDoes] = decision('Approve', 'starts it on ' + name(a.worker), { class: 'primary' })
-      const [no, noDoes] = decision('Deny', 'does not start it')
+      const [no, noDoes] = decision('Deny', DISPATCH_DENY)
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
@@ -1113,7 +1118,8 @@ export const APP_JS = `'use strict'
         a.windows.map((w) => el('div', { class: 'window' }, w.used !== undefined ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(w.used), 'aria-hidden': 'true' }) : null, el('span', {}, goWindow(w)))),
         fold('Why this Worker?', el('div', {}, a.why), read.length ? el('div', { class: 'muted' }, read.join(' · ')) : null, el('div', { class: 'muted' }, 'project ' + a.projectId)),
         el('div', { class: 'actions' }, yes, yesDoes, no, noDoes, expires(r.expiresAt, 'denied'), ' ',
-          el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, 'Review request')))
+          el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, 'Review request')),
+        el('p', { class: 'muted deny-note' }, 'Deny is final for attempt ' + a.attempt + ': it is not asked again.'))
     }
     const last = dispatch.lastPass
     const reasons = last && last.tasks.length ? fold('Why ready tasks did not start (' + relative(last.at) + ')',

@@ -10,6 +10,15 @@
  *   that start work outside the run (`FEATURES_OFF`);
  * - the `codex` process starts without the daemon's credentials: only the variables the operator
  *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
+ * - its shells run no startup code its agent wrote (T198): each run's `HOME` is a fresh, empty,
+ *   owner-only directory in the run directory, outside the workspace, bound back read-only (so no
+ *   startup file is there, login shell or not, and no call can write one) and removed with the run;
+ *   no variable a shell runs code from (`BASH_ENV`, `ENV`, an exported function) or that moves its
+ *   startup files (`ZDOTDIR`, `XDG_CONFIG_HOME`) reaches it, nor is one set for its commands, nor
+ *   `HOME` (`shell_environment_policy.set` naming one is refused). Codex still starts each command
+ *   in the shell program and login mode the call asks for (`exec_command`'s `shell` and `login`),
+ *   which its hook does not show, so it never reports `cleanShells`, and a gate takes none of its
+ *   shell commands for a read;
  * - it runs in its own Codex home (`home`, never the operator's `~/.codex`), or in the home a run
  *   or probe names (one account's, ADR-0051), which must configure no MCP server: Codex starts those
  *   outside its sandbox, so a Worker would reach their tools (the system MCP server among them).
@@ -50,8 +59,9 @@ import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions } from '
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
-  type RuntimeEvidence, type ToolCall, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement, readHomeJson, withMetering, writeLauncher,
+  type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
+  type RuntimeEvidence, type ToolCall, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement, readHomeJson, withMetering,
+  writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
@@ -203,7 +213,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
       return unavailable(`Codex ${version} is not signed in inside its home ${home} (${signedOut}): sign in there (CODEX_HOME=${home} codex login), configure a model provider (config), or forward an API key by name (forwardEnv)`)
     }
     const gate = await this.proveGate(executable, home)
-    return { ...found, detail: `Codex ${version}; ${reads.detail}; ${gate.detail}`, readsConfined: true, gatesToolCalls: gate.proven }
+    // Never cleanShells (T198): each call picks its own shell and login mode, which the hook does not show.
+    return { ...found, detail: `Codex ${version}; ${reads.detail}; ${gate.detail}`, readsConfined: true, gatesToolCalls: gate.proven, cleanShells: false }
   }
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
@@ -232,6 +243,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     let failure: string | undefined
     let id: string | null = null
     let launcher: string | undefined
+    // A fresh private home for its shells, outside the workspace, removed with the run (T198).
+    let shell: AgentHome | undefined
     // The child's environment, set before Codex starts: its `TZ` is the zone a limit's reset is read in.
     let env: Record<string, string> | undefined
     // A run that ended before Codex finished (a stop, a timeout, a drain, a deferred call) reports
@@ -243,6 +256,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
         : `Codex ${how} before it completed a turn`,
     })
     try {
+      shell = this.shellHome(spec.workspace)
       if (spec.toolGate) {
         try {
           channel = await openGateChannel({ parent: this.runDir, gate: spec.toolGate, workspace: spec.workspace, signal: controller.signal, onDefer: stop })
@@ -251,8 +265,10 @@ export class CodexRuntime implements AgentRuntimeProvider {
         }
       }
       // The workspace is bound back as the sandbox allows; Codex's own sandbox still confines writes.
+      // The shells' home is bound back read-only (T198): it stays empty, so whatever shell and login
+      // mode a call picks finds no startup file there, and no call can write one for a later call.
       const own = channel ? [channel.dir, this.hook(), this.node()] : []
-      const bind = spec.sandbox === 'workspace-write' ? { writable: [home, spec.workspace], readOnly: own } : { writable: [home], readOnly: [spec.workspace, ...own] }
+      const bind = spec.sandbox === 'workspace-write' ? { writable: [home, spec.workspace], readOnly: [shell.path, ...own] } : { writable: [home], readOnly: [spec.workspace, shell.path, ...own] }
       let confined: { command: string; args: string[] }
       try {
         confined = confinedCommand(executable, [], this.confinement(bind))
@@ -262,7 +278,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       // A gated run's launcher names its own channel, so it is the run's alone, and removed with it.
       const program = this.options.launcher ? this.options.launcher(confined) : (launcher = defaultLauncher(this.runDir, confined))
       if (!channel) launcher = undefined
-      env = this.environment(home, channel)
+      env = this.environment(home, channel, shell.path)
       const client = (this.options.client ?? ((options) => new Codex(options)))({
         codexPathOverride: program,
         configOverrides: [...this.overrides, ...(channel ? hookOverrides(this.node(), this.hook()) : [])],
@@ -305,6 +321,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       signal.removeEventListener('abort', stop)
       await channel?.close()
       if (launcher) rmSync(launcher, { force: true })
+      shell?.remove()
     }
     if (signal.aborted) throw ended(new ProviderError('aborted', 'codex-sdk: the run was stopped'), 'was stopped')
     if (ungated) throw ended(ungatedError(ungated), 'was stopped at a tool call that passed no gate')
@@ -447,9 +464,30 @@ export class CodexRuntime implements AgentRuntimeProvider {
     return checked
   }
 
-  /** Codex's environment: without the daemon's credentials (INV-8), in its home, with the gate's channel. */
-  private environment(home: string, channel?: GateChannel): Record<string, string> {
-    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: home, ...channel?.env })
+  /**
+   * Codex's environment: without the daemon's credentials (INV-8), in its home, with the gate's
+   * channel; for a run, with `HOME` its private shell home and no variable a shell runs code from
+   * (T198).
+   */
+  private environment(home: string, channel?: GateChannel, shellHome?: string): Record<string, string> {
+    const env = childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: home, ...channel?.env })
+    return shellHome === undefined ? env : agentShellEnvironment(env, shellHome)
+  }
+
+  /**
+   * A fresh, empty, owner-only `HOME` for one run's shells (T198), in the run directory (hidden by
+   * the confinement, the home bound back read-only), never in `workspace`: Codex runs a command in
+   * the user's shell, as a login shell unless asked otherwise, which reads the profile files of its
+   * `HOME`; there are none, and none can be written. The call still picks its shell program and
+   * login mode, which its hook does not show, so no gated shell command is taken for a read.
+   */
+  private shellHome(workspace: string): AgentHome {
+    try {
+      ensurePrivateDir(this.runDir)
+      return agentHome(this.runDir, workspace)
+    } catch (error) {
+      throw new ProviderError('config_error', `codex-sdk: its shells' private home cannot be made: ${firstLine(error)}; nothing was run`, { cause: error })
+    }
   }
 
   private hook(): string {

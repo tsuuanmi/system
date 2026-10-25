@@ -109,8 +109,10 @@ again from now. When and each Worker's status then are kept in this browser only
 task's title, its attempt, the Worker's roster `name`, each window of its account as *5 h · used 12 %
 · reserve 20 % · resets 14:20* with a small bar, *Why this Worker?* folded (the reason, when each
 window was read, the project), *Expires in 40 min · No response: denied*, and **Approve** (*starts
-it on* the Worker) and **Deny** (*does not start it*), which are the approval queue's verdicts on the request's exact subject (`POST
-approvals/decide`, INV-5); **Review request** goes to the request's full card in the queue, where it
+it on* the Worker) and **Deny** (*does not start it, and this attempt is not asked again*, its
+accessible description, here and on the request's card), which are the approval queue's verdicts on the request's exact subject (`POST
+approvals/decide`, INV-5), with a short note in sight under them, *Deny is final for attempt N: it is
+not asked again.* (T197); **Review request** goes to the request's full card in the queue, where it
 is described as a start. It also says *Automatic starts off* (`dispatch.enabled: false`, folded) or
 *Automatic starts paused · why · since when* (*How to resume*, `system dispatch resume`, folded), or
 for each project paused on its own *Automatic starts paused in project … · why · since when · resume:

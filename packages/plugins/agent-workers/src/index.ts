@@ -1950,6 +1950,8 @@ export class AgentWorkers extends Service {
     const gate = runGate(this.ctx, {
       runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
       classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : {}),
+      // A shell command is taken for a read only where the runtime enforces shells that read no startup code (T198).
+      shellReads: evidence.cleanShells === true,
     })
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,

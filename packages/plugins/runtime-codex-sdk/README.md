@@ -17,6 +17,17 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   - the `codex` process starts without the daemon's credentials (INV-8):
     always with `childEnvironment` (agent-runtime-core), so credential-shaped
     and `DSH_*` variables are scrubbed;
+  - its shells run no startup code its agent wrote, nor the worktree's or the
+    operator's (T198): no variable a shell runs code from (`BASH_ENV`, `ENV`,
+    an exported function) or that moves its startup files (`ZDOTDIR`,
+    `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`; a `shell_environment_policy.set`
+    naming one, or `HOME`, is refused), and each run's `HOME` a fresh, empty,
+    owner-only directory in the run directory, outside the worktree, bound back
+    **read-only** (no startup file is there, login shell or not, and no call can
+    write one) and removed with the run. Each `exec_command` still picks its own
+    `shell` program and `login`, which the hook does not show, so it never
+    reports `cleanShells`, and the gate takes none of its shell commands for a
+    read;
   - Codex runs in **its own Codex home** (`CODEX_HOME`, config `home`, default
     `<DSH_HOME>/system/codex-home`, created owner-only), never the operator's
     `~/.codex`, where `system mcp-config codex` puts the `system` MCP server.

@@ -19,6 +19,15 @@
  *   reports `executes`; without either proof nothing writes or runs a command;
  * - Claude Code starts without the daemon's credentials: only the variables the operator
  *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
+ * - its shells run no startup code its agent wrote (T198): each run's `HOME` is a fresh, empty,
+ *   owner-only directory in the run directory, outside the workspace, bound back read-only (so no
+ *   startup file is there, and none can be written) and removed with the run; no variable a shell
+ *   runs code from (`BASH_ENV`, `ENV`, an exported function) or that moves its startup files
+ *   (`ZDOTDIR`, `XDG_CONFIG_HOME`) reaches it; and its commands' sandbox denies writes to its home,
+ *   where Claude Code keeps the shell snapshot it sources before each command, and to that `HOME`
+ *   (`commandSandbox`), as its file tools reach the workspace only. Claude Code still starts its
+ *   Bash tool's shells its own way, so it never reports `cleanShells`, and a gate takes none of its
+ *   shell commands for a read;
  * - a run or probe may name another home (one account's, ADR-0051), an owner-only directory that
  *   exists, which then stands for its own everywhere; who is signed in to a home (`identity`) is
  *   read as the account and organization ids of the `oauthAccount` its state file holds, after
@@ -46,9 +55,9 @@ import { type HookCallback, type HookJSONOutput, type SandboxSettings, type Spaw
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
+  type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
   type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand,
-  homeProblem, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
+  agentHome, agentShellEnvironment, homeProblem, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -82,13 +91,16 @@ const rule = (tool: string): string => (tool === COMMAND_TOOL ? tool : `${tool}(
  * The SDK's sandbox for the commands of a `workspace-write` run (ADR-0038): on, and a run whose
  * sandbox cannot start fails instead of running a command unconfined (`failIfUnavailable`); no
  * command runs outside it, whatever the model asks (`allowUnsandboxedCommands: false`); writes
- * reach the run's workspace only; and no network: no domain is allowed, and `strictAllowlist`
- * makes any other host a refusal by the sandbox itself, never a question for a permission flow.
+ * reach the run's workspace only, and never `startup` (T198): Claude Code's home, where it keeps
+ * the shell snapshot it sources before each command, and the shells' private `HOME`, each denied
+ * by name too (`denyWrite` wins over `allowWrite`), so no command writes startup code a later
+ * command's shell would run; and no network: no domain is allowed, and `strictAllowlist` makes any
+ * other host a refusal by the sandbox itself, never a question for a permission flow.
  */
-export function commandSandbox(workspace: string): SandboxSettings {
+export function commandSandbox(workspace: string, startup: readonly string[] = []): SandboxSettings {
   return {
     enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false,
-    filesystem: { allowWrite: [workspace] },
+    filesystem: { allowWrite: [workspace], ...(startup.length ? { denyWrite: [...startup] } : {}) },
     network: { allowedDomains: [], strictAllowlist: true },
   }
 }
@@ -157,6 +169,12 @@ export interface RuntimeOptions {
   status?: ConfinedRun
   /** Starts the confined Claude Code process for the SDK (default: `spawn`). */
   spawn?: SpawnConfined
+  /**
+   * The owner-only directory each run's private shell home is made in (default
+   * `<DSH_HOME>/system/run`, hidden from Claude Code, the home bound back; T198).
+   */
+  runDir?: string | undefined
+
   query?: QueryFn
   findExecutable?: () => string | undefined
   version?: (executable: string) => Promise<string>
@@ -168,11 +186,14 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   private readonly query: QueryFn
   /** Its own configured home: where a run that names none runs, and slot 1 of its accounts. */
   readonly home: string
+  private readonly runDir: string
 
   constructor(private readonly options: RuntimeOptions = {}) {
     this.query = options.query ?? query
     if (options.home !== undefined && !isAbsolute(options.home)) throw new ProviderError('config_error', 'claude-agent-sdk: home must be an absolute path')
+    if (options.runDir !== undefined && !isAbsolute(options.runDir)) throw new ProviderError('config_error', 'claude-agent-sdk: runDir must be an absolute path')
     this.home = options.home ?? join(dshHome(), 'system', 'claude-home')
+    this.runDir = options.runDir ?? join(dshHome(), 'system', 'run')
   }
 
   async probe(options: ProbeOptions = {}): Promise<RuntimeEvidence> {
@@ -209,9 +230,10 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     }
     // Commands need the second layer too: without it, no run writes or runs a command (ADR-0038).
     const commands = await this.proveCommands(confinement, env)
+    // Never cleanShells (T198): Claude Code starts its shells its own way, sourcing a snapshot of its own.
     return {
       ...found, detail: `Claude Code ${version}; ${reads.detail}; ${commands.detail}`,
-      sandboxes: commands.proven ? ['read-only', 'workspace-write'] : ['read-only'], executes: commands.proven, readsConfined: true,
+      sandboxes: commands.proven ? ['read-only', 'workspace-write'] : ['read-only'], executes: commands.proven, readsConfined: true, cleanShells: false,
     }
   }
 
@@ -233,9 +255,21 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     if (!executable) throw new ProviderError('config_error', 'claude-agent-sdk: Claude Code is not installed')
     if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
     if (!this.options.confine) throw new ProviderError('config_error', 'claude-agent-sdk: no read confinement is configured; refusing to run Claude Code with the host state readable (ADR-0024)')
+    // A fresh private home for its shells, outside the workspace, removed with the run (T198).
+    const shell = this.shellHome(spec.workspace)
+    try {
+      return await this.drive(spec, signal, home, tools, executable, shell.path, onHandle, observer)
+    } finally {
+      shell.remove()
+    }
+  }
+
+  /** A run, its checks passed, in its shell home `shellHome`. */
+  private async drive(spec: RunSpec, signal: AbortSignal, home: string, tools: string[], executable: string, shellHome: string, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
     const writes = spec.sandbox === 'workspace-write'
-    const confinement = this.confinement(home, writes ? { writable: [home, spec.workspace] } : { writable: [home], readOnly: [spec.workspace] })
-    const env = this.environment(home)
+    // The shells' home is bound back read-only (T198): it stays empty, so no shell finds a startup file there.
+    const confinement = this.confinement(home, writes ? { writable: [home, spec.workspace], readOnly: [shellHome] } : { writable: [home], readOnly: [spec.workspace, shellHome] })
+    const env = this.environment(home, shellHome)
     if (writes) {
       // The second layer is proven again before a run that writes: its sandbox must start (ADR-0038).
       const commands = await this.proveCommands(confinement, env)
@@ -267,7 +301,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           // Without the daemon's credentials (INV-8); its own sign-in lives in its home.
           env,
           // Every command in the SDK's sandbox: the workspace, no network, no way out (ADR-0038).
-          ...(writes ? { sandbox: commandSandbox(spec.workspace) } : {}),
+          ...(writes ? { sandbox: commandSandbox(spec.workspace, [home, shellHome]) } : {}),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
           // No matcher: every tool call, subagents' included, passes the gate before it runs.
           ...(spec.toolGate ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }] } } : {}),
@@ -454,9 +488,29 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     return { command: this.executable() ?? 'claude', args: [], env: { CLAUDE_CONFIG_DIR: home } }
   }
 
-  /** Claude Code's environment: without the daemon's credentials (INV-8), in its home. */
-  private environment(home: string): Record<string, string> {
-    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CLAUDE_CONFIG_DIR: home })
+  /**
+   * Claude Code's environment: without the daemon's credentials (INV-8), in its home; for a run,
+   * with `HOME` its private shell home and no variable a shell runs code from (T198).
+   */
+  private environment(home: string, shellHome?: string): Record<string, string> {
+    const env = childEnvironment(this.options.forwardEnv, { ...this.options.env, CLAUDE_CONFIG_DIR: home })
+    return shellHome === undefined ? env : agentShellEnvironment(env, shellHome)
+  }
+
+  /**
+   * A fresh, empty, owner-only `HOME` for one run's shells (T198), in the run directory (hidden by
+   * the confinement, the home bound back read-only), never in `workspace`: Claude Code's Bash tool
+   * sources the startup files of its `HOME` (`~/.bashrc` into its shell snapshot, `~/.bash_profile`
+   * for a login shell); there are none, and none can be written. The shell and its snapshot are
+   * still Claude Code's own, so no gated shell command is taken for a read.
+   */
+  private shellHome(workspace: string): AgentHome {
+    try {
+      ensurePrivateDir(this.runDir)
+      return agentHome(this.runDir, workspace)
+    } catch (error) {
+      throw new ProviderError('config_error', `claude-agent-sdk: its shells' private home cannot be made: ${firstLine(error)}; nothing was run`, { cause: error })
+    }
   }
 
   /** Its own home is made owner-only on first use; a named one was checked to be one already, and is never made. */

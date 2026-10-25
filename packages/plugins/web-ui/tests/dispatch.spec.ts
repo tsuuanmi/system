@@ -69,12 +69,17 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     // The request itself is in the queue too, described as a start: Approve / Deny there and here, each
     // described by what it does (T191).
     const card = page.getByRole('region', { name: 'Approval queue' }).getByRole('article').filter({ hasText: 'Write the release notes' })
-    expect(await decisionsIn(card)).toEqual([{ label: 'Approve', description: 'starts it' }, { label: 'Deny', description: 'does not start it' }])
+    // A Deny is final for the attempt (T197): its accessible description says it is not asked again, here and on the card.
+    const deny = 'does not start it, and this attempt is not asked again'
+    expect(await decisionsIn(card)).toEqual([{ label: 'Approve', description: 'starts it' }, { label: 'Deny', description: deny }])
     const start = go.getByRole('listitem', { name: 'Start of Write the release notes' })
     const here = await decisionsIn(start)
     expect(here.map((d) => d.label)).toEqual(['Approve', 'Deny'])
     expect(here[0]!.description).toMatch(/^starts it on \S/)
-    expect(here[1]!.description).toBe('does not start it')
+    expect(here[1]!.description).toBe(deny)
+    // And a short note in sight under the start says so too, naming the attempt.
+    expect(await start.innerText()).toContain('Deny is final for attempt 1: it is not asked again.')
+    expect(await start.locator('.deny-note').isVisible()).toBe(true)
     await start.getByRole('button', { name: 'Approve', exact: true }).click()
     await vi.waitFor(async () => expect((await ctx.approvals.list({ states: ['approved'] })).filter((r) => r.action.class === 'dispatch')).toHaveLength(1), { timeout: 15_000 })
     await ctx.workflow.sweepDispatch()

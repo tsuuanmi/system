@@ -37,6 +37,16 @@ export interface ToolAction {
  * each naming its file in `Path`). Its `run_command` is not classified, so it is denied: no
  * confinement of its commands is proven.
  */
+/** What a classification knows of the run's runtime. */
+export interface ClassifyOptions {
+  /**
+   * The runtime enforces that every shell a call runs in reads no startup code
+   * (`RuntimeEvidence.cleanShells`, T198): only then is a `Bash` probe or inspection command a
+   * `read`. Absent: it is not.
+   */
+  shellReads?: boolean | undefined
+}
+
 /** Tools that only read, and the input field that names where; a field that may be absent reads the workspace. */
 const READS: Record<string, { field: string; required: boolean }> = {
   Read: { field: 'file_path', required: true },
@@ -399,7 +409,8 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  *   git's own data;
  * - `Bash`: an empty word (a doubled, leading, or trailing space) or a word with a shell
  *   metacharacter is refused here first, before the policy is asked (which forbids the latter
- *   too). Then a probe that can do nothing is `read` (summary the command, no argv): `echo` with
+ *   too). Then, only where the runtime enforces clean shells (`options.shellReads`, below), a
+ *   probe that can do nothing is `read` (summary the command, no argv): `echo` with
  *   zero or more words (any word, `-e` and `-n` included: with no metacharacter it only prints
  *   them), `pwd` with no argument, and `true` and `false` with none; they read no file and change
  *   nothing, so a Worker's probe never waits on the operator. A read-only inspection command inside
@@ -419,8 +430,16 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  * - `WebFetch`, `WebSearch`: `external-send`;
  * - any other tool (`run_command` among them), or an input that is not an object: refused.
  * A path may be a `file:` URI, which is checked as the path it names.
+ *
+ * A `Bash` probe or inspection command is `read` only with `options.shellReads` (T198): the run's
+ * runtime itself starts every shell a call's command runs in, non-login and non-interactive, with no
+ * startup file or startup variable, in a shell the agent cannot choose (`RuntimeEvidence.cleanShells`),
+ * so the program a word names is the one that runs. Without it, absent included, such a command
+ * stays a `command`, judged by its exact argv like any other (INV-2: what cannot be enforced is not
+ * assumed). Neither Codex (each call picks its shell and login mode) nor Claude Code (each command
+ * sources its shell snapshot) reports it, so under either no shell command is a read.
  */
-export function classify(call: ToolCall, workspace: string): ToolAction | { refused: string } {
+export function classify(call: ToolCall, workspace: string, options: ClassifyOptions = {}): ToolAction | { refused: string } {
   const { tool } = call
   const input = call.input
   if (!isObject(input)) return { refused: `the input of ${tool} is not an object` }
@@ -473,8 +492,10 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
     if (empty >= 0) return { refused: `${tool}: argv word ${empty + 1} is empty (a doubled, leading, or trailing space); a command is words split on single spaces` }
     const unsafe = argv.findIndex((word) => SHELL_METACHARACTER.test(word))
     if (unsafe >= 0) return { refused: `${tool}: argv word ${unsafe + 1} holds a shell metacharacter; a command is never parsed by a shell` }
-    if (noopCommand(argv)) return { class: 'read', summary: clamp(command), consequences: `Prints its words or the working directory, or nothing, and reads and changes nothing: ${clamp(command)}. ${ANSWER}` }
-    if (readCommand(argv, workspace)) return { class: 'read', summary: clamp(command), consequences: `Reads inside the run's workspace: ${clamp(command)}. ${ANSWER}` }
+    // A program is what its name says only in a shell enforced to read no startup code (T198): elsewhere a
+    // function or an alias a startup file defined could run instead, so nothing is taken for a read.
+    if (options.shellReads === true && noopCommand(argv)) return { class: 'read', summary: clamp(command), consequences: `Prints its words or the working directory, or nothing, and reads and changes nothing: ${clamp(command)}. ${ANSWER}` }
+    if (options.shellReads === true && readCommand(argv, workspace)) return { class: 'read', summary: clamp(command), consequences: `Reads inside the run's workspace: ${clamp(command)}. ${ANSWER}` }
     return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
   }
   const send = Object.hasOwn(SENDS, tool) ? SENDS[tool] : undefined
@@ -502,6 +523,11 @@ export interface GateRun {
    * material is its prompt alone, so the gate denies every tool call, each a recorded decision.
    */
   profile?: 'review-member' | undefined
+  /**
+   * The run's runtime enforces that its shells read no startup code (`RuntimeEvidence.cleanShells`,
+   * T198): only then does the gate take a `Bash` probe or inspection command for a read ({@link classify}).
+   */
+  shellReads?: boolean | undefined
 }
 
 /** The call a run's gate deferred: the run stops there and does not complete. */
@@ -661,7 +687,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`)
     const approvals = ctx.get('approvals')
     if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision')
-    const action = classify(call, run.workspace)
+    const action = classify(call, run.workspace, { shellReads: run.shellReads === true })
     if ('refused' in action) return refuse(call, action.refused)
     const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}) })
     switch (verdict.mode) {

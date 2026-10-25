@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { childEnvironment, confinedCommand } from '../src/index.ts'
-import { BWRAP, BWRAP_REFUSED, CAN_CONFINE, createdMode, needsBubblewrap } from './host.ts'
+import { BWRAP, BWRAP_REFUSED, CAN_CONFINE, PROBES, type ProbeRun, createdMode, needsBubblewrap, refusal } from './host.ts'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 
@@ -14,6 +14,47 @@ describe('the suite decides what its environment can do by doing it, the same on
   it('names why real bubblewrap cannot confine here, and nothing when it can', () => {
     if (CAN_CONFINE) expect(BWRAP_REFUSED).toBeUndefined()
     else expect(BWRAP_REFUSED).toMatch(BWRAP ? / cannot run .+ here/ : /no bwrap on PATH/)
+  })
+
+  // The classification itself, apart from this host (T197): each outcome given by a stand-in for bubblewrap.
+  describe('classifies a probe run on its own: success, a missing bwrap, a failing bwrap', () => {
+    const failing = (stderr: string | undefined, at = 0): ProbeRun => {
+      let n = 0
+      return () => {
+        if (n++ < at) return
+        throw Object.assign(new Error('Command failed'), stderr === undefined ? {} : { stderr: Buffer.from(stderr) })
+      }
+    }
+
+    it('confines when every probe runs: each one\'s command line, ending in true, and nothing named', () => {
+      const ran: Array<{ bwrap: string; args: string[] }> = []
+      expect(refusal('/usr/bin/bwrap', (bwrap, args) => {
+        ran.push({ bwrap, args })
+      })).toBeUndefined()
+      expect(ran).toEqual(PROBES.map((probe) => ({ bwrap: '/usr/bin/bwrap', args: [...probe.args, '--', 'true'] })))
+    })
+
+    it('names a missing bwrap without running anything', () => {
+      const ran: string[][] = []
+      expect(refusal(undefined, (_bwrap, args) => {
+        ran.push(args)
+      })).toBe('no bwrap on PATH')
+      expect(ran).toEqual([])
+    })
+
+    it('names a failing bwrap: the first probe that failed, with the first line bubblewrap said, and runs none after it', () => {
+      expect(refusal('/usr/bin/bwrap', failing('bwrap: setting up uid map: Permission denied\nmore'))).toBe(`/usr/bin/bwrap cannot run ${PROBES[0]!.what} here (bwrap: setting up uid map: Permission denied)`)
+      expect(refusal('/usr/bin/bwrap', failing('bwrap: No permissions to create new namespace', 1))).toBe(`/usr/bin/bwrap cannot run ${PROBES[1]!.what} here (bwrap: No permissions to create new namespace)`)
+      // Said nothing (a timeout, a signal): the probe is still named, with no reason in parentheses.
+      expect(refusal('/usr/bin/bwrap', failing(undefined))).toBe(`/usr/bin/bwrap cannot run ${PROBES[0]!.what} here`)
+      expect(refusal('/usr/bin/bwrap', failing('  \n'))).toBe(`/usr/bin/bwrap cannot run ${PROBES[0]!.what} here`)
+      let calls = 0
+      refusal('/usr/bin/bwrap', () => {
+        calls += 1
+        throw new Error('x')
+      })
+      expect(calls).toBe(1)
+    })
   })
 
   it('reads the mode a created file gets as the file system gives it: never more than asked, the umask taken off', () => {

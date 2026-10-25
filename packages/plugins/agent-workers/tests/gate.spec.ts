@@ -134,6 +134,8 @@ const decisionOf = (ctx: Context, reason: string) => {
   return ctx.artifacts.get(id!)!.body as { decisionType: string; decider: { type: string; id: string }; outcome: { option: string; detail?: Record<string, unknown> } }
 }
 const bash = (command: string) => ({ tool: 'Bash', input: { command } })
+/** A run whose runtime enforces shells that read no startup code (`cleanShells`, T198): the only one where a shell command can be a read. */
+const CLEAN = { shellReads: true } as const
 
 // The board's own steps to a ready task, as the workflow's suite takes them; kept here so the agent
 // Workers' tests compose the engine's code, never its tests (docs/engineering/testing.md#test-groups).
@@ -548,16 +550,29 @@ describe('classify: a tool call as the action the policy judges', () => {
 
   it('classifies a probe that can do nothing as read: echo with any plain words, pwd with no argument, true, false (T187)', () => {
     for (const command of ['echo', 'echo noop', 'echo -n x', 'echo -e a', 'echo -E -n', 'echo --help', 'echo #x', 'echo a=b /etc/passwd ../x', 'pwd', 'true', 'false']) {
-      expect(classify(bash(command), ws), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('reads and changes nothing') })
+      expect(classify(bash(command), ws, CLEAN), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('reads and changes nothing') })
     }
     // A metacharacter is still refused, an empty word too.
     for (const command of ['echo $HOME', 'echo `id`', 'echo a;id', 'echo a|id', 'echo >x', 'echo *', 'echo ~', 'echo "a"', 'echo a\\nb', 'echo  a', 'echo ', 'true;id', 'pwd&&id']) {
-      expect(classify(bash(command), ws), command).toHaveProperty('refused')
+      expect(classify(bash(command), ws, CLEAN), command).toHaveProperty('refused')
     }
     // Anything else of these programs stays a command, by its exact argv.
     for (const command of ['pwd -P', 'pwd -L', 'pwd /tmp', 'true x', 'false --help', '/bin/echo x', 'printf x', 'Echo x', 'sh -c true']) {
-      expect(classify(bash(command), ws), command).toMatchObject({ class: 'command', command: command.split(' ') })
+      expect(classify(bash(command), ws, CLEAN), command).toMatchObject({ class: 'command', command: command.split(' ') })
     }
+  })
+
+  it('takes no shell command for a read where the runtime does not enforce shells that read no startup code: a function named echo or cat could run instead (T198)', () => {
+    const a = join(ws, 'src/a.ts')
+    for (const command of ['echo', 'echo noop', 'pwd', 'true', 'false', `cat ${a}`, `head -n 20 ${a}`, `ls -la ${ws}`, `sed -n 1,40p ${a}`, `rg -n foo ${ws}`, `grep -r foo ${ws}`, `find ${ws} -name a.ts`]) {
+      // Enforced clean: a read. Not enforced (absent, or false): the exact command, which the policy judges by its argv.
+      expect(classify(bash(command), ws, CLEAN), command).toMatchObject({ class: 'read' })
+      for (const options of [undefined, {}, { shellReads: false }]) {
+        expect(classify(bash(command), ws, options), command).toMatchObject({ class: 'command', command: command.split(' ') })
+      }
+    }
+    // The file tools read as before: the program they name is the runtime's own, no shell between.
+    expect(classify({ tool: 'Read', input: { file_path: a } }, ws)).toMatchObject({ class: 'read' })
   })
 
   describe('read-only inspection commands', () => {
@@ -568,10 +583,11 @@ describe('classify: a tool call as the action the policy judges', () => {
     writeFileSync(join(repo, 'src', 'a.ts'), 'x')
     writeFileSync(join(repo, '.git', 'config'), '')
     symlinkSync(join(repo, '.git'), join(repo, 'meta'))
-    const read = (command: string, workspace = ws) => expect(classify(bash(command), workspace), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('Reads inside the run\'s workspace') })
-    const asks = (command: string, workspace = ws) => expect(classify(bash(command), workspace), command).toMatchObject({ class: 'command', command: command.split(' ') })
+    // Each under a runtime that enforces clean shells (T198): only there could any of them be a read.
+    const read = (command: string, workspace = ws) => expect(classify(bash(command), workspace, CLEAN), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('Reads inside the run\'s workspace') })
+    const asks = (command: string, workspace = ws) => expect(classify(bash(command), workspace, CLEAN), command).toMatchObject({ class: 'command', command: command.split(' ') })
     const notRead = (command: string, workspace = ws) => {
-      const action = classify(bash(command), workspace)
+      const action = classify(bash(command), workspace, CLEAN)
       expect('refused' in action ? 'refused' : action.class, command).not.toBe('read')
     }
 
@@ -753,7 +769,10 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
    * Claude Code on a host where both of its confinements are proven (ADR-0038), its SDK stream
    * scripted: each tool call goes through the hooks the run registered, and a defer ends the run.
    */
-  function claude(calls: ReadonlyArray<readonly [string, Record<string, unknown>]>, outputs: Array<Record<string, unknown>>, optionsSeen: Array<Record<string, unknown>>): ClaudeAgentRuntime {
+  const runDir = mkdtempSync(join(tmpdir(), 'system-gate-claude-run-'))
+  afterAll(() => rmSync(runDir, { recursive: true, force: true }))
+
+  function claude(calls: ReadonlyArray<readonly [string, Record<string, unknown>]>, outputs: Array<Record<string, unknown>>, optionsSeen: Array<Record<string, unknown>>, enforcesCleanShells = false): ClaudeAgentRuntime {
     const query = ((params: { prompt: string; options: Record<string, unknown> }) => {
       optionsSeen.push(params.options)
       const hooks = (params.options.hooks as { PreToolUse: Array<{ hooks: Hook[] }> }).PreToolUse
@@ -774,11 +793,18 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
         }
       })()
     }) as unknown as QueryFn
-    return new ClaudeAgentRuntime({
+    const runtime = new ClaudeAgentRuntime({
       query, executable: '/usr/bin/claude', findExecutable: () => undefined, version: async () => '2.1.300', home,
       confine: (bind) => ({ bwrap: '/usr/bin/bwrap', hide: [], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }),
       prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => '', status: async () => '{"loggedIn": true}',
+      runDir,
     })
+    // A stand-in for a runtime that would itself start every shell with no startup files (`cleanShells`, T198); Claude Code is not one.
+    if (enforcesCleanShells) {
+      const probe = runtime.probe.bind(runtime)
+      runtime.probe = async (options) => ({ ...await probe(options), cleanShells: true })
+    }
+    return runtime
   }
 
   it('reads and writes inside its workspace through the runtime\'s PreToolUse hook, and its pre-approvals still bind it there', async () => {
@@ -809,6 +835,24 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
+  })
+
+  it('takes a shell read for a read only where the runtime enforces shells with no startup files: Claude Code does not, so a function named cat in a startup file or its shell snapshot could run instead, and the exact command waits for the operator (T198)', async () => {
+    const a = join(WORKSPACE, 'src/a.ts')
+    const calls = [['Bash', { command: `cat ${a}` }], ['Bash', { command: 'echo probe' }]] as const
+    // A runtime that enforced it: both read, nothing asked.
+    const clean: Array<Record<string, unknown>> = []
+    const enforced = await boot(claude(calls, clean, [], true), bundlePolicies()[0]!)
+    expect((await enforced.run()).status).toBe('completed')
+    expect(clean).toEqual([{}, {}])
+    expect(await enforced.ctx.approvals.list()).toEqual([])
+    // Claude Code itself: the same read is the exact command, which the operator decides; the run stops there.
+    const unproven: Array<Record<string, unknown>> = []
+    const { ctx, run } = await boot(claude(calls, unproven, []), bundlePolicies()[0]!)
+    const done = await run()
+    expect(unproven.map((o) => (o.hookSpecificOutput as { permissionDecision?: string }).permissionDecision)).toEqual(['defer'])
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
   })
 })
 
@@ -858,17 +902,18 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ tool: 'apply_patch', pendingChecks: ['tests', 'lint'] }) })])
   })
 
-  it('reads files through its shell without asking: a read-only command on an absolute path inside the workspace is a read; a relative path, whose directory the hook does not see, still waits for the operator', async () => {
+  it('reads nothing through its shell: each call picks its own shell, which the hook does not see, so even a read inside the workspace waits for the operator as the exact command it is (T198)', async () => {
     const shell = (command: string) => ({ tool: 'Bash', input: { command }, item: 'command_execution' })
     const a = join(WORKSPACE, 'src/a.ts')
-    const { runtime, hooks } = codex([shell(`cat ${a}`), shell(`sed -n 1,40p ${a}`), shell(`rg -n classify ${join(WORKSPACE, 'src')}`), shell('cat .ssh/id_rsa')])
+    const { runtime, hooks } = codex([shell(`cat ${a}`), shell('echo probe')])
+    expect(await runtime.probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false })
     const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
     const done = await run()
-    expect(hooks().map((h) => h.blocked)).toEqual([false, false, false, true])
+    // The read is blocked (deferred); nothing after it runs.
+    expect(hooks()[0]!.blocked).toBe(true)
+    expect(hooks().every((h) => h.blocked)).toBe(true)
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
-    // Only the relative read asks; the reads inside opened no request.
-    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: cat .ssh/id_rsa' }), requester: expect.objectContaining({ toolUseId: 'call_4' }) })])
-    expect(ctx.eventLog.query({ type: 'agent-workers.tool.deferred' })).toHaveLength(1)
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
   })
 })
 

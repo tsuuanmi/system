@@ -6,7 +6,7 @@
  * @module @tsuuanmi/system-agent-runtime-core
  */
 import { execFile } from 'node:child_process'
-import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -45,6 +45,20 @@ export interface RuntimeEvidence {
    * without it.
    */
   gatesToolCalls: boolean
+  /**
+   * The runtime itself starts every shell a tool call's command runs in, on every call, as a
+   * non-login, non-interactive shell that reads no startup file and no startup variable (`bash
+   * --norc --noprofile` with no `BASH_ENV` or `ENV`), the shell a trusted program the agent cannot
+   * choose or change (T198). Every runtime here enforces that no startup code its agent wrote ever
+   * runs: its shells' `HOME` is an empty private directory bound back read-only ({@link agentHome}),
+   * their environment names no startup variable or file ({@link agentShellEnvironment}), and nothing
+   * its agent runs can write where its shells read startup code. That is not this field, which also
+   * needs the shell program pinned. Absent or false: a gate never takes a shell command for a read,
+   * since the program a command names may not be the one it runs. Neither runtime in this repository
+   * sets it: Codex lets each call pick its shell program and its login mode, which its hook does not
+   * show, and Claude Code starts its shells its own way, after sourcing its own shell snapshot.
+   */
+  cleanShells?: boolean
   /**
    * It runs in the home a run or probe names ({@link RunSpec.home}, {@link ProbeOptions.home}), one
    * account's own sign-in, binding back only that home (ADR-0051). Absent or false: it runs in its
@@ -817,11 +831,29 @@ export async function proveConfinement(confinement: Confinement, run: RunCommand
 const SESSION_ACCESS = ['DBUS_SESSION_BUS_ADDRESS', 'SSH_AUTH_SOCK', 'GPG_AGENT_INFO', 'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY']
 
 /**
+ * Variables that make a shell run code before a command, or change what a command name runs
+ * (T198): the file a non-interactive bash (`BASH_ENV`) or an interactive POSIX shell (`ENV`)
+ * sources, where zsh reads its startup files (`ZDOTDIR`), code run before each prompt or on each
+ * traced line (`PROMPT_COMMAND`, `PS0`, `PS4`), shell options taken from the environment
+ * (`SHELLOPTS`, `BASHOPTS`), and readline's file (`INPUTRC`). Every name starting with
+ * {@link EXPORTED_FUNCTION} is one too: an exported bash function, which defines a command name in
+ * every bash that inherits it.
+ */
+export const SHELL_STARTUP_VARIABLES: readonly string[] = ['BASH_ENV', 'ENV', 'ZDOTDIR', 'PROMPT_COMMAND', 'PS0', 'PS4', 'SHELLOPTS', 'BASHOPTS', 'INPUTRC']
+/** The prefix of an exported bash function's variable (`BASH_FUNC_echo%%`). */
+export const EXPORTED_FUNCTION = 'BASH_FUNC_'
+
+/** Whether `name` is a variable a shell runs code from ({@link SHELL_STARTUP_VARIABLES}, an exported function). */
+export const isShellStartupVariable = (name: string): boolean => SHELL_STARTUP_VARIABLES.includes(name) || name.startsWith(EXPORTED_FUNCTION)
+
+/**
  * The environment an agent runtime's child process starts with (INV-8): DSH's own scrub of the
  * daemon environment (credential-shaped and `DSH_*` names removed; PATH, HOME, locale, proxy
  * kept) without the session-access variables, then the variables the operator forwards by
  * name (never by value in configuration, e.g. the gateway token a Codex Worker's model
- * provider reads), then explicit values.
+ * provider reads), then explicit values. A variable a shell runs code from
+ * ({@link isShellStartupVariable}: `BASH_ENV`, `ENV`, an exported function, …) is never in it,
+ * forwarded or explicit alike (T198): the agent's shells run only the command they are given.
  */
 export function childEnvironment(forward: readonly string[] = [], explicit: Record<string, string> = {}): Record<string, string> {
   const env = scrubbedParentEnv()
@@ -830,5 +862,69 @@ export function childEnvironment(forward: readonly string[] = [], explicit: Reco
     const value = process.env[name]
     if (value !== undefined) env[name] = value
   }
-  return { ...env, ...explicit }
+  const all = { ...env, ...explicit }
+  for (const name of Object.keys(all)) if (isShellStartupVariable(name)) delete all[name]
+  return all
+}
+
+/**
+ * Variables that name a directory a shell reads its startup files from other than `HOME` (fish's
+ * `config.fish` and `conf.d` under `XDG_CONFIG_HOME`, else `~/.config`, and `XDG_CONFIG_DIRS`, else
+ * `/etc/xdg`): an agent's environment never has them (T198), so those directories are its read-only
+ * private home's, or the system's.
+ */
+export const SHELL_CONFIG_DIRECTORIES: readonly string[] = ['XDG_CONFIG_HOME', 'XDG_CONFIG_DIRS']
+
+/**
+ * An agent's environment in its private shell home (T198): `env` without any variable a shell runs
+ * code from, nor one naming another directory a shell reads startup files from
+ * ({@link SHELL_CONFIG_DIRECTORIES}), `HOME` the private home ({@link agentHome}), so every startup
+ * file a shell looks for in its home (`~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.zshenv`,
+ * `~/.config/fish/config.fish`, …) is that empty directory's, which the confinement binds back
+ * read-only: none exists, and none can be made during the run. `XDG_CACHE_HOME` keeps naming the
+ * operator's cache (`<HOME>/.cache` when it was unset), where tools find what they already
+ * downloaded (corepack's package managers among them); no shell reads a startup file there.
+ * The environment alone does not choose the shell a runtime starts, so it never earns
+ * {@link RuntimeEvidence.cleanShells} by itself.
+ */
+export function agentShellEnvironment(env: Record<string, string>, home: string): Record<string, string> {
+  if (!isAbsolute(home)) throw new Error(`the agent's home ${home} is not an absolute path`)
+  const clean = Object.fromEntries(Object.entries(env).filter(([name]) => !isShellStartupVariable(name) && !SHELL_CONFIG_DIRECTORIES.includes(name)))
+  const cache = env.XDG_CACHE_HOME ?? (env.HOME && isAbsolute(env.HOME) ? join(env.HOME, '.cache') : undefined)
+  return { ...clean, ...(cache ? { XDG_CACHE_HOME: cache } : {}), HOME: home }
+}
+
+/** A run's private shell home: its path, and how to remove it once the run ended. */
+export interface AgentHome {
+  path: string
+  remove(): void
+}
+
+/**
+ * A fresh, empty, owner-only home for one agent run or probe (T198), made in `parent` (an
+ * owner-only directory outside every workspace, such as the runtime's run directory, which the read
+ * confinement hides and binds the home back from). Refused (throws) when it would lie in
+ * `workspace`, or the workspace in it: a home in the worktree is git-visible and a Worker's tools
+ * write there. A runtime binds it back into its confinement **read-only** (a `readOnly` bind, never a
+ * `writable` one): it stays empty for the whole run, so no shell its agent starts, login,
+ * interactive, or neither, in whatever mode a call asks for, finds a startup file there, and no tool
+ * call can write one for a later call's shell to read. Nothing in it survives the run
+ * ({@link AgentHome.remove}).
+ */
+export function agentHome(parent: string, workspace?: string): AgentHome {
+  if (!isAbsolute(parent)) throw new Error(`the agent home's parent ${parent} is not an absolute path`)
+  const path = mkdtempSync(join(parent, 'agent-home-'))
+  const remove = (): void => rmSync(path, { recursive: true, force: true })
+  try {
+    chmodSync(path, 0o700)
+    if (workspace !== undefined) {
+      const home = realpathSync(path)
+      const ws = real(workspace) ?? workspace
+      if (home === ws || under(home, ws) || under(ws, home)) throw new Error(`the agent's home ${home} would be inside its workspace ${ws}, where its tools write and git sees it`)
+    }
+  } catch (error) {
+    remove()
+    throw error
+  }
+  return { path, remove }
 }

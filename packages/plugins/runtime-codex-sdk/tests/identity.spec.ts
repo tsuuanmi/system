@@ -37,8 +37,11 @@ const confine = (bind: { readOnly?: readonly string[]; writable?: readonly strin
   binds.push(bind)
   return { bwrap: '/usr/bin/bwrap', hide: ['/dsh'], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }
 }
+/** The run directory, outside `root`, which a run here takes for its workspace: a run's private shell home is never in its workspace (T198). */
+const RUN_DIR = mkdtempSync(join(tmpdir(), 'cx-id-run-'))
+afterAll(() => rmSync(RUN_DIR, { recursive: true, force: true }))
 const runtime = (extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) => new CodexRuntime({
-  executable: '/usr/bin/codex', home: join(root, 'own-home'), runDir: join(root, 'run'), hook: HOOK, client: scripted().client, version: async () => '0.164.0',
+  executable: '/usr/bin/codex', home: join(root, 'own-home'), runDir: RUN_DIR, hook: HOOK, client: scripted().client, version: async () => '0.164.0',
   mcpServers: async () => [], exec: probeExec(), confine, prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => undefined, status,
   launcher: (c) => `launcher:${[c.command, ...c.args].join(' ')}`, ...extra,
 })
@@ -121,7 +124,8 @@ describe('codex-sdk identity reader (ADR-0051, REQ-ACC-11)', () => {
     const r = runtime({ client: s.client })
     await r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: at }, new AbortController().signal)
     expect(s.lastClient.env).toMatchObject({ CODEX_HOME: at })
-    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root] })
+    // The named home bound back writable; the run's private shell home (T198) read-only.
+    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root, expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-`))] })
     await expect(r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: join(root, 'nowhere') }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
     expect(await r.probe({ home: join(root, 'nowhere') })).toMatchObject({ available: false, homes: true })
     expect(r.home).toBe(join(root, 'own-home'))
