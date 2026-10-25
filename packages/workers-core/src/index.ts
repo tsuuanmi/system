@@ -532,8 +532,11 @@ export interface WorkerSource {
   /**
    * Run workflow run `step.runId`'s required checks on the worktree `step.workspace` (T151).
    * Undefined when this source holds no such worktree. The commands change nothing a later step reads
-   * (a check that changes the tree is an `error`), so a step repeated after a restart runs them again
-   * (INV-4: safe to repeat). `signal` stops the commands in flight; the step then throws.
+   * (a check that changes the tree is an `error`). A step repeated after a restart gets each check's
+   * stored outcome on that subject back, never a check run again to replace what it came to; one a
+   * crash interrupted is an `error` (INV-4). An infrastructure failure (a command the source's
+   * confinement did not start) is an `error`, never `failed`. `signal` stops the commands in flight;
+   * the step then throws.
    */
   check?(step: CheckStep, signal?: AbortSignal): Promise<Checked | undefined>
   /**

@@ -12,16 +12,17 @@
  * until its setup has run under the definition loaded now.
  * @module @tsuuanmi/system-agent-workers/setup
  */
-import { spawn } from 'node:child_process'
+import { spawn, type StdioOptions } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
+import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
-import { childEnvironment, confinedCommand, proveConfinement } from '@tsuuanmi/system-agent-runtime-core'
+import { childEnvironment, confinedCommand, type Confinement, proveConfinement } from '@tsuuanmi/system-agent-runtime-core'
 import { type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
-import { type ContentId, contentId, ensurePrivateDir } from '@tsuuanmi/system-libs'
+import { type ContentId, contentId, ensurePrivateDir, ignoredPath } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import { RUN_CHECKS, type RunCheck } from '@tsuuanmi/system-workers-core'
@@ -55,6 +56,13 @@ export interface WorktreeSetupConfig {
   checks?: Partial<Record<RunCheck, string>>
   /** Each check's deadline, in seconds (default 1800). */
   checkTimeoutSeconds?: number
+  /**
+   * Paths inside the worktree (relative) that its checks see as fresh, private, writable directories
+   * (a build or test cache such as `node_modules/.vite`): the checks see the rest of the worktree
+   * read-only. Each must be ignored by git and hold nothing tracked, so it is never part of the
+   * subject a check is judged on; what a check writes there is discarded when it ends.
+   */
+  checkScratch?: string[]
 }
 
 /** A setup as loaded: every default filled in, its commands as argv, and the hash an approval binds to. */
@@ -69,6 +77,8 @@ export interface Setup {
   /** Each check's command line and argv; not part of the setup's hash, since the setup does not run them. */
   checks: Partial<Record<RunCheck, { line: string; argv: string[] }>>
   checkTimeoutSeconds: number
+  /** The worktree's paths its checks see as fresh private writable directories (relative); not part of the hash either. */
+  checkScratch: string[]
 }
 
 /** `commandChars` is the policy's own bound on a commands-list line (`autonomy-policy@1.0`): every setup command can be listed there. */
@@ -150,8 +160,14 @@ export function loadSetups(setups: readonly WorktreeSetupConfig[] | undefined, w
     }
     const checkTimeoutSeconds = entry.checkTimeoutSeconds ?? SETUP_LIMITS.defaultCheckTimeoutSeconds
     if (!Number.isInteger(checkTimeoutSeconds) || checkTimeoutSeconds < 1 || checkTimeoutSeconds > SETUP_LIMITS.maxTimeoutSeconds) fail(`${repository}: checkTimeoutSeconds is 1 to ${SETUP_LIMITS.maxTimeoutSeconds}`)
+    const checkScratch = entry.checkScratch ?? []
+    if (!Array.isArray(checkScratch) || checkScratch.length > SETUP_LIMITS.entries || checkScratch.some((path) => !RELATIVE(path) || path.split('/')[0] === '.git')) {
+      fail(`${repository}: checkScratch names up to ${SETUP_LIMITS.entries} relative paths inside the worktree, none with . or .., none in .git`)
+    }
+    const overlapping = checkScratch.find((p, i) => checkScratch.some((q, j) => i !== j && (p === q || p.startsWith(`${q}/`))))
+    if (overlapping) fail(`${repository}: checkScratch names ${overlapping} and another that holds it, or names it twice`)
     const definition = { repository, commands: [...lines], views, timeoutSeconds }
-    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds })
+    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkScratch: [...checkScratch] })
   }
   return loaded
 }
@@ -406,17 +422,69 @@ export interface Confined {
   command(argv: string[]): { command: string; args: string[] }
   /** Remove the private views (always call it once the commands ended). */
   dispose(): void
+  /** The confinement itself. */
+  confinement: Confinement
 }
 
 /**
- * The confinement a repository's commands run in, in its worktree `worktree` (its real path): the
- * host read-only but the worktree and the setup's private views, no network. The views are checked
- * (never a path hidden from agents, nor over the worktree), the confinement proven, and the views made
- * in a fresh owner-only directory under `runDir`. Throws, naming the cause, when any of it cannot be:
- * nothing has run then. The setup's commands and the run's checks (./checks.ts) both run in it.
+ * What a check's launcher says on its own channel (fd 3) once the kernel executed the check's command
+ * (an exec that succeeded, never only a command found on `PATH`).
  */
-export async function confineIn(ctx: Context, setup: Setup, worktree: string, runDir: string): Promise<Confined> {
-  const confinement = ctx.agentRuntimes.confinement({ writable: [worktree] })
+export const STARTED = 'started'
+
+/** What a check's launcher says on fd 3, and only that, when the exec of its command failed: `exec-failed <errno code>`. */
+const EXEC_FAILED =/^exec-failed [A-Z0-9_]+$/
+
+/** The word before a check's argv in its launcher's arguments, so the launcher finds the argv whatever Node did with `--`. */
+const LAUNCHED = 'system-check'
+
+/**
+ * The fixed program a check's command starts through, inside the confinement (System's own Node,
+ * `-e`, only `node:` modules): it spawns the command with its argv as given (never parsed by a
+ * shell) and says, on fd 3, {@link STARTED} once the spawn succeeded, or `exec-failed <code>` when the
+ * exec failed (no such command, an interpreter its `#!` names that is not there, not executable).
+ * Node learns that from the exec itself (libuv's close-on-exec handshake), so an exec failure is
+ * never mistaken for the command's own exit code, 127 or another. The command gets its fd 3 as
+ * `/dev/null`, never the channel, and fd 4 ({@link REPORT_FD}) as it is; the launcher ends with the
+ * command's exit code (128 + the signal when a signal ended it).
+ */
+const LAUNCHER = [
+  "'use strict'",
+  "const { spawn } = require('node:child_process')",
+  "const { openSync, writeSync } = require('node:fs')",
+  "const { signals } = require('node:os').constants",
+  `const argv = process.argv.slice(process.argv.indexOf(${JSON.stringify(LAUNCHED)}) + 1)`,
+  'const say = (text) => { try { writeSync(3, text) } catch {} }',
+  "const child = spawn(argv[0], argv.slice(1), { stdio: [0, 1, 2, openSync('/dev/null', 'r'), 4] })",
+  'let spawned = false',
+  `child.once('spawn', () => { spawned = true; say(${JSON.stringify(STARTED)}) })`,
+  "child.on('error', (error) => {",
+  '  if (spawned) return',
+  "  say(`exec-failed ${/^[A-Z0-9_]+$/.test(String(error.code)) ? error.code : 'EUNKNOWN'}`)",
+  '  process.stderr.write(`system: ${argv[0]}: ${error.message}\\n`)',
+  '  process.exit(127)',
+  '})',
+  "child.once('exit', (code, signal) => process.exit(code ?? 128 + (signals[signal] ?? 0)))",
+].join('\n')
+
+/**
+ * The confinement a repository's commands run in, in its worktree `worktree` (its real path): the
+ * host read-only but the setup's private views, no network. A setup (`mode` `setup`) can write the
+ * worktree. A check (`check`) sees it read-only, so it cannot change what it checks even for a while
+ * (INV-5): only the setup's `checkScratch` paths are writable to it, each a fresh private directory
+ * (git-ignored, so never in the subject), and its private `/tmp`; and each check's command starts
+ * through {@link LAUNCHER} (System's own Node, bound back read-only), so the caller can tell a command
+ * the kernel executed from one that never started. A check's confinement is made for one command:
+ * its scratch directories are its own, and {@link Confined.dispose} discards them. The views are
+ * checked (never a path hidden from agents, nor over the worktree), the confinement proven, and the
+ * views made in a fresh owner-only directory under `runDir`. Throws, naming the cause, when any of it
+ * cannot be: nothing has run then.
+ */
+export async function confineIn(ctx: Context, setup: Setup, worktree: string, runDir: string, mode: 'setup' | 'check' = 'setup'): Promise<Confined> {
+  // The launcher's Node, at its real path: what is bound back is what runs.
+  const node = real(process.execPath) ?? process.execPath
+  const confinement = ctx.agentRuntimes.confinement(mode === 'check' ? { readOnly: [worktree, node] } : { writable: [worktree] })
+  const scratchPaths = mode === 'check' ? setup.checkScratch.map((entry) => scratchPoint(worktree, entry)) : []
   const hidden = confinement.hide.map((h) => real(h)).filter((h): h is string => !!h)
   // A view shows the commands a private copy of host files: never of a path hidden from agents, nor over the worktree.
   for (const view of setup.views) {
@@ -452,14 +520,49 @@ export async function confineIn(ctx: Context, setup: Setup, worktree: string, ru
       }
       return [{ source: dir, path: view.path, writable: true }, ...view.readOnly.map((entry) => ({ source: join(view.path, entry), path: join(view.path, entry), writable: false }))]
     })
+    // A check's writable places in the worktree: each a fresh private directory over its (ignored) path.
+    const scratchViews = scratchPaths.map((path, i) => {
+      const dir = join(scratch, `scratch-${i}`)
+      mkdirSync(dir, { mode: 0o700 })
+      return { source: dir, path, writable: true }
+    })
+    const options = { readOnly: true, network: false, chdir: worktree, views: [...views, ...scratchViews] } as const
     return {
-      command: (argv) => confinedCommand(argv[0]!, argv.slice(1), confinement, { readOnly: true, network: false, chdir: worktree, views }),
+      command: (argv) => mode === 'check'
+        ? confinedCommand(node, ['-e', LAUNCHER, '--', LAUNCHED, ...argv], confinement, options)
+        : confinedCommand(argv[0]!, argv.slice(1), confinement, options),
       dispose: () => rmSync(scratch, { recursive: true, force: true }),
+      confinement,
     }
   } catch (error) {
     rmSync(scratch, { recursive: true, force: true })
     throw error
   }
+}
+
+/**
+ * Where a check's scratch path `entry` is mounted in the worktree (its real path): every directory on
+ * the way is a directory of the worktree itself, never a link, made (owner-only) when missing, so the
+ * private directory can be mounted over it. Refused unless git ignores it and it holds nothing tracked:
+ * a writable place there can never be part of the subject a check is judged on (INV-5).
+ */
+function scratchPoint(worktree: string, entry: string): string {
+  let ignored: boolean
+  try {
+    ignored = ignoredPath(worktree, entry)
+  } catch (error) {
+    throw new Refusal(`its check scratch ${entry} cannot be judged against git's ignore rules: ${(error as Error).message.split('\n')[0]}`)
+  }
+  if (!ignored) throw new Refusal(`its check scratch ${entry} is not ignored by git, or holds a tracked file: a check's writable place is never part of the subject it is judged on`)
+  let path = worktree
+  for (const part of entry.split('/')) {
+    path = join(path, part)
+    const stat = lstatSync(path, { throwIfNoEntry: false })
+    if (!stat) mkdirSync(path, { mode: 0o700 })
+    else if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Refusal(`its check scratch ${entry} reaches ${path}, which is not a directory of the worktree (a link or a file)`)
+  }
+  if (real(path) !== path) throw new Refusal(`its check scratch ${entry} is reached through a link`)
+  return path
 }
 
 /** ` Its output ended: …`, the last part of what a command printed, when it printed anything. */
@@ -505,35 +608,89 @@ function copyFile(source: string, target: string): void {
   }
 }
 
-/** A confined command's end: its exit code or signal, the last 64 KiB of what it printed (stdout and stderr as they came), and how much it printed in all with its hash. */
-export interface Ended { code: number | null; signal: string | null; output: string; bytes: number; sha256: string }
+/**
+ * A confined command's end: its exit code or signal, the last 64 KiB of what it printed (stdout and
+ * stderr as they came), and how much it printed in all with its hash; with `acknowledged`, whether its
+ * launcher executed it (a check's command, {@link STARTED}).
+ */
+export interface Ended {
+  code: number | null; signal: string | null; output: string; bytes: number; sha256: string; started?: boolean
+  /** `signal` killed it before it ended by itself: what it would have come to is not known. */
+  stopped?: true
+  /** What it reported on {@link REPORT_FD} (a check's command; the first {@link REPORT_BYTES} bytes). */
+  report?: string
+}
 
-/** Run a confined command to its end, or until `signal` stops it (SIGKILL; bubblewrap takes its namespace with it). */
-export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal): Promise<Ended> {
+/**
+ * The descriptor a check's command reports an infrastructure failure on, named to it by
+ * `SYSTEM_CHECK_REPORT_FD`: a line `nested-confinement-refused: <detail>` ({@link NESTED_REFUSED}) says
+ * a nested bubblewrap it needed was refused, so its nonzero exit is the host's, not the check's
+ * (./checks.ts). Writing it never makes a check pass.
+ */
+export const REPORT_FD = 4
+/** The report of a nested bubblewrap refused inside a check's confinement ({@link REPORT_FD}). */
+export const NESTED_REFUSED = 'nested-confinement-refused'
+/** How much of a check's report is kept. */
+const REPORT_BYTES = 4096
+
+/**
+ * Whether a check's command was executed, from what its launcher said on fd 3: not when it said
+ * nothing (the confinement or the launcher never got that far), nor when it said exactly
+ * `exec-failed <code>`. Anything else, `started` or bytes no launcher says alone, means a process of
+ * the command existed (only one can have added to what the launcher said): its exit code is judged.
+ */
+function launched(said: string): boolean {
+  return said !== '' && !EXEC_FAILED.test(said)
+}
+
+/**
+ * Run a confined command to its end, or until `signal` stops it (SIGKILL; bubblewrap takes its
+ * namespace with it). `acknowledged`: a check's launcher says on fd 3 whether its command was executed
+ * ({@link confineIn}), and its end says whether it was ({@link launched}); it may report on {@link REPORT_FD}.
+ */
+export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, acknowledged = false): Promise<Ended> {
   return new Promise((resolvePromise, reject) => {
     let output = ''
     let bytes = 0
+    let said = ''
+    let report = ''
+    let stopped = false
     const hash = createHash('sha256')
     const keep = (chunk: Buffer): void => {
       bytes += chunk.length
       hash.update(chunk)
       output = (output + chunk.toString('utf8')).slice(-64 * 1024)
     }
-    const child = spawn(command.command, command.args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const stdio: StdioOptions = acknowledged ? ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe']
+    const child = spawn(command.command, command.args, { env: acknowledged ? { ...env, SYSTEM_CHECK_REPORT_FD: String(REPORT_FD) } : env, stdio })
     const stop = (): void => {
+      // Only a command still running is stopped by it: one that already exited ended by itself.
+      if (child.exitCode === null && child.signalCode === null) stopped = true
       child.kill('SIGKILL')
     }
     if (signal.aborted) stop()
     else signal.addEventListener('abort', stop, { once: true })
-    child.stdout.on('data', keep)
-    child.stderr.on('data', keep)
+    child.stdout!.on('data', keep)
+    child.stderr!.on('data', keep)
+    // What the command says on its own channel: only the first bytes are kept.
+    if (acknowledged) {
+      const acknowledgement = child.stdio[3] as Readable
+      const reported = child.stdio[REPORT_FD] as Readable
+      acknowledgement.on('data', (chunk: Buffer) => void (said = (said + chunk.toString('utf8')).slice(0, 64)))
+      reported.on('data', (chunk: Buffer) => {
+        if (report.length < REPORT_BYTES) report = (report + chunk.toString('utf8')).slice(0, REPORT_BYTES)
+      })
+    }
     child.once('error', (error) => {
       signal.removeEventListener('abort', stop)
       reject(new Refusal(`its commands cannot start: ${(error as NodeJS.ErrnoException).code === 'ENOENT' ? `${command.command} is not installed` : error.message}`))
     })
     child.once('close', (code, killed) => {
       signal.removeEventListener('abort', stop)
-      resolvePromise({ code, signal: killed, output, bytes, sha256: hash.digest('hex') })
+      resolvePromise({
+        code, signal: killed, output, bytes, sha256: hash.digest('hex'),
+        ...(acknowledged ? { started: launched(said), ...(report ? { report } : {}) } : {}), ...(stopped ? { stopped: true as const } : {}),
+      })
     })
   })
 }

@@ -356,8 +356,13 @@ export class Engine {
           }
           if (nodes.every((n) => n.state === 'COMPLETED')) {
             const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
-            // The checks the policy requires of a written result run on its exact tree first (./checks.ts):
-            // safe to repeat, so a restart before the run finished runs them again.
+            // A board task's acceptance stored before a crash stands (INV-4): the run finishes on it, its
+            // checks never asked again, so no later outcome replaces what they came to.
+            const stored = this.tasks.row(runId)
+            if (stored?.acceptance && stored.result) return this.finish(run, 'completed', { result: final }, current)
+            // The checks the policy requires of a written result run on its exact tree first (./checks.ts).
+            // The source stores each check's outcome on the subject, so a restart before the run finished
+            // gets the same outcomes back, never a check run again in place of one that ended.
             const ran = await checksFor(this, run, nodes, signal)
             if (signal.aborted) return
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.

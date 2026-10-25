@@ -373,10 +373,26 @@ The **`agents` Worker source**: agent runtimes as Workers
       loaded, or the policy does not let its exact argv run unasked (`auto` or
       `notify`; an `ask` opens no request: list the line in the studio policy);
     - the allowed ones run in order in the setup's confinement and views
-      (`confineIn`, shared with the setup), each within its deadline. Exit 0 is
-      `passed`, any other code `failed`, a timeout, signal, or start failure an
-      `error`; after each, the tree is captured again, and a check that changed it is
-      an `error`, the later ones not run;
+      (`confineIn` in its `check` mode), each within its deadline, **with the
+      worktree read-only** (T164): a check cannot change what it checks, even for
+      a while; its writable places are its private `/tmp` and the setup's
+      `checkScratch` paths (git-ignored, nothing tracked; each a fresh private
+      directory of that check alone, its own confinement, discarded after it).
+      Each command starts through a fixed launcher (System's own Node, bound back
+      read-only) that spawns it and says on fd 3 `started` once the exec itself
+      succeeded, or `exec-failed <code>` (a missing `#!` interpreter among them);
+      the command may report on the descriptor `SYSTEM_CHECK_REPORT_FD` names
+      (fd 4). Exit 0 is `passed`, any other code (127 too) `failed`; a command
+      never executed, a nonzero
+      exit whose command reported `nested-confinement-refused: <detail>` there,
+      a timeout, or a signal is an `error`; after each, the tree is captured
+      again, and a check that changed it is an `error`, the later ones not run;
+    - each check that ran is stored (`agent_check_runs`: run, worktree, subject,
+      check, argv, setup hash; `started`, then `done` with its record) and its
+      record is the answer when asked again on that key, after a restart too; one
+      left `started` by a crash is an `error` stored in its place; a stop of the
+      run (a lost lease) is honoured only once the check's outcome is stored: as
+      it ended, or an `error` when the stop killed it (INV-4);
     - what ran is one `check-run@1.0` evidence artifact (its inputs the commands'
       `autonomy` decisions; per check the argv, exit code, duration, and the last
       4000 characters of its output with its length and SHA-256), at the run's

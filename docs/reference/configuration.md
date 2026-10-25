@@ -104,6 +104,7 @@
 | `worktreeSetup[].checks.typecheck` | string |  | The command of the typecheck check |
 | `worktreeSetup[].checks.lint` | string |  | The command of the lint check |
 | `worktreeSetup[].checkTimeoutSeconds` | number (1…3600) | `1800` | Each check's deadline |
+| `worktreeSetup[].checkScratch` | string[] | `[]` | Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner's cache (node_modules/.vite); the checks see the rest of the worktree read-only |
 
 ## `approvals`
 

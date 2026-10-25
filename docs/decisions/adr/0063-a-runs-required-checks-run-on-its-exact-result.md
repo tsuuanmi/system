@@ -77,15 +77,28 @@ What constrains a fix:
   `moved`, `gone`, `busy`, `failed`). A source that throws is `failed`, never a check passed.
 - **How** (the `agents` source). Each check's command is the operator's, per repository, beside its
   setup (`worktreeSetup[].checks`); it runs only on a worktree set up under the setup loaded now,
-  in that setup's confinement and views (the host read-only but the worktree, no network), within
-  `checkTimeoutSeconds`, and only when the policy lets its exact argv run unasked (`auto` or
+  in that setup's confinement and views (the host read-only, **the worktree too**, no network),
+  within `checkTimeoutSeconds`, and only when the policy lets its exact argv run unasked (`auto` or
   `notify`: a line on the studio commands list). An `ask` opens no request: a check is not a step
-  that waits.
-- **What counts.** Exit 0 is `passed` and any other code `failed`, only while the tree is still the
-  subject after the command; anything else (no command configured, not allowed, not set up, a
-  confinement not proven, a command that cannot start, a timeout, a signal, a tree the check
-  changed) is `error`, neither passed nor failed: the check stays pending (INV-2). A check that
-  changed the tree ends the run of the rest.
+  that waits. Its only writable places are its private `/tmp` and the repository's
+  `checkScratch` paths, each git-ignored, holding nothing tracked, and a fresh private directory
+  of that check alone, discarded after it: each check gets a confinement of its own, so the next
+  never sees what one wrote there (T164).
+- **What counts.** Exit 0 is `passed` and any other code `failed`, only when the command was
+  positively executed and the tree is still the subject after it. It starts through a fixed launcher
+  (System's own Node, bound back read-only) that spawns it and says, on its own channel, `started`
+  once the exec succeeded or `exec-failed <code>` when it did not: the exec itself tells, never a
+  lookup on `PATH`, so an executable whose `#!` interpreter is missing is not started, and a command
+  that exits 127 by itself is `failed`. Anything else (no command configured, not allowed, not
+  set up, a confinement not proven, a command never executed, a timeout, a signal, a
+  tree that changed) is `error`, neither passed nor failed: the check stays pending (INV-2). A
+  nonzero exit is an `error` too when the command itself reports, on the descriptor
+  `SYSTEM_CHECK_REPORT_FD` names, a line `nested-confinement-refused: <detail>`: a repository's
+  confinement tests fail there for the host, not the code. No probe stands in for that report: any
+  other nonzero exit is the check's own failure, wherever it ran. Writing the report never makes a
+  check pass. A tree that changed ends the run of the rest.
+- **What the subject binds.** Every untracked file's whole content, hashed whatever its size; one
+  that cannot be hashed exactly leaves the subject unknown, and nothing is accepted on it (INV-5).
 - **What is recorded.** The source records one `check-run@1.0` `evidence` artifact (per check: the
   argv, the `autonomy` decision on it, exit code, duration, and the end of its output with the
   length and SHA-256 of all of it) at the run's classification. The engine's `acceptance` decision
@@ -95,8 +108,17 @@ What constrains a fix:
 - **What the board does with it** is unchanged: no check failed and none pending, the result is
   accepted without the operator; a failed one is another attempt; a pending one holds the review for
   the operator. A plain run records them and is never blocked.
-- **Restart** (INV-4): running a check changes nothing it checks (a check that does is an
-  `error`), so it is safe to repeat: a run stopped before its acceptance runs them again.
+- **Restart** (INV-4), as amended by T164: a check is never run again to replace what it came to.
+  The source stores each check that ran (`agent_check_runs`), keyed by the run, the worktree, the
+  subject, the check, its argv, and the setup's hash: `started` before its command starts, `done`
+  with its record after. Asked again on that key, it answers with the stored record; one left
+  `started` by a crash becomes a stored `error`. A stop of the run (an operator's stop, a lost
+  lease) loses nothing either: a command that ended before it is judged and stored as it ended,
+  and one the stop killed before its end is stored as an `error`. Only a check the confinement
+  never started (nothing of it ran) may run again. The engine
+  finishes a board task's run whose acceptance it already stored, without asking the checks again.
+  (The first version repeated the checks after a restart, as safe; checks can behave differently on
+  repetition, so a failure could be replaced by a pass on the same subject.)
 
 ## Consequences
 
@@ -122,6 +144,22 @@ What constrains a fix:
   (INV-5); a tree that moved since binds the result to its artifact as before, and the checks stay
   pending. A result on no git working tree keeps them pending. A task with a write subject is
   unchanged.
+- From the review of T163 (T164): a check can no longer change what it checks, even for a while (a
+  passing file swapped in, tested, the defective one put back): the worktree is read-only to it. A
+  repository whose checks write into the worktree (a test runner's cache under `node_modules`, a
+  build directory) must name those git-ignored paths in `checkScratch`, or its checks fail on the
+  write; a write to a path in the subject always fails.
+- A subject hashes every untracked file whole, so capturing a tree with large untracked files reads
+  them all (bounded at 8 GiB in all, past which the subject is unknown and nothing is accepted).
+- An infrastructure failure (a command the confinement did not start, a nested bubblewrap the
+  command reports refused) is an `error`: the result is held for the operator, never sent back as
+  a failed attempt. A repository whose checks start a nested bubblewrap must report its refusal on
+  `SYSTEM_CHECK_REPORT_FD`; one that does not has the refusal judged a failed check. A check can
+  turn its own failure into a held `error` by reporting falsely, never into a pass.
+- A check's outcome is kept per subject in the store and reused: a restart costs no second run,
+  and a flaky check's failure stands for that subject. A check interrupted by a crash or killed by
+  a stop stays an `error` for that subject; the operator decides, or the next attempt's new subject
+  runs it.
 
 ## Rejected alternatives
 

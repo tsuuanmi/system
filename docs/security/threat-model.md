@@ -146,6 +146,27 @@
   is refused, and a batch verdict names its batch, so it never reaches a request
   outside it. A policy change is asked on the hash of the whole set it makes and applies only
   onto the set it was proposed on, so an approval never applies a set the operator was not shown.
+- **A result's required checks pass on code other than the result, or a failed one is replaced**
+  ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md),
+  [a run's checks](../design/agent-runtimes.md#a-runs-checks)). The repository's check scripts are
+  the result's author's content. The subject a check is judged on hashes every untracked file's
+  whole content, whatever its size (same size and a restored mtime are another subject); a tree
+  that cannot be hashed exactly has no subject, and nothing is accepted on it. A check runs on a
+  read-only view of the result: it cannot swap a passing file in, test it, and put the defective
+  one back, since the swap fails it; its only writable places are its private `/tmp` and the
+  operator's git-ignored `checkScratch` paths, fresh for each check and discarded after it (one
+  check never sees another's); the tree is captured again after it as proof. A check passes only on
+  a command its launcher positively executed (the exec itself acknowledged, not a lookup on
+  `PATH`); one never executed (an interpreter its `#!` names that is missing among them), or a
+  nonzero exit whose command reports (on `SYSTEM_CHECK_REPORT_FD`) a nested bubblewrap refused, is an infrastructure `error`, held for the operator, never a failure that sends the work
+  back; no probe of the host turns another check's nonzero exit into an `error`. Each check's
+  outcome is stored on its subject, argv, and setup before the acceptance is decided and reused
+  after a restart; one a crash interrupted, or a stop (a lost lease) killed, is an `error`, and one
+  that ended before a stop is stored as it ended before the stop is honoured: none is run again to
+  replace what it came to, and a stored acceptance is finished on, never decided again (INV-4).
+  Residual: a check script can still exit 0 without testing anything, or report a nested refusal
+  falsely to hold its own failure for the operator instead of another attempt (never to pass); that
+  is the repository's content, which the review and the operator's merge judge.
 - **The safety layer loosened by something other than the operator.** A new autonomy policy comes
   into force only by the operator: an approved `policy-change` request, proposed from `/ui` or
   MCP `approvals_policy_propose` (both operator only), or by the queue itself from repeated
@@ -388,9 +409,10 @@
   content: a repository's install scripts as the earlier agent left them run
   under the setup's confinement (the host read-only but the worktree, no
   network, a deadline), the same bounds as the agent's own commands, with read
-  access to the package store's files a view shows read-only. A listed setup or
-  validation command is allowed by its argv, never by what the repository's files
-  make it run.
+  access to the package store's files a view shows read-only. A run's required
+  checks run in that confinement with the worktree read-only as well (ADR-0063).
+  A listed setup, check, or validation command is allowed by its argv, never by
+  what the repository's files make it run.
 - **Local or private data leaks to a provider website or API through a prompt or
   attachment.** `ctx.egress` checks the **actual outgoing payload** inside the
   Worker source, after routing chose the Worker and before anything is sent

@@ -361,7 +361,12 @@ ids, never the call's input.
   run runs those that are commands on the result's exact tree, with the commands the operator
   configured for the repository, and its acceptance reports each that ran to an exit code
   ([a run's required checks](workflow-engine.md#a-runs-required-checks)); a Worker's own account of
-  a command never counts. A run outside the board applies nothing, so they never block it: when it
+  a command never counts. A check sees the result read-only, so it cannot pass on code it swapped in
+  for a while; one whose command was never executed (the exec itself tells), or a nonzero exit whose command reports its
+  nested bubblewrap refused, is an infrastructure `error`, pending for the operator, never a failed
+  check sent back as another attempt (any other nonzero exit is `failed`); and each check's outcome,
+  even one a stop of the run came after or killed, is stored on its subject and reused, never run
+  again to replace it ([a run's checks](agent-runtimes.md#a-runs-checks)). A run outside the board applies nothing, so they never block it: when it
   wrote, its completion records them as passed, failed, or pending on an `acceptance` decision
   (rule `workflow.run-acceptance`) for the operator to see
   ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)), and they bind

@@ -10,7 +10,7 @@ export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileD
 export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runtime.ts'
 export { registerSecretPath, secretPaths } from './secrets.ts'
 export { GIT_FLOOR, GLOB_BUDGET, type GlobBudget, globMatches, isPrivateAddress, pinnedTo, type RepositorySnapshot, selectFiles, type SnapshotBounds, SnapshotError, type SnapshotFile, type SnapshotRequest, snapshotRepository, type UnreadReason } from './repositories.ts'
-export { captureGitSubject, type CapturedSubject, type CaptureOptions, type GitSubject, subjectId } from './subjects.ts'
+export { captureGitSubject, type CapturedSubject, type CaptureOptions, type GitSubject, ignoredPath, subjectId } from './subjects.ts'
 export {
   currentProcess, hostOf, type LeaseProbe, type Liveness, type LivenessBounds, LIVENESS_RULE, LIVENESS_VERDICTS, livenessOf, type LivenessSignals, type LivenessVerdict,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, probeProcess, type ReadText,

@@ -477,6 +477,7 @@ worktreeSetup:
       tests: corepack pnpm test:affected
       lint: corepack pnpm lint
     checkTimeoutSeconds: 1800             # each check's deadline (1 to 3600)
+    checkScratch: [node_modules/.vite]    # git-ignored paths a check may write: fresh, private, discarded
 ```
 
 - **Only on the result's tree:** the worktree is still there (`gone`), no agent run of its
@@ -486,17 +487,53 @@ worktreeSetup:
   worktree was not set up under the setup loaded now (the checks run in the environment the setup
   prepared), no queue is loaded, or the policy does not let its exact argv run unasked: `auto` or
   `notify`, as for a line on the studio commands list. An `ask` opens no request.
-- **Confined as the setup is** (the same `confineIn`): the host read-only but the worktree and the
-  setup's private views, no network, a private `/tmp`, the daemon's scrubbed environment, the
-  confinement proven first; each check within `checkTimeoutSeconds` (default 1800), in order.
-- **What counts:** exit 0 is `passed` and any other code `failed`, only while the tree, captured
-  again after the command, is still the subject; a check that changed it is an `error`, and the
-  later ones are not run. A timeout, a signal, or a command that cannot start is an `error`.
+- **Confined as the setup is, but on a read-only result** (the same `confineIn`, in its `check`
+  mode): the host read-only, **the worktree too**, the setup's private views, no network, a private
+  `/tmp`, the daemon's scrubbed environment, the confinement proven first; each check within
+  `checkTimeoutSeconds` (default 1800), in order. A check cannot change what it checks, not even for
+  a while (swap a file in, test it, put it back): a write to the worktree fails it. Its only writable
+  places there are the setup's `checkScratch` paths, each a fresh private directory mounted over its
+  path, of that check alone (each check gets a confinement of its own), discarded when the check
+  ends, so the next check never sees what it wrote there; each must be ignored by git and hold
+  nothing tracked (else the check is an `error`, not run), so it is never part of the subject.
+- **Executed, positively:** each command starts through a fixed launcher, System's own Node (its
+  binary bound back read-only), which spawns the command with its argv as given (never parsed by a
+  shell) and says on its own channel (fd 3) `started` once the exec succeeded, or `exec-failed
+  <code>` when it failed; the command gets fd 3 as `/dev/null`. The exec tells (libuv's
+  close-on-exec handshake), never a lookup on `PATH`: an executable whose `#!` interpreter is
+  missing is not started, while a command that runs and exits 127 by itself is `failed`. One whose
+  launcher said nothing (bubblewrap refused, the launcher not run) or `exec-failed` is an `error`,
+  an infrastructure failure, never a failed check; nothing is kept of it, so the next ask runs it.
+- **A nested confinement refused, as the command reports it:** a check's command is given a second
+  channel, the descriptor `SYSTEM_CHECK_REPORT_FD` names (fd 4). A test suite that tests
+  confinement and finds its nested bubblewrap refused fails for the host, not for the code: it
+  writes a line `nested-confinement-refused: <detail>` there, and its nonzero exit is an `error`
+  naming the refusal (exit 0 is still `passed`), so a result is held for the operator instead of
+  sent back as another attempt. Nothing else makes a nonzero exit an `error`: no probe of the host
+  stands for a command's own cause, so a lint or test that fails on defective code is `failed`
+  wherever it ran. A false report can hold a failure, never pass it.
+- **What counts:** exit 0 is `passed` and any other code `failed`, only when the command said it
+  started and the tree, captured again after the command, is still the subject (the read-only view
+  makes this the proof, not the guard); a tree that changed anyway is an `error`, and the later
+  checks are not run. A timeout or a signal is an `error`.
+- **Stored per check, reused, never re-run** (INV-4): each check that ran is kept in
+  `agent_check_runs`, keyed by the workflow run, the worktree, the subject, the check, its argv, and
+  the setup's hash, `started` before its command starts and `done` with its record after. Asked
+  again on that key (a restart before the run finished, or the engine's next turn), the stored
+  record is the answer, byte for byte; one left `started` (the daemon stopped meanwhile) becomes an
+  `error` stored in its place, never run again to replace what it came to. A stop of the run (an
+  operator's stop, a lost lease) loses nothing: a command that ended before it is judged and stored
+  as it ended, before the stop is honoured; one the stop killed before its end is stored as an
+  `error`. Only a command the confinement never started is forgotten (nothing of it ran).
 - **Recorded:** one `check-run@1.0` `evidence` artifact at the run's classification, its inputs the
   commands' `autonomy` decisions; per check the argv, exit code or signal, duration, and the last
   4000 characters of its output with the length and SHA-256 of all of it. The answer carries it.
-- The checks are not part of the setup's hash: changing them neither sets the worktrees up again
-  nor asks again about the setup's commands.
+- The checks and their scratch paths are not part of the setup's hash: changing them neither sets
+  the worktrees up again nor asks again about the setup's commands.
+- The subject they are judged on binds every untracked file's whole content, hashed in chunks
+  whatever its size (the display bound decides only what a reviewer is shown); a file that changes
+  while it is read, or untracked files past 8 GiB in all, leave the subject unknown, and nothing is
+  accepted on it (INV-2, INV-5).
 
 ## Credentials and egress
 

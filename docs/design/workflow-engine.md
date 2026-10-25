@@ -1101,9 +1101,12 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
   working tree is no longer that version, the result binds to the final result artifact as
   before, and the checks, on another subject, stay pending. A result on no git working tree runs
   none, and they stay pending for the operator. A task that writes a subject keeps binding to it.
-- **Restart** (INV-4): a check changes nothing it checks, so it is safe to repeat; a run stopped
-  before its acceptance asks for them again. A stop of the run (the operator's, a lost lease)
-  stops the commands in flight, and nothing is recorded.
+- **Restart** (INV-4): a run stopped before its acceptance asks for them again, and the source
+  answers with each check's stored outcome on that subject, never running one again to replace
+  what it came to (one a crash interrupted is an `error`, pending;
+  [a run's checks](agent-runtimes.md#a-runs-checks)). A board task's run whose acceptance was
+  stored before the stop finishes on it, its checks not asked again. A stop of the run (the
+  operator's, a lost lease) stops the commands in flight, and nothing is recorded.
 - **Bounded** (INV-9): at most the three checks, each within the source's deadline.
 - **Configuration**: the commands are the operator's, per repository
   ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,

@@ -61,7 +61,7 @@ import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
   MAX_LIMIT_READ_SECONDS, setsDerivedOnly,
 } from './roles.ts'
-import { RunChecks } from './checks.ts'
+import { CHECKS_MIGRATION, RunChecks } from './checks.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
 import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
@@ -214,7 +214,8 @@ export interface Config {
    * policy, run confined: the host read-only but the worktree and the views named, no network
    * (./setup.ts, ADR-0058). A worktree whose setup did not run under this definition takes no run.
    * Its `checks` name the command of each check a policy can require, which a workflow run runs on
-   * its result in the same confinement (./checks.ts, T151).
+   * its result in the same confinement, but with the worktree read-only to it except its
+   * `checkScratch` paths (./checks.ts, T151).
    */
   worktreeSetup?: WorktreeSetupConfig[]
 }
@@ -473,6 +474,7 @@ export class AgentWorkers extends Service {
         lint: z.string().description('The command of the lint check'),
       }).description('The command of each check a policy can require, run by a workflow run on its result\'s exact tree in this setup\'s confinement, only when the autonomy policy allows it unasked (T151)'),
       checkTimeoutSeconds: z.natural().min(1).max(3600).default(1800).description('Each check\'s deadline'),
+      checkScratch: z.array(z.string()).description('Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner\'s cache (node_modules/.vite); the checks see the rest of the worktree read-only'),
     })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
   }) as unknown as z<Config>
 
@@ -639,7 +641,7 @@ export class AgentWorkers extends Service {
       // The operator frees what a run that ended not known to be gone held, on their word that its agent is gone.
       version: 14,
       sql: 'ALTER TABLE agent_runs ADD COLUMN liveness_freed TEXT;',
-    }, CARRY_MIGRATION, FORK_MIGRATION])
+    }, CARRY_MIGRATION, FORK_MIGRATION, CHECKS_MIGRATION])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined

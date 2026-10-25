@@ -2926,11 +2926,14 @@ every such result waits for you in **Reviews** with `tests, lint` pending.
              tests: corepack pnpm test:affected
              lint: corepack pnpm lint
            checkTimeoutSeconds: 1800    # each check's deadline; at most 3600
+           checkScratch: [node_modules/.vite]   # vitest's cache: the rest of the worktree is read-only to a check
    ```
 
    Each is a command line as the policy matches it: words split on single spaces, no shell
    metacharacter, at most 200 characters. Only `tests`, `typecheck`, and `lint` can be named. The
-   checks are not part of the setup's hash: adding them sets no worktree up again.
+   checks are not part of the setup's hash: adding them sets no worktree up again. A check sees the
+   worktree read-only; `checkScratch` names the git-ignored paths it writes (a cache), each a fresh
+   private directory for it, discarded after it.
 3. **The policy.** A check runs only when the policy lets its exact argv run unasked: list each
    line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy));
    a line already listed for the validation step is enough. A check whose command would ask is not
@@ -2949,7 +2952,12 @@ What a check that did not pass means:
 | `… (the autonomy policy asks the operator about its command …)` | list the command (step 3) |
 | `… (the worktree … was not set up under … setup as loaded now …)` | the setup changed after the worktree was made, or never ran there: the next attempt's worktree is set up again |
 | `… did not finish within 1800 s` | raise `checkTimeoutSeconds`, or find what hangs |
-| `… left the worktree as git:…, no longer git:…` | the command writes files git does not ignore: make it write only ignored ones (a cache under `node_modules/`), or add them to `.gitignore` |
+| `the run's own tests check failed …`, its output naming `EROFS` (a read-only file system) | the command writes into the worktree, which a check sees read-only: name the git-ignored path it writes (a cache under `node_modules/`) in `checkScratch` |
+| `… its check scratch … is not ignored by git, or holds a tracked file` | a scratch path must be ignored by git: add it to `.gitignore`, or name another |
+| `… was not started by the confinement (an infrastructure failure …)` | bubblewrap refused, or the command is not installed for the daemon: the result waits for you; fix the host, then accept by hand |
+| `… and reported a nested bubblewrap refused (…)` | the check's own suite reported (on `SYSTEM_CHECK_REPORT_FD`) that the checks' confinement refused the nested bubblewrap it needed: the result waits for you. A suite that does not report it has the refusal judged a failed check |
+| `… recorded no end (the daemon stopped meanwhile) …` or `… was stopped before its end (a stop or a lost lease of the run) …` | a restart or a stop interrupted that check; it is not run again on this tree: decide by hand, or the next attempt runs it on its own tree |
+| `… left the worktree as git:…, no longer git:…` | the tree changed while the check ran, though it is read-only to the check: something else wrote it; check the worktree |
 | `… did not run: source agents refused (busy) …` or `(moved)` | an agent run of the workflow run had not ended, or the tree changed after the last step: the result waits for you; check its worktree |
 
 A pending check is never failed: the review waits for you as before, and your Accept applies it.

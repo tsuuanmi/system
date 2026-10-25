@@ -10,7 +10,7 @@ import StoreBoard from '@tsuuanmi/system-board'
 import type { ArtifactRef, BoardTask } from '@tsuuanmi/system-board-core'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
-import Leases from '@tsuuanmi/system-leases'
+import Leases, { LeaseLost } from '@tsuuanmi/system-leases'
 import { captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
@@ -201,6 +201,43 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     const three = await none.task()
     expect(await settled(none.ctx, three.taskId)).toMatchObject({ state: 'review', waiting: { pendingChecks: ['tests', 'lint'] } })
     expect(acceptanceOf(none.ctx, three.runId).outcome.detail).toMatchObject({ checkRun: { outcome: 'not-run', reason: expect.stringContaining('no Worker source holds the worktree') } })
+  })
+
+  it('holds for the operator a result whose checks could not start, an infrastructure error, and never sends it back as a failed attempt (INV-2)', async () => {
+    const checker = new Checker()
+    checker.outcomes = { tests: 'error', lint: 'error' }
+    const { ctx, task } = await boot(checker)
+    const { taskId, runId } = await task()
+    const held = await settled(ctx, taskId)
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] } })
+    const acceptance = acceptanceOf(ctx, runId)
+    expect(acceptance.outcome.option).toBe('accept')
+    expect(acceptance.outcome.detail['checks']).toEqual({})
+  })
+
+  it('finishes a run whose acceptance was stored before its holder was lost on that acceptance, never asking its checks again: a failure is not replaced by a later pass (INV-4)', async () => {
+    const checker = new Checker()
+    checker.outcomes = { tests: 'passed', lint: 'failed' }
+    const { ctx, task } = await boot(checker)
+    const append = ctx.eventLog.append.bind(ctx.eventLog)
+    let lost = 0
+    // The run's lease lost as it finishes, after its acceptance was stored: the run's next turn takes it from there.
+    vi.spyOn(ctx.eventLog, 'append').mockImplementation((event) => {
+      if (event.type === 'workflow.run.completed' && !lost++) {
+        // Asked again, its checks would pass now.
+        checker.outcomes = { tests: 'passed', lint: 'passed' }
+        throw new LeaseLost(`run:${event.runId}`, 'taken over')
+      }
+      return append(event)
+    })
+    const { taskId, runId } = await task()
+    const back = await settled(ctx, taskId)
+    expect(lost).toBe(2)
+    expect(checker.steps).toHaveLength(1)
+    expect(back.state).toBe('ready')
+    expect(back.attempts.count).toBe(1)
+    expect(acceptanceOf(ctx, runId).outcome).toMatchObject({ option: 'reject', detail: { checks: { tests: true, lint: false } } })
+    expect(ctx.workflow.get(runId)).toMatchObject({ status: 'completed' })
   })
 
   it('asks for no check the task\'s class does not require', async () => {
