@@ -15,4 +15,8 @@ export {
   currentProcess, hostOf, type LeaseProbe, type Liveness, type LivenessBounds, LIVENESS_RULE, LIVENESS_VERDICTS, livenessOf, type LivenessSignals, type LivenessVerdict,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, probeProcess, type ReadText,
 } from './liveness.ts'
+export {
+  type AccountQuota, accountQuotaOf, QUOTA_DEFAULTS, QUOTA_RANGES, QUOTA_SCORE, type QuotaCandidate, type QuotaKeys, type QuotaPool, type QuotaReading, type QuotaScore, quotaScoreOf, type QuotaSettings,
+  quotaSettingsProblems, type QuotaWindow, type ScoredCandidate, type WindowQuota, windowName,
+} from './quota.ts'
 export { countUnknownUsage, MAX_UNKNOWN_ENTRIES, MAX_UNKNOWN_REASON, type UnknownUsageCount, type UnknownUsageSources, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf } from './usage.ts'
