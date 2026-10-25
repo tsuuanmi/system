@@ -3,15 +3,16 @@
  * ADR-0063): boots the store, the approval queue, routing, the agent Worker source with one writing
  * Worker on a scripted runtime (a worktree per workflow run of `<dir>/repo`, whose setup is `true` and
  * whose `tests` check is `node tests.mjs`), and the workflow engine with a one-step `develop` template.
- * The check hangs while the worktree holds `hang` (git-ignored, written by the agent in `start`), after
- * writing `started`, so the suite can kill the process with SIGKILL while a check runs. Reports on
- * stdout as `@@ {json}` lines.
+ * The check hangs while the worktree holds `hang` (git-ignored, written by the agent in `start`), so
+ * the suite can kill the process with SIGKILL while a check runs: the worktree is read-only to the
+ * check, so its start is read from the source's store (`agent_check_runs`), not from a file it writes.
+ * Reports on stdout as `@@ {json}` lines.
  * - `start`: starts the run; reports its id, the agent's worktree, and when the check started.
- * - `resume <runId> <worktree>`: removes `hang`, boots again, and reports the run's end with its
- *   acceptance decision.
+ * - `resume <runId> <worktree>`: removes `hang` (so the check, were it run again, would pass), boots
+ *   again, and reports the run's end with its acceptance decision.
  * Usage: checks-harness.mjs <dir> start | resume <runId> <worktree>
  */
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRuntimeRegistry from '@tsuuanmi/system-agent-runtimes'
@@ -78,9 +79,11 @@ if (mode === 'start') {
   report({ runId })
   const watch = setInterval(() => {
     const worktree = ctx.store.db.prepare('SELECT path FROM agent_worktrees WHERE workflow_run_id = ?').get(runId)?.path
-    if (worktree && existsSync(join(worktree, 'started'))) {
+    const check = ctx.store.db.prepare("SELECT state FROM agent_check_runs WHERE workflow_run_id = ? AND check_name = 'tests'").get(runId)?.state
+    if (worktree && check === 'started') {
       clearInterval(watch)
-      report({ checking: { worktree, status: ctx.workflow.get(runId)?.status } })
+      // Long enough for its command to be running (it hangs on `hang`).
+      setTimeout(() => report({ checking: { worktree, status: ctx.workflow.get(runId)?.status } }), 1000)
     }
   }, 50)
 } else {

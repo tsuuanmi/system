@@ -1,9 +1,10 @@
 /**
  * Crash injection while a run's required check runs (ADR-0063, T151, INV-4): the daemon is killed
  * with SIGKILL while the `tests` check of a completed run runs, confined, in the run's worktree,
- * before its acceptance is decided. Running a check is safe to repeat: after a restart the engine
- * advances the run again, the source runs the check again on the same tree, and the acceptance is
- * decided once, on the checks the restart ran. Run with `pnpm test:crash` (it builds first).
+ * before its acceptance is decided. A check is never run again to replace what it came to (T164):
+ * after a restart the engine advances the run again, the source answers the check the crash
+ * interrupted with a stored `error`, not a second run (which would pass now), and the acceptance is
+ * decided once, the check pending. Run with `pnpm test:crash` (it builds first).
  */
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -61,18 +62,17 @@ function daemon(args: string[]): { child: ChildProcess; message: (key: string) =
 }
 
 describe.skipIf(!CONFINES)('crash injection while a run\'s required check runs (ADR-0063, INV-4)', () => {
-  it('a daemon killed while the tests check runs leaves the run unaccepted; the restart runs the check again on the same tree and accepts the run on it, once', async () => {
+  it('a daemon killed while the tests check runs leaves the run unaccepted; the restart never runs the check again: it is an error, pending, and the run is accepted once', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-checks-'))
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const repo = join(dir, 'repo')
     const git = (...args: string[]): string => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' }).trim()
     execFileSync('git', ['init', '-q', '-b', 'main', repo])
     writeFileSync(join(repo, 'calc.py'), 'def add(a, b):\n    return a - b\n')
-    writeFileSync(join(repo, '.gitignore'), 'hang\nstarted\n')
-    // The check: marks that it started, then hangs while `hang` is there; else passes when add() adds.
+    writeFileSync(join(repo, '.gitignore'), 'hang\n')
+    // The check: hangs while `hang` is there; else passes when add() adds.
     writeFileSync(join(repo, 'tests.mjs'), [
-      "import { existsSync, readFileSync, writeFileSync } from 'node:fs'",
-      "writeFileSync('started', '')",
+      "import { existsSync, readFileSync } from 'node:fs'",
       "if (existsSync('hang')) setInterval(() => {}, 1000)",
       "else { const ok = readFileSync('calc.py', 'utf8').includes('a + b'); console.log(ok ? 'tests: passed' : 'tests: failed'); process.exit(ok ? 0 : 1) }",
       '',
@@ -89,10 +89,11 @@ describe.skipIf(!CONFINES)('crash injection while a run\'s required check runs (
     if (first.child.exitCode === null && first.child.signalCode === null) await new Promise((resolve) => first.child.once('exit', resolve))
 
     const second = daemon([dir, 'resume', runId, checking.worktree])
-    const done = (await second.message('done')).done as { status: string; acceptances: number; detail: { checks: Record<string, boolean>; pendingChecks: string[]; checkRun: { outcome: string; evidence: string } }; inputs: string[] }
+    const done = (await second.message('done')).done as { status: string; acceptances: number; detail: { checks: Record<string, boolean>; pendingChecks: string[]; checkRun: { outcome: string } } }
     expect(done.status).toBe('completed')
     expect(done.acceptances).toBe(1)
-    expect(done.detail).toMatchObject({ checks: { tests: true }, pendingChecks: [], checkRun: { outcome: 'checked', asked: ['tests'] } })
-    expect(done.inputs).toContain(done.detail.checkRun.evidence)
+    // The interrupted check is an error, never replaced by a second run's pass: it stays pending.
+    expect(done.detail).toMatchObject({ pendingChecks: ['tests'], checkRun: { outcome: 'checked', asked: ['tests'], results: [{ check: 'tests', outcome: 'error' }] } })
+    expect(done.detail.checks).not.toHaveProperty('tests')
   }, 180_000)
 })
