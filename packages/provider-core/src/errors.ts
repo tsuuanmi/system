@@ -37,12 +37,19 @@ export class ProviderError extends Error {
   readonly disposition: Disposition
   /** The account feature a usage limit applies to (`quota_exhausted`, ADR-0034); none means the whole account. */
   readonly feature: string | undefined
+  /**
+   * The site answered the sent prompt with its own error in place of an answer, read on the turn's
+   * own page (Gemini's "Sorry, something went wrong"): sent, and nothing answered. Only a caller's
+   * own rule may start such work again, once, in a new conversation (ADR-0062); never this runtime.
+   */
+  readonly siteError: boolean
 
-  constructor(readonly kind: ProviderErrorKind, message: string, options?: ErrorOptions & { feature?: string }) {
+  constructor(readonly kind: ProviderErrorKind, message: string, options?: ErrorOptions & { feature?: string; siteError?: boolean }) {
     super(message, options)
     this.name = 'ProviderError'
     this.disposition = dispositionOf(kind)
     this.feature = options?.feature
+    this.siteError = options?.siteError === true
   }
 }
 
