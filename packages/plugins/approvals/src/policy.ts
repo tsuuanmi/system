@@ -8,7 +8,7 @@ import { ALWAYS_ASK, applyingPolicies as applying, MODES, SHELL_METACHARACTER, w
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
-export const ACTION_CLASSES: readonly ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion']
+export const ACTION_CLASSES: readonly ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion', 'dispatch']
 
 export const rank = (mode: Mode): number => MODES.indexOf(mode)
 
