@@ -364,7 +364,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.getByRole('link', { name: 'Workers' }).click()
+    await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(new URL(page.url()).search).toBe('?view=workers')
     // The operator's words: free, and resting until a clock time.
@@ -433,7 +433,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await capacity.innerText()).toBe('Chatgpt · Studio Plus: resting until 11:00 (in 2 h); 5 h used 42 %, resets 09:45')
     expect(await capacity.locator('meter').getAttribute('value')).toBe('42')
     expect(await page.getByLabel('Capacity of Claude · slot 1').innerText()).toBe('Claude · slot 1: 5 h no reading yet')
-    await page.getByRole('link', { name: 'Workers' }).click()
+    await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('article', { name: 'agent:acc-a/develop' }).count()).toBe(1)
     // No reading yet, with why its account's usage report could not be read, its time on the clock (T111).
     const agent = page.getByRole('region', { name: 'Account Claude · slot 1' }).getByLabel('window five-hour of plan/agent')
@@ -718,8 +718,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByRole('region', { name: 'Workers at a glance' }).getByRole('region', { name: 'Right now' }).count()).toBe(1)
     expect(home['Free']).toBe(`Free: 1 — ${free[0]!.name} (quota not tracked; excluded from teams: free for other steps, not team work)`)
     expect(home['Stalled']).toBe('Stalled: 0')
-    expect(home['No quota left']).toBe('No quota left: Chatgpt · Studio Plus until 11:00 (in 2 h)')
-    await page.getByRole('link', { name: 'Workers' }).click()
+    expect(home['No quota left']).toBe('No quota left: 1 — Chatgpt · Studio Plus until 11:00 (in 2 h)')
+    await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(await lines()).toEqual(home)
     // Kept in teams again, it is free for every step: said the same on both pages.
