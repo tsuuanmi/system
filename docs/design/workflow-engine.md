@@ -1080,7 +1080,7 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
 
 | Step | Records | On failure |
 |---|---|---|
-| asked | once every step of a run that wrote has completed (`algorithm-development`: after `validate:1`), for a board task's run whose task writes a `git-head` subject, or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
+| asked | once every step of a run that wrote has completed (`algorithm-development`: after `validate:1`), for a board task's run whose task writes a `git-head` subject or writes none (the tree is then its latest agent result's, as a plain run's: T165), or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
 | run | `ctx.workers.check` with the run, the worktree, the exact subject, the checks, and the run's classification: the source that holds the worktree runs them ([a run's checks](agent-runtimes.md#a-runs-checks)) and records a `check-run@1.0` evidence artifact | no `check` on the seam, no source holding the worktree, or a refusal (`moved`, `gone`, `busy`, `failed`): none ran, and each stays pending, the reason recorded |
 | reported | the acceptance decision ([board tasks](#board-tasks), or [a plain run's](#a-plain-runs-acceptance)) reports each check that ran to an exit code on that very subject, `passed` or `failed`, in `outcome.detail.checks`; names the evidence among its inputs; gives each `error` as a reason; and records what was asked and answered in `outcome.detail.checkRun` (rule version 2) | a check the source answered `error` is not reported: it stays pending (INV-2) |
 
@@ -1090,6 +1090,14 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
 - **Exact** (INV-5): the checks are reported only on the subject they ran on, which is the
   subject the acceptance binds; the source runs them only while the worktree is that tree, and a
   check that changed it is an `error`.
+- **A task with no write subject** (T165): the lead proposes tasks without `writes` so several run
+  on one repository at once ([board](board.md#required-checks-bind-at-acceptance), rule 6). Their
+  checks run on the tree the run's latest agent result names, and when at least one ran there to
+  an exit code, the task's result binds to that tree: its subject is that `git-head` at that
+  version, and its artifacts name the agent result on it beside the final result (INV-5). If the
+  working tree is no longer that version, the result binds to the final result artifact as
+  before, and the checks, on another subject, stay pending. A result on no git working tree runs
+  none, and they stay pending for the operator. A task that writes a subject keeps binding to it.
 - **Restart** (INV-4): a check changes nothing it checks, so it is safe to repeat; a run stopped
   before its acceptance asks for them again. A stop of the run (the operator's, a lost lease)
   stops the commands in flight, and nothing is recorded.

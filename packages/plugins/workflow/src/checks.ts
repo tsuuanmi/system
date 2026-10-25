@@ -41,9 +41,10 @@ export function ranOn(ran: RanChecks | undefined, subject: Subject): Partial<Rec
 }
 
 /**
- * The tree a completed run's result is on, as its acceptance binds it: for a board task's run, the
- * latest result on the subject its task writes (`tasks.complete`), else the latest agent result on a
- * git working tree. Undefined when that is not a git working tree with its workspace.
+ * The tree a completed run's result is on, as its acceptance binds it: for a board task's run whose
+ * task writes a subject, the latest result on that subject (`tasks.complete`), else (a plain run, or
+ * a board task with no write subject) the latest agent result on a git working tree. Undefined when
+ * that is not a git working tree with its workspace.
  */
 function treeOf(e: Engine, done: NodeRow[], writes: Subject | undefined): Tree | undefined {
   for (const node of [...done].reverse()) {
@@ -59,8 +60,11 @@ function treeOf(e: Engine, done: NodeRow[], writes: Subject | undefined): Tree |
 /**
  * A completed run's required checks, before its acceptance is decided: for a board task's run, under
  * the task's action class and project (what the board judges its acceptance under); for a plain run
- * that wrote (a `develop` step completed), under `workspace-write`. Undefined when nothing was asked.
- * Throws only when `signal` stopped it.
+ * that wrote (a `develop` step completed), under `workspace-write`. A board task's run is checked on
+ * the tree of the subject its task writes, when that is a `git-head`; with no write subject (the
+ * lead's parallel tasks on one repository, T165), on the tree its latest agent result is on, as a
+ * plain run's, and `tasks.complete` binds the result to that tree when a check ran on it (INV-5).
+ * Undefined when nothing was asked. Throws only when `signal` stopped it.
  */
 export async function checksFor(e: Engine, run: RunRow, nodes: NodeRow[], signal: AbortSignal): Promise<RanChecks | undefined> {
   const done = nodes.filter((n) => n.state === 'COMPLETED')
@@ -69,7 +73,7 @@ export async function checksFor(e: Engine, run: RunRow, nodes: NodeRow[], signal
   let tree: Tree | undefined
   if (row) {
     const writes = row.writes ? JSON.parse(row.writes) as Subject : undefined
-    if (writes?.type !== 'git-head') return undefined
+    if (writes && writes.type !== 'git-head') return undefined
     tree = treeOf(e, done, writes)
     if (!tree || !e.board) return undefined
     try {

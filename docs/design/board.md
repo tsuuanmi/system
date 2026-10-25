@@ -354,7 +354,10 @@ when the result is accepted:
 - The workflow engine's acceptance reports, beside `schema` and `review`, the required checks that
   are commands (`tests`, `typecheck`, `lint`) its run ran on the result's exact tree, by their exit
   codes ([a run's required checks](workflow-engine.md#a-runs-required-checks)); one that could not
-  run is not reported, so it stays pending here.
+  run is not reported, so it stays pending here. A task with no write subject (rule 6 lets the
+  lead run several on one repository at once) gets them too: when they ran on its run's git
+  working tree, its result is on that tree (`git-head` at its version, a commit's subject in
+  `submit`), so the acceptance that reports them binds to it; nothing about the board changes.
 - A class the policy asks about needs no check here: the operator approved the attempt before it
   started.
 
