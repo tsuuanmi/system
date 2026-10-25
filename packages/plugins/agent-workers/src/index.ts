@@ -55,6 +55,7 @@ import {
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, recordDenial, runGate, unaskedNote } from './gate.ts'
+import { repositoryLessons } from './lessons.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Overlaps } from './overlaps.ts'
 import { Probes, refused } from './probes.ts'
@@ -1847,7 +1848,7 @@ export class AgentWorkers extends Service {
         const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
         if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
-        const turn = await this.withUnasked(await this.turnOf(row, worker, current), row, worker)
+        const turn = await this.withUnasked(await this.withLessons(await this.turnOf(row, worker, current), row, worker), row, worker)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
         const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
@@ -1965,6 +1966,25 @@ export class AgentWorkers extends Service {
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
       this.ctx.logger.warn(`agent Workers: the autonomy policy could not be read for ${row.run_id}'s note of the calls that run unasked; it is sent without it: ${(error as Error).message}`)
+      return turn
+    }
+  }
+
+  /**
+   * The turn with the repository's lessons appended (lessons.ts, T220): for a writing Worker
+   * (`workspace-write`) only, never a review member, the lessons file as its repository (the
+   * configured workspace, whose HEAD a run's worktree is cut from) has it committed at HEAD, at most
+   * 30 lessons (lessons.ts `LESSONS_LIMITS`). No such file, or none committed, is no section; one that cannot be
+   * read is none either (logged), since nothing else depends on it. Appended before the egress
+   * check, which sees it.
+   */
+  private async withLessons(turn: Turn, row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
+    if (row.scope === REVIEW_MEMBER || worker.sandbox !== 'workspace-write') return turn
+    try {
+      const section = await repositoryLessons(worker.workspace)
+      return section ? { ...turn, prompt: `${turn.prompt}\n\n${section}` } : turn
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the lessons of ${worker.workspace} could not be read for ${row.run_id}; it is sent without them: ${(error as Error).message}`)
       return turn
     }
   }

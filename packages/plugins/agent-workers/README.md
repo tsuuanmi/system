@@ -63,6 +63,14 @@ The **`agents` Worker source**: agent runtimes as Workers
   `mcp__workspace__…` tool. Such a Worker's Tools section (`unaskedNote`, never a
   review member's) names them as its reading tools and tells it to read with them,
   never with a shell.
+- **The repository's lessons** (`src/lessons.ts`, T220): a run on a writing
+  Worker (`workspace-write`, never a review member) is sent, before its Tools
+  section, a section "Lessons of this repository": the `- ` lines of
+  `docs/engineering/lessons.md` as its repository (the configured `workspace`)
+  has it committed at HEAD, read by git, never from the working tree, at most 30
+  lessons of at most 400 characters each, the rest counted. No file committed
+  there, or no repository, is no section. It is appended before the egress check,
+  which sees it.
 - **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
   [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
   - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,

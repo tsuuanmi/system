@@ -230,6 +230,15 @@ the decision that carried it), and the board's `TASKS.md` in the worktree.
 A run of the template that serves no board task has no task frame: its validation names no
 criteria and runs nothing, so start it for a board task (MCP `run` with `task`).
 
+A step on a writing Worker (a `workspace-write` sandbox: `develop:1`, its fix, and `validate:1`,
+whose commands run) also reads, after its instructions and before its Tools section, the section
+**Lessons of this repository**: the lines of the repository's
+[`docs/engineering/lessons.md`](../engineering/lessons.md) that start with `- `, as committed at
+the HEAD of the Worker's repository (an uncommitted edit, a Worker's included, is never read), at
+most 30, each at most 400 characters, the rest counted. No such file committed, or one with no
+lesson, is no section; the review, on a read-only Worker, never reads it. The lead or a review adds
+a lesson by committing a line to that file; nothing else changes.
+
 ## Removed templates
 
 PROP-0004 removed `investigate`, `deep-research`, `develop`, and `panel`, and replaced
