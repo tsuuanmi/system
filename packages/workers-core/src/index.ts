@@ -300,6 +300,17 @@ export type LandStep =
   | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
 
+/**
+ * A merge's generated files made again (T166): the files (repository-relative) the merge conflicted in
+ * or the commands changed, the commands that made them (as configured), and the autonomy decisions
+ * they ran on.
+ */
+export interface Regenerated {
+  files: string[]
+  commands: string[]
+  autonomy: string[]
+}
+
 /** Why a landing step changed nothing: everything stays as it was. */
 export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved' | 'dirty' | 'conflict' | 'failed'
 
@@ -310,12 +321,13 @@ export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved
  *   whether it already holds `head` (nothing to merge), `stat` the change against it (`git diff
  *   --stat`, bounded);
  * - `merged`: `commit` is the base branch's new head, which holds `head` (`already` when it held it
- *   before this step, such as after a restart);
+ *   before this step, such as after a restart); `regenerated` when the merge conflicted only in files
+ *   the repository declares generated, and they were made again by its commands (T166);
  * - `refused`: nothing changed, and why.
  */
 export type Landed =
   | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string }
-  | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean }
+  | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean; regenerated?: Regenerated }
   | { outcome: 'refused'; cause: LandRefusal; reason: string }
 
 /** One file of a run's change (`WorkChange`): its path, how it changed, its lines added and removed, and its diff. */
