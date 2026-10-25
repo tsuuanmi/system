@@ -61,6 +61,7 @@ import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
   MAX_LIMIT_READ_SECONDS, setsDerivedOnly,
 } from './roles.ts'
+import { RunChecks } from './checks.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
 import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
@@ -212,6 +213,8 @@ export interface Config {
    * works in it (dependencies installed without a network, say), each allowed by the autonomy
    * policy, run confined: the host read-only but the worktree and the views named, no network
    * (./setup.ts, ADR-0058). A worktree whose setup did not run under this definition takes no run.
+   * Its `checks` name the command of each check a policy can require, which a workflow run runs on
+   * its result in the same confinement (./checks.ts, T151).
    */
   worktreeSetup?: WorktreeSetupConfig[]
 }
@@ -464,6 +467,12 @@ export class AgentWorkers extends Service {
         readOnly: z.array(z.string()).description('Paths inside it (relative) bound back read-only into the private directory, for example a package store\'s files'),
       })).description('Host directories the setup sees as private copies; never a path hidden from agents'),
       timeoutSeconds: z.natural().min(1).max(3600).default(600).description('The whole setup\'s deadline'),
+      checks: z.object({
+        tests: z.string().description('The command of the tests check, its words split on single spaces (no shell)'),
+        typecheck: z.string().description('The command of the typecheck check'),
+        lint: z.string().description('The command of the lint check'),
+      }).description('The command of each check a policy can require, run by a workflow run on its result\'s exact tree in this setup\'s confinement, only when the autonomy policy allows it unasked (T151)'),
+      checkTimeoutSeconds: z.natural().min(1).max(3600).default(1800).description('Each check\'s deadline'),
     })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
   }) as unknown as z<Config>
 
@@ -493,6 +502,8 @@ export class AgentWorkers extends Service {
   /** Each repository's worktree setup, by its path as configured (resolved), and what runs them (ADR-0058). */
   private readonly setups: Map<string, Setup>
   private readonly worktreeSetups: WorktreeSetups
+  /** A workflow run's required checks, run on its result's worktree in its repository's setup's confinement (./checks.ts, T151). */
+  private readonly runChecks: RunChecks
   /** Each runtime's account setting (ADR-0052); a runtime not configured is assigned. */
   private readonly accounts: Map<string, AccountSetting>
   /** The enrollment slots of each runtime and the accounts in them (ADR-0051). */
@@ -520,6 +531,7 @@ export class AgentWorkers extends Service {
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
+    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'))
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     const slots = new Map<string, number>()
     for (const entry of providers) {
@@ -672,6 +684,8 @@ export class AgentWorkers extends Service {
       changes: (runId) => this.worktrees.changes(runId),
       // A board task's next attempt starting from the work its previous attempt left (ADR-0061).
       carry: (step) => this.worktrees.carry(step),
+      // A workflow run's required checks, run on its result's exact tree (T151).
+      check: (step, signal) => this.runChecks.check(step, signal),
     })
     // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => {

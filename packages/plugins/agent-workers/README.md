@@ -356,6 +356,32 @@ The **`agents` Worker source**: agent runtimes as Workers
       `agent-workers.worktree-setup`, `start` or `refuse`) among the run's
       decisions, and an `agent-workers.worktree.setup` event (`ran`, `refused`,
       `waits`);
+  - **a run's checks** (`worktreeSetup[].checks`, [`src/checks.ts`](src/checks.ts),
+    T151, [ADR-0063](../../../docs/decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md),
+    [design](../../../docs/design/workflow-engine.md#a-runs-required-checks),
+    [runbook](../../../docs/operations/runbooks.md#let-a-run-pass-the-required-checks)):
+    a repository's setup may name the command of each check a policy can require
+    (`tests`, `typecheck`, `lint`; each a command line as above, outside the
+    setup's hash, so changing them asks nothing again) and `checkTimeoutSeconds`
+    (default 1800, at most 3600). The source's `check` (the workers seam's) runs
+    the checks a workflow run asks for on its worktree:
+    - only while the worktree is intact, no agent run of its workflow run is
+      unfinished or not known to be gone, and it is exactly the result's subject
+      (else `refused`: `gone`, `busy`, `failed`, `moved`, nothing run);
+    - each check is an `error`, never run, when the repository names no command
+      for it, the worktree was not set up under the setup loaded now, no queue is
+      loaded, or the policy does not let its exact argv run unasked (`auto` or
+      `notify`; an `ask` opens no request: list the line in the studio policy);
+    - the allowed ones run in order in the setup's confinement and views
+      (`confineIn`, shared with the setup), each within its deadline. Exit 0 is
+      `passed`, any other code `failed`, a timeout, signal, or start failure an
+      `error`; after each, the tree is captured again, and a check that changed it is
+      an `error`, the later ones not run;
+    - what ran is one `check-run@1.0` evidence artifact (its inputs the commands'
+      `autonomy` decisions; per check the argv, exit code, duration, and the last
+      4000 characters of its output with its length and SHA-256), at the run's
+      classification, returned with the results. Nothing is retried; the engine's
+      acceptance reports each `passed` or `failed`, and an `error` stays pending;
   - an agent can write the worktree's `.git` file, so git never follows it: a
     run whose worktree's `.git` file no longer points to the worktree's own
     directory fails as `reconciliation_failed`, and the worktree is left for

@@ -13,6 +13,7 @@
  * @module @tsuuanmi/system-agent-workers/setup
  */
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -23,6 +24,7 @@ import type {} from '@tsuuanmi/system-event-log'
 import { type ContentId, contentId, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
+import { RUN_CHECKS, type RunCheck } from '@tsuuanmi/system-workers-core'
 import { CHECKS } from './gate.ts'
 import { repositoryKey } from './worktrees.ts'
 
@@ -45,6 +47,14 @@ export interface WorktreeSetupConfig {
   views?: WorktreeSetupView[]
   /** The whole setup's deadline, in seconds (default 600). */
   timeoutSeconds?: number
+  /**
+   * The command of each check a policy can require (`tests`, `typecheck`, `lint`) for this repository,
+   * its words split on single spaces as the policy's commands list matches them: a workflow run's
+   * checks run it on the run's result, in the setup's confinement and views (./checks.ts, T151).
+   */
+  checks?: Partial<Record<RunCheck, string>>
+  /** Each check's deadline, in seconds (default 1800). */
+  checkTimeoutSeconds?: number
 }
 
 /** A setup as loaded: every default filled in, its commands as argv, and the hash an approval binds to. */
@@ -54,12 +64,15 @@ export interface Setup {
   commands: string[][]
   views: Array<Required<WorktreeSetupView>>
   timeoutSeconds: number
-  /** The content id of the whole definition: a change to any of it is another setup, asked about again. */
+  /** The content id of the setup's definition (repository, commands, views, deadline): a change to any of it is another setup, asked about again. */
   hash: ContentId
+  /** Each check's command line and argv; not part of the setup's hash, since the setup does not run them. */
+  checks: Partial<Record<RunCheck, { line: string; argv: string[] }>>
+  checkTimeoutSeconds: number
 }
 
 /** `commandChars` is the policy's own bound on a commands-list line (`autonomy-policy@1.0`): every setup command can be listed there. */
-export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3 } as const
+export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800 } as const
 /** How much of a failed command's output its run's error keeps (INV-9). */
 const OUTPUT_TAIL = 1500
 const RULE = { type: 'rule', id: 'agent-workers.worktree-setup', version: '1' } as const
@@ -127,8 +140,18 @@ export function loadSetups(setups: readonly WorktreeSetupConfig[] | undefined, w
     if (nested) fail(`${repository}: the views ${nested} and another overlap; each is its own directory`)
     const timeoutSeconds = entry.timeoutSeconds ?? SETUP_LIMITS.defaultTimeoutSeconds
     if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > SETUP_LIMITS.maxTimeoutSeconds) fail(`${repository}: timeoutSeconds is 1 to ${SETUP_LIMITS.maxTimeoutSeconds}`)
+    const checks: Setup['checks'] = {}
+    if (entry.checks !== undefined && (typeof entry.checks !== 'object' || entry.checks === null || Array.isArray(entry.checks))) fail(`${repository}: checks maps a check name to its command`)
+    for (const [name, line] of Object.entries(entry.checks ?? {})) {
+      if (!RUN_CHECKS.includes(name as RunCheck)) fail(`${repository}: checks names ${name}; a check is one of ${RUN_CHECKS.join(', ')}`)
+      const problem = lineProblem(line)
+      if (problem) fail(`${repository}: the ${name} check's command ${problem}`)
+      checks[name as RunCheck] = { line: line as string, argv: (line as string).split(' ') }
+    }
+    const checkTimeoutSeconds = entry.checkTimeoutSeconds ?? SETUP_LIMITS.defaultCheckTimeoutSeconds
+    if (!Number.isInteger(checkTimeoutSeconds) || checkTimeoutSeconds < 1 || checkTimeoutSeconds > SETUP_LIMITS.maxTimeoutSeconds) fail(`${repository}: checkTimeoutSeconds is 1 to ${SETUP_LIMITS.maxTimeoutSeconds}`)
     const definition = { repository, commands: [...lines], views, timeoutSeconds }
-    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition) })
+    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds })
   }
   return loaded
 }
@@ -308,47 +331,12 @@ export class WorktreeSetups {
   private async execute(run: SetupRun, setup: Setup, signal: AbortSignal): Promise<void> {
     const worktree = real(run.worktree)
     if (!worktree) throw new Refusal(`its worktree ${run.worktree} cannot be read`)
-    const confinement = this.ctx.agentRuntimes.confinement({ writable: [worktree] })
-    const hidden = confinement.hide.map((h) => real(h)).filter((h): h is string => !!h)
-    // A view shows the setup a private copy of host files: never of a path hidden from agents, nor over the worktree.
-    for (const view of setup.views) {
-      const path = real(view.path)
-      if (!path || !statSync(path).isDirectory()) throw new Refusal(`its view ${view.path} is not a directory on this host`)
-      if (path !== view.path) throw new Refusal(`its view ${view.path} is reached through a link (${path}); name the directory itself`)
-      const exposed = hidden.find((h) => within(path, h) || within(h, path))
-      if (exposed) throw new Refusal(`its view ${view.path} lies inside, or holds, ${exposed}, which is hidden from agents`)
-      if (within(path, worktree) || within(worktree, path)) throw new Refusal(`its view ${view.path} overlaps the worktree ${worktree}`)
-      for (const entry of view.readOnly) {
-        const bound = real(join(path, entry))
-        if (!bound) throw new Refusal(`its view ${view.path} binds back ${entry}, which does not exist on this host`)
-        const leaks = hidden.find((h) => within(bound, h) || within(h, bound))
-        if (leaks) throw new Refusal(`its view ${view.path} binds back ${entry}, which reaches ${leaks}, hidden from agents`)
-      }
-    }
-    const proof = await proveConfinement(confinement)
-    if (!proof.confined) throw new Refusal(`its commands cannot be confined on this host: ${proof.detail}`)
-    ensurePrivateDir(this.runDir)
-    const scratch = mkdtempSync(join(this.runDir, 'setup-'))
+    const confined = await confineIn(this.ctx, setup, worktree, this.runDir)
     try {
-      const views = setup.views.flatMap((view, i) => {
-        const dir = join(scratch, String(i))
-        mkdirSync(dir, { mode: 0o700 })
-        for (const name of view.copy) copyFile(join(view.path, name), join(dir, name))
-        // Where each path bound back is mounted: a directory, or an empty file for a file.
-        for (const entry of view.readOnly) {
-          if (statSync(join(view.path, entry)).isDirectory()) mkdirSync(join(dir, entry), { recursive: true, mode: 0o700 })
-          else {
-            mkdirSync(dirname(join(dir, entry)), { recursive: true, mode: 0o700 })
-            closeSync(openSync(join(dir, entry), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600))
-          }
-        }
-        return [{ source: dir, path: view.path, writable: true }, ...view.readOnly.map((entry) => ({ source: join(view.path, entry), path: join(view.path, entry), writable: false }))]
-      })
       const deadline = AbortSignal.timeout(setup.timeoutSeconds * 1000)
       const env = childEnvironment()
       for (const [i, argv] of setup.commands.entries()) {
-        const command = confinedCommand(argv[0]!, argv.slice(1), confinement, { readOnly: true, network: false, chdir: worktree, views })
-        const ended = await runBounded(command, env, AbortSignal.any([signal, deadline]))
+        const ended = await runBounded(confined.command(argv), env, AbortSignal.any([signal, deadline]))
         if (signal.aborted) throw signal.reason ?? new ProviderError('aborted', 'stopped')
         if (deadline.aborted) throw new Refusal(`its command ${i + 1} (${setup.lines[i]}) did not finish within the setup's ${setup.timeoutSeconds} s; it was stopped${tail(ended.output)}`, [], { command: i + 1, timedOut: true })
         if (ended.code !== 0) {
@@ -356,7 +344,7 @@ export class WorktreeSetups {
         }
       }
     } finally {
-      rmSync(scratch, { recursive: true, force: true })
+      confined.dispose()
     }
   }
 
@@ -413,6 +401,67 @@ export class WorktreeSetups {
   }
 }
 
+/** A setup's confinement, its private views made: how each command runs in it, and how it is cleared up. */
+export interface Confined {
+  command(argv: string[]): { command: string; args: string[] }
+  /** Remove the private views (always call it once the commands ended). */
+  dispose(): void
+}
+
+/**
+ * The confinement a repository's commands run in, in its worktree `worktree` (its real path): the
+ * host read-only but the worktree and the setup's private views, no network. The views are checked
+ * (never a path hidden from agents, nor over the worktree), the confinement proven, and the views made
+ * in a fresh owner-only directory under `runDir`. Throws, naming the cause, when any of it cannot be:
+ * nothing has run then. The setup's commands and the run's checks (./checks.ts) both run in it.
+ */
+export async function confineIn(ctx: Context, setup: Setup, worktree: string, runDir: string): Promise<Confined> {
+  const confinement = ctx.agentRuntimes.confinement({ writable: [worktree] })
+  const hidden = confinement.hide.map((h) => real(h)).filter((h): h is string => !!h)
+  // A view shows the commands a private copy of host files: never of a path hidden from agents, nor over the worktree.
+  for (const view of setup.views) {
+    const path = real(view.path)
+    if (!path || !statSync(path).isDirectory()) throw new Refusal(`its view ${view.path} is not a directory on this host`)
+    if (path !== view.path) throw new Refusal(`its view ${view.path} is reached through a link (${path}); name the directory itself`)
+    const exposed = hidden.find((h) => within(path, h) || within(h, path))
+    if (exposed) throw new Refusal(`its view ${view.path} lies inside, or holds, ${exposed}, which is hidden from agents`)
+    if (within(path, worktree) || within(worktree, path)) throw new Refusal(`its view ${view.path} overlaps the worktree ${worktree}`)
+    for (const entry of view.readOnly) {
+      const bound = real(join(path, entry))
+      if (!bound) throw new Refusal(`its view ${view.path} binds back ${entry}, which does not exist on this host`)
+      const leaks = hidden.find((h) => within(bound, h) || within(h, bound))
+      if (leaks) throw new Refusal(`its view ${view.path} binds back ${entry}, which reaches ${leaks}, hidden from agents`)
+    }
+  }
+  const proof = await proveConfinement(confinement)
+  if (!proof.confined) throw new Refusal(`its commands cannot be confined on this host: ${proof.detail}`)
+  ensurePrivateDir(runDir)
+  const scratch = mkdtempSync(join(runDir, 'setup-'))
+  try {
+    const views = setup.views.flatMap((view, i) => {
+      const dir = join(scratch, String(i))
+      mkdirSync(dir, { mode: 0o700 })
+      for (const name of view.copy) copyFile(join(view.path, name), join(dir, name))
+      // Where each path bound back is mounted: a directory, or an empty file for a file.
+      for (const entry of view.readOnly) {
+        if (statSync(join(view.path, entry)).isDirectory()) mkdirSync(join(dir, entry), { recursive: true, mode: 0o700 })
+        else {
+          mkdirSync(dirname(join(dir, entry)), { recursive: true, mode: 0o700 })
+          closeSync(openSync(join(dir, entry), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600))
+        }
+      }
+      return [{ source: dir, path: view.path, writable: true }, ...view.readOnly.map((entry) => ({ source: join(view.path, entry), path: join(view.path, entry), writable: false }))]
+    })
+    return {
+      command: (argv) => confinedCommand(argv[0]!, argv.slice(1), confinement, { readOnly: true, network: false, chdir: worktree, views }),
+      dispose: () => rmSync(scratch, { recursive: true, force: true }),
+    }
+  } catch (error) {
+    rmSync(scratch, { recursive: true, force: true })
+    throw error
+  }
+}
+
 /** ` Its output ended: …`, the last part of what a command printed, when it printed anything. */
 function tail(output: string): string {
   const text = output.trim()
@@ -456,11 +505,18 @@ function copyFile(source: string, target: string): void {
   }
 }
 
+/** A confined command's end: its exit code or signal, the last 64 KiB of what it printed (stdout and stderr as they came), and how much it printed in all with its hash. */
+export interface Ended { code: number | null; signal: string | null; output: string; bytes: number; sha256: string }
+
 /** Run a confined command to its end, or until `signal` stops it (SIGKILL; bubblewrap takes its namespace with it). */
-function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal): Promise<{ code: number | null; signal: string | null; output: string }> {
+export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal): Promise<Ended> {
   return new Promise((resolvePromise, reject) => {
     let output = ''
+    let bytes = 0
+    const hash = createHash('sha256')
     const keep = (chunk: Buffer): void => {
+      bytes += chunk.length
+      hash.update(chunk)
       output = (output + chunk.toString('utf8')).slice(-64 * 1024)
     }
     const child = spawn(command.command, command.args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -477,7 +533,7 @@ function runBounded(command: { command: string; args: string[] }, env: Record<st
     })
     child.once('close', (code, killed) => {
       signal.removeEventListener('abort', stop)
-      resolvePromise({ code, signal: killed, output })
+      resolvePromise({ code, signal: killed, output, bytes, sha256: hash.digest('hex') })
     })
   })
 }
