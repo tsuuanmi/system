@@ -844,7 +844,7 @@ person's answer. The protocol is the brief's: every brief of a board task's run 
 ### Starting from the previous attempt's work
 
 > Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-> (proposed: the carry is on by default, pending the operator's acceptance (D59)), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (accepted 2026-10-25, D59), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
 > (`src/carries.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > ([carrying an earlier run's work](agent-runtimes.md#carrying-an-earlier-runs-work)).
 

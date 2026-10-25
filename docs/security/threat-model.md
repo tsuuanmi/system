@@ -356,7 +356,7 @@
   merged. Nothing is pushed.
 
   **Carrying** ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md),
-  proposed: the carry is on by default, pending the operator's acceptance (D59)):
+ accepted 2026-10-25, D59):
   a board task's next attempt may start from the tree its previous attempt's
   writer left, so content one agent run wrote is the starting point of the next
   run's worktree. It is carried only when no review or person judged it, only
