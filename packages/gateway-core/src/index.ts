@@ -11,10 +11,14 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ZodRawShape } from 'zod'
 
 export {
-  type Availability, type AvailabilityState, formatRoster, type Known, projectRoster, readRoster, type Roster, type RosterAccount, type RosterAccountRecord, type RosterAgentAccount, ROSTER_BOUNDS, ROSTER_SCHEMA,
+  type Availability, type AvailabilityState, formatRoster, type Known, projectRoster, readCapacity, readRoster, type Roster, type RosterAccount, type RosterAccountRecord, type RosterAgentAccount, ROSTER_BOUNDS, ROSTER_SCHEMA,
   type RosterDescriptor, type RosterEntry, type RosterInput, type RosterPool, type RosterPoolView, type RosterRun, type RosterScope, type RosterServices, type RosterSourceRead, type RosterTask,
   type RosterWebsiteAccount, type RosterWindow, type RosterWork, type RosterLiveness, type RosterLivenessRead, type RosterLivenessRun,
 } from './roster.ts'
+export {
+  accountName, canTakeStep, type Capacity, type CapacityAccount, CAPACITY_BOUNDS, type CapacityCannotWork, type CapacityFree, type CapacityInput, type CapacityList, type CapacityNoQuota, type CapacityQuota,
+  type CapacityReady, type CapacityStalled, type CapacityStep, type CapacityTaskRead, type CapacityUnread, type CapacityWindow, formatCapacity, projectCapacity, urgency,
+} from './capacity.ts'
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
 export { outline, reply } from './reply.ts'
 

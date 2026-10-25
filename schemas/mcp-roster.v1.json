@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-roster:v1",
   "title": "MCP roster tool",
-  "description": "Input and output of the `roster` MCP tool (design/roster.md): every Worker in one read model, projected on read from the Worker registry, the account and enrollment records, the resource ledger, the workflow runs, and the board, never stored. A fact a source could not give is `{unknown: why}`, never a default. The root describes one call (tool, input, structured output); a provider validates the output against `#/$defs/roster-output`. 1.1 adds each Worker's `description` and `derived` line, and each step's `since` and `summary`. 1.2 adds each Worker's `liveness`, its runs whose liveness needs a look. 1.3 adds each Worker's `name` for people, and makes a Worker the engine runs a step on busy whatever load its source reports. 1.4 makes the name `<runtime> \u00b7 <account> \u00b7 <role or tier> [<kinds>]` (the runtime's title, the operator's label of an agent account or its masked hint and slot, the kinds of work) and adds an agent account quarantine's `detail`. 1.5 adds a source read's `describing`: a source whose first describe has not landed yet. 1.6 adds each Worker's `teams`: the operator keeps it out of teams.",
+  "description": "Input and output of the `roster` MCP tool (design/roster.md): every Worker in one read model, projected on read from the Worker registry, the account and enrollment records, the resource ledger, the workflow runs, and the board, never stored. A fact a source could not give is `{unknown: why}`, never a default. The root describes one call (tool, input, structured output); a provider validates the output against `#/$defs/roster-output`. 1.1 adds each Worker's `description` and `derived` line, and each step's `since` and `summary`. 1.2 adds each Worker's `liveness`, its runs whose liveness needs a look. 1.3 adds each Worker's `name` for people, and makes a Worker the engine runs a step on busy whatever load its source reports. 1.4 makes the name `<runtime> \u00b7 <account> \u00b7 <role or tier> [<kinds>]` (the runtime's title, the operator's label of an agent account or its masked hint and slot, the kinds of work) and adds an agent account quarantine's `detail`. 1.5 adds a source read's `describing`: a source whose first describe has not landed yet. 1.6 adds each Worker's `teams`: the operator keeps it out of teams. 1.7 adds `now`, capacity now (design/roster.md#capacity-now): each account's windows and whether it takes new work, the free Workers in the order their quota would be lost unused, the Workers whose quota cannot be read (never counted free), the stalled runs, the accounts with no quota left, the Workers that cannot work, and the ready board tasks with the Worker a start would most likely go to; each list at most 16, `more` counting the rest.",
   "type": "object",
   "required": [
     "tool",
@@ -1110,6 +1110,224 @@
       },
       "additionalProperties": false
     },
+    "count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "knownTimestamp": {
+      "oneOf": [
+        { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" } }, "additionalProperties": false },
+        { "$ref": "#/$defs/unknown" }
+      ]
+    },
+    "capacityWindow": {
+      "description": "1.7: one window of an account's pool now, as the Worker's pools give it.",
+      "type": "object",
+      "required": ["pool", "id", "state", "used", "resets"],
+      "properties": {
+        "pool": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "seconds": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["ok", "limited", "unknown"] },
+        "used": { "$ref": "#/$defs/window/properties/used" },
+        "resets": { "$ref": "#/$defs/window/properties/resets" }
+      },
+      "additionalProperties": false
+    },
+    "capacityAccount": {
+      "description": "1.7: an account now: its pools' windows, and whether it takes new work now (false at a limit, or when none of its Workers takes work; unknown when its quota cannot be read: no current reading is never read as room), with why in one line.",
+      "type": "object",
+      "required": ["account", "name", "windows", "canWork", "summary"],
+      "properties": {
+        "account": { "$ref": "#/$defs/accountId" },
+        "name": { "$ref": "#/$defs/name" },
+        "windows": {
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityWindow" } } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "canWork": {
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "boolean" } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 }
+      },
+      "additionalProperties": false
+    },
+    "capacityQuota": {
+      "description": "1.7: the quota a free Worker has left: its account's window with the least left among those with a current reading (its reset still ahead).",
+      "type": "object",
+      "required": ["pool", "window", "used", "left", "resetsAt"],
+      "properties": {
+        "pool": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "window": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "seconds": { "type": "integer", "minimum": 1 },
+        "used": { "type": "number", "minimum": 0, "maximum": 100 },
+        "left": { "type": "number", "minimum": 0, "maximum": 100 },
+        "resetsAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "capacityFree": {
+      "description": "1.7: a Worker that takes work now (ready, its account not at a limit, its quota known). `quota` null: no account quota applies to it (it names no account, or none is tracked for its account).",
+      "type": "object",
+      "required": ["worker", "name", "tier", "load", "quota"],
+      "properties": {
+        "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "name": { "$ref": "#/$defs/name" },
+        "account": { "$ref": "#/$defs/accountId" },
+        "role": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+        "kinds": { "type": "array", "maxItems": 32, "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" } },
+        "tier": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier" },
+        "load": { "$ref": "#/$defs/entry/properties/load" },
+        "quota": { "oneOf": [{ "$ref": "#/$defs/capacityQuota" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    },
+    "capacityUnread": {
+      "description": "1.7: a Worker its source says is ready whose account's quota cannot be read now, and why: never counted as free capacity (INV-2).",
+      "type": "object",
+      "required": ["worker", "name", "tier", "why"],
+      "properties": {
+        "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "name": { "$ref": "#/$defs/name" },
+        "account": { "$ref": "#/$defs/accountId" },
+        "tier": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier" },
+        "why": { "type": "string", "minLength": 1, "maxLength": 300 }
+      },
+      "additionalProperties": false
+    },
+    "capacityStalled": {
+      "description": "1.7: a stalled agent run of a Worker, since when.",
+      "type": "object",
+      "required": ["worker", "name", "execution", "since"],
+      "properties": {
+        "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "name": { "$ref": "#/$defs/name" },
+        "execution": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "runId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "capacityNoQuota": {
+      "description": "1.7: an account at a limit, and until when (unknown when no reset is known).",
+      "type": "object",
+      "required": ["account", "name", "until"],
+      "properties": {
+        "account": { "$ref": "#/$defs/accountId" },
+        "name": { "$ref": "#/$defs/name" },
+        "until": { "$ref": "#/$defs/knownTimestamp" }
+      },
+      "additionalProperties": false
+    },
+    "capacityCannotWork": {
+      "description": "1.7: a Worker that takes no work (unavailable or quarantined), with why in one line.",
+      "type": "object",
+      "required": ["worker", "name", "state", "reason"],
+      "properties": {
+        "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "name": { "$ref": "#/$defs/name" },
+        "state": { "enum": ["unavailable", "quarantined"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+      },
+      "additionalProperties": false
+    },
+    "capacityReady": {
+      "description": "1.7: a ready task of an active board project, and the Worker a start would most likely go to now, as the start preview tells it (the first, in the free order, that could take its first step); null when no Worker that takes work now could.",
+      "type": "object",
+      "required": ["projectId", "taskId", "title", "likely"],
+      "properties": {
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "template": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "likely": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["value"],
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["worker", "name"],
+                      "properties": { "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }, "name": { "$ref": "#/$defs/name" } },
+                      "additionalProperties": false
+                    },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "capacity": {
+      "description": "1.7: capacity now, made on the server from the roster and the board (design/roster.md#capacity-now). Each list holds at most 16 entries, `more` counting the rest; a list that cannot be made is unknown, with why.",
+      "type": "object",
+      "required": ["asOf", "accounts", "free", "quotaUnknown", "stalled", "noQuota", "cannotWork", "ready"],
+      "properties": {
+        "asOf": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "accounts": {
+          "description": "Each account, in id order.",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityAccount" } }, "more": { "$ref": "#/$defs/count" } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "free": {
+          "description": "The Workers that take work now, the one whose quota would be lost unused fastest first (what is left over the minutes to its reset), then the most left, the soonest reset, the id; those no quota applies to last.",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityFree" } }, "more": { "$ref": "#/$defs/count" } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "quotaUnknown": {
+          "description": "The Workers ready as their source says whose account's quota cannot be read, in id order: never counted free.",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityUnread" } }, "more": { "$ref": "#/$defs/count" } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "stalled": {
+          "description": "The stalled runs, the longest stalled first; `unread` when a Worker's liveness could not be told (never read as none).",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityStalled" } }, "more": { "$ref": "#/$defs/count" }, "unread": { "type": "string", "minLength": 1, "maxLength": 500 } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "noQuota": {
+          "description": "The accounts at a limit, in id order.",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityNoQuota" } }, "more": { "$ref": "#/$defs/count" } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "cannotWork": {
+          "description": "The Workers that take no work (unavailable or quarantined), in id order.",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityCannotWork" } }, "more": { "$ref": "#/$defs/count" } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        },
+        "ready": {
+          "description": "The ready tasks of the active board projects, by project id, each project's oldest first; `unread` when not every active project was read.",
+          "oneOf": [
+            { "type": "object", "required": ["value"], "properties": { "value": { "type": "object", "required": ["items", "more"], "properties": { "items": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capacityReady" } }, "more": { "$ref": "#/$defs/count" }, "unread": { "type": "string", "minLength": 1, "maxLength": 500 } }, "additionalProperties": false } }, "additionalProperties": false },
+            { "$ref": "#/$defs/unknown" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "roster-input": {
       "type": "object",
       "properties": {},
@@ -1275,6 +1493,9 @@
               "$ref": "#/$defs/unknown"
             }
           ]
+        },
+        "now": {
+          "$ref": "#/$defs/capacity"
         }
       },
       "additionalProperties": false

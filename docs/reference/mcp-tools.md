@@ -659,7 +659,7 @@ Scope: `client`
 
 ## `roster`
 
-Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit's reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account's pools (each window's used share and reset, runs the ledger could not count). A fact no source gave reads unknown, with why.
+Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit's reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account's pools (each window's used share and reset, runs the ledger could not count). `now`: the Workers free, the quota lost soonest first; stalled runs; accounts out of quota; ready tasks, each with its likely Worker. A fact no source gave reads unknown, with why.
 
 Scope: `client`
 

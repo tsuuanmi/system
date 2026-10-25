@@ -230,8 +230,18 @@ describe('system MCP server on ctx.webServer', () => {
       ] },
     })
     expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/^Roster as of .*: 2 Worker\(s\): 0 ready, 1 busy, 1 resting, 0 unavailable, 0 quarantined\n/)
+    // Capacity now, made once on the server (mcp-roster@1.7 `now`, T152): no Worker free, the account at its limit until its reset.
+    const now = (operator.structuredContent as { now: unknown }).now
+    schemas.assertDef('mcp-roster@1.7', 'capacity', now)
+    expect(now).toMatchObject({
+      free: { value: { items: [], more: 0 } },
+      noQuota: { value: { items: [{ account: 'plus', name: 'Chatgpt · Studio Plus', until: { value: '2026-10-24T11:00:00.000Z' } }], more: 0 } },
+      accounts: { value: { items: [{ account: 'plus', canWork: { value: false }, summary: 'at its limit until 2026-10-24T11:00:00.000Z' }], more: 0 } },
+    })
+    expect((operator.content as Array<{ text: string }>)[0]!.text).toContain('\nRight now (as of ')
     const client = await roster(tokens.client)
-    schemas.assertDef('mcp-roster@1.6', 'roster-output', client.structuredContent)
+    schemas.assertDef('mcp-roster@1.7', 'roster-output', client.structuredContent)
+    expect(client.structuredContent).toMatchObject({ now: { noQuota: { value: { items: [{ name: 'Chatgpt · plus' }] } } } })
     expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
     // A client's names carry the account id, never the operator's label.
     expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 }, workers: { value: [{ name: 'Chatgpt · plus · frontier' }, { name: 'Chatgpt · plus · standard' }] } })

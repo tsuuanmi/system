@@ -470,7 +470,7 @@ export class McpEndpoint extends McpTools {
     // services that hold each fact; a client (the lead) sees it without account labels.
     this.tools.set('roster', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit\'s reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account\'s pools (each window\'s used share and reset, runs the ledger could not count). A fact no source gave reads unknown, with why.', inputSchema: {} },
+      spec: { scope: 'client', description: 'Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit\'s reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account\'s pools (each window\'s used share and reset, runs the ledger could not count). `now`: the Workers free, the quota lost soonest first; stalled runs; accounts out of quota; ready tasks, each with its likely Worker. A fact no source gave reads unknown, with why.', inputSchema: {} },
       handler: async (_args, { scope }) => {
         try {
           const roster = await readRoster(this.rosterServices(), { scope })

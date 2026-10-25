@@ -99,9 +99,11 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - the **Workers** tab (`?view=workers`, next to Board; REQ-HOST-8), read through `readRoster` in
   [`gateway-core`](../../gateway-core/README.md#the-roster) from the services mounted (`workers`,
   `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`): the counts (working,
-  free, resting and until when the first is, unavailable); **Right now**, by name: who is free
-  (and how many tasks are ready, linked to the Board), who is stalled, which accounts have no quota
-  left and until when, and who cannot work; then the Workers by account, each
+  free, resting and until when the first is, unavailable); **Right now**, rendered from the roster's
+  `now` as the server made it (`readCapacity`, T152; the page computes none of it), by name: who is
+  free, the quota lost soonest unused first, with what each has left (and how many tasks are ready,
+  linked to the Board), whose quota is unknown (never counted free), who is stalled, which accounts
+  have no quota left and until when, who cannot work, and each ready task's likely Worker; then the Workers by account, each
   account once under a small header with its name and roles (`Claude Code · science: develop
   [code], review`, [display names](../../../docs/design/roster.md#display-names)), what stops it
   (resting until when, signed out, quarantined, one person on two accounts), and its quota, each

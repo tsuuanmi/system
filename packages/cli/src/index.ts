@@ -680,8 +680,27 @@ export function formatHealth(health: HealthView): string[] {
 }
 
 /**
+ * The running profile's capacity now (MCP `roster`'s `now`, docs/design/roster.md#capacity-now): the
+ * server's rendering of it for a terminal (the roster text's last block, from "Right now"), or with
+ * `json` the record itself (`mcp-roster@1.7` `#/$defs/capacity`). Nothing is computed here. A refused
+ * call, a host that does not answer, or a host whose roster has no `now` throws.
+ */
+export async function hostCapacity(json: boolean, call: typeof callTool = callTool): Promise<string> {
+  const outcome = await call('roster', {})
+  if (outcome.isError) throw new Error(outcome.text || 'the roster could not be read')
+  if (json) {
+    const now = outcome.structured?.now
+    if (!now) throw new Error('the running profile gave no capacity record (a roster below mcp-roster@1.7 has no now)')
+    return JSON.stringify(now, null, 2)
+  }
+  const at = outcome.text.lastIndexOf('\nRight now (as of ')
+  if (at < 0) throw new Error('the running profile gave no capacity (a roster below mcp-roster@1.7 has no now)')
+  return outcome.text.slice(at + 1)
+}
+
+/**
  * The running profile's roster (REQ-HOST-8, MCP `roster`): its rendering for a terminal, or with
- * `json` the record itself (`mcp-roster@1.6`). A refused call, or a host that does not answer, throws.
+ * `json` the record itself (`mcp-roster@1.7`, with `now`). A refused call, or a host that does not answer, throws.
  */
 export async function hostRoster(json: boolean, call: typeof callTool = callTool): Promise<string> {
   const outcome = await call('roster', {})

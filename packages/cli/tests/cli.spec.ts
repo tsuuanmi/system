@@ -3,9 +3,10 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostCapacity, hostRoster,claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -104,6 +105,35 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(calls).toEqual(['roster', 'roster'])
     await expect(hostRoster(false, async () => ({ isError: true, text: 'the roster could not be made: mcp-roster@1.5#/$defs/roster-output: …', structured: undefined }))).rejects.toThrow(/could not be made/)
     await expect(hostRoster(true, async () => ({ isError: false, text: 'x', structured: undefined }))).rejects.toThrow(/no roster record/)
+  })
+
+  it('prints capacity now from the running profile\'s roster: the server\'s Right now block, or with --json its now record, computing nothing (T152)', async () => {
+    const now = {
+      asOf: '2026-10-24T09:30:00.000Z',
+      accounts: { value: { items: [], more: 0 } },
+      free: { value: { items: [{ worker: 'agent:a/develop', name: 'Claude Code · science · develop', account: 'a', tier: 'standard', load: { unknown: 'its Worker source reports no load' }, quota: { pool: 'p', window: 'five-hour', seconds: 18_000, used: 10, left: 90, resetsAt: '2026-10-24T10:10:00.000Z' } }], more: 0 } },
+      quotaUnknown: { value: { items: [], more: 0 } },
+      stalled: { value: { items: [], more: 0 } },
+      noQuota: { value: { items: [], more: 0 } },
+      cannotWork: { value: { items: [], more: 0 } },
+      ready: { unknown: 'the board (ctx.board) is not mounted' },
+    }
+    const block = 'Right now (as of 2026-10-24T09:30:00.000Z):\n  free         Claude Code · science · develop (agent:a/develop; 90 % left of five-hour, resets 2026-10-24T10:10:00.000Z)'
+    const text = `Roster as of 2026-10-24T09:30:00.000Z: 1 Worker(s): 1 ready, 0 busy, 0 resting, 0 unavailable, 0 quarantined\n\nClaude Code · science · develop (agent:a/develop)  ready\n\n${block}`
+    const calls: string[] = []
+    const call = async (name: string) => {
+      calls.push(name)
+      return { isError: false, text, structured: { asOf: now.asOf, now } }
+    }
+    expect(await hostCapacity(false, call)).toBe(block)
+    const json = JSON.parse(await hostCapacity(true, call)) as unknown
+    expect(json).toEqual(now)
+    new SchemaRegistry().assertDef('mcp-roster@1.7', 'capacity', json)
+    expect(calls).toEqual(['roster', 'roster'])
+    // A host whose roster has no now (below mcp-roster@1.7), or a refused call: an error, never an empty capacity.
+    await expect(hostCapacity(true, async () => ({ isError: false, text: 'Roster as of …', structured: { asOf: now.asOf } }))).rejects.toThrow(/no capacity record/)
+    await expect(hostCapacity(false, async () => ({ isError: false, text: 'Roster as of …', structured: { asOf: now.asOf } }))).rejects.toThrow(/no capacity/)
+    await expect(hostCapacity(false, async () => ({ isError: true, text: 'the roster could not be made: …', structured: undefined }))).rejects.toThrow(/could not be made/)
   })
 
   it('lists the plugins with their recorded lifecycle and manifest, and refuses a host whose plugin host lists none (REQ-HOST-7)', async () => {

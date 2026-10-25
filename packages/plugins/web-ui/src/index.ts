@@ -19,13 +19,13 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, canTakeStep, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
 import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
-import { type CapabilityDescriptor, takesKind, TIERS } from '@tsuuanmi/system-workers-core'
+import type { CapabilityDescriptor } from '@tsuuanmi/system-workers-core'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
 export interface Config {
@@ -489,8 +489,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     return steps.map((step) => {
       if (typeof listed === 'string') return { ...step, workers: { unknown: listed } }
       if (step.source) return { ...step, workers: { free: [], busy: [] } }
-      const able = listed.filter((d) => step.capabilities.every((c) => d.capabilities.some((o) => o.capability === c && o.scope === undefined))
-        && TIERS.indexOf(d.tier) >= TIERS.indexOf(step.tier) && takesKind(d, step.kind !== undefined ? { kind: step.kind } : {}))
+      // The same test capacity now tells a ready task's likely Worker by (gateway-core `canTakeStep`).
+      const able = listed.filter((d) => canTakeStep(d, step))
       const free = (d: CapabilityDescriptor): boolean => d.state === 'ready' || (d.state === 'busy' && !!d.load && d.load.running < d.load.slots)
       const ids = (list: CapabilityDescriptor[]): string[] => list.map((d) => d.worker).sort().slice(0, LIKELY_WORKERS)
       return { ...step, workers: { free: ids(able.filter(free)), busy: ids(able.filter((d) => !free(d) && (d.state === 'busy' || d.state === 'quota-exhausted'))) } }
@@ -691,8 +691,9 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   /**
    * The roster (docs/design/roster.md): `GET roster` gives every Worker in one read model, projected
-   * on read from the services mounted, each one absent read as unknown with why. The page is the
-   * operator's, so it shows account labels.
+   * on read from the services mounted, each one absent read as unknown with why, and its `now`,
+   * capacity now (docs/design/roster.md#capacity-now), which the Workers page's "Right now" renders
+   * as it is. The page is the operator's, so it shows account labels.
    */
   const roster = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
