@@ -9,7 +9,7 @@ import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import Workflow from '@tsuuanmi/system-workflow'
+import Workflow, { type NodeTemplate } from '@tsuuanmi/system-workflow'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import * as SoftwareDevelopment from '../src/index.ts'
 
@@ -55,5 +55,40 @@ describe('the inputs each step of algorithm-development reads (docs/reference/wo
       expect(steps.get(id)!.dependsOn, id).toHaveLength(1)
     }
     expect(steps.get('validate:1')!.prompt).toContain('acceptance criteria')
+  })
+})
+
+describe('the kind of work each step of algorithm-development names (ADR-0057)', () => {
+  const kinds = (nodes: NodeTemplate[]) => Object.fromEntries(nodes.flatMap((n) => [
+    [n.nodeId, n.kind ?? null], ...Object.entries(n.variants ?? {}).map(([variant, v]) => [`${n.nodeId} (${variant})`, v.kind ?? null]),
+  ]))
+
+  it('ships three writing kinds and validation for the step that only runs the checks; the review names none', () => {
+    expect(kinds(SoftwareDevelopment.ALGORITHM_DEVELOPMENT)).toEqual({
+      'develop:1': 'code', 'develop:1 (docs)': 'docs', 'develop:1 (tests)': 'tests', 'review:1': null, 'validate:1': 'validation',
+    })
+    expect(SoftwareDevelopment.Config({})).toEqual({ kinds: SoftwareDevelopment.DEFAULT_KINDS })
+  })
+
+  it('takes each step\'s kind from the row\'s configuration, the rest keeping theirs, and the review still none', async () => {
+    expect(kinds(SoftwareDevelopment.algorithmDevelopment({ validate: 'tests', docs: 'writing' }))).toEqual({
+      'develop:1': 'code', 'develop:1 (docs)': 'writing', 'develop:1 (tests)': 'tests', 'review:1': null, 'validate:1': 'tests',
+    })
+    const ctx = await boot()
+    await ctx.plugin(SoftwareDevelopment, { kinds: { validate: 'checks' } })
+    expect(ctx.workflow.templateSteps('algorithm-development')!.find((s) => s.nodeId === 'validate:1')).toMatchObject({ kind: 'checks' })
+  })
+
+  it('refuses a key that is not a step and a kind that is not a kind of work, at the check and at load (INV-2)', async () => {
+    expect(SoftwareDevelopment.checkConfig({})).toEqual([])
+    expect(SoftwareDevelopment.checkConfig({ kinds: { develop: 'code', validate: 'validation' } })).toEqual([])
+    expect(SoftwareDevelopment.checkConfig({ kinds: { review: 'code' } } as never)).toEqual(['kinds.review is not a step; kinds takes develop, docs, tests, validate'])
+    expect(SoftwareDevelopment.checkConfig({ kinds: { validate: '' } })).toEqual([`kinds.validate: "" is not a kind of work (${String(/^[a-z][a-z0-9-]{0,31}$/)})`])
+    expect(SoftwareDevelopment.checkConfig({ kinds: { develop: 'Code' } })).toHaveLength(1)
+    expect(SoftwareDevelopment.checkConfig({ kinds: ['code'] } as never)).toEqual(['kinds must be an object of steps (develop, docs, tests, validate), each naming a kind of work'])
+    expect(() => SoftwareDevelopment.Config({ kinds: { validate: '' } })).toThrow(/kinds\.validate/)
+    const ctx = await boot()
+    await expect(ctx.plugin(SoftwareDevelopment, { kinds: { validation: 'validation' } } as never)).rejects.toThrow(/kinds\.validation is not a step/)
+    expect(ctx.workflow.templateNames()).not.toContain('algorithm-development')
   })
 })
