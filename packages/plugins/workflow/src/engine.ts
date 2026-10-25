@@ -10,7 +10,7 @@ import type { Board, Subject } from '@tsuuanmi/system-board-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
-import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, provesFor, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
 import { checksFor } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
@@ -23,7 +23,7 @@ import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
 import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
-import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
+import { decide, expireTie, proving, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
 import { Dispatcher } from './dispatch.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type TaskDispatch, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
@@ -642,13 +642,19 @@ export class Engine {
         release()
         ;(admitted as AdmittedWorker | undefined)?.release()
       }
-      const restricting = await restriction(this, run, spec)
-      // A team member beside a held account no one can tell apart is refused, whatever the operator allows (INV-2).
+      const restricting = await restriction(this, run, spec, record.requirement)
+      // A team member beside a held account no one can tell apart, or one the operator's
+      // teams.excludeWorkers leaves too few provider families, is refused, whatever the operator allows (INV-2).
       if ('problem' in restricting) {
         done()
         return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: restricting.problem }, { sent: false, decisions: [] }, lease)
       }
-      const { distinctAccounts, teams, ...restricted } = restricting
+      const { distinctAccounts, teams, leftOut, unmatched, ...restricted } = restricting
+      // Entries that leave nothing out are recorded, never passed over in silence (a typo would otherwise keep a Worker in teams).
+      if (unmatched?.length) {
+        this.ctx.eventLog.append({ type: 'workflow.team.unmatched-exclusions', runId: run.run_id, nodeId: node.node_id,
+          data: { reason: 'teams.excludeWorkers entries that match no Worker or account listed now: they leave nothing out of teams', entries: unmatched.slice(0, 16), more: Math.max(0, unmatched.length - 16) } })
+      }
       // The prompt as its source will render and send it, in characters (ADR-0032): a Worker that takes less is not admitted.
       const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
@@ -704,7 +710,7 @@ export class Engine {
         if (!(error instanceof AdmissionFailure)) throw error
         const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
         // A team member short of provider families: say what the team needs, beside why this one failed.
-        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec, record.requirement, teams?.workers) : ''
+        const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
         // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
         const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
         if (waiting && 'waited' in waiting) return
@@ -836,17 +842,17 @@ export class Engine {
   /**
    * A team's need for provider families, as the start of a member's admission failure, when fewer
    * are ready now than it has members: the families of the Workers ready or busy that prove what
-   * the member's step needs, and of those only the ones `allowed` (what the operator's
-   * `teams.excludeWorkers` leaves teams), naming the exclusion when it is what leaves too few. With
-   * enough of them, the shortage is not why it failed: empty.
+   * the member's step needs, and of those only the ones not `leftOut` (the Workers the operator's
+   * `teams.excludeWorkers` left out when the member was restricted, so a Worker described since is
+   * never blamed on it), naming the exclusion when it is what leaves too few. With enough of them,
+   * the shortage is not why it failed: empty.
    */
-  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement, allowed?: readonly string[]): Promise<string> {
-    const proving = (await this.ctx.workers.list())
-      .filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined
-        && requirement.capabilities.every((c) => w.capabilities.some((o) => o.capability === c && provesFor(o, requirement))))
-    const ready = new Set(proving.filter((w) => !allowed || allowed.includes(w.worker)).map((w) => w.family))
+  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement, leftOut?: readonly string[]): Promise<string> {
+    const able = proving(await this.ctx.workers.list(), requirement)
+    const out = new Set(leftOut)
+    const ready = new Set(able.filter((w) => !out.has(w.worker)).map((w) => w.family))
     if (ready.size >= spec.team!.members) return ''
-    const left = new Set(proving.map((w) => w.family)).size - ready.size
+    const left = new Set(able.map((w) => w.family)).size - ready.size
     const why = left ? ` outside the operator's teams.excludeWorkers, which leaves ${left} more out of teams` : ''
     return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready${why} (ADR-0027). `
   }

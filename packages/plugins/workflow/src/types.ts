@@ -410,9 +410,10 @@ export interface Config {
    */
   allowSameFamily?: boolean
   /**
-   * Team membership: `excludeWorkers` names Workers (by Worker id) and accounts (by account id)
-   * that no team member joins on, with every other Worker on their accounts; they stay available
-   * for every other node (docs/design/teams.md#workers-left-out-of-teams).
+   * Team membership: `excludeWorkers` names Workers (by Worker id) and accounts (`<group>/<id>`,
+   * or the bare id when one group has it) that no team member joins on, with every other Worker on
+   * their accounts; they stay available for every other node
+   * (docs/design/teams.md#workers-left-out-of-teams).
    */
   teams?: { excludeWorkers?: string[] }
   /**

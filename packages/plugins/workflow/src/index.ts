@@ -45,10 +45,40 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** `teams.excludeWorkers` holds at most this many entries (INV-9). */
+const MAX_EXCLUDED = 64
+/** An entry of `teams.excludeWorkers`: a Worker id, an account id, or `<group>/<account id>`, as system roster lists them. */
+const EXCLUDED_ENTRY = /^\S{1,200}$/
+
+/**
+ * What `teams` would be refused for, as the schema would refuse it, and more: an option it does not
+ * know (a misspelt `excludeWorkers` would leave nothing out of teams), a list that is not one, an
+ * entry the schema refuses, more than {@link MAX_EXCLUDED} entries, an entry listed twice. At most
+ * one line per entry it reads, and it reads at most {@link MAX_EXCLUDED} + 1 entries (INV-9).
+ */
+function checkTeams(teams: unknown): string[] {
+  if (teams === undefined) return []
+  if (teams === null || typeof teams !== 'object' || Array.isArray(teams)) return ['teams must be an object; it takes excludeWorkers, a list of Worker ids and account ids']
+  const problems = Object.keys(teams).filter((key) => key !== 'excludeWorkers').slice(0, 8).map((key) => `teams.${key} is not an option; teams takes excludeWorkers`)
+  const entries = (teams as { excludeWorkers?: unknown }).excludeWorkers
+  if (entries === undefined) return problems
+  if (!Array.isArray(entries)) return [...problems, 'teams.excludeWorkers must be a list of Worker ids and account ids, not a single value']
+  if (entries.length > MAX_EXCLUDED) problems.push(`teams.excludeWorkers lists ${entries.length} entries; it takes at most ${MAX_EXCLUDED}`)
+  const seen = new Set<string>()
+  entries.slice(0, MAX_EXCLUDED + 1).forEach((entry: unknown, i) => {
+    if (typeof entry !== 'string' || !EXCLUDED_ENTRY.test(entry)) problems.push(`teams.excludeWorkers[${i}] must be a Worker id or an account id: 1 to 200 characters, no whitespace`)
+    else if (seen.has(entry)) problems.push(`teams.excludeWorkers lists ${entry} more than once`)
+    else seen.add(entry)
+  })
+  return problems
+}
+
 /**
  * What this code would refuse in a configuration, before a host starts on it (`system check`): each
- * configured template that fails its check, with why, and an option under `teams` it does not know
- * (a misspelt `excludeWorkers` would leave nothing out of teams). Empty when the configuration is fine.
+ * configured template that fails its check, with why, and what `teams` would be refused for (see
+ * {@link checkTeams}). Empty when the configuration is fine. Whether an entry of
+ * `teams.excludeWorkers` names a Worker or account is known only against the Workers listed when a
+ * member routes: one that matches none is recorded there (`workflow.team.unmatched-exclusions`).
  */
 export function checkConfig(config: Config = {}): string[] {
   const schemas = new SchemaRegistry()
@@ -60,8 +90,7 @@ export function checkConfig(config: Config = {}): string[] {
       return [`template ${name}: ${(error as Error).message}`]
     }
   })
-  const teams = Object.keys(config.teams ?? {}).filter((key) => key !== 'excludeWorkers').map((key) => `teams.${key} is not an option; teams takes excludeWorkers`)
-  return [...templates, ...teams, ...dispatchProblems(config)]
+  return [...templates, ...checkTeams(config.teams), ...dispatchProblems(config)]
 }
 
 export class Workflow extends Service {
@@ -94,7 +123,7 @@ export class Workflow extends Service {
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
     allowSameFamily: z.boolean().default(false).description('When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035)'),
     teams: z.object({
-      excludeWorkers: z.array(z.string().pattern(/^\S{1,200}$/)).max(64).default([]).description('Worker ids and account ids (as system roster lists them) that no team member joins on, the first member included: a Worker id leaves out that Worker, an account id every Worker naming it, each with every other Worker on its account. They still take every other node, and a member already in its conversation keeps it'),
+      excludeWorkers: z.array(z.string().pattern(EXCLUDED_ENTRY)).max(MAX_EXCLUDED).default([]).description('Worker ids and accounts (as system roster lists them: an account as group/id, or its bare id when only one group has it) that no team member joins on, the first member included: a Worker id leaves out that Worker, an account every Worker naming it, each with every other Worker on its account. They still take every other node. A team they leave fewer provider families than members fails config_error before anything is sent, allowSameFamily or not; a member already in its team\'s conversation in that run keeps it, recorded; an entry that matches nothing is recorded as a workflow.team.unmatched-exclusions event'),
     }).description('Team membership (docs/design/teams.md#workers-left-out-of-teams)'),
     retainRunsDays: z.natural().default(30).description('Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session\'s latest run always stays'),
     maxLimitWaitHours: z.number().min(0).max(720).default(24).description('Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits'),
@@ -313,7 +342,7 @@ export class Workflow extends Service {
     const listed = await workers.list()
     const ids = new Set(listed.map((w) => w.worker))
     // An entry is an id to compare, not a Worker: one that names no Worker listed now is not listed as one.
-    return { entries, workers: [...leftOutOfTeams(entries, listed, (w) => workers.siblings(w))].filter((w) => ids.has(w) || !entries.includes(w)).sort() }
+    return { entries, workers: [...leftOutOfTeams(entries, listed, (w) => workers.siblings(w)).out].filter((w) => ids.has(w) || !entries.includes(w)).sort() }
   }
 
   /** The durable node records of a run, in dependency order. */

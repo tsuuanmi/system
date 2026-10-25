@@ -106,7 +106,8 @@ provider family than the Workers that served those nodes
   node that no Worker of another family admits routes again without the exclusion (a team
   member, also without the distinct-account rule; a session's own Worker still binds it, and
   the operator's `teams.excludeWorkers` still keeps a member off the Workers it leaves out of
-  teams, [teams](teams.md#workers-left-out-of-teams)). The
+  teams; a team that exclusion leaves too few families fails before this fallback,
+  [teams](teams.md#workers-left-out-of-teams)). The
   fallback is an `admission` decision (`workflow.same-family`, outcome `same-family`) kept among
   the node's decisions, and the run's answer starts with a line naming those steps (`Same
   provider family (allowSameFamily): …`; a team says it in its own answer). Off by default:
