@@ -301,13 +301,46 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     const error = await runtime(scripted(() => steps)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, stop.signal, () => { if (++handles === 2) stop.abort() })
       .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
     expect(error).toMatchObject({ kind: 'aborted' })
-    expect(meteringOf(error)).toEqual({ turns: 1, partial: 'Codex was stopped; counted the 1 turn it completed before then, which leaves out a turn in flight' })
+    expect(meteringOf(error)).toEqual({ turns: 1, usage: { inputTokens: 1, outputTokens: 1 }, partial: 'Codex was stopped; counted the 1 turn and the tokens it completed before then, which leaves out a turn in flight' })
     expectConsistentMetering(meteringOf(error)!)
     // Stopped before any turn completed: no number, never a turn count of 0.
     const early = new AbortController()
     const none = await runtime(scripted(() => steps)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, early.signal, () => early.abort())
       .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
     expect(meteringOf(none)).toEqual({ partial: 'Codex was stopped before it completed a turn' })
+  })
+
+  it('sums the tokens of the turns a run completed, never adding a cached or reasoning part to its whole, and reports no cost (T208)', async () => {
+    const usage = (input: number, cached: number, written: number, output: number, reasoning: number) => ({
+      type: 'turn.completed' as const, usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: written, output_tokens: output, reasoning_output_tokens: reasoning },
+    })
+    const two: Step[] = [
+      { type: 'thread.started', thread_id: 'h-1' }, { type: 'turn.started' }, answer('first'), usage(1000, 600, 100, 200, 150),
+      { type: 'turn.started' }, answer('second'), usage(1500, 1200, 0, 300, 50),
+    ]
+    const result = await runtime(scripted(() => two)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    // Input includes its cached and written parts; output includes its reasoning part: each is summed once.
+    expect(result).toEqual({ text: 'second', nativeHandle: 'h-1', turns: 2, usage: { inputTokens: 2500, outputTokens: 500, cacheReadInputTokens: 1800, cacheCreationInputTokens: 100 } })
+    expect(result).not.toHaveProperty('costUsd')
+    expectConsistentMetering(result)
+
+    // Stopped after its first turn: that turn's tokens, a lower bound, marked partial; still no cost.
+    const stop = new AbortController()
+    let handles = 0
+    const stopped = [...two.slice(0, 4), { type: 'thread.started', thread_id: 'h-1' } as Step, { type: 'turn.started' } as Step, answer('second'), usage(1500, 1200, 0, 300, 50)]
+    const error = await runtime(scripted(() => stopped)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, stop.signal, () => { if (++handles === 2) stop.abort() })
+      .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
+    expect(error).toMatchObject({ kind: 'aborted' })
+    expect(meteringOf(error)).toEqual({
+      turns: 1, usage: { inputTokens: 1000, outputTokens: 200, cacheReadInputTokens: 600, cacheCreationInputTokens: 100 },
+      partial: 'Codex was stopped; counted the 1 turn and the tokens it completed before then, which leaves out a turn in flight',
+    })
+    expect(meteringOf(error)).not.toHaveProperty('costUsd')
+    expectConsistentMetering(meteringOf(error)!)
+
+    // A turn whose parts exceed their whole is not read: no tokens are reported, never a sum that leaves it out.
+    const broken = await runtime(scripted(() => [two[0]!, two[1]!, answer('x'), usage(10, 20, 0, 5, 0), usage(10, 0, 0, 5, 0)])).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    expect(broken).toEqual({ text: 'x', nativeHandle: 'h-1', turns: 2 })
   })
 
   it('stops a run in which Codex reports a tool item its gate never allowed: a hook that failed or did not run', async () => {

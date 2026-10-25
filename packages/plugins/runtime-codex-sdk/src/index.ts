@@ -70,6 +70,7 @@ import { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limi
 import { configOverrides, refused } from './overrides.ts'
 import { probeGate, proofFailure, startProbeModel } from './proof.ts'
 import { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, askRateLimits, endAppServer, limitsFromRateLimits } from './rate-limits.ts'
+import { TurnUsage } from './usage.ts'
 
 export { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
 export { FEATURES_OFF } from './overrides.ts'
@@ -240,6 +241,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     let ungated: string | undefined
     let text = ''
     let turns = 0
+    // The token counts of the turns it completed, summed (`usage.ts`); none until a turn reports them.
+    const tokens = new TurnUsage()
     let failure: string | undefined
     let id: string | null = null
     let launcher: string | undefined
@@ -248,13 +251,18 @@ export class CodexRuntime implements AgentRuntimeProvider {
     // The child's environment, set before Codex starts: its `TZ` is the zone a limit's reset is read in.
     let env: Record<string, string> | undefined
     // A run that ended before Codex finished (a stop, a timeout, a drain, a deferred call) reports
-    // what it did report: the turns it completed, a lower bound, and says so; none completed is no number.
-    const ended = (error: ProviderError, how: string): ProviderError => withMetering(error, {
-      ...(turns > 0 ? { turns } : {}),
-      partial: turns > 0
-        ? `Codex ${how}; counted the ${turns} turn${turns === 1 ? '' : 's'} it completed before then, which leaves out a turn in flight`
-        : `Codex ${how} before it completed a turn`,
-    })
+    // what it did report: the turns it completed and their tokens, a lower bound, and says so; none
+    // completed is no number. Never a cost: Codex reports no charge for a run.
+    const ended = (error: ProviderError, how: string): ProviderError => {
+      const usage = tokens.total()
+      return withMetering(error, {
+        ...(turns > 0 ? { turns } : {}),
+        ...(usage ? { usage } : {}),
+        partial: turns > 0
+          ? `Codex ${how}; counted the ${turns} turn${turns === 1 ? '' : 's'}${usage ? ' and the tokens' : ''} it completed before then, which leaves out a turn in flight`
+          : `Codex ${how} before it completed a turn`,
+      })
+    }
     try {
       shell = this.shellHome(spec.workspace)
       if (spec.toolGate) {
@@ -293,7 +301,10 @@ export class CodexRuntime implements AgentRuntimeProvider {
       const seen = new Set<string>()
       for await (const event of events) {
         if (event.type === 'thread.started') onHandle?.(event.thread_id)
-        else if (event.type === 'turn.completed') turns++
+        else if (event.type === 'turn.completed') {
+          turns++
+          tokens.add(event.usage)
+        }
         else if (event.type === 'turn.failed') failure = event.error.message
         else if (event.type === 'error') failure = event.message
         else if (event.type === 'item.started' || event.type === 'item.updated' || event.type === 'item.completed') {
@@ -331,7 +342,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     // A failed turn breaks the thread's work (as for Claude): the engine's recovery decides what follows.
     if (failure && !/usage limit|quota|rate limit/i.test(failure)) throw new ProviderError('session_broken', `codex-sdk: ${failure.slice(0, 500)}`)
     if (failure) throw await this.limitError(executable, failure, env!.TZ)
-    return { text, ...(id ? { nativeHandle: id } : {}), turns }
+    const usage = tokens.total()
+    return { text, ...(id ? { nativeHandle: id } : {}), turns, ...(usage ? { usage } : {}) }
   }
 
   /**

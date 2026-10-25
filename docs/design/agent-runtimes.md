@@ -1042,16 +1042,38 @@ Agent SDK provider reports usage (from the result's `modelUsage`) and rate-limit
 ([its README](../../packages/plugins/runtime-claude-agent-sdk/README.md)); the Antigravity CLI
 provider reports turns, usage from agy's own result (normalized by the one reading whose sum is
 agy's total), and the main model when an event names it
-([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex and ACP
-providers report no usage. Codex and the Antigravity CLI report a usage limit's reset time
-([limit readings](#limit-readings)).
+([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex provider
+reports turns and usage ([below](#codex-metering)); the ACP provider reports no usage. Codex and the
+Antigravity CLI report a usage limit's reset time ([limit readings](#limit-readings)).
+
+### Codex metering
+
+The Codex provider counts each `turn.completed` as a turn and sums the `usage` it carries into the
+run's `usage` (T208). Codex reports five counts per turn; two are parts of another, and a part is
+never added to its whole, so nothing is counted twice:
+
+| Codex count | Is | Reported as |
+|---|---|---|
+| `input_tokens` | every input token of the turn, cached ones included | `inputTokens` |
+| `cached_input_tokens` | a part of `input_tokens`: read from the prompt cache | `cacheReadInputTokens` |
+| `cache_write_input_tokens` | a part of `input_tokens`: written to the prompt cache | `cacheCreationInputTokens` |
+| `output_tokens` | every output token, reasoning included | `outputTokens` |
+| `reasoning_output_tokens` | a part of `output_tokens` | not reported apart: `outputTokens` already counts it |
+
+A turn whose counts are not counts, or whose parts exceed their whole, is not read: the run then
+reports its turns and no tokens, never a sum that silently leaves a turn out. Codex reports no
+charge, so a Codex run has no `costUsd` (its cost stays unknown); a Codex subscription's capacity
+is judged by its windows ([an account's usage report](#an-accounts-usage-report)), not by tokens.
+The per-run token totals are recorded in the run's `usage-record` all the same, so a later forecast
+can relate them to the windows.
 
 A run that ends before the runtime's final count (stopped, past its timeout, drained at the host's
 stop, or at a deferred call) reports what the agent did report while it ran, marked `partial` with
 why in words (at most 300 characters), never an invented figure: the Claude Agent SDK provider sums
 the `usage` of the `assistant` messages it streamed (each message id once, at its largest counts,
 subagents included; the main loop's messages are its turns), and the Codex provider the turns it
-completed (`turn.completed`); none completed is no number, never 0. A partial report names no
+completed (`turn.completed`) and their summed tokens ([Codex metering](#codex-metering)); none
+completed is no number, never 0. A partial report names no
 result (`resultId`), and the conformance suite checks both. The `agents` source records it as a
 lower bound ([usage the ledger cannot count](resources.md#usage-the-ledger-cannot-count)), and says
 in each `usage.unknown` fact how the run ended.

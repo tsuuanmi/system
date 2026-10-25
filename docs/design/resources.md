@@ -264,13 +264,23 @@ Some usage reaches no counted figure, or only a lower bound of one:
 | a record the ledger refused (`unknown-pool`, `invalid`), or a `record()` that failed | is refused until the run is reconciled |
 
 **Why a run goes `not-reported`.** Its runtime's numbers come from its final message: the Claude
-Agent SDK's `result` (its `modelUsage` and `num_turns`), Codex's turn count. A run that ends before
+Agent SDK's `result` (its `modelUsage` and `num_turns`), Codex's turns and the tokens their
+`turn.completed` events report. A run that ends before
 that message (stopped by the operator, past its `runTimeoutMs`, stopped by the host's stop or a
 drain at restart, or at a call its gate deferred) has none. What the runtime did report while it
 ran is not dropped ([metering](agent-runtimes.md#metering)): the Claude Agent SDK provider sums the
 `usage` of the assistant messages it streamed (each response once, at its largest counts; the main
-loop's responses are its turns), and Codex counts the turns it completed. That is a lower bound (the
-response or turn in flight is not in it), marked `partial` with why, never an estimate.
+loop's responses are its turns), and Codex counts the turns it completed and sums their tokens. That
+is a lower bound (the response or turn in flight is not in it), marked `partial` with why, never an
+estimate.
+
+**Codex's tokens.** A Codex run's record carries `turns` and token counts, never a `cost`: Codex
+reports no charge, so its cost stays unknown, and a cap on cost counts it as a record without that
+figure (above). Of Codex's per-turn counts, `cached_input_tokens` and `cache_write_input_tokens` are
+parts of `input_tokens`, and `reasoning_output_tokens` is a part of `output_tokens`; no part is added
+to its whole ([Codex metering](agent-runtimes.md#codex-metering)). A Codex subscription's capacity
+is still judged by its windows (the account's usage report, above); the per-run token totals are
+recorded so a later forecast can use them.
 
 The operator decided first (D25, 2026-10-23) to count these as 0 and make each one visible and
 durable; then that a cap never counts unknown usage as 0, for every pool kind (INV-2,
