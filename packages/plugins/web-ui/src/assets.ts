@@ -667,7 +667,10 @@ export const APP_JS = `'use strict'
         el('div', { class: 'line' }, el('h3', { id: 'title-' + r.requestId }, d.title),
           el('span', { class: 'meta' }, d.for ? 'for ' + d.for + ' · ' : '', expires(r.expiresAt, 'denied')),
           irreversible ? chip(irreversible, 'warn') : null),
-        el('div', { class: 'actions' }, yes, no),
+        // A policy change's own diff stays one press away, beside the verdict buttons: never folded away (T186).
+        el('div', { class: 'actions' }, yes, no,
+          r.action.class === 'policy-change' && r.requester.policyChangeId ? el('button', { type: 'button', onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }, 'Show change') : null),
+        shown,
         cardFold('request-' + r.requestId,
           el('p', {}, 'Asked by ' + d.by + ' · ', el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class')),
           el('dl', {},
@@ -683,8 +686,6 @@ export const APP_JS = `'use strict'
             el('dt', {}, 'Buttons'), el('dd', {}, d.yes + ' · ' + d.no),
             r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null,
             d.more ? [el('dt', {}, 'How it works'), el('dd', {}, d.more)] : null),
-          r.action.class === 'policy-change' && r.requester.policyChangeId ? el('p', {}, el('button', { type: 'button', onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }, 'Show change')) : null,
-          shown,
           el('div', { class: 'actions' }, noteFor(r.requestId, 'Note (optional)')),
           el('div', { class: 'muted' }, 'request ' + r.requestId, copyId('Copy request ID', r.requestId)), el('div', { class: 'muted' }, 'expires ' + absolute(r.expiresAt)),
           d.ids.map(([k, v]) => el('div', { class: 'muted' }, k + ' ' + v))))

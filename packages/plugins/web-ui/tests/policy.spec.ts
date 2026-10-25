@@ -268,7 +268,8 @@ describe('web UI: the policy page in a real browser', () => {
     expect(await page.locator('details', { hasText: 'Exact set' }).getAttribute('open')).toBeNull()
     const card = waiting.locator('article', { hasText: `request ${request.requestId}` })
     // One line and two buttons (T186); what a verdict does, what it is about, and the set's hashes under its closed Details.
-    expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
+    // A policy change's card keeps its diff one press away, beside the two verdicts (T186).
+    expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny', 'Show change'])
     expect(await card.innerText()).not.toContain('If approved')
     expect(await card.innerText()).not.toContain(change.hash)
     await card.locator('details.card-details > summary').click()
