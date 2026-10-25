@@ -206,6 +206,26 @@ function gitRead(dir: string, args: string[], take: (text: string) => boolean): 
   })
 }
 
+/**
+ * The text of `path` (relative to the repository's top level) as the repository at `dir` has it
+ * committed at HEAD, never as its working tree has it, so an uncommitted edit is never read; at most
+ * `maxChars` characters, read no further (INV-9), `cut` when there was more. Undefined when `dir` is
+ * in no repository, it has no commit, or no file is committed at that path; git runs as every git
+ * here does (no hooks, no configuration of the machine's, bounded time).
+ */
+export async function committedText(dir: string, path: string, maxChars: number): Promise<{ text: string; cut: boolean } | undefined> {
+  const object = `HEAD:${path}`
+  const type = await git(dir, ['cat-file', '-t', object]).then((out) => out.trim(), () => undefined)
+  if (type !== 'blob') return undefined
+  let text = ''
+  const { stopped } = await gitRead(dir, ['cat-file', 'blob', object], (piece) => {
+    text += piece
+    return text.length > maxChars
+  })
+  const cut = stopped || text.length > maxChars
+  return { text: text.slice(0, maxChars), cut }
+}
+
 /** Characters one NUL-separated field of git's output may have (a path, a status): longer is not git's listing. */
 const FIELD_CHARS = 64 * 1024
 
