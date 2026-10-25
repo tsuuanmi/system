@@ -181,8 +181,9 @@ verdict and puts the action to the new policy again:
   amendment is dropped) when no request can be opened. A request the board withdrew itself
   changes nothing there.
 - A Worker's deferred call is denied when its session runs it again, as for any withdrawn
-  request, and nothing new is queued for that call ([below](#a-deferred-call)); the workflow
-  engine continues nothing for it.
+  request, and nothing new is queued for that call ([below](#a-deferred-call)). A board task's
+  step waiting on it ends its attempt when the new policy forbids the call's class, and otherwise
+  continues its session once, told the call was denied; a run outside the board continues nothing.
 - A workflow run's remediation gate closes (`plan_rejected`), and the fix does not run;
   `continue` puts the plan to the policy loaded now on a new request
   ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)).
@@ -318,9 +319,26 @@ ids, never the call's input.
   blocked, its output in the thread naming the request, and the runtime stops Codex; in the later
   run the model makes the call again.
 - **Resume.** The same session continues in a later run (by its native handle): the workflow
-  engine starts it by itself once the request is approved, once per approval; a board task's step
-  waits on the request in its live run meanwhile, and a rejection or expiry ends that attempt for
-  the operator ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). The hook
+  engine starts it by itself once the request is approved, once per approval. A board task's step
+  waits on the request in its live run meanwhile, a `command` call at most
+  `deferredCommandMinutes` (default 10; 0 waits until the request expires), after which the engine
+  withdraws the request and treats that call alone as denied. A denied call (rejected, expired,
+  withdrawn, unanswered past that bound or the request's expiry, whether or not the queue's sweep
+  recorded the expiry yet, or approved only after that deadline) does not end the attempt: the
+  session continues once, its brief saying the call was denied and why, and the gate denies that
+  exact call there, so the agent's tool result is the denial and it works on without it. The
+  attempt ends for the operator only when the policy now forbids the call's class or the session
+  cannot resume ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)).
+- **A denied call stays denied in its session.** Before it allows any call, `auto` and `notify`
+  included, the gate looks up the request it last opened for that exact call in that session: one
+  rejected, expired, or withdrawn denies the call; and so does any request of the session for that
+  call the engine denied. The engine keeps its denial on the gate's own row of the request (the
+  `recovery` decision `deny` and its cause, written in the transaction that records the decision,
+  through `ctx.agentWorkers.denyToolCall`; with nothing to keep it, the attempt ends instead), and
+  the gate reads it from the store by session, never from the event log, whose retention may drop
+  the `workflow.run.continued` event. So a policy change that lists the command, an approval given
+  after the step's deadline, or a later attempt or chained task that continues the session in
+  another workflow run never runs a call the session was told was denied, across restarts too. The hook
   runs again on the deferred call. The gate finds the request opened for that exact call in
   that session, and checks it in full before using it: subject type `content`, ref
   `agent-tool-call:<the agent run that opened it>:<tool>`, version the input's content id, the
@@ -331,6 +349,14 @@ ids, never the call's input.
   input is a different call, with a request of its own.
 - **A run with no session** cannot be continued, so an `ask` there is denied, not deferred, and
   nothing is queued: the operator is never asked for an approval no run could use.
+- **Asking less.** A Worker whose sandbox writes its workspace is told, with every turn's prompt,
+  the calls its gate lets run unasked under the policy as it stands (`ctx.approvals.policy()`):
+  reading tools and the read-only inspection commands of the table above when `read` runs
+  unasked, writing tools when `workspace-write` does, and the studio policy's commands list, its
+  exact lines (at most 50 shown), when `workspace-write` runs unasked and `command` is not
+  forbidden (every command when `command` itself runs unasked). Nothing it names is a call the
+  policy asks about now; the gate still judges every call. With no queue, or a policy that cannot
+  be read, the prompt goes without it.
 
 ### Where a Worker's gate leaves room
 
@@ -351,7 +377,9 @@ ids, never the call's input.
   that deferred as a new attempt on the same session, at most once per approval, with a
   `recovery` decision ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). A board
   task's step waits on the request in its live run, so the task's attempt is not spent on the
-  wait; a run outside the board fails until the verdict. When a board task's attempt ends without
+  wait (a `command` call at most `deferredCommandMinutes`), and a denied call continues the
+  session once, told so, a `recovery` decision `deny`; a run outside the board fails until the
+  verdict, and a denial continues nothing there. When a board task's attempt ends without
   a verdict, the engine withdraws the requests its Workers left open, so none is left on a session
   no later attempt resumes. The engine finds the request from the gate's
   `agent-workers.tool.deferred` event and checks it through `ctx.approvals`, so `WorkerStart` and

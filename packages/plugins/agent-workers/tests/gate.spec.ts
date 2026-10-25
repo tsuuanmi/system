@@ -29,7 +29,7 @@ import Workflow from '@tsuuanmi/system-workflow'
 import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
-import { classify } from '../src/gate.ts'
+import { classify, unaskedNote } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 
@@ -207,6 +207,34 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     const { run } = await boot(agent)
     expect((await run()).status).toBe('completed')
     expect(agent.verdicts[0]).toEqual([{ decision: 'allow' }])
+  })
+
+  it('tells a Worker that may run commands which calls run unasked, the policy\'s commands list word for word, so it asks less (T199)', async () => {
+    const agent = new GatedAgent([[]])
+    const { run } = await boot(agent, { ...policy(), commands: ['npm run build', 'git status --short'] })
+    expect((await run()).status).toBe('completed')
+    const sent = agent.runs[0]!.prompt
+    expect(sent.startsWith('step 1\n\nTool calls that run without asking the operator (the autonomy policy now):\n')).toBe(true)
+    expect(sent).toContain('- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):\n  - npm run build\n  - git status --short\n')
+    expect(sent).toContain(`every path absolute and inside ${WORKSPACE}`)
+    expect(sent).toContain('Any other command waits for the operator; unanswered in time, or rejected, it is denied and you go on without it')
+  })
+
+  it('names in that note only what the policy lets run unasked: no commands list when commands are forbidden, every command when they run, nothing when nothing does', () => {
+    const effective = (modes: Record<string, string>) => Object.entries(modes).map(([actionClass, mode]) => ({ actionClass: actionClass as AutonomyPolicy['rules'][number]['actionClass'], mode }))
+    const policies = [{ commands: ['npm test'] }]
+    const forbidden = unaskedNote({ policies, effective: effective({ 'read': 'auto', 'workspace-write': 'auto', 'command': 'forbid' }) }, '/ws')!
+    expect(forbidden).not.toContain('npm test')
+    expect(forbidden).toContain('Any other command is denied')
+    const asked = unaskedNote({ policies, effective: effective({ 'read': 'auto', 'workspace-write': 'ask', 'command': 'ask' }) }, '/ws')!
+    // A listed command runs as a workspace write: when writes ask, so does it.
+    expect(asked).not.toContain('npm test')
+    expect(asked).not.toContain('Writing tools')
+    expect(unaskedNote({ policies, effective: effective({ 'read': 'notify', 'workspace-write': 'auto', 'command': 'auto' }) }, '/ws')).toContain('- Any other Bash command.')
+    expect(unaskedNote({ policies, effective: effective({ 'read': 'ask', 'workspace-write': 'ask', 'command': 'ask' }) }, '/ws')).toBeUndefined()
+    const many = unaskedNote({ policies: [{ commands: Array.from({ length: 60 }, (_, i) => `make t${i}`) }], effective: effective({ 'workspace-write': 'auto', 'command': 'ask' }) }, '/ws')!
+    expect(many).toContain('  - make t49\n  - and 10 more')
+    expect(many).not.toContain('make t50')
   })
 
   it('opens one request bound to the exact call on an ask, defers it, and fails the run naming the request; a later run before the verdict waits on the same one (REQ-WRK-6, INV-5)', async () => {
@@ -1014,7 +1042,9 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
   const CHANGE = [{ nodeId: 'change', objective: 'Change the code', prompt: '{{input}}', capabilities: ['develop', 'local-data'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer' }]
   const WORKFLOW = { retryDelayMs: 50, approvalPollSeconds: 1, templates: { change: CHANGE } }
 
-  async function bootTask(agent: AgentRuntimeProvider) {
+  /** `backdateMs`: each request the gate opens is made that long ago, so it expires that much sooner (the queue never sweeps here). */
+  async function bootTask(agent: AgentRuntimeProvider, overrides: Record<string, unknown> = {}, options: { backdateMs?: number } = {}) {
+    const workflow = { ...WORKFLOW, ...overrides }
     const dir = mkdtempSync(join(tmpdir(), 'system-gate-task-'))
     const ctx = new Context()
     const fibers = [
@@ -1024,7 +1054,7 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
       ctx.plugin(StoreBoard, { sweepSeconds: 0 }),
     ]
     await Promise.all(fibers)
-    let engine = ctx.plugin(Workflow, WORKFLOW)
+    let engine = ctx.plugin(Workflow, workflow)
     await engine
     ctx.agentRuntimes.register(agent)
     onTestFinished(async () => {
@@ -1033,15 +1063,25 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
       rmSync(dir, { recursive: true, force: true })
     })
     await activeProject(ctx)
+    if (options.backdateMs) {
+      const request = ctx.approvals.request.bind(ctx.approvals)
+      ctx.approvals.request = (asked) => request(asked, new Date(Date.now() - options.backdateMs!))
+    }
     const task = await readyTask(ctx, 'change')
     const run = await ctx.workflow.start({ template: 'change', input: 'Make the tests pass', classification: 'operator-shared', task: { taskId: task.taskId } })
-    // Stop the engine alone and start it again over the same store (a restart).
-    const restart = async (): Promise<void> => {
+    // Stop the engine alone, and start it again over the same store (a restart).
+    const stop = async (): Promise<void> => {
       await engine.dispose()
-      engine = ctx.plugin(Workflow, WORKFLOW)
+    }
+    const start = async (): Promise<void> => {
+      engine = ctx.plugin(Workflow, workflow)
       await engine
     }
-    return { ctx, task, run, restart }
+    const restart = async (): Promise<void> => {
+      await stop()
+      await start()
+    }
+    return { ctx, task, run, restart, stop, start }
   }
 
   const blockedOn = (ctx: Context, runId: string) => vi.waitFor(() => {
@@ -1063,7 +1103,9 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
     const [request] = await open(ctx)
     // The run waits on exactly the request the Worker's gate opened, for that session; nothing failed.
     expect(request).toMatchObject({ action: { class: 'command' }, requester: { component: 'worker', runId: waiting.nodes[0]!.executionId, sessionId: run.sessionId } })
-    expect(waiting).toMatchObject({ status: 'running', blocked: { nodeId: 'change', approvalRequest: request!.requestId, until: request!.expiresAt } })
+    // A command call waits at most deferredCommandMinutes (default 10) from its request's creation, inside the request's own expiry.
+    expect(waiting).toMatchObject({ status: 'running', blocked: { nodeId: 'change', approvalRequest: request!.requestId, until: new Date(Date.parse(request!.createdAt) + 600_000).toISOString() } })
+    expect(Date.parse(waiting.blocked.until)).toBeLessThan(Date.parse(request!.expiresAt))
     expect(waiting.nodes).toEqual([expect.objectContaining({ nodeId: 'change', state: 'BLOCKED', attempt: 1 })])
     expect(waiting.nodes[0]!.error).toBeUndefined()
     expect(waiting.error).toBeUndefined()
@@ -1090,23 +1132,175 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
     expect(await open(ctx)).toEqual([])
   })
 
-  it('ends the attempt for the operator when the request is rejected or expires: USER_ACTION, an attempt the board counts, nothing of the call run', async () => {
+  /** The step's `recovery` decisions of rule `workflow.deferred-call` whose outcome is `deny`. */
+  const denials = (ctx: Context, runId: string) => ctx.artifacts.list({ kind: 'decision', runId }).map((a) => a.body as { decisionType: string; decider: { id: string }; inputs: string[]; outcome: { option: string; detail?: Record<string, unknown> } })
+    .filter((d) => d.decider.id === 'workflow.deferred-call' && d.outcome.option === 'deny')
+
+  it('returns a rejected or expired call to the agent as a denied tool result, and the same session goes on once without it: the attempt completes, nothing of the call run (T199)', async () => {
     for (const how of ['rejected', 'expired'] as const) {
-      const agent = new GatedAgent([[bash('npm test')]])
-      const { ctx, task, run } = await bootTask(agent)
+      // The second run is the session resumed: the call it stopped at is put to the gate again, then the next call.
+      const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+      // deferredCommandMinutes 0 keeps waiting as before: until the request's own expiry. The expired
+      // request is made to expire 3 s from now, and the queue never sweeps: the engine reaches the
+      // deadline first, and resolves the expiry itself as a denial, never by ending the attempt.
+      const { ctx, task, run } = await bootTask(agent, { deferredCommandMinutes: 0 }, how === 'expired' ? { backdateMs: 3_597_000 } : {})
       const waiting = await blockedOn(ctx, run.runId)
       const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+      expect(waiting.blocked.until, how).toBe(request.expiresAt)
       if (how === 'rejected') await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'rejected' }])
-      else await ctx.approvals.sweep(new Date(Date.parse(request.expiresAt) + 1000))
-      const ended = await reportedRun(ctx, run.runId)
-      expect(ended, how).toMatchObject({ status: 'failed', error: { kind: how === 'rejected' ? 'call_rejected' : 'call_expired', disposition: 'USER_ACTION' } })
-      expect(ended.nodes[0]!.error).toMatchObject({ disposition: 'USER_ACTION', message: expect.stringContaining(request.requestId) })
-      expect(ended.task?.outcome, how).toMatchObject({ status: 'reconciled', state: 'ready' })
-      expect(await ctx.board.task(task.taskId), how).toMatchObject({ state: 'ready', attempts: { count: 1 } })
-      expect(agent.runs, how).toHaveLength(1)
-      // The notifier reads the step's failure as one only the operator resolves.
-      expect(ctx.eventLog.query({ type: 'workflow.node.failed', runId: run.runId }).at(-1)?.data, how).toMatchObject({ disposition: 'USER_ACTION', approvalRequest: request.requestId })
+      const done = await reportedRun(ctx, run.runId)
+      expect(done, how).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+      expect(done.nodes, how).toEqual([expect.objectContaining({ nodeId: 'change', state: 'COMPLETED', attempt: 2 })])
+      // The same session, resumed once, told the call was denied and why.
+      expect(agent.runs, how).toHaveLength(2)
+      expect(agent.runs[1]!.resume, how).toBe(agent.runs[0]!.resume ?? 'h-1')
+      expect(agent.runs[1]!.prompt, how).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): ${how === 'rejected' ? 'the operator rejected it' : `no verdict came by ${request.expiresAt}`}. It did not run`)
+      // The call itself is denied with the reason, never run, and nothing new is asked; the Worker's next call runs.
+      expect(agent.verdicts[1], how).toEqual([
+        { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how === 'rejected' ? 'rejected by the operator' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'}, so it does not run; go on without it` },
+        { decision: 'allow' },
+      ])
+      // Recorded (INV-13): the denial, on the queue's own resolution and the autonomy decision that the class still asks.
+      const [deny, ...more] = denials(ctx, run.runId)
+      expect(more, how).toEqual([])
+      expect(deny, how).toMatchObject({ decisionType: 'recovery', inputs: expect.arrayContaining([request.resolution?.decision ?? (await ctx.approvals.get(request.requestId))!.resolution!.decision]), outcome: { detail: { approvalRequest: request.requestId, cause: how } } })
+      expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId }).at(-1)?.data, how).toMatchObject({ approvalRequest: request.requestId, denied: true, cause: how })
+      // One attempt of the task, done; no request left open.
+      expect(await ctx.board.task(task.taskId), how).toMatchObject({ state: 'done', attempts: { count: 1 } })
+      expect(await open(ctx), how).toEqual([])
+      expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.component === 'worker'), how).toHaveLength(1)
     }
+  })
+
+  it('treats a command call unanswered past deferredCommandMinutes as denied, for that call alone: its request withdrawn, the expiry recorded, and the session goes on once (T199)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+    const { ctx, task, run } = await bootTask(agent, { deferredCommandMinutes: 0.05 })
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // Bounded: 3 s after the request was made, well inside its own expiry.
+    expect(waiting.blocked.until).toBe(new Date(Date.parse(request.createdAt) + 3000).toISOString())
+    expect(Date.parse(request.expiresAt) - Date.parse(waiting.blocked.until)).toBeGreaterThan(3_000_000)
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    // The request is withdrawn, by the queue's own record, and the expiry is the engine's decision.
+    const withdrawn = (await ctx.approvals.get(request.requestId))!
+    expect(withdrawn).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({
+      decisionType: 'recovery', inputs: expect.arrayContaining([withdrawn.resolution!.decision]),
+      outcome: { option: 'deny', detail: expect.objectContaining({ approvalRequest: request.requestId, cause: 'bound', boundMinutes: 0.05 }) },
+    })])
+    // That call is denied, never run; the session goes on, and its next call runs.
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.prompt).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): no verdict came within 0.05 minutes, so the call is denied.`)
+    expect(agent.verdicts[1]).toEqual([{ decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was withdrawn before a verdict`) }, { decision: 'allow' }])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(await open(ctx)).toEqual([])
+  })
+
+  it('still ends the attempt for the operator when the policy now forbids the call\'s class: USER_ACTION, an attempt the board counts, nothing of the call run', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const { ctx, task, run } = await bootTask(agent)
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // The operator forbids commands while the step waits: the open request is withdrawn on the change.
+    const { request: change } = await ctx.approvals.proposePolicy!({ policy: { ...policy({ command: { mode: 'forbid' } }), version: 2 } })
+    const [applied] = await ctx.approvals.decide([{ requestId: change.requestId, subject: change.subject, verdict: 'approved' }])
+    expect(applied?.refused).toBeUndefined()
+    const ended = await reportedRun(ctx, run.runId)
+    expect(ended).toMatchObject({ status: 'failed', error: { kind: 'call_rejected', disposition: 'USER_ACTION' } })
+    expect(ended.nodes[0]!.error).toMatchObject({ disposition: 'USER_ACTION', message: expect.stringContaining('the autonomy policy now forbids its class command') })
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(ended.task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    expect(agent.runs).toHaveLength(1)
+    expect(denials(ctx, run.runId)).toEqual([])
+    // The notifier reads the step's failure as one only the operator resolves.
+    expect(ctx.eventLog.query({ type: 'workflow.node.failed', runId: run.runId }).at(-1)?.data).toMatchObject({ disposition: 'USER_ACTION', approvalRequest: request.requestId })
+  })
+
+  it('keeps a command call\'s bound across a restart of the engine mid-wait: past it, the call is denied once and the session goes on, nothing asked twice (INV-4)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const { ctx, run, restart } = await bootTask(agent, { deferredCommandMinutes: 0.05 })
+    const waiting = await blockedOn(ctx, run.runId)
+    await restart()
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted' } } })
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.verdicts[1]).toEqual([expect.objectContaining({ decision: 'deny' })])
+    // One request, withdrawn once by its bound; one denial; one continuation.
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.component === 'worker').map((r) => r.requestId)).toEqual([waiting.blocked.approvalRequest])
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({ outcome: expect.objectContaining({ detail: expect.objectContaining({ cause: 'bound' }) }) })])
+    expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId })).toHaveLength(1)
+  })
+
+  it('denies an approval given after a command call\'s bound while the engine was down: the call never runs, the denial is the engine\'s, and the session goes on (INV-4); a later workflow run of the session is denied it too, once the event log dropped the engine\'s events', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm test')], [bash('npm test')]])
+    const { ctx, task, run, stop, start } = await bootTask(agent, { deferredCommandMinutes: 0.05 })
+    const waiting = await blockedOn(ctx, run.runId)
+    await stop()
+    // The bound passes with no engine to withdraw the request; the queue's own expiry is an hour off, so it takes the approval.
+    await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(Date.parse(waiting.blocked.until) + 100), { timeout: 10_000, interval: 100 })
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    const [applied] = await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+    expect(applied?.refused).toBeUndefined()
+    await start()
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    const approved = (await ctx.approvals.get(request.requestId))!
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({
+      decisionType: 'recovery', inputs: expect.arrayContaining([approved.resolution!.decision]),
+      outcome: { option: 'deny', detail: expect.objectContaining({ approvalRequest: request.requestId, cause: 'late' }) },
+    })])
+    // The approved call is denied, both times the resumed session makes it: its approval is never taken.
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.prompt).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): the approval came at ${approved.resolution!.at}, after the call's deadline`)
+    expect(agent.verdicts[1]).toEqual([
+      { decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was denied (late`) },
+      { decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was denied (late`) },
+    ])
+    expect(ctx.store.db.prepare('SELECT used_at FROM agent_tool_requests WHERE request_id = ?').get(request.requestId)).toEqual({ used_at: null })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    // The denial is kept on the gate's own row of the request, with the engine's decision and cause.
+    const kept = ctx.store.db.prepare('SELECT denial_decision, denial_cause FROM agent_tool_requests WHERE request_id = ?').get(request.requestId) as { denial_decision: string; denial_cause: string }
+    expect(kept.denial_cause).toBe('late')
+    expect(ctx.artifacts.get(kept.denial_decision)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'deny', detail: { approvalRequest: request.requestId, cause: 'late' } } })
+
+    // The event log's retention drops the engine's events; then another workflow run continues the
+    // session (a next attempt, a chained task). The request is still approved and its approval
+    // unused, but the call stays denied in the session: it never runs, and the approval is never taken.
+    ctx.store.db.prepare("DELETE FROM events WHERE type = 'workflow.run.continued'").run()
+    expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId })).toEqual([])
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'approved' })
+    const admitted = await ctx.workers.route(requirement) as { decisions: { tier: `sha256:${string}`; route: `sha256:${string}` } }
+    const source = ctx.workers.source('agents')!
+    const later = source.start({ key: 'a-later-workflow-run', worker: 'agent:dev', prompt: 'the next attempt', sessionId: run.sessionId!, runId: 'run_later', requirement, decisions: admitted.decisions })
+    expect(await source.wait(later.id, 10_000)).toMatchObject({ status: 'completed' })
+    expect(agent.runs).toHaveLength(3)
+    expect(agent.verdicts[2]).toEqual([{ decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was denied (late, decision ${kept.denial_decision}), so it does not run; go on without it` }])
+    expect(ctx.store.db.prepare('SELECT used_at FROM agent_tool_requests WHERE request_id = ?').get(request.requestId)).toEqual({ used_at: null })
+    expect(await open(ctx)).toEqual([])
+  })
+
+  it('never runs a denied call once a newer policy lists its command: the replay in the resumed session is denied by the persisted denial', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+    const { ctx, task, run } = await bootTask(agent)
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // The operator lists the very command while the step waits: the queue withdraws the open request on the change.
+    const { request: change } = await ctx.approvals.proposePolicy!({ policy: { ...policy(), commands: ['npm run build', 'npm test'], version: 2 } })
+    const [applied] = await ctx.approvals.decide([{ requestId: change.requestId, subject: change.subject, verdict: 'approved' }])
+    expect(applied?.refused).toBeUndefined()
+    expect((await ctx.approvals.check({ class: 'command', command: ['npm', 'test'] })).mode).not.toBe('ask')
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({ outcome: expect.objectContaining({ detail: expect.objectContaining({ approvalRequest: request.requestId, cause: 'withdrawn' }) }) })])
+    // The policy now lets `npm test` run unasked, but this session's call was denied: it stays denied; the next call runs.
+    expect(agent.verdicts[1]).toEqual([
+      { decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was withdrawn before a verdict`) },
+      { decision: 'allow' },
+    ])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('leaves no request open once the attempt has ended any other way: stopped while it waits, its request is withdrawn, so none is orphaned on a session no later attempt resumes', async () => {

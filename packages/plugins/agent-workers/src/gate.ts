@@ -349,6 +349,48 @@ function readCommand(argv: string[], workspace: string): boolean {
 
 const ANSWER = 'Approved: the next run of this session makes exactly this call. Rejected, or unanswered when the request expires: the call is denied.'
 
+/** At most this many of the policy's commands-list lines are shown to the agent (INV-9). */
+const NOTE_LINES = 50
+const NOTE_LINE_CHARS = 200
+
+/**
+ * What a Worker that may run commands is told before its work (docs/design/approvals.md#a-deferred-call):
+ * the tool calls its gate lets run without asking the operator under the autonomy policy as it
+ * stands (`ctx.approvals.policy()`, the studio policy the gate judges by), so it asks less. Pure:
+ * read from the policy's effective modes and its commands list, the exact lines, never a guess. A
+ * call it does not name may still run (the gate decides each call); one it names is never one the
+ * policy asks about now. Undefined when nothing runs unasked.
+ */
+export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; effective: ReadonlyArray<{ actionClass: ActionClass; mode: string }> }, workspace: string): string | undefined {
+  const mode = (c: ActionClass): string => policy.effective.find((e) => e.actionClass === c)?.mode ?? 'ask'
+  const unasked = (c: ActionClass): boolean => mode(c) === 'auto' || mode(c) === 'notify'
+  const lines: string[] = []
+  if (unasked('read')) {
+    lines.push(`- Reading tools (Read, Glob, Grep, LS) on paths inside your workspace ${workspace}.`)
+    lines.push(`- Bash read-only inspection, every path absolute and inside ${workspace} (a relative path, or a form that names none, asks): cat, head, tail, wc, ls, stat, file, sed -n <a>,<b>p, rg, grep, and find without actions; and echo, pwd, true, false with no argument but echo's.`)
+  }
+  if (unasked('workspace-write')) lines.push(`- Writing tools (Write, Edit) on files inside ${workspace}, outside its .git.`)
+  if (unasked('command')) lines.push('- Any other Bash command.')
+  else if (mode('command') !== 'forbid' && unasked('workspace-write')) {
+    const studio = policy.policies[0]
+    const listed = (studio?.commands ?? []).filter((line) => line.length <= NOTE_LINE_CHARS)
+    if (listed.length) {
+      lines.push('- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):')
+      for (const line of listed.slice(0, NOTE_LINES)) lines.push(`  - ${line}`)
+      if (listed.length > NOTE_LINES) lines.push(`  - and ${listed.length - NOTE_LINES} more`)
+    }
+  }
+  if (!lines.length) return undefined
+  return [
+    'Tool calls that run without asking the operator (the autonomy policy now):',
+    ...lines,
+    `A Bash command is words split on single spaces, never parsed by a shell: a word with a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like) is denied. Any other ${mode('command') === 'forbid' ? 'command is denied' : 'command waits for the operator; unanswered in time, or rejected, it is denied and you go on without it'}, so prefer the calls above.`,
+  ].join('\n')
+}
+
+/** The part of a policy {@link unaskedNote} reads. */
+interface AutonomyPolicyLike { commands?: string[] | undefined }
+
 /** The file headers of a patch, and what each does to the file it names. */
 const PATCH_HEADERS = [['*** Add File: ', 'add'], ['*** Delete File: ', 'delete'], ['*** Update File: ', 'update'], ['*** Move to: ', 'move to']] as const
 
@@ -560,6 +602,34 @@ export const GATE_MIGRATION = {
 }
 
 /**
+ * A call's denial by the workflow engine, kept on its request's row (docs/design/approvals.md#a-deferred-call):
+ * when, the engine's `recovery` decision `deny`, and its cause. Durable, so the call stays denied in
+ * its session across workflows, restarts, and the event log's retention, whatever the queue says
+ * of the request later (an approval given after the deadline, a request left open when its
+ * withdrawal failed).
+ */
+export const DENIAL_MIGRATION = {
+  version: 18,
+  sql: `ALTER TABLE agent_tool_requests ADD COLUMN denied_at TEXT;
+  ALTER TABLE agent_tool_requests ADD COLUMN denial_decision TEXT;
+  ALTER TABLE agent_tool_requests ADD COLUMN denial_cause TEXT;`,
+}
+
+/**
+ * Record that the call request `requestId` was for is denied for good in its session: the engine's
+ * `recovery` decision `deny` and its cause, on the request's row, in the caller's transaction. The
+ * first denial stands (idempotent). False when no gate opened that request, so nothing could hold it.
+ */
+export function recordDenial(ctx: Context, requestId: string, denial: { decision: string; cause: string }): boolean {
+  return ctx.store.transaction((db) => {
+    if (!db.prepare('SELECT 1 FROM agent_tool_requests WHERE request_id = ?').get(requestId)) return false
+    db.prepare('UPDATE agent_tool_requests SET denied_at = ?, denial_decision = ?, denial_cause = ? WHERE request_id = ? AND denied_at IS NULL')
+      .run(new Date().toISOString(), denial.decision, denial.cause.slice(0, 64), requestId)
+    return true
+  })
+}
+
+/**
  * The first part of a stored request that is not the call the gate's row says it is for: its
  * subject (`content`, the ref naming the run that opened it and the tool, the input's content id),
  * its action class, and its requester (`worker`, that run, this session). Undefined when it is.
@@ -638,25 +708,61 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     return { decision: 'defer', reason, requestId }
   }
 
+  /**
+   * The workflow engine's denial of exactly this call in this session (docs/design/approvals.md#a-deferred-call):
+   * one of the session's requests for it whose row carries the denial ({@link recordDenial}),
+   * written in the transaction that recorded the engine's `recovery` decision `deny`. Read from the
+   * store by session, so it holds in any workflow that continues the session, across restarts
+   * (INV-4) and the event log's retention, whatever the queue says of the request later (an
+   * approval given after the step's deadline, a request left open when its withdrawal failed).
+   * Undefined when none.
+   */
+  const workflowDenial = (call: ToolCall, inputHash: string): { requestId: string; decision?: ArtifactRef; cause?: string } | undefined => {
+    const found = ctx.store.db.prepare('SELECT request_id, denial_decision, denial_cause FROM agent_tool_requests WHERE scope = ? AND tool = ? AND input_hash = ? AND denied_at IS NOT NULL ORDER BY denied_at LIMIT 1')
+      .get(`session:${run.sessionId}`, call.tool, inputHash) as { request_id: string; denial_decision: string | null; denial_cause: string | null } | undefined
+    if (!found) return undefined
+    return { requestId: found.request_id, ...(found.denial_decision ? { decision: found.denial_decision as ArtifactRef } : {}), ...(found.denial_cause ? { cause: found.denial_cause } : {}) }
+  }
+
+  /**
+   * The request this session last opened for exactly this call, if any, read and checked (INV-5),
+   * and whether that call stands denied: its request rejected (a verdict, an expiry, a withdrawal)
+   * or denied by the workflow engine ({@link workflowDenial}). A denied call stays denied in its
+   * session whatever the policy says now, `auto` included: a policy change never runs it. A
+   * `verdict` is returned when the gate decides here (denied, or a request it cannot use).
+   */
+  const priorOf = async (approvals: Approvals, call: ToolCall, action: ToolAction, inputs: ArtifactRef[]): Promise<{ prior?: RequestRow; request?: ApprovalRequest; verdict?: ToolVerdict }> => {
+    if (!run.sessionId) return {}
+    const inputHash = contentId(call.input)
+    const prior = ctx.store.db.prepare('SELECT request_id, run_id, used_at FROM agent_tool_requests WHERE scope = ? AND tool = ? AND input_hash = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+      .get(`session:${run.sessionId}`, call.tool, inputHash) as RequestRow | undefined
+    if (!prior) return {}
+    const request: ApprovalRequest | undefined = await approvals.get(prior.request_id)
+    if (!request) return { verdict: refuse(call, `approval request ${prior.request_id} for this call cannot be read`, inputs) }
+    // INV-5: the request is for exactly this call, asked by this session's Worker, as the row records it.
+    const other = mismatch(request, { ref: `agent-tool-call:${prior.run_id}:${call.tool}`, version: inputHash, actionClass: action.class, runId: prior.run_id, sessionId: run.sessionId })
+    if (other) return { verdict: refuse(call, `approval request ${request.requestId} is for another call than this one (its ${other} differs), so its verdict is not used`, inputs) }
+    if (request.state === 'rejected') {
+      const how = request.resolution?.cause === 'verdict' ? 'rejected by the operator' : request.resolution?.cause === 'expired' ? 'unanswered when it expired' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'
+      event('denied', call, request.resolution?.decision, { actionClass: action.class, requestId: request.requestId })
+      return { verdict: { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how}, so it does not run; go on without it` } }
+    }
+    const denial = workflowDenial(call, inputHash)
+    if (denial) {
+      event('denied', call, denial.decision, { actionClass: action.class, requestId: denial.requestId })
+      return { verdict: { decision: 'deny', reason: `approval request ${denial.requestId} for exactly this call was denied (${denial.cause ?? 'no verdict in time'}${denial.decision ? `, decision ${denial.decision}` : ''}), so it does not run; go on without it` } }
+    }
+    return { prior, request }
+  }
+
   /** An `ask`: the request already opened for this exact call in this session, or a new one. */
   const ask = async (approvals: Approvals, call: ToolCall, action: ToolAction, verdict: AutonomyVerdict): Promise<ToolVerdict> => {
     if (!run.sessionId) return refuse(call, `the policy asks the operator about this ${action.class} call, and run ${run.runId} has no session a later run could continue once approved, so it cannot wait`, [verdict.decision])
     const scope = `session:${run.sessionId}`
     const inputHash = contentId(call.input)
-    const db = ctx.store.db
-    const prior = db.prepare('SELECT request_id, run_id, used_at FROM agent_tool_requests WHERE scope = ? AND tool = ? AND input_hash = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
-      .get(scope, call.tool, inputHash) as RequestRow | undefined
-    if (prior) {
-      const request: ApprovalRequest | undefined = await approvals.get(prior.request_id)
-      if (!request) return refuse(call, `approval request ${prior.request_id} for this call cannot be read`, [verdict.decision])
-      // INV-5: the request is for exactly this call, asked by this session's Worker, as the row records it.
-      const other = mismatch(request, { ref: `agent-tool-call:${prior.run_id}:${call.tool}`, version: inputHash, actionClass: action.class, runId: prior.run_id, sessionId: run.sessionId })
-      if (other) return refuse(call, `approval request ${request.requestId} is for another call than this one (its ${other} differs), so its verdict is not used`, [verdict.decision])
-      if (request.state === 'rejected') {
-        const how = request.resolution?.cause === 'verdict' ? 'rejected by the operator' : request.resolution?.cause === 'expired' ? 'unanswered when it expired' : 'withdrawn'
-        event('denied', call, request.resolution?.decision, { actionClass: action.class, requestId: request.requestId })
-        return { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how}, so it does not run` }
-      }
+    const { prior, request, verdict: decided } = await priorOf(approvals, call, action, [verdict.decision])
+    if (decided) return decided
+    if (prior && request) {
       if (request.state !== 'approved') return defer(call, action, verdict, request.requestId)
       if (prior.used_at === null) {
         // One approval, one call: taken once, under the store's write lock.
@@ -703,6 +809,10 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
         // require may be pending; anything else is not a verdict this gate knows.
         const pending = verdict.failedChecks ?? []
         if (pending.some((c) => !CHECKS.includes(c))) return refuse(call, `the autonomy policy left checks pending that no rule can require (${pending.join(', ')})`, [verdict.decision])
+        // A call this session was denied stays denied, even once a newer policy lets its class or
+        // argv run unasked (the denial is persisted: the queue's request, the engine's denial on its row).
+        const { verdict: decided } = await priorOf(approvals, call, action, [verdict.decision])
+        if (decided) return decided
         const shown = pending.length ? { pendingChecks: pending } : {}
         if (verdict.mode === 'notify') event('notified', call, verdict.decision, { actionClass: action.class, ...shown })
         else if (pending.length && !pendingShown.has(action.class)) event('checks-pending', call, verdict.decision, { actionClass: action.class, ...shown })

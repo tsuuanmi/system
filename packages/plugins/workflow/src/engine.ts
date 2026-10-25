@@ -421,7 +421,8 @@ export class Engine {
             const queued = waiting.filter((n) => isRemediationGate(JSON.parse(n.spec) as ResolvedNode) && n.not_before)
             if (queued.length && await settleQueued(this, run, queued, current)) continue
             // A board task's step whose Worker's tool call waits on the operator: continue it once
-            // approved, or end the attempt on a rejection or expiry (./continuations.ts).
+            // approved, or once told the call was denied on a rejection, an expiry, or a command call's
+            // bound; the attempt ends only when the policy forbids the call's class (./continuations.ts).
             const calls = current_.filter(waitsOnCall)
             if (calls.length && await settleCalls(this, run, calls, current)) continue
             const expired = waiting.find((n) => !(Date.parse(n.not_before ?? '') - Date.now() > 0))

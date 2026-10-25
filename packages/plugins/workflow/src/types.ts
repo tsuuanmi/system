@@ -445,6 +445,13 @@ export interface Config {
    */
   approvalPollSeconds?: number
   /**
+   * Minutes a board task's step waits on the operator for its Worker's deferred tool call of class
+   * `command`, from its request's creation (default 10; INV-9); past it the call is treated as
+   * denied, for it alone: the request is withdrawn and the session continues once, told so. 0 waits
+   * until the request expires.
+   */
+  deferredCommandMinutes?: number
+  /**
    * Runs one session may serve when a board task's next attempt, or the next task of a chain,
    * resumes the session of the work before it (default 5; INV-9): past it, the run starts fresh.
    */

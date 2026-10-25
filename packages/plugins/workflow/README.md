@@ -553,16 +553,27 @@ second execution path (INV-1).
   Worker's tool gate deferred (sent, `config_error`, on a session) names the request it waits on
   in the gate's `agent-workers.tool.deferred` event.
   - **A board task's step waits** (T99 D2): instead of failing, the node becomes `BLOCKED` on
-    the request (`approval_request`) until the request's expiry (`gateTimeoutHours` with the
-    queue unreadable), after a `recovery` decision `wait` (`decision@1.8`, rule
-    `workflow.deferred-call`). The run stays live, holding its task and renewing its lease (the
-    task stays `running`, its attempt not spent); its view shows `blocked: tool-call`, and it
-    counts against `maxWaitingRuns`. Every `approvalPollSeconds`, under the run's lease, the
-    engine reads the request: approved by the operator for exactly that call before it expired,
-    the session continues once (as below); rejected, expired, withdrawn, approved for anything
-    else, or with no verdict by the deadline, the step fails as `call_rejected` or `call_expired`
-    (`USER_ACTION`, a `recovery` decision `fail`), and the run's report is an attempt the board
-    counts. Not for a run that lost its holder or whose budget refused a step: its node fails as
+    the request (`approval_request`) until the request's expiry, a `command` call at most
+    `deferredCommandMinutes` (default 10; 0: until the expiry) after it was asked
+    (`gateTimeoutHours` with the queue unreadable), after a `recovery` decision `wait`
+    (`decision@1.8`, rule `workflow.deferred-call`, `boundMinutes` for a bounded call). The run
+    stays live, holding its task and renewing its lease (the task stays `running`, its attempt not
+    spent); its view shows `blocked: tool-call`, and it counts against `maxWaitingRuns`. Every
+    `approvalPollSeconds`, under the run's lease, the engine reads the request: approved by the
+    operator for exactly that call by the step's deadline, the session continues once (as below).
+    A call still open past its deadline (its bound, or the request's expiry before the queue's
+    sweep recorded it) has its request withdrawn first. Rejected, expired, withdrawn, or approved
+    only after the deadline, the call is denied (T199): unless the policy now forbids its class,
+    the session continues once, its brief saying the call was denied and why (a `recovery` decision
+    `deny`, its cause `rejected`, `expired`, `withdrawn`, `bound`, or `late`;
+    `workflow.run.continued` with `denied: true`), and the Worker's gate denies that exact call
+    there and in any later run of the session, in any workflow, reading the denial the engine keeps
+    on the gate's row of the request (`ctx.agentWorkers.denyToolCall`, in the decision's
+    transaction), whatever the queue, the policy, or the event log's retention says later.
+    Forbidden (or a policy that cannot be read), approved for anything else, nothing loaded to keep
+    the denial (no `ctx.agentWorkers`, or no gate row for the request), or past the deadline with no queue to read,
+    the step fails as `call_rejected` or `call_expired` (`USER_ACTION`, a `recovery` decision
+    `fail`), and the run's report is an attempt the board counts. Not for a run that lost its holder or whose budget refused a step: its node fails as
     before. When a board task's run has ended, before its report, the requests still open that
     its Workers' gates or its remediation gates opened are withdrawn.
   - **A run that serves no board task** fails on that node, which keeps the request it waits on

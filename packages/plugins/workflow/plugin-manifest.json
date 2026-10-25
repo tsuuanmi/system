@@ -43,6 +43,11 @@
       "range": "^1.1.0"
     },
     {
+      "seam": "agentWorkers",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "approvals",
       "range": "^1.1.0",
       "optional": true
@@ -127,6 +132,10 @@
     },
     {
       "key": "approvalPollSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "deferredCommandMinutes",
       "sensitive": false
     },
     {

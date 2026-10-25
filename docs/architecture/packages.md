@@ -38,7 +38,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | `workers-core` |
 | [statistics](../../packages/statistics/README.md) | orchestration | — | — | — | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
@@ -288,6 +288,7 @@ flowchart TB
   workflow --> egress
   workflow --> workers
   workflow --> worker_sessions
+  workflow -.-> agent_workers
   workflow -.-> approvals
   workflow -.-> board
   workflow -.-> digest

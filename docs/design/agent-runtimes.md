@@ -154,6 +154,16 @@ does, and how a deferred call resumes). The gate comes from the source, never fr
 passes the call on to that policy, `deny` refuses it with a reason the agent is told, and
 `defer` stops the run at the call until the operator answers. A run a gate deferred fails as
 `config_error`, naming the request, and a later run of its session makes the call once approved.
+For a board task's step, a call not approved (rejected, expired, or a `command` call unanswered
+within the workflow's `deferredCommandMinutes`, default 10) also gets a later run of its session:
+its gate denies that exact call there with the reason, which the runtime returns to the agent as
+the call's result like any `deny`, and the agent goes on without it; that call stays denied in
+its session, in any workflow run that continues it, even once a newer policy would let it run
+unasked: the engine keeps the denial on the gate's own row of the request, which the gate reads by
+session ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). Each run of a Worker whose
+sandbox writes its workspace is told, after its prompt, the calls its gate lets run unasked under
+the policy as it stands, the commands list's exact lines among them
+([asking less](approvals.md#a-deferred-call)), so it asks the operator less.
 
 A runtime that can ask the gate before every tool call reports `gatesToolCalls`; one that cannot
 refuses a run that carries a gate (`config_error`), and its Workers are not admitted. Each gating

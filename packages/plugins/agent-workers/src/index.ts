@@ -53,7 +53,7 @@ import {
   type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
-import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
+import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Probes, refused } from './probes.ts'
 import { regenerationOf } from './regenerate.ts'
@@ -648,7 +648,7 @@ export class AgentWorkers extends Service {
       // The operator frees what a run that ended not known to be gone held, on their word that its agent is gone.
       version: 14,
       sql: 'ALTER TABLE agent_runs ADD COLUMN liveness_freed TEXT;',
-    }, CARRY_MIGRATION, FORK_MIGRATION, CHECKS_MIGRATION])
+    }, CARRY_MIGRATION, FORK_MIGRATION, CHECKS_MIGRATION, DENIAL_MIGRATION])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -1084,6 +1084,18 @@ export class AgentWorkers extends Service {
     return this.worktrees.acquire(check.repository, row.workflow_run_id).catch((error: unknown) => {
       throw new ProviderError('config_error', `${row.worker}: the worktree of run ${row.workflow_run_id} cannot be prepared: ${(error as Error).message}; nothing was run`, { cause: error })
     })
+  }
+
+  /**
+   * The workflow engine denies the call a Worker's gate deferred on approval request `requestId`,
+   * for good in its session (docs/design/approvals.md#a-deferred-call): recorded on the request's
+   * row, in the caller's transaction, with the engine's `recovery` decision `deny` and its cause.
+   * Every later run of that session, in any workflow, is denied that exact call, whatever the queue
+   * says of the request later and however long the event log keeps its events. False when no gate
+   * of this source opened that request.
+   */
+  denyToolCall(requestId: string, denial: { decision: string; cause: string }): boolean {
+    return recordDenial(this.ctx, requestId, denial)
   }
 
   /**
@@ -1775,7 +1787,7 @@ export class AgentWorkers extends Service {
         const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
         if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
-        const turn = await this.turnOf(row, worker, current)
+        const turn = await this.withUnasked(await this.turnOf(row, worker, current), row, worker)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
         const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
@@ -1865,6 +1877,28 @@ export class AgentWorkers extends Service {
     return {
       prompt: replayed(turns.map((t) => ({ prompt: t.prompt, answer: t.text })), row.prompt), classification, native: false,
       replay: { runs: ids, answers: turns.map((t) => t.answer) },
+    }
+  }
+
+  /**
+   * The turn with the calls its gate lets run unasked appended (gate.ts `unaskedNote`, the autonomy
+   * policy's exact lines), so the agent asks the operator less: only for a Worker whose sandbox
+   * writes its workspace (one that may run commands), never for a review member (its gate allows no
+   * call). Read from `ctx.approvals.policy()` now; with no queue, or one that cannot be read, the
+   * turn is sent as it is (logged), since the gate still decides every call. Appended before the
+   * egress check, which sees it.
+   */
+  private async withUnasked(turn: Turn, row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
+    if (worker.sandbox !== 'workspace-write' || row.scope === REVIEW_MEMBER) return turn
+    const approvals = this.ctx.get('approvals')
+    if (!approvals) return turn
+    const workspace = worker.worktreePerRun && row.workflow_run_id && RUN_ID.test(row.workflow_run_id) ? this.worktrees.pathOf(worker.workspace, row.workflow_run_id) : worker.workspace
+    try {
+      const note = unaskedNote(await approvals.policy(), workspace)
+      return note ? { ...turn, prompt: `${turn.prompt}\n\n${note}` } : turn
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the autonomy policy could not be read for ${row.run_id}'s note of the calls that run unasked; it is sent without it: ${(error as Error).message}`)
+      return turn
     }
   }
 

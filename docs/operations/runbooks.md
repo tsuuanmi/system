@@ -2256,7 +2256,8 @@ about is denied, nothing is queued, and the agent goes on without it
 Where it shows:
 
 - A run for a board task waits: its step is `BLOCKED` on the request, the run's view says
-  `blocked: tool-call` with the request and until when, and the task stays `running`, its
+  `blocked: tool-call` with the request and until when (for a `command` call at most
+  `deferredCommandMinutes`, 10 by default, after it was asked; otherwise the request's expiry), and the task stays `running`, its
   attempt not spent (`system result <runId>` returns at once and says so; the run's page on `/ui`
   links the request; `system explain <runId>` shows the step's `recovery` decision `wait`, rule
   `workflow.deferred-call`). It counts against `maxWaitingRuns`, not `maxActiveRuns`.
@@ -2283,12 +2284,27 @@ To approve:
      approval the waiting step runs again as a new attempt in its session, with a line saying the
      call was approved, and the call runs once (a `recovery` decision `continue`, rule
      `workflow.approved-call`, and a `workflow.run.continued` event naming the request). The task's
-     attempt goes on to its result. A deny, or no verdict by the request's expiry, ends the step as
-     `call_rejected` or `call_expired` (`USER_ACTION`, which notify tells as `run.user-action`): the
-     run fails, its report is an attempt the board counts, and the task goes through the gate for
-     its next attempt (or waits for input, `retries-spent`, with none left). Stopping the run, or
-     any other end of the attempt, withdraws every request its Workers left open, so an approval
-     given later runs nothing;
+     attempt goes on to its result. A deny, no verdict by the request's expiry, or, for a
+     `command` call, no verdict within `deferredCommandMinutes` (10; the engine then withdraws the
+     request) denies that call alone: within `approvalPollSeconds` the step runs again in its
+     session, told the call was denied and why, the gate denies that exact call there (the agent's
+     tool result is the denial), and the Worker goes on without it (a `recovery` decision `deny`,
+     rule `workflow.deferred-call`, cause `rejected`, `expired`, `withdrawn`, `bound`, or `late`
+     for an approval you gave after that deadline while the engine was down, and a
+     `workflow.run.continued` event with `denied: true`). Nothing of the call runs, then or later
+     in that session, even once you list its command or a later attempt continues the session:
+     the gate reads that denial from its own row of the request (`agent_tool_requests.denied_at`),
+     not from the event, which event-log retention may drop. The attempt
+     ends only when the policy now forbids the call's class, or on an approval that is not for
+     exactly that call: the step fails `call_rejected` or
+     `call_expired` (`USER_ACTION`, which notify tells as `run.user-action`), the run's report is
+     an attempt the board counts, and the task goes through the gate for its next attempt (or
+     waits for input, `retries-spent`, with none left). Stopping the run, or any other end of the
+     attempt, withdraws every request its Workers left open, so an approval given later runs
+     nothing. To wait for your verdict as long as the request lives, set the workflow's
+     `deferredCommandMinutes` to 0. To let a command run unasked, add its exact argv to the studio
+     policy's commands list ([change the autonomy policy](#change-the-autonomy-policy)); each
+     Worker that may run commands is told the list's lines with every turn's prompt;
    - a run outside a board task continues by itself: within `approvalPollSeconds` (15 s) of your
      approval the engine reopens the failed step as a new attempt in its session, with a line
      saying the call was approved, and the call runs once. It is a `recovery` decision (rule

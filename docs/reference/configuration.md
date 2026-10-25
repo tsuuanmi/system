@@ -573,6 +573,7 @@ No options.
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |
 | `gateTimeoutHours` | number (0.0001…720) | `24` | Hours a plan's gate waits for the operator's approval, then closes and fails the run, by rule (INV-9); continue the run to wait again |
 | `approvalPollSeconds` | number (1…300) | `15` | Seconds between the engine's reads of the approval queue: a remediation fix's request while its run waits on it, and the requests a Worker's deferred tool calls wait on (INV-9) |
+| `deferredCommandMinutes` | number (0…1440) | `10` | Minutes a board task's step waits on the operator for a Worker's deferred tool call of class command (from its request's creation), then treats that call as denied, for it alone: the request is withdrawn, recorded as a recovery decision deny, and the session continues once, told the call was denied (INV-9); 0 waits until the request expires |
 | `maxSessionRuns` | number (1…50) | `5` | Runs one session may serve when a board task's next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief |
 | `tasksFile` | object | `{}` | The board's TASKS.md projection a board task's run is given in its own worktree (INV-9) |
 | `tasksFile.maxTasks` | number (0…10000) | `200` | Tasks it lists at most, open ones first, the rest counted; 0 writes no file |

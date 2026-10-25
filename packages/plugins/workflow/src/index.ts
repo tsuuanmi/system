@@ -132,6 +132,7 @@ export class Workflow extends Service {
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
     gateTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a plan\'s gate waits for the operator\'s approval, then closes and fails the run, by rule (INV-9); continue the run to wait again'),
     approvalPollSeconds: z.natural().min(1).max(300).default(15).description('Seconds between the engine\'s reads of the approval queue: a remediation fix\'s request while its run waits on it, and the requests a Worker\'s deferred tool calls wait on (INV-9)'),
+    deferredCommandMinutes: z.number().min(0).max(1440).default(10).description('Minutes a board task\'s step waits on the operator for a Worker\'s deferred tool call of class command (from its request\'s creation), then treats that call as denied, for it alone: the request is withdrawn, recorded as a recovery decision deny, and the session continues once, told the call was denied (INV-9); 0 waits until the request expires'),
     maxSessionRuns: z.natural().min(1).max(50).default(5).description('Runs one session may serve when a board task\'s next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief'),
     tasksFile: z.object({
       maxTasks: z.natural().max(10_000).default(200).description('Tasks it lists at most, open ones first, the rest counted; 0 writes no file'),
