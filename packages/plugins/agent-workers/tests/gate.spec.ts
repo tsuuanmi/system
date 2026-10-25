@@ -163,7 +163,8 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
   })
 
   it('denies a call the policy forbids, with the reason its autonomy decision records', async () => {
-    const agent = new GatedAgent([[bash('ls')]])
+    // A command that is no read-only inspection stays `command`, which the policy decides.
+    const agent = new GatedAgent([[bash('npm test')]])
     const { ctx, run } = await boot(agent, policy({ command: { mode: 'forbid' } }))
     expect((await run()).status).toBe('completed')
     const verdict = agent.verdicts[0]![0] as { decision: string; reason: string }
@@ -521,6 +522,103 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toHaveProperty('refused')
   })
 
+  describe('read-only inspection commands', () => {
+    // A workspace that holds its own .git.
+    const repo = join(tree, 'git-repo')
+    mkdirSync(join(repo, '.git'), { recursive: true })
+    mkdirSync(join(repo, 'src'))
+    writeFileSync(join(repo, 'src', 'a.ts'), 'x')
+    writeFileSync(join(repo, '.git', 'config'), '')
+    symlinkSync(join(repo, '.git'), join(repo, 'meta'))
+    const read = (command: string, workspace = ws) => expect(classify(bash(command), workspace), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('Reads inside the run\'s workspace') })
+    const asks = (command: string, workspace = ws) => expect(classify(bash(command), workspace), command).toMatchObject({ class: 'command', command: command.split(' ') })
+    const notRead = (command: string, workspace = ws) => {
+      const action = classify(bash(command), workspace)
+      expect('refused' in action ? 'refused' : action.class, command).not.toBe('read')
+    }
+
+    it('classifies each program\'s allowed forms on absolute paths inside the workspace as read, with no argv for the commands list', () => {
+      const a = join(ws, 'src/a.ts')
+      const src = join(ws, 'src')
+      for (const command of [
+        `cat ${a}`, `cat -n ${a}`, `cat ${join(ws, 'inner/a.ts')}`, `cat ${a} ${join(ws, 'src/new.ts')}`,
+        `head -n 20 ${a}`, `head -20 ${a}`, `head -c 100 ${a}`, `tail -n +5 ${a}`, `tail -n 3 ${a}`, `tail -50 ${a}`,
+        `wc -l ${a}`, `wc -c -w ${a}`, `ls ${ws}`, `ls -la ${ws}`, `ls -la ${src}`, `ls -R ${src}`, `ls -1 ${ws}/`, `stat ${a}`, `file ${a}`, `file -i ${a}`,
+        `sed -n 1,40p ${a}`, `sed -n 7p ${a}`,
+        `rg -n classify ${src}`, `rg -i -F -w -c foo ${a}`, `rg -A 2 -B 1 -C 3 --line-number foo ${src}`, `rg -g src/a.ts --glob !dist -t ts foo ${ws}`, `rg -l foo ${ws}`,
+        `grep foo ${a}`, `grep -r -n foo ${src}`, `grep -r -i -F -w -c foo ${ws}`, `grep -l -A 2 -B 2 -C 1 --line-number foo ${a}`,
+        `find ${src}`, `find ${ws} -name a.ts -type f`, `find ${src} ${join(ws, 'inner')} -iname A.TS -path src/a.ts -maxdepth 2 -mindepth 1`,
+      ]) {
+        read(command)
+      }
+    })
+
+    it('leaves a relative path, a form that names no path, and git a command: the gate does not see the directory a command runs in (Codex\'s exec_command workdir)', () => {
+      for (const command of [
+        'cat src/a.ts', 'cat .ssh/id_rsa', 'cat src/new.ts', 'head -n 5 src/a.ts', 'tail src/a.ts', 'wc -l src/a.ts', 'stat src/a.ts', 'file src/a.ts', 'sed -n 1p src/a.ts',
+        'ls', 'ls -la', 'ls -R', 'ls .', 'ls src', 'rg -n token', 'rg foo src', 'rg foo .', 'grep -r foo', 'grep foo src/a.ts', 'find', 'find .', 'find src', 'find -name a.ts',
+        `cat ${join(ws, 'src')}/../src/a.ts`,
+      ]) {
+        notRead(command)
+      }
+      for (const command of [
+        'git status', 'git status --short', 'git diff', 'git log --oneline -n 5', 'git show HEAD:src/a.ts', 'git ls-files src', 'git grep -n foo', 'git blame src/a.ts', 'git rev-parse HEAD',
+        `git diff -- ${join(repo, 'src/a.ts')}`, `git log ${repo}`,
+      ]) {
+        asks(command, repo)
+        asks(command)
+      }
+    })
+
+    it('leaves every other form of these programs a command, which the policy asks about: an option off the list, an action, a missing path or value, a cluster or an abbreviation', () => {
+      const a = join(ws, 'src/a.ts')
+      const src = join(ws, 'src')
+      for (const command of [
+        'cat', `cat -v ${a}`, `cat -- ${a}`, `cat ${a} #x`, `cat file:${a}`, `head ${a} -n`, `head -n ${a}`, `head -n -5 ${a}`, `tail -f ${a}`, `tail -F ${a}`,
+        `wc --files0-from ${a}`, `wc -L ${a}`, `ls -L ${join(ws, 'link-dir')}`, `ls --color ${ws}`, `stat -L ${a}`, `stat -c %n ${a}`, `file -m ${a} ${a}`, `file -L ${a}`,
+        'sed -n 1p', `sed 1p ${a}`, `sed -n 1,2p ${a} ${a}`, `sed -i 1d ${a}`, `sed -n 1w ${a}`, `sed -n 1,2pw ${a}`, `sed -n -e 1p ${a}`, `sed -n /x/p ${a}`,
+        `rg --pre cat foo ${ws}`, `rg --pre-glob x foo ${ws}`, `rg -f ${a} ${ws}`, `rg --files-from ${a} foo ${ws}`, `rg -z foo ${ws}`, `rg --search-zip foo ${ws}`, `rg --follow foo ${ws}`, `rg -L foo ${ws}`, `rg -r x foo ${ws}`,
+        `rg -n ${ws}`, `rg -in foo ${ws}`, `rg --line foo ${ws}`, `rg -A x foo ${ws}`, `rg -A -1 foo ${ws}`, `rg -g -x foo ${ws}`, `rg -t t-s foo ${ws}`, `rg --files ${ws}`, `rg -- foo ${ws}`,
+        `grep -f ${a} ${src}`, `grep -R foo ${ws}`, `grep -z foo ${src}`, `grep --line foo ${src}`, `grep -rn foo ${ws}`, `grep --include a.ts foo ${src}`, `grep -g a.ts foo ${src}`, `grep -e foo ${src}`,
+        `find ${ws} -exec cat`, `find ${ws} -execdir ls`, `find ${ws} -ok ls`, `find ${ws} -okdir ls`, `find ${ws} -delete`, `find ${ws} -fprint out`, `find ${ws} -fprint0 out`, `find ${ws} -fprintf out x`, `find ${ws} -fls out`,
+        `find -L ${ws}`, `find -H ${ws}`, `find ${ws} -follow`, `find ${ws} -name`, `find ${ws} -name -delete`, `find ${ws} -type x`, `find ${ws} -maxdepth x`, `find ${ws} -newer ${a}`, `find ${src} ! -name a.ts`, `find ${ws} -print`,
+        `less ${a}`, `more ${a}`, `awk 1 ${a}`, `python3 ${a}`, `node ${a}`, `/bin/cat ${a}`, `./cat ${a}`, 'xargs cat', `env cat ${a}`, `nl ${a}`,
+        `git -c core.fsmonitor=x status`, `git -C ${repo} status`, `git --git-dir=${repo}/.git log`, 'git push', 'git',
+      ]) {
+        asks(command)
+      }
+    })
+
+    it('never reads outside the workspace: an absolute path outside, a climb with .., or a symlink pointing out is refused or stays a command', () => {
+      for (const path of ['/etc/passwd', `${ws}/../outside/secret`, join(outside, 'secret'), `${ws}-other/a`, join(ws, 'link-file'), join(ws, 'link-dir/secret'), join(ws, 'src/up/secret'), `${ws}/src/up/../outside/secret`, join(ws, 'dangling'), join(ws, 'loop'), '~/.ssh/id_rsa', '$HOME/x', '../outside/secret']) {
+        for (const command of [`cat ${path}`, `head -n 5 ${path}`, `tail ${path}`, `wc -l ${path}`, `ls ${path}`, `stat ${path}`, `file ${path}`, `sed -n 1p ${path}`, `rg foo ${path}`, `grep -r foo ${path}`, `find ${path}`, `find ${ws} ${path} -name a`]) {
+          notRead(command)
+        }
+      }
+      for (const dir of [join(ws, 'link-dir'), join(ws, 'src/up'), `${ws}/..`, '/', tree]) {
+        for (const command of [`ls ${dir}`, `ls -la ${dir}`, `rg foo ${dir}`, `grep -r foo ${dir}`, `find ${dir}`]) notRead(command)
+      }
+      // A workspace named through a symlink is its real directory.
+      read(`cat ${join(tree, 'repo-link', 'src/a.ts')}`, join(tree, 'repo-link'))
+      notRead(`cat ${join(tree, 'repo-link', 'link-file')}`, join(tree, 'repo-link'))
+    })
+
+    it('refuses a file tool\'s write into git\'s own data, which git reads its configuration from, as written or through a symlink; other dotfiles are written as before', () => {
+      for (const path of ['.git/config', '.git', 'src/.git/config', '.GIT/config', 'meta/config', 'meta/hooks/new', join(repo, '.git', 'config')]) {
+        expect(classify(write(path), repo), path).toMatchObject({ refused: expect.stringContaining('git\'s own data') })
+        expect(classify(edit(path), repo), path).toMatchObject({ refused: expect.stringContaining('git\'s own data') })
+        expect(classify({ tool: 'apply_patch', input: { command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch\n` } }, repo), path).toMatchObject({ refused: expect.stringContaining('git\'s own data') })
+        expect(classify({ tool: 'write_file', input: { Path: path.startsWith('/') ? path : join(repo, path), Content: 'x' } }, repo), path).toHaveProperty('refused')
+      }
+      for (const path of ['.gitignore', '.gitattributes', 'src/.github/workflows/ci.yml', 'src/a.ts']) {
+        expect(classify(write(path), repo), path).toMatchObject({ class: 'workspace-write' })
+      }
+      // Reading it stays a read.
+      expect(classify({ tool: 'Read', input: { file_path: '.git/config' } }, repo)).toMatchObject({ class: 'read' })
+      read(`cat ${join(repo, '.git/config')}`, repo)
+    })
+  })
+
   it('reads a patch strictly and allows it only when every file it names is inside the workspace: added, deleted, updated, or moved to', () => {
     const patch = (...body: string[]) => ({ tool: 'apply_patch', input: { command: ['*** Begin Patch', ...body, '*** End Patch', ''].join('\n') } })
     expect(classify(patch('*** Add File: src/new.ts', '+x', '*** Delete File: src/a.ts', '*** Update File: src/a.ts', '*** Move to: src/b.ts', '@@ class A', ' keep', '', '-x', '+y', '*** End of File'), ws))
@@ -720,6 +818,19 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'call_4' }) })])
     expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ tool: 'apply_patch', pendingChecks: ['tests', 'lint'] }) })])
+  })
+
+  it('reads files through its shell without asking: a read-only command on an absolute path inside the workspace is a read; a relative path, whose directory the hook does not see, still waits for the operator', async () => {
+    const shell = (command: string) => ({ tool: 'Bash', input: { command }, item: 'command_execution' })
+    const a = join(WORKSPACE, 'src/a.ts')
+    const { runtime, hooks } = codex([shell(`cat ${a}`), shell(`sed -n 1,40p ${a}`), shell(`rg -n classify ${join(WORKSPACE, 'src')}`), shell('cat .ssh/id_rsa')])
+    const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
+    const done = await run()
+    expect(hooks().map((h) => h.blocked)).toEqual([false, false, false, true])
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
+    // Only the relative read asks; the reads inside opened no request.
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: cat .ssh/id_rsa' }), requester: expect.objectContaining({ toolUseId: 'call_4' }) })])
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.deferred' })).toHaveLength(1)
   })
 })
 

@@ -260,6 +260,25 @@
     - The hook sees an `exec_command`'s `command` only, not its `workdir` or
       `shell`: those act inside Codex's sandbox, which bounds every command, as
       a listed command such as `npm test` running code the run wrote does;
+    - Codex reads files through its shell, so the gate classifies a fixed set
+      of read-only inspection commands inside the workspace as `read`
+      ([Codex's gate](../design/agent-runtimes.md#codexs-gate)): `cat`,
+      `head`, `tail`, `wc`, `ls`, `stat`, `file`, `sed -n <range>p`, `rg`,
+      `grep`, and `find`, each word matched exactly (an option off the list,
+      an action such as `find -exec` or `rg --pre`, or a path outside the
+      workspace on disk leaves it a `command`, which asks). Because the hook
+      does not see the `workdir`, every path word must be absolute (no `..`)
+      and at least one named: a relative path, a form that reads its working
+      directory (`ls`, `rg foo`, `find`), and `git` (which finds its
+      repository and the configuration it runs there) stay a `command`. With
+      no metacharacter the shell expands nothing, so the words name the same
+      files from any directory; they run under the read confinement and
+      Codex's sandbox, and none writes or runs a program. Not covered: a
+      program on the `PATH` named like one of these is that program; the
+      `PATH` is the confinement's (the operator's tools, read-only); and a
+      non-default `shell`, which the hook does not see, is the program that
+      runs the words, inside Codex's sandbox and the read confinement, as
+      above;
     - a process inside Codex's sandbox that could read the socket's path cannot
       present the key, and the gate only answers: no call runs because of it;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
@@ -325,7 +344,8 @@
   Worker may write or `validate`; the release checklist verifies the sandbox
   Claude Code itself starts, live. Each command still passes the tool gate by its
   exact argv, so a shell metacharacter is forbidden and an unlisted command asks
-  the operator. What remains:
+  the operator; only the fixed read-only inspection commands inside the workspace
+  (as for Codex, above) are reads. What remains:
   - a kernel escape from the namespaces, which neither bubblewrap nor the
     sandbox runtime claims to stop;
   - reads inside the confinement: a command can read what Claude Code itself

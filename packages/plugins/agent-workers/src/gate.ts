@@ -10,7 +10,7 @@
  * @module @tsuuanmi/system-agent-workers/gate
  */
 import { lstatSync, realpathSync } from 'node:fs'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCall, ToolGate, ToolVerdict } from '@tsuuanmi/system-agent-runtime-core'
@@ -184,6 +184,148 @@ function within(workspace: string, written: string): boolean {
   return real !== undefined && inside(realRoot, real)
 }
 
+/**
+ * Whether `written` (a path `within` the workspace) is git's own data: a `.git` entry anywhere in
+ * it, as written or on disk (any letter case). Git reads its configuration there, and a read-only
+ * git command runs what that configuration names (`core.fsmonitor`, a diff or filter driver): so a
+ * tool that writes a file never changes it, and it changes only by an asked command or the operator.
+ */
+function gitData(workspace: string, written: string): boolean {
+  let path = written
+  if (/^file:/i.test(written)) {
+    try {
+      path = fileURLToPath(written)
+    } catch {
+      return true
+    }
+  }
+  const named = (rest: string): boolean => rest.split(/[\\/]/).some((segment) => segment.toLowerCase() === '.git')
+  const root = resolve(workspace)
+  if (named(relative(root, resolve(root, path)))) return true
+  try {
+    const real = realLocation(isAbsolute(path) ? path : `${root}${sep}${path}`)
+    return real === undefined || named(relative(realpathSync.native(root), real))
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Read-only inspection commands (a `Bash` call's argv, after the empty-word and metacharacter
+ * refusals): a fixed list of programs, each with the rule every word after it must pass. Nothing is
+ * guessed: a word that is not an option the rule allows (exactly, never abbreviated or clustered
+ * otherwise) nor a path inside the workspace fails the rule, and the call stays a `command`.
+ *
+ * The gate does not see the directory a command runs in: Codex's `exec_command` takes its own
+ * `workdir`, which its hook does not report, and Claude Code's shell keeps the directory a previous
+ * command changed to. So every path is absolute, and a form that names no path (and would read its
+ * working directory) or that depends on it (`git`, which finds its repository there) is no read.
+ */
+const NUMBER = /^\d+$/
+/** An option's value that cannot be read as an option. */
+const VALUE = /^[^-]/
+/**
+ * A word that names a path inside the workspace: absolute (so it names the same file from any
+ * working directory), with no `..` segment, and `within` the workspace on disk, every symlink
+ * followed. An option (`-`), a comment (`#`), find's negation (`!`), a URI (`file:`, which the
+ * shell reads as a relative name) or a relative path is none.
+ */
+const pathWord = (workspace: string, word: string): boolean => word.startsWith('/') && !word.split('/').includes('..') && within(workspace, word)
+
+/**
+ * Options from `flags` (exact words), options from `valued` each followed by a value its pattern
+ * allows, and at least `paths` path words inside the workspace.
+ */
+function optionsAndPaths(args: string[], workspace: string, flags: (word: string) => boolean, valued: Record<string, RegExp>, paths: number): boolean {
+  let named = 0
+  for (let i = 0; i < args.length; i += 1) {
+    const word = args[i]!
+    if (flags(word)) continue
+    const value = Object.hasOwn(valued, word) ? valued[word] : undefined
+    if (value) {
+      const next = args[i + 1]
+      if (next === undefined || !value.test(next)) return false
+      i += 1
+      continue
+    }
+    if (!pathWord(workspace, word)) return false
+    named += 1
+  }
+  return named >= paths
+}
+
+const among = (...words: string[]) => (word: string): boolean => words.includes(word)
+
+/**
+ * A search (`rg`, `grep`): options from `flags` and `valued`, then one pattern word (free text, not
+ * an option), then at least one path word inside the workspace (none would search the working
+ * directory, which the gate does not see).
+ */
+function search(args: string[], workspace: string, flags: (word: string) => boolean, valued: Record<string, RegExp>): boolean {
+  let pattern = false
+  let paths = 0
+  for (let i = 0; i < args.length; i += 1) {
+    const word = args[i]!
+    if (flags(word)) continue
+    const value = Object.hasOwn(valued, word) ? valued[word] : undefined
+    if (value) {
+      const next = args[i + 1]
+      if (next === undefined || !value.test(next)) return false
+      i += 1
+      continue
+    }
+    if (/^[-#]/.test(word)) return false
+    if (!pattern) pattern = true
+    else if (!pathWord(workspace, word)) return false
+    else paths += 1
+  }
+  return pattern && paths > 0
+}
+
+/** find's tests it may carry, each with its value: never an action (`-exec`, `-delete`, `-fprint`, …) nor `-L`/`-follow`. */
+const FIND_TESTS: Record<string, RegExp> = { '-name': VALUE, '-iname': VALUE, '-path': VALUE, '-type': /^[bcdpfls]$/, '-maxdepth': NUMBER, '-mindepth': NUMBER }
+
+/** `find <paths> [<test> <value>]...`: at least one path inside the workspace first, then only the tests above. */
+function findRule(args: string[], workspace: string): boolean {
+  let i = 0
+  for (; i < args.length && !args[i]!.startsWith('-'); i += 1) if (!pathWord(workspace, args[i]!)) return false
+  if (i === 0) return false
+  for (; i < args.length; i += 2) {
+    const value = Object.hasOwn(FIND_TESTS, args[i]!) ? FIND_TESTS[args[i]!] : undefined
+    const next = args[i + 1]
+    if (!value || next === undefined || !value.test(next)) return false
+  }
+  return true
+}
+
+const HEAD_TAIL: Record<string, RegExp> = { '-n': /^\+?\d+$/, '-c': /^\+?\d+$/ }
+const LS_FLAGS = among('-l', '-a', '-A', '-la', '-al', '-lA', '-1', '-R', '-h', '-lh', '-lah', '-alh', '-F')
+/**
+ * Each read-only program and the rule its words must pass. `git` is not one: it finds its
+ * repository, and the configuration it runs (`core.fsmonitor`, a diff driver), from the working
+ * directory, which the gate does not see; it stays a `command`.
+ */
+const READ_COMMANDS: Record<string, (args: string[], workspace: string) => boolean> = {
+  cat: (args, ws) => optionsAndPaths(args, ws, among('-n'), {}, 1),
+  head: (args, ws) => optionsAndPaths(args, ws, (w) => /^-\d+$/.test(w), HEAD_TAIL, 1),
+  tail: (args, ws) => optionsAndPaths(args, ws, (w) => /^-\d+$/.test(w), HEAD_TAIL, 1),
+  wc: (args, ws) => optionsAndPaths(args, ws, among('-l', '-c', '-w', '-m'), {}, 1),
+  ls: (args, ws) => optionsAndPaths(args, ws, LS_FLAGS, {}, 1),
+  stat: (args, ws) => optionsAndPaths(args, ws, () => false, {}, 1),
+  file: (args, ws) => optionsAndPaths(args, ws, among('-b', '-i'), {}, 1),
+  sed: (args, ws) => args.length === 3 && args[0] === '-n' && /^\d+(,\d+)?p$/.test(args[1]!) && pathWord(ws, args[2]!),
+  rg: (args, ws) => search(args, ws, among('-n', '-i', '-l', '-F', '-w', '-c', '--line-number'), { '-A': NUMBER, '-B': NUMBER, '-C': NUMBER, '--glob': VALUE, '-g': VALUE, '-t': /^[A-Za-z0-9_]+$/ }),
+  grep: (args, ws) => search(args, ws, among('-n', '-i', '-l', '-r', '-F', '-w', '-c', '--line-number'), { '-A': NUMBER, '-B': NUMBER, '-C': NUMBER }),
+  find: findRule,
+}
+
+/** Whether `argv` is a read-only inspection command inside the workspace (`READ_COMMANDS`). */
+function readCommand(argv: string[], workspace: string): boolean {
+  const [program, ...args] = argv
+  const rule = program !== undefined && Object.hasOwn(READ_COMMANDS, program) ? READ_COMMANDS[program] : undefined
+  return rule !== undefined && rule(args, workspace)
+}
+
 const ANSWER = 'Approved: the next run of this session makes exactly this call. Rejected, or unanswered when the request expires: the call is denied.'
 
 /** The file headers of a patch, and what each does to the file it names. */
@@ -239,13 +381,27 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  *   they name is inside the workspace (absent for `Glob` and `Grep`: the workspace); a `Glob`
  *   pattern whose literal leading directory is outside it, or that climbs with `..`, is refused;
  * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `write_file`, `edit_file`: `workspace-write`, for
- *   a file inside the workspace; outside it is refused (the runtime refuses it too);
+ *   a file inside the workspace; outside it is refused (the runtime refuses it too), and so is a
+ *   file in git's own data (a `.git` entry in its path, as written or on disk);
  * - `apply_patch`: `workspace-write`, when its patch reads strictly in the patch grammar and every
- *   file a header names (added, deleted, updated, or moved to) is inside the workspace;
- * - `Bash`: `command`, its argv the command split on single spaces, exactly as the policy's
- *   exact-argv rule matches it; an empty word (a doubled, leading, or trailing space) or a word
- *   with a shell metacharacter is refused here, before the policy is asked (which forbids the
- *   latter too);
+ *   file a header names (added, deleted, updated, or moved to) is inside the workspace and not in
+ *   git's own data;
+ * - `Bash`: an empty word (a doubled, leading, or trailing space) or a word with a shell
+ *   metacharacter is refused here first, before the policy is asked (which forbids the latter
+ *   too). Then a read-only inspection command inside the workspace is `read` (summary the command,
+ *   no argv): `cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file` with a few options each and every
+ *   other word a path inside the workspace; `sed -n <a>[,<b>]p <path>` exactly; `rg` and `grep`
+ *   with allowed options only (never `--pre`, `-f`, `-z`, `-L`, …), a free-text pattern, and paths
+ *   inside the workspace; `find <paths>` with only `-name`, `-iname`, `-path`, `-type`,
+ *   `-maxdepth`, `-mindepth` (never an action such as `-exec` or `-delete`, nor `-L`). Every path
+ *   is absolute, with no `..`, and at least one is named: the gate does not see the directory the
+ *   command runs in (Codex's `exec_command` takes a `workdir` its hook does not report), so a
+ *   relative path, a form that reads its working directory, and `git` (which finds its repository
+ *   and configuration there) stay a `command`. The shell that runs it sees the same words (no
+ *   metacharacter, so no expansion), under the run's read confinement and its runtime's own
+ *   sandbox. Any word the rule does not match exactly, or that could be read as either an option
+ *   or a path, leaves the call a `command`: its argv the command split on single spaces, exactly
+ *   as the policy's exact-argv rule matches it;
  * - `WebFetch`, `WebSearch`: `external-send`;
  * - any other tool (`run_command` among them), or an input that is not an object: refused.
  * A path may be a `file:` URI, which is checked as the path it names.
@@ -282,6 +438,8 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
     if ('refused' in files) return { refused: `${tool}: ${files.refused}` }
     const outside = files.find((f) => !within(workspace, f.path))
     if (outside) return { refused: `${tool} changes ${outside.path}, which is not inside the workspace` }
+    const git = files.find((f) => gitData(workspace, f.path))
+    if (git) return { refused: `${tool} changes ${git.path}, which is git's own data (.git): only an asked command or the operator changes it` }
     const touched = clamp(files.map((f) => `${f.op} ${f.path}`).join(', '))
     return { class: 'workspace-write', summary: clamp(`${tool}: ${touched}`), consequences: `Changes ${files.length === 1 ? 'one file' : `${files.length} files`} inside the run's workspace: ${touched}. ${ANSWER}` }
   }
@@ -289,6 +447,7 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
   if (write) {
     const file = input[write]
     if (typeof file !== 'string' || !within(workspace, file)) return { refused: `${tool} changes ${typeof file === 'string' ? file : 'no file'}, which is not inside the workspace` }
+    if (gitData(workspace, file)) return { refused: `${tool} changes ${file}, which is git's own data (.git): only an asked command or the operator changes it` }
     return { class: 'workspace-write', summary: clamp(`${tool} ${file}`), consequences: `Changes ${file} inside the run's workspace. ${ANSWER}` }
   }
   if (tool === COMMAND) {
@@ -300,6 +459,7 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
     if (empty >= 0) return { refused: `${tool}: argv word ${empty + 1} is empty (a doubled, leading, or trailing space); a command is words split on single spaces` }
     const unsafe = argv.findIndex((word) => SHELL_METACHARACTER.test(word))
     if (unsafe >= 0) return { refused: `${tool}: argv word ${unsafe + 1} holds a shell metacharacter; a command is never parsed by a shell` }
+    if (readCommand(argv, workspace)) return { class: 'read', summary: clamp(command), consequences: `Reads inside the run's workspace: ${clamp(command)}. ${ANSWER}` }
     return { class: 'command', command: argv, summary: clamp(`${tool}: ${command}`), consequences: `Runs this exact command in the run's workspace. ${ANSWER}` }
   }
   const send = Object.hasOwn(SENDS, tool) ? SENDS[tool] : undefined

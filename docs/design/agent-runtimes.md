@@ -196,6 +196,26 @@ What it does with a hook was established live on the host, and the bridge is bui
   PreToolUse call, a call from another directory than the run's workspace, and any call after a
   defer; it bounds the input (16 MiB), the connections at once (16), and each connection's time.
   The directory, the socket, and the run's launcher are removed when the run ends.
+- **Reading through its shell.** Codex has no file-reading tool of its own: it reads with
+  `exec_command` (`cat`, `sed -n`, `rg`), reported as `Bash`. The gate classifies a read-only
+  inspection command inside the workspace as `read`, as it does Claude Code's `Read` and `Grep`
+  ([approvals](approvals.md#how-a-call-is-classified)), so under a policy where reads run a Codex
+  Worker reads without asking; every other command stays `command`, by its exact argv. The forms
+  are fixed and matched word for word, after the metacharacter and empty-word refusals: `cat`,
+  `head`, `tail`, `wc`, `ls`, `stat`, `file` with a few options each; `sed -n <a>[,<b>]p <path>`;
+  `rg` and `grep` with allowed options (never `--pre`, `-f`, `-z`, `-L`); and `find` with only
+  `-name`, `-iname`, `-path`, `-type`, `-maxdepth`, `-mindepth` (no action, no `-L`). Every path
+  word is absolute, holds no `..`, and is inside the workspace on disk, symlinks followed; at
+  least one is named. The hook reports an `exec_command`'s `command` but not its `workdir` (the
+  bridge checks only the hook's own directory), so the gate cannot know where a relative path,
+  or a form with no path (`ls`, `rg foo`, `find`), would read: those stay `command`, and so does
+  `git`, which finds its repository and the configuration it runs (`core.fsmonitor`, a diff
+  driver) from the working directory. They are safe as reads because none of them writes or
+  runs anything: with no metacharacter the shell expands nothing, so the absolute words name the
+  same files from any directory, under the read confinement and Codex's own sandbox. A
+  non-default `shell` argument, which the hook does not see either, runs inside the same two
+  bounds. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
+  written or on disk): it changes only by a command the operator approved, or by the operator.
 - **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
   change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
   the gate allowed; one that is not (a hook that failed and let the tool run) stops the run, which
