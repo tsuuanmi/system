@@ -1440,7 +1440,9 @@ OnFailure=<your notifier>.service
 Type=oneshot
 # gh and git; the script puts Node 24 and pnpm on PATH itself.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-# Options after the script: --settle <minutes>, --hours <HH-HH> (its section).
+# Options after the script: --branch <name> (default main), --settle <minutes>, --hours <HH-HH>
+# (its section). To follow dev:
+#   ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh --branch dev
 ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh
 # A pass with a drain and two builds takes its time. The daemon it stops and starts is
 # system.service's (systemctl), so nothing of it is in this unit: no KillMode= is needed.
@@ -1659,40 +1661,46 @@ there, so each reported), completed, the seven old runs explaining as before.
 
 ## Update the live install automatically
 
-[`scripts/live-auto-update.sh`](../../scripts/live-auto-update.sh) keeps the live install on `main`:
+[`scripts/live-auto-update.sh`](../../scripts/live-auto-update.sh) keeps the live install on a branch
+of origin, `--branch <name>`, `main` by default (`--branch dev` follows dev: **Follow dev** below):
 each pass decides whether to start an update, and the update itself is [`live-update.sh`'s](#update-the-live-install-from-e218ae7-to-the-base-release),
 with its backup, upgrade checks, and rollback. A systemd user timer runs a pass every 15 minutes
-([units](#run-as-a-service)). One pass:
+([units](#run-as-a-service)). The branch name must be a plain one (letters, digits, `.`, `_`, `-`
+in components joined by `/`, such as `dev` or `release/1`); any other is refused before any git
+command, with exit 2 and the usage. Below, `<branch>` is the branch it follows. One pass:
 
 1. Does nothing while `~/.dsh/system/auto-update.paused` exists, while another pass or a live update
    runs (their locks under `~/system-backups`), or while an update that stopped the daemon is
    unfinished (it pauses itself then: take that update up by hand, with the command its notes name).
-2. `git fetch origin main` in the check checkout. Nothing to do when it is the live checkout's HEAD.
-3. Refuses, and pauses itself, unless `main` descends from the live commit (a fast-forward).
+2. `git fetch origin refs/heads/<branch>` in the check checkout; no other branch is read. Nothing to
+   do when it is the live checkout's HEAD.
+3. Refuses, and pauses itself, unless `<branch>` descends from the live commit (a fast-forward).
 4. Waits `--settle` minutes (default 30) after the pass first saw the commit, so a quick revert can
    land first; and, with `--hours 02-06`, for 02:00 to 05:59 local time (`22-04` wraps midnight;
    default any time).
 5. Asks GitHub (`gh api`, signed in as `gh auth status` shows) for the commit's check runs and
    statuses. Every one must have completed with success. One still running, none yet, or no usable
-   `gh` is a wait; a failed one is a refusal until `main` moves on. Neither pauses.
+   `gh` is a wait; a failed one is a refusal until `<branch>` moves on. Neither pauses.
 6. Builds the target in the check checkout (`~/workspaces/system-live-check`, a worktree of the
    live repository, never `system-live`): `git checkout --detach`, `pnpm install
    --frozen-lockfile`, `pnpm build`.
-7. Runs that checkout's `scripts/live-update.sh <main> --from <live HEAD> --check-with
+7. Runs that checkout's `scripts/live-update.sh <branch's head> --from <live HEAD> --check-with
    ~/workspaces/system-live-check`: the dry run, then `--apply`. The [build
    stamp](../../packages/cli/README.md) tells the builds apart. A dry run that refuses (the live
    patch fails the target's `system check`, say), an update that stops or rolls back, or a target
    that does not build, pauses the timer.
 
-Each pass appends one line to `~/system-backups/auto-update/log`: `current`, `wait`, `refused`,
-`busy`, `paused`, `stopped` (it paused itself), or `updated`. A pass that built and ran the update
+Each pass appends one line to `~/system-backups/auto-update/log`, `<time> origin/<branch> <kind>:
+<detail>`, the kind one of `current`, `wait`, `refused`, `busy`, `paused`, `stopped` (it paused
+itself), or `updated`. The pause file's notes name the branch too. A pass that built and ran the update
 writes its output next to it (`<time>-<sha>.out`); the update's own notes are in its
 `~/system-backups/<date>-before-base*/` directory.
 
 **What it never does.** It never changes the profile's patch (`--patch` is never passed: a target
 that needs a new patch stops at the dry run, and you update to it [by
 hand](#update-the-live-install-from-e218ae7-to-the-base-release)). It never updates to a commit
-that is not a fast-forward of the live one, on a red or pending CI, or while paused. It never stops
+that is not a fast-forward of the live one, to a branch other than `--branch`'s, on a red or
+pending CI, or while paused. It never stops
 the daemon but by `systemctl --user stop system.service`, whose `ExecStop` drains, and never kills
 it.
 
@@ -1706,6 +1714,18 @@ until then every dry run refuses, and the first pass pauses itself):
    && systemctl --user enable --now system-auto-update.timer` (and `loginctl enable-linger`).
 4. Run a pass now and read its line: `systemctl --user start system-auto-update.service; tail -n 1
    ~/system-backups/auto-update/log`.
+
+**Follow dev.** To keep the live install on `dev` (the operator integrates
+there, 2026-10-25), give the timer's service `--branch dev`, with the steps above:
+
+1. In step 1, `git -C ~/workspaces/system-live fetch origin dev` (and add the check worktree at
+   `origin/dev` if it is new). The live commit must be an ancestor of `dev`, or the first pass
+   refuses and pauses itself (not a fast-forward): update to `dev` [by
+   hand](#update-the-live-install-from-e218ae7-to-the-base-release) first if it is not.
+2. In `system-auto-update.service`: `ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh --branch dev`.
+3. `systemctl --user daemon-reload`, run a pass, and read its line: it names `origin/dev`.
+
+Back to `main` the same way, without `--branch` (once `main` descends from the live commit).
 
 The daemon an update restarts is `system.service`'s, with the unit's environment file, whatever
 this timer's environment is. The dry run checks that file against the target's profile (`system
