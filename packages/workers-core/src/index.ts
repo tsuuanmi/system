@@ -554,6 +554,28 @@ export interface RouteOptions {
   producer?: string
 }
 
+/** One Worker as admission sees it now, with nothing reserved (`Workers.candidates`). */
+export interface Candidate {
+  worker: CapabilityDescriptor
+  /** The source that describes it. */
+  source: string
+  /** Every admission check it fails, in the router's order and words; empty when routing admits it. */
+  failed: Rejection['failed']
+}
+
+/**
+ * What admission would say of every Worker for one requirement, with nothing reserved and nothing
+ * decided (PROP-0014, ADR-0063): the same checks `route` runs, in the same order, under the same lock.
+ */
+export interface Candidates {
+  /** The stored work requirement (an `objective` artifact), for the caller's own decision to name. */
+  requirement: ArtifactRef
+  /** Every Worker every source describes now, by id, each with the checks it fails. */
+  workers: Candidate[]
+  /** Sources that did not describe their Workers within the router's bound: none of theirs is listed, never read as having none. */
+  unheard: Array<{ source: string; reason: string }>
+}
+
 export interface AdmittedWorker {
   worker: CapabilityDescriptor
   /** Name of the source that describes the Worker, and runs work on it. */
@@ -683,6 +705,16 @@ export abstract class Workers extends Service {
    * decision, or an `admission` decision and throws {@link AdmissionFailure}.
    */
   abstract route(requirement: WorkRequirement, options?: RouteOptions): Promise<AdmittedWorker>
+
+  /**
+   * Every Worker with what admission says of it for this requirement, as `route` would judge it now:
+   * the same checks, in the same order, under the same lock, the assigned-account hold included
+   * (PROP-0014, ADR-0063). It reserves nothing (no Worker's `load.pending` moves) and records no
+   * decision: a caller that acts on it records its own, listing every Worker with its checks
+   * (INV-13). Optional: a caller that finds none cannot look before it routes, and starts nothing on
+   * a look (INV-2).
+   */
+  abstract candidates?(requirement: WorkRequirement, options?: RouteOptions): Promise<Candidates>
 
   /** Register an acceptance contract for the calling plugin's lifetime. Ids are unique. */
   abstract contract(id: string, check: AcceptanceContract): void

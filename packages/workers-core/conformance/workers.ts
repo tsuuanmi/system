@@ -614,6 +614,52 @@ export function workersConformance(name: string, boot: Boot): void {
       expect(await chosen(accounted)).toEqual(await chosen(plain))
     })
 
+    it('lists every Worker with the checks route would fail it on, the assigned-account hold included, reserving nothing and deciding nothing (PROP-0014, REQ-WRK-12)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional: a provider without it leaves a caller unable to look before it routes.
+        if (!ctx.workers.candidates) return
+        const later = new Date(Date.now() + 3_600_000).toISOString()
+        const proves = ['reason', 'develop']
+        const pending = new Map<string, number>()
+        const listed = [
+          worker('w:g-a', { ...account('a', 'g'), proves, cooldowns: [{ capability: 'develop', until: later }] }),
+          worker('w:g-b', { ...account('b', 'g'), proves }),
+          worker('w:h-c', { ...account('c', 'h'), proves, load: { running: 0, queued: 0, pending: 0, slots: 1 } }),
+          worker('w:plain', { proves: ['reason'] }),
+        ]
+        ctx.workers.register(source('pool', async () => listed.map((w) => (w.load ? { ...w, load: { ...w.load, pending: pending.get(w.worker) ?? 0 } } : w)), {
+          reserve: (id) => {
+            pending.set(id, (pending.get(id) ?? 0) + 1)
+            return () => pending.set(id, pending.get(id)! - 1)
+          },
+        }))
+        const develop = requirement({ capabilities: proves })
+        const decisions = ctx.artifacts.list({ kind: 'decision', limit: 1000 }).length
+        const looked = await ctx.workers.candidates(develop)
+        expect(looked.workers.map((c) => [c.worker.worker, c.source, c.failed.map((f) => f.check)])).toEqual([
+          ['w:g-a', 'pool', ['cooldown']], ['w:g-b', 'pool', ['assignment']], ['w:h-c', 'pool', []], ['w:plain', 'pool', ['capability']],
+        ])
+        expect(looked.workers.find((c) => c.worker.worker === 'w:g-b')!.failed[0]!.reason).toBe(`w:g-a is at its limit until ${later}; assigned accounts do not take another account's work at its limit`)
+        expect(looked.unheard).toEqual([])
+        // The stored requirement, no decision, and no pending admission on any Worker.
+        expect(ctx.artifacts.get(looked.requirement)?.body).toEqual(develop)
+        expect(ctx.artifacts.list({ kind: 'decision', limit: 1000 })).toHaveLength(decisions)
+        expect([...pending.values()].filter((n) => n !== 0)).toEqual([])
+        // Route admits what it listed as admitted, with the same reasons for the others.
+        const admitted = await ctx.workers.route(develop)
+        expect(admitted.worker.worker).toBe('w:h-c')
+        const route = body(ctx, admitted.decisions.route)
+        for (const c of looked.workers.filter((x) => x.failed.length)) expect(route.candidates.find((r) => r.option === c.worker.worker)!.reasons).toEqual(c.failed.map((f) => f.reason))
+        admitted.release()
+        // Route options apply as they do to a route: a restriction refuses the others.
+        const restricted = await ctx.workers.candidates(develop, { restrict: { workers: ['w:g-b'], reason: 'only this one' } })
+        expect(restricted.workers.find((c) => c.worker.worker === 'w:h-c')!.failed).toEqual([{ check: 'restricted', reason: 'only this one' }])
+      } finally {
+        await dispose()
+      }
+    })
+
     it('refuses an account below the schema version that carries it (capability-descriptor@1.5)', async () => {
       await withWorkers([worker('w:a', { schema: 'capability-descriptor@1.4', account: { id: 'a', group: 'g', mode: 'assigned' } })], async (ctx) => {
         await expect(ctx.workers.route(requirement())).rejects.toThrow(/capability-descriptor@1\.4/)
