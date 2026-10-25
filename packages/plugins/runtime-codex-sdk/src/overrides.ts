@@ -4,7 +4,7 @@
  * so the probe proves what a run gets.
  * @module @tsuuanmi/system-runtime-codex-sdk/overrides
  */
-import { SHELL_CONFIG_DIRECTORIES, isShellStartupVariable } from '@tsuuanmi/system-agent-runtime-core'
+import { SHELL_CONFIG_DIRECTORIES, WORKSPACE_READS_SERVER, isShellStartupVariable } from '@tsuuanmi/system-agent-runtime-core'
 import { GATE_ENV } from './gate.ts'
 
 /**
@@ -73,6 +73,20 @@ export function refused(config: Record<string, unknown>): string | undefined {
     return (error as Error).message
   }
   return undefined
+}
+
+/** How long Codex waits for the workspace reads server to start, in its unit (seconds). */
+export const READS_STARTUP_S = 30
+
+/**
+ * The `--config` override that registers a run's workspace reads server (T200b) under
+ * `mcp_servers.workspace`: the confined command that starts it, how long its start may take, and
+ * how long one tool call may take (the search deadline, and a margin for the server to answer).
+ * The operator's own `mcp_servers` are refused ({@link refused}): this is the only server a run has.
+ */
+export function readsOverride(command: { command: string; args: readonly string[] }, bounds: { searchTimeoutMs: number }): string {
+  const server = { command: command.command, args: [...command.args], startup_timeout_sec: READS_STARTUP_S, tool_timeout_sec: Math.ceil(bounds.searchTimeoutMs / 1000) + 30 }
+  return `mcp_servers.${WORKSPACE_READS_SERVER}=${toml(server, `mcp_servers.${WORKSPACE_READS_SERVER}`)}`
 }
 
 /**

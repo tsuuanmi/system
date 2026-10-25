@@ -35,7 +35,7 @@ turns them on.
 | Provider plugin | Kind | Backed by | Policy holder |
 |---|---|---|---|
 | [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, file tools pre-approved inside the workspace only; `Bash` in `workspace-write` runs only, inside the SDK's sandbox ([confined commands](#confined-commands)); its own home; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
-| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
+| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server of its own; System's [workspace reads server](#the-workspace-reads-server) on every run, confined again; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
 | [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) | `antigravity-cli` | the operator's installed `agy`, in print mode (stream-json); no SDK exists | its PreToolUse hook, bridged to the run: the runtime's own rules (the sandbox's reading and file-editing tools only, no command; every location inside the workspace), then the run's gate; its own home (`HOME`), with no MCP server, plugin, or other hook, in it or in the workspace; the run's tool gate after its rules, and a sandbox, only on an agy version verified live ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)) |
 
@@ -80,6 +80,7 @@ interface RuntimeEvidence {
   readsConfined: boolean;                   // host state unreadable to the agent, proven now
   gatesToolCalls: boolean;                  // asks RunSpec.toolGate before every tool call
   cleanShells?: boolean;                    // it starts every call's shell with no startup code (T198)
+  workspaceReads?: boolean;                 // its agent gets the workspace reads server, proven to start (T200b)
   homes?: boolean;                          // runs in the home a run or probe names (ADR-0051)
 }
 
@@ -93,6 +94,7 @@ interface RunSpec {
   resume?: string;                          // native handle of a conversation to continue
   toolGate?: ToolGate;                      // asked before every tool call (below)
   home?: string;                            // one account's home; refused unless `homes` (ADR-0051)
+  workspaceReads?: Partial<WorkspaceReadBounds>;  // the workspace reads server's bounds (T200b)
 }
 
 type ToolGate = (call: { tool: string; input: unknown; callId?: string }, signal: AbortSignal) =>
@@ -229,7 +231,8 @@ What it does with a hook was established live on the host, and the bridge is bui
   it names. Codex is not one: `exec_command` takes a `shell` and a `login` argument the hook does
   not see, so a call may run its words in a login shell, or in any executable the Worker names (a
   workspace script among them). Under Codex every `Bash` call is therefore a `command`, judged by
-  its exact argv. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
+  its exact argv; its Workers read through the [workspace reads server](#the-workspace-reads-server)
+  instead, whose three tools are reads. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
   written or on disk): it changes only by a command the operator approved, or by the operator.
 - **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
   change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
@@ -601,7 +604,8 @@ worktreeSetup:
   own client configuration holds the `system` MCP server (operator tools such as `approve`).
   So a Worker attaches none: Claude Code takes no settings files and a strict, empty MCP
   configuration; Codex runs in its own Codex home and fails closed if that home configures
-  any, with plugins and apps off; the Antigravity CLI runs in its own home and fails closed if
+  any, with plugins and apps off, and attaches only System's own
+  [workspace reads server](#the-workspace-reads-server), which confines itself; the Antigravity CLI runs in its own home and fails closed if
   that home, or the workspace's customization roots, configure any, or a plugin or hook of their
   own.
 - **Reads** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). The host
@@ -1007,6 +1011,75 @@ login, and interactive, are the real ones):
   each command, and to the shells' `HOME` (`filesystem.denyWrite`, which wins over `allowWrite`);
   its file tools reach the workspace only. Codex's commands and patches write the workspace only
   (its `workspace-write` sandbox), and its home holds no shell startup code.
+
+### The workspace reads server
+
+> T200b (operator 2026-10-25, option A, on research T204). Implemented in
+> [`agent-runtime-core`](../../packages/agent-runtime-core/README.md) (`src/workspace-reads.ts`) and
+> [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md).
+
+Since no `Bash` call is a read under Codex or Claude Code ([above](#an-agents-shells-read-no-startup-code)),
+a Codex Worker, which has no file-reading tool of its own, would read only through commands the
+operator approves. So it reads through a tool that runs no program instead: System's own MCP server,
+minimal and in Node, with no third-party server (the reference filesystem server always registers
+write tools and lets MCP Roots widen its directories; the others run language servers, caches, or
+repository plugins).
+
+| Tool | Input | Returns, bounded |
+|---|---|---|
+| `read_file` | `path`; `startLine`, `endLine` (1-based, inclusive) | the lines numbered (`<n>\t<line>`), at most `maxReadBytes`, reading through at most `maxScanBytes`; where it stopped and the line to read on from; a binary file (a NUL in its first 8000 bytes) named, not shown |
+| `list_dir` | `path` (default the workspace) | entries by name, at most `maxEntries`: a directory `name/`, a symlink `name@` (not followed), a file with its size; the count of all |
+| `search` | `pattern`; `regex` (default a fixed string); `ignoreCase`; `path` (default the workspace) | `<path>:<line>: <text>`, at most `maxMatches`, each line cut at `maxLineChars`; opening at most `maxSearchFiles` files, none over `maxScanBytes`, within `searchTimeoutMs`; a pattern of at most `maxPatternChars`; never a symlink, a binary file, or a `node_modules` directory below the path |
+
+- **Bound to one workspace.** The server takes its root as an argument when it starts and keeps it:
+  it declares no capability but tools, asks the client nothing (no `roots/list`), and ignores
+  every notification, MCP Roots' among them. It answers `initialize`, `ping`, `tools/list`, and
+  `tools/call` over newline-delimited JSON-RPC on stdio, one request at a time; a message over
+  1 MiB is refused, and so is a request past 32 waiting.
+- **Every path inside it, really.** A path is relative to the workspace or absolute inside it.
+  Refused: a `..` segment anywhere, an absolute path outside, and any path whose `realpath` is
+  outside the workspace's (a symlink out, a file or a directory); git's own data (`.git` in any
+  letter case, as written or resolved) and files named as secrets, by name whether or not the
+  repository ignores them (`SECRET_NAMES`: `.env` and `.env.*` but `.example`, `.sample`,
+  `.template`, `.dist`; `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`; SSH
+  private keys; `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `.htpasswd`; `credentials` and
+  `secrets` files), which `list_dir` leaves out and counts. Each file or directory is opened without
+  following a link at its end and without blocking (a FIFO), and checked again by the path its
+  descriptor names (`/proc/self/fd`): one swapped after the check is refused.
+- **No program.** Node built-ins only; a search runs in a worker thread of the server, terminated a
+  second past its deadline whatever its regular expression does. No shell, git, or subprocess.
+- **Bounded by configuration** (INV-9): the `agents` source's `workspaceReads` (each bound within
+  its range, `WORKSPACE_READ_BOUNDS`; refused at load otherwise) goes with every run as
+  `RunSpec.workspaceReads`, and the runtime refuses a run whose bounds are out of range
+  (`config_error`); the server refuses to start on them too.
+- **Confined twice.** Codex registers it for every run, the read-only sandbox's included, as a
+  `--config` override (`mcp_servers.workspace`, its only MCP server: the operator's own are
+  refused), with a 30 s start and a tool timeout of the search deadline and 30 s. Codex starts MCP
+  servers outside its own sandbox, so the command is `node` and the server's script under a
+  bubblewrap of their own, inside the run's read confinement: the host read-only, the workspace
+  bound back read-only (whatever the run's sandbox), no network, the workspace its directory. The
+  path checks above are a second layer. The probe proves it starts there (its self-test reads one
+  file of a fresh directory, nested as a run nests it) before it reports `workspaceReads`; on a
+  host that refuses, no Codex Worker is admitted.
+- **Gated as reads, where the runtime gives it.** Codex's hook reports the tools as
+  `mcp__workspace__read_file`, `mcp__workspace__list_dir`, and `mcp__workspace__search`; for a run
+  whose runtime reports `workspaceReads` (its evidence, passed to the gate as `cleanShells` is),
+  the gate classifies exactly these as `read` (inside the workspace, no `..`, not git's data) and
+  refuses any other tool name of the server; under any other runtime it refuses every
+  `mcp__workspace__…` tool, since no server of System's started there (`unclassified-tool`;
+  [approvals](approvals.md#how-a-call-is-classified)). Each allowed call accounts for one
+  `mcp_tool_call` item; one no allowed call accounts for stops the run.
+- **Told to use it.** The Tools section of every Worker whose runtime reports `workspaceReads`
+  (whatever its sandbox; never a review member, [approvals](approvals.md#a-deferred-call)) tells it
+  to read with these tools and never with a shell, whose every command may wait for the operator,
+  and names them as its reading tools; it names no `Bash` inspection command where shells are not
+  clean.
+- **Claude Code** gives no such server: it keeps its own `Read`, `Grep`, and `Glob`, which the gate
+  classifies as reads.
+
+Differs from target: that Codex 0.164 runs its PreToolUse hook before an MCP tool call and names it
+`mcp__workspace__<tool>` was not shown by the probe's turn, which calls no MCP tool; a hook that did
+not run stops the run at the first such call, after it ran, as for any tool.
 
 The Antigravity CLI offers no command tool (`run_command` is denied), so its Workers never
 `validate`: agy's own terminal sandbox (`--sandbox`) has no model-free proof.

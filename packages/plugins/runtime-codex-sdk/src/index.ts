@@ -19,9 +19,16 @@
  *   in the shell program and login mode the call asks for (`exec_command`'s `shell` and `login`),
  *   which its hook does not show, so it never reports `cleanShells`, and a gate takes none of its
  *   shell commands for a read;
+ * - so its agent reads without a shell (T200b): every run registers the workspace reads server of
+ *   `agent-runtime-core` (`mcp_servers.workspace`, a `--config` override of the run's), its three
+ *   read-only tools bound to the run's workspace, which Codex starts as `node` under a confinement
+ *   of its own inside the run's (the workspace read-only to it, no network); its tool calls pass the
+ *   run's gate like every other (`mcp__workspace__read_file`, …). The probe proves the server starts
+ *   there before it reports `workspaceReads`;
  * - it runs in its own Codex home (`home`, never the operator's `~/.codex`), or in the home a run
  *   or probe names (one account's, ADR-0051), which must configure no MCP server: Codex starts those
- *   outside its sandbox, so a Worker would reach their tools (the system MCP server among them).
+ *   outside its sandbox, so a Worker would reach their tools (the system MCP server among them); the
+ *   workspace reads server, which confines itself, is the only one a run has.
  *   Probe and every run check, and fail closed. The probe also checks it is signed in there, unless
  *   a model provider is configured or an API key forwarded;
  * - who is signed in to a home (`identity`) is read as the ChatGPT account id in its `auth.json`,
@@ -51,7 +58,7 @@
  */
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { accessSync, constants, mkdtempSync, rmSync } from 'node:fs'
+import { accessSync, constants, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -60,14 +67,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
-  type RuntimeEvidence, type ToolCall, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement, readHomeJson, withMetering,
-  writeLauncher,
+  type RuntimeEvidence, type ToolCall, WORKSPACE_READS_SCRIPT, type WorkspaceReadBounds, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement,
+  readHomeJson, withMetering, workspaceReadArgs, workspaceReadBounds, writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { type Deferral, type GateChannel, hookOverrides, openGateChannel } from './gate.ts'
 import { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
-import { configOverrides, refused } from './overrides.ts'
+import { configOverrides, readsOverride, refused } from './overrides.ts'
 import { probeGate, proofFailure, startProbeModel } from './proof.ts'
 import { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, askRateLimits, endAppServer, limitsFromRateLimits } from './rate-limits.ts'
 import { TurnUsage } from './usage.ts'
@@ -105,8 +112,10 @@ export interface RuntimeOptions {
   runDir?: string | undefined
   /** The gate hook script (default: `gate-hook.js` beside this module), run with `node`. */
   hook?: string | undefined
-  /** The `node` that runs the hook (default: this process's). */
+  /** The `node` that runs the hook and the workspace reads server (default: this process's). */
   node?: string | undefined
+  /** The workspace reads server's script, run with `node` (default: agent-runtime-core's `WORKSPACE_READS_SCRIPT`). */
+  readsServer?: string | undefined
   client?: (options: CodexOptions) => CodexClient
   /** The enabled MCP servers a Codex home configures (`codex mcp list`). */
   mcpServers?: (home: string, executable: string) => Promise<string[]>
@@ -121,8 +130,10 @@ export interface RuntimeOptions {
   /** Proves the confinement on this host (default `proveConfinement`). */
   prove?: (confinement: Confinement) => Promise<{ confined: boolean; detail: string }>
   /**
-   * Proves Codex's own sandbox still starts inside the confinement (default: `codex sandbox --
-   * true`, confined): a host policy can let bubblewrap run yet refuse Codex's nested one.
+   * Runs a command nested inside the confinement to its end, rejecting on a failure (default: run
+   * it): Codex's own sandbox (`codex sandbox -- true`) and the workspace reads server's self-test
+   * (its own bubblewrap, reading one file) must start there. A host policy can let bubblewrap run
+   * yet refuse a nested one.
    */
   nested?: (command: { command: string; args: string[] }, env: Record<string, string>) => Promise<void>
   /** `codex login status` inside the confinement (default: run it): resolves what it printed, rejects when no one is signed in. */
@@ -215,7 +226,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     }
     const gate = await this.proveGate(executable, home)
     // Never cleanShells (T198): each call picks its own shell and login mode, which the hook does not show.
-    return { ...found, detail: `Codex ${version}; ${reads.detail}; ${gate.detail}`, readsConfined: true, gatesToolCalls: gate.proven, cleanShells: false }
+    // Its agent reads through the workspace reads server instead (T200b), proven to start in proveReads.
+    return { ...found, detail: `Codex ${version}; ${reads.detail}; ${gate.detail}`, readsConfined: true, gatesToolCalls: gate.proven, cleanShells: false, workspaceReads: true }
   }
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
@@ -233,6 +245,12 @@ export class CodexRuntime implements AgentRuntimeProvider {
     const servers = await this.mcpServers(executable, home)
     if (servers.length) throw new ProviderError('config_error', noMcp(home, servers))
     if (!this.options.confine) throw new ProviderError('config_error', 'codex-sdk: no read confinement is configured; refusing to run Codex with the host state readable (ADR-0024)')
+    let readBounds: WorkspaceReadBounds
+    try {
+      readBounds = workspaceReadBounds(spec.workspaceReads)
+    } catch (error) {
+      throw new ProviderError('config_error', `codex-sdk: ${firstLine(error)}; nothing was run`, { cause: error })
+    }
     if (spec.toolGate) this.checkHook()
     const controller = new AbortController()
     const stop = (): void => controller.abort()
@@ -275,10 +293,15 @@ export class CodexRuntime implements AgentRuntimeProvider {
       // The workspace is bound back as the sandbox allows; Codex's own sandbox still confines writes.
       // The shells' home is bound back read-only (T198): it stays empty, so whatever shell and login
       // mode a call picks finds no startup file there, and no call can write one for a later call.
+      // The workspace reads server's script and node are bound back read-only too: Codex starts the
+      // server, which confines itself again, the workspace read-only to it (T200b).
       const own = channel ? [channel.dir, this.hook(), this.node()] : []
-      const bind = spec.sandbox === 'workspace-write' ? { writable: [home, spec.workspace], readOnly: [shell.path, ...own] } : { writable: [home], readOnly: [spec.workspace, shell.path, ...own] }
+      const readOnly = [...new Set([shell.path, ...own, this.readsScript(), this.node()])]
+      const bind = spec.sandbox === 'workspace-write' ? { writable: [home, spec.workspace], readOnly } : { writable: [home], readOnly: [spec.workspace, ...readOnly] }
       let confined: { command: string; args: string[] }
+      let reads: { command: string; args: string[] }
       try {
+        reads = this.readsCommand(spec.workspace, readBounds)
         confined = confinedCommand(executable, [], this.confinement(bind))
       } catch (error) {
         throw new ProviderError('config_error', `codex-sdk: ${firstLine(error)}; nothing was run`, { cause: error })
@@ -289,7 +312,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       env = this.environment(home, channel, shell.path)
       const client = (this.options.client ?? ((options) => new Codex(options)))({
         codexPathOverride: program,
-        configOverrides: [...this.overrides, ...(channel ? hookOverrides(this.node(), this.hook()) : [])],
+        configOverrides: [...this.overrides, readsOverride(reads, readBounds), ...(channel ? hookOverrides(this.node(), this.hook()) : [])],
         env,
       })
       const thread: ThreadOptions = {
@@ -510,6 +533,26 @@ export class CodexRuntime implements AgentRuntimeProvider {
     return this.options.node ?? process.execPath
   }
 
+  private readsScript(): string {
+    return this.options.readsServer ?? WORKSPACE_READS_SCRIPT
+  }
+
+  /**
+   * The command Codex starts the workspace reads server with (T200b): `node` and the server's
+   * script under a confinement of its own, inside the run's: the read confinement with the
+   * workspace, the script, and `node` bound back read-only, the whole host read-only (so is the
+   * workspace, whatever the run's sandbox), no network, and the workspace its directory. Its root is
+   * the workspace's real path, fixed by its arguments: the path bubblewrap binds back, so the root
+   * the server resolves is the one it sees. A workspace that does not resolve is bound by no path
+   * (the confinement binds only what exists), and the server refuses to start on it.
+   */
+  private readsCommand(workspace: string, bounds: WorkspaceReadBounds, extra: readonly string[] = []): { command: string; args: string[] } {
+    const script = this.readsScript()
+    const root = realPath(workspace)
+    const confinement = this.confinement({ readOnly: [root, script, this.node()] })
+    return confinedCommand(this.node(), [script, ...workspaceReadArgs(root, bounds), ...extra], confinement, { readOnly: true, network: false, chdir: root })
+  }
+
   /** The hook script and `node` exist: a gated run without them would run its tools unasked. */
   private checkHook(): void {
     for (const [what, path] of [['the gate hook', this.hook()], ['node', this.node()]] as const) {
@@ -526,9 +569,24 @@ export class CodexRuntime implements AgentRuntimeProvider {
     if (!reads.confined) return reads
     try {
       await (this.options.nested ?? runQuiet)(confinedCommand(executable, ['sandbox', '--', 'true'], confinement), childEnvironment([], { CODEX_HOME: home }))
-      return reads
     } catch (error) {
       return { confined: false, detail: `Codex's own sandbox does not start inside the confinement: ${firstLine(error)}` }
+    }
+    // The workspace reads server confines itself inside Codex's confinement, as a run starts it (T200b):
+    // its self-test reads one file of a fresh directory there.
+    let dir: string | undefined
+    try {
+      ensurePrivateDir(this.runDir)
+      dir = mkdtempSync(join(this.runDir, 'reads-probe-'))
+      writeFileSync(join(dir, 'probe.txt'), 'probe\n')
+      const server = this.readsCommand(dir, workspaceReadBounds(), ['--self-test', 'probe.txt'])
+      const outer = this.confinement({ writable: [home], readOnly: [dir, this.readsScript(), this.node()] })
+      await (this.options.nested ?? runQuiet)(confinedCommand(server.command, server.args, outer), childEnvironment([], { CODEX_HOME: home }))
+      return { confined: true, detail: `${reads.detail}; the workspace reads server starts inside it` }
+    } catch (error) {
+      return { confined: false, detail: `the workspace reads server does not start inside the confinement: ${firstLine(error)}` }
+    } finally {
+      if (dir) rmSync(dir, { recursive: true, force: true })
     }
   }
 
@@ -603,6 +661,15 @@ export class CodexRuntime implements AgentRuntimeProvider {
 
   private executable(): string | undefined {
     return this.options.executable ?? (this.options.findExecutable ?? (() => findOnPath('codex')))()
+  }
+}
+
+/** `path` with every symlink resolved, as a confinement binds it; as given when it does not resolve. */
+function realPath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
   }
 }
 

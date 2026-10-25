@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeIdentityConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import type { Confinement } from '@tsuuanmi/system-agent-runtime-core'
+import { type Confinement, WORKSPACE_READS_SCRIPT } from '@tsuuanmi/system-agent-runtime-core'
 import { CodexRuntime, IDENTITY_READER, VERIFIED_IDENTITY_VERSIONS } from '../src/index.ts'
 import { probeExec, scripted } from './fake-codex.ts'
 
@@ -124,8 +124,8 @@ describe('codex-sdk identity reader (ADR-0051, REQ-ACC-11)', () => {
     const r = runtime({ client: s.client })
     await r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: at }, new AbortController().signal)
     expect(s.lastClient.env).toMatchObject({ CODEX_HOME: at })
-    // The named home bound back writable; the run's private shell home (T198) read-only.
-    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root, expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-`))] })
+    // The named home bound back writable; the run's private shell home (T198), and the workspace reads server's script and node (T200b), read-only.
+    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root, expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-`)), WORKSPACE_READS_SCRIPT, process.execPath] })
     await expect(r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: join(root, 'nowhere') }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
     expect(await r.probe({ home: join(root, 'nowhere') })).toMatchObject({ available: false, homes: true })
     expect(r.home).toBe(join(root, 'own-home'))

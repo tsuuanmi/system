@@ -265,6 +265,31 @@ queue as a Claude Code Worker's does. To use one:
    - "tool calls cannot be gated: …": the probe's turn showed Codex would run a tool without
      asking the gate (a hook that did not run, a terminal session, a hosted tool). Usually a
      Codex release that changed its hooks: keep the Workers off and report the reason.
+   - "the workspace reads server does not start inside the confinement": the host refuses a
+     bubblewrap nested in the read confinement, or `node` or System's install is hidden from it
+     (as for step 1, bind it back read-only in the `agent-runtimes` row).
+
+**How a Codex Worker reads.** Every Codex run, a reviewer's in the read-only sandbox included, has
+System's own [workspace reads server](../design/agent-runtimes.md#the-workspace-reads-server):
+`read_file`, `list_dir`, and `search` over its workspace, under a confinement of their own with the
+workspace read-only. Under the bundle's policy (`read: auto`) they run without asking you; every
+shell command, `cat` and `rg` included, is a `command` and waits for your approval, and each run's
+brief tells the Worker to read with the tools instead. Git's data and secret-named files (`.env`,
+keys, credentials) are never read through them. Their bounds are the `agent-workers` row's
+`workspaceReads` (defaults shown; each has a range, and a value outside it refuses the row):
+
+```yaml
+- id: agent-workers
+  config:
+    workspaceReads: { maxReadBytes: 262144, maxScanBytes: 8388608, maxEntries: 1000, maxMatches: 200, maxSearchFiles: 20000, maxLineChars: 500, maxPatternChars: 1000, searchTimeoutMs: 10000 }
+```
+
+A Worker whose reads stall anyway: look for `agent-workers.tool.denied` events on a
+`mcp__workspace__…` tool in the event log (MCP `events` by type), whose `reason` says why
+(`outside-workspace`: outside the workspace or `..`; `git-data`; `unclassified-tool`: a tool the
+server does not have, or a runtime that reports no such server); a run stopped with "an mcp_tool_call item that the
+run's tool gate never allowed" is a Codex release that does not ask its hook before an MCP tool:
+keep the Workers off and report it.
 
 ## Antigravity CLI Workers
 

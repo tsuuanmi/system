@@ -4,10 +4,21 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { workspaceReadBounds } from '@tsuuanmi/system-agent-runtime-core'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type WorkRequirement } from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { ScriptedAgent, SlowProbeAgent, WORKSPACE, worker, boot, requirement, chatWorker } from './stack.ts'
+import { checkConfig } from '../src/index.ts'
+
+describe('the workspace reads server\'s bounds are configuration with validated ranges (T200b, INV-9)', () => {
+  it('takes bounds within their ranges and refuses one outside, or one it does not know, at load', () => {
+    expect(checkConfig({ workspaceReads: { maxEntries: 50, searchTimeoutMs: 2000 } })).toEqual([])
+    expect(checkConfig({ workspaceReads: { maxEntries: 0 } })).toEqual([expect.stringContaining('workspaceReads: the workspace reads bound maxEntries is 0')])
+    expect(checkConfig({ workspaceReads: { searchTimeoutMs: 600_000 } })).toEqual([expect.stringContaining('searchTimeoutMs')])
+    expect(checkConfig({ workspaceReads: { maxBytes: 1 } as never })).toEqual([expect.stringContaining('is not a workspace reads bound')])
+  })
+})
 
 describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
   it('describes each configured Worker with the capabilities its probe proves, never plain reason (REQ-WRK-1)', async () => {
@@ -176,7 +187,8 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const done = await source.wait(started.id, 10_000)
     expect(done).toMatchObject({ status: 'completed', submitted: true })
     // Every run carries its gate, asked before each tool call (./gate.spec.ts).
-    expect(agent.runs).toEqual([{ prompt: 'look at it', workspace: WORKSPACE, sandbox: 'read-only', tools: ['Read', 'Grep'], model: 'model-x', toolGate: expect.any(Function) }])
+    // The workspace reads server's bounds go with every run, each at its default unless configured (T200b).
+    expect(agent.runs).toEqual([{ prompt: 'look at it', workspace: WORKSPACE, sandbox: 'read-only', tools: ['Read', 'Grep'], model: 'model-x', workspaceReads: workspaceReadBounds(), toolGate: expect.any(Function) }])
     const result = ctx.artifacts.get(done.result!)!
     expect(result).toMatchObject({ kind: 'report', bodySchema: 'agent-result@1.1', classification: 'operator-shared' })
     expect(result.body).toMatchObject({ worker: 'agent:reviewer', runtime: 'scripted', sandbox: 'read-only', workspace: WORKSPACE, text: 'echo: look at it', nativeHandle: 'h-1' })

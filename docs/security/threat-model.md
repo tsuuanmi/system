@@ -343,6 +343,34 @@
       startup file a call can reach, and the next call's `echo` and `cat`,
       plain, login, and interactive, are the real ones. That still does not
       earn `cleanShells`: the shell program itself is the call's to pick;
+    - so a Codex Worker reads without a shell (T200b): every run registers
+      System's own workspace reads server (`agent-runtime-core`,
+      [the workspace reads server](../design/agent-runtimes.md#the-workspace-reads-server)),
+      whose three tools (`read_file`, `list_dir`, `search`) the gate classifies
+      as `read` by their MCP names (`mcp__workspace__…`), only for a run whose
+      runtime reports that it gives its agent that server (`workspaceReads`
+      evidence; elsewhere every `mcp__workspace__…` tool is denied, so a
+      server of that name System did not start is never taken for reads); any
+      other tool name of that server is denied. They are reads because they run no program: the
+      server is Node built-ins only, searches in a thread of its own (killed at
+      its deadline), and runs no shell, git, or subprocess. Codex starts it
+      outside its own sandbox, so the server confines itself: a bubblewrap of
+      its own nested in the run's read confinement, the host and the workspace
+      read-only, no network, its root fixed by its arguments (MCP Roots are
+      ignored, and it sends the client no request). Its path checks are a
+      second layer: every path is resolved with `realpath` and must stay in the
+      workspace (`..`, an absolute path outside, and a symlink out are
+      refused), git's data and secret-named files (`.env`, keys, credentials)
+      are never read, and each file is opened without following a final link
+      and checked again by what its descriptor names (`/proc/self/fd`). Every
+      bound (bytes, entries, matches, files, line and pattern length, the
+      search deadline) is configuration with a validated range. A call Codex
+      reports for it passes the hook like any other, and an MCP item no allowed
+      call accounts for stops the run. Not covered: that Codex 0.164 runs the
+      PreToolUse hook on an MCP tool and names it `mcp__workspace__<tool>`
+      rests on the runtime's item accounting, not on the probe's turn, which
+      calls no MCP tool (a hook that did not run stops the run, after one
+      read); and what a read returns reaches the model, as any read does;
     - a process inside Codex's sandbox that could read the socket's path cannot
       present the key, and the gate only answers: no call runs because of it;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every

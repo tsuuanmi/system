@@ -108,6 +108,15 @@
 | `worktreeSetup[].generated` | object | `{}` | The repository's generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run's worktree in this setup's confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166) |
 | `worktreeSetup[].generated.paths` | string[] | `[]` | 1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json |
 | `worktreeSetup[].generated.commands` | string[] | `[]` | 1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked |
+| `workspaceReads` | object | `{}` | The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range |
+| `workspaceReads.maxReadBytes` | number (1024…8388608) | `262144` | The most bytes read_file returns, line numbers included (1024 to 8388608) |
+| `workspaceReads.maxScanBytes` | number (65536…268435456) | `8388608` | The most bytes of one file read through: for a line range, and per file searched (a larger file is not searched) (65536 to 268435456) |
+| `workspaceReads.maxEntries` | number (1…10000) | `1000` | The most entries list_dir returns (1 to 10000) |
+| `workspaceReads.maxMatches` | number (1…5000) | `200` | The most matching lines search returns (1 to 5000) |
+| `workspaceReads.maxSearchFiles` | number (1…200000) | `20000` | The most files one search opens (1 to 200000) |
+| `workspaceReads.maxLineChars` | number (80…10000) | `500` | The most characters of one matching line search shows (80 to 10000) |
+| `workspaceReads.maxPatternChars` | number (1…10000) | `1000` | The longest pattern search takes (1 to 10000) |
+| `workspaceReads.searchTimeoutMs` | number (100…120000) | `10000` | How long one search may take, in milliseconds; past it, it is stopped (100 to 120000) |
 
 ## `approvals`
 

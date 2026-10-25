@@ -165,6 +165,23 @@ Capability **seam definition** for agent runtimes
   - `tests/shells.spec.ts` plants a function named `echo` and `cat` in every
     startup file a call can reach, under the real confinement, and the next
     call's `echo` and `cat`, plain, login, and interactive, are the real ones.
+- **The workspace reads server** (T200b, `src/workspace-reads.ts`,
+  [agent runtimes](../../docs/design/agent-runtimes.md#the-workspace-reads-server)):
+  System's own minimal MCP server over stdio, Node built-ins only, so a runtime
+  binds its one file (`WORKSPACE_READS_SCRIPT`) into a confinement and runs it
+  with `node`. Three read-only tools over one workspace fixed at start
+  (`WORKSPACE_READS_SERVER` `workspace`, `WORKSPACE_READ_TOOLS`): `read_file`,
+  `list_dir`, `search` (a worker thread, ended at its deadline). Every path is
+  resolved with `realpath` inside the workspace (no `..`, no absolute path
+  outside, no symlink out), git's data and secret-named files (`SECRET_NAMES`)
+  are unreadable, and each open is checked again through `/proc/self/fd`; MCP
+  Roots are ignored. Its bounds (`WorkspaceReadBounds`, `WORKSPACE_READ_BOUNDS`
+  with ranges, `workspaceReadBounds`, `workspaceReadBoundsProblem`) are its
+  arguments (`workspaceReadArgs`, `parseWorkspaceReadArgs`) and travel as
+  `RunSpec.workspaceReads`; a runtime that gives its agent the server reports
+  `RuntimeEvidence.workspaceReads`. `tests/workspace-reads.spec.ts` covers each
+  bound, every refusal, the protocol, its own process, and the server under real
+  bubblewrap with the workspace read-only.
 - Conformance:
   - `conformance/agent-runtimes.ts` has `agentRuntimesConformance` for the
     registry;

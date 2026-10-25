@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import { type Confinement, meteringOf, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
+import { type Confinement, meteringOf, type ToolCall, type ToolGate, WORKSPACE_READS_SCRIPT } from '@tsuuanmi/system-agent-runtime-core'
 import { childTimeZone, CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
 import { hookOverrides } from '../src/gate.ts'
 import { type ProbeBehaviour, type Step, probeExec, scripted } from './fake-codex.ts'
@@ -44,8 +44,8 @@ const command = (id: string, cmd: string): Step => ({ call: { tool: 'Bash', inpu
 describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
   it('probes the installed codex: both sandboxes, resumable, able to run confined commands, and gating every tool call', async () => {
     expect(await runtime().probe()).toMatchObject({
-      available: true, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, cleanShells: false,
-      detail: 'Codex 0.164.0; host state hidden by /usr/bin/bwrap; tool calls gated: a PreToolUse hook answered before each tool call, its deny held, and no terminal session started',
+      available: true, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, cleanShells: false, workspaceReads: true,
+      detail: 'Codex 0.164.0; host state hidden by /usr/bin/bwrap; the workspace reads server starts inside it; tool calls gated: a PreToolUse hook answered before each tool call, its deny held, and no terminal session started',
     })
     expect(await new CodexRuntime({ findExecutable: () => undefined }).probe()).toMatchObject({ available: false, sandboxes: [] })
   })
@@ -60,6 +60,8 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(s.lastClient.overrides).toEqual([
       'model_provider="system"', 'model_providers.system.base_url="http://127.0.0.1:47317/openai/v1"', 'model_providers.system.env_key="SYSTEM_MCP_TOKEN"',
       ...FEATURES_OFF.map((f) => `features.${f}=false`), 'features.hooks=true', 'shell_environment_policy.exclude=["SYSTEM_CODEX_GATE_SOCKET", "SYSTEM_CODEX_GATE_KEY"]',
+      // The workspace reads server, confined by its own bubblewrap (T200b).
+      expect.stringMatching(/^mcp_servers\.workspace=\{command = "\/usr\/bin\/bwrap", args = \[/),
     ])
     expect(s.lastClient.env).toMatchObject({ SYSTEM_MCP_TOKEN: 't', PATH: process.env.PATH })
   })
@@ -162,9 +164,10 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     if (ptmx && !(pts && (ptmx === pts || ptmx.startsWith(`${pts}/`)))) expect(s.lastClient.program).toContain(`--ro-bind /dev/null ${ptmx}`)
     else expect(s.lastClient.program).not.toContain('--ro-bind /dev/null /dev/')
     // Its home is bound back writable; its shells' private home read-only (T198), so no startup file can be written there; a read-only Worker's workspace read-only.
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w', SHELL_HOME] })
+    // The workspace reads server's script and node are bound back read-only, for Codex to start it (T200b).
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w', SHELL_HOME, WORKSPACE_READS_SCRIPT, process.execPath] })
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'workspace-write' }, new AbortController().signal)
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [SHELL_HOME] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [SHELL_HOME, WORKSPACE_READS_SCRIPT, process.execPath] })
   })
 
   it('offers no Worker, and runs nothing, when reads cannot be confined (ADR-0024, REQ-WRK-6)', async () => {
@@ -206,6 +209,59 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(s.calls).toEqual([])
   })
 
+  it('registers the workspace reads server for every run, read-only ones included: node and its script under a bubblewrap of their own, the workspace read-only, no network, its root fixed (T200b)', async () => {
+    for (const sandbox of ['read-only', 'workspace-write'] as const) {
+      const s = scripted()
+      await runtime(s).run({ prompt: 'x', workspace, sandbox, workspaceReads: { maxEntries: 7 } }, new AbortController().signal)
+      const servers = s.lastClient.overrides!.filter((o) => o.startsWith('mcp_servers.'))
+      expect(servers, sandbox).toHaveLength(1)
+      const [, table] = /^mcp_servers\.workspace=(\{.*\})$/.exec(servers[0]!)!
+      const args = JSON.parse(/args = (\[.*\]), startup_timeout_sec/.exec(table!)![1]!) as string[]
+      expect(table).toMatch(/^\{command = "\/usr\/bin\/bwrap", /)
+      expect(table).toMatch(/startup_timeout_sec = 30, tool_timeout_sec = 40\}$/)
+      // Its own confinement: the host read-only, the workspace bound back read-only, no network, started in the workspace.
+      expect(args.slice(0, 8)).toEqual(['--die-with-parent', '--unshare-pid', '--unshare-net', '--new-session', '--ro-bind', '/', '/', '--dev'])
+      expect(args.join(' ')).toContain(`--ro-bind ${real(workspace)} ${real(workspace)}`)
+      expect(args.join(' ')).not.toContain(`--bind ${real(workspace)}`)
+      expect(args.join(' ')).toContain(`--chdir ${real(workspace)}`)
+      const program = args.slice(args.indexOf('--') + 1)
+      expect(program.slice(0, 4)).toEqual([process.execPath, WORKSPACE_READS_SCRIPT, '--root', real(workspace)])
+      expect(program.join(' ')).toContain('--max-entries 7')
+    }
+  })
+
+  it('gives the workspace reads server the workspace\'s real path as its root, the path bubblewrap binds back, when the run names it through a symlink (T200b)', async () => {
+    const link = join(root, 'w-link')
+    symlinkSync(workspace, link)
+    try {
+      const s = scripted()
+      await runtime(s).run({ prompt: 'x', workspace: link, sandbox: 'read-only' }, new AbortController().signal)
+      const [server] = s.lastClient.overrides!.filter((o) => o.startsWith('mcp_servers.'))
+      const args = JSON.parse(/args = (\[.*\]), startup_timeout_sec/.exec(server!)![1]!) as string[]
+      const program = args.slice(args.indexOf('--') + 1)
+      expect(program.slice(2, 4)).toEqual(['--root', real(workspace)])
+      expect(args.join(' ')).toContain(`--ro-bind ${real(workspace)} ${real(workspace)}`)
+      expect(args.join(' ')).toContain(`--chdir ${real(workspace)}`)
+      expect(args).not.toContain(link)
+    } finally {
+      rmSync(link)
+    }
+  })
+
+  it('refuses workspace reads bounds out of their ranges, before running (INV-9)', async () => {
+    const s = scripted()
+    await expect(runtime(s).run({ prompt: 'x', workspace, sandbox: 'read-only', workspaceReads: { maxEntries: 0 } }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('maxEntries') })
+    expect(s.calls).toEqual([])
+  })
+
+  it('offers no Worker when the workspace reads server does not start inside the confinement (T200b)', async () => {
+    let n = 0
+    const refused = runtime(scripted(), { nested: async () => { n += 1; if (n === 2) throw new Error('bwrap: setting up uid map: Permission denied') } })
+    expect(await refused.probe()).toMatchObject({ readsConfined: false, gatesToolCalls: false, detail: expect.stringContaining('the workspace reads server does not start inside the confinement') })
+    expect(readdirSync(runDir).filter((f) => f.startsWith('reads-probe-'))).toEqual([])
+  })
+
   it('resumes a thread by its native handle, and classifies a failed turn', async () => {
     const s = scripted()
     expect(await runtime(s).run({ prompt: 'again', workspace: '/w', sandbox: 'read-only', resume: 'thread-9' }, new AbortController().signal)).toMatchObject({ text: 'echo: again', nativeHandle: 'h-1' })
@@ -234,7 +290,7 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     expect(hookOverrides(process.execPath, HOOK)).toEqual(hooks)
     // The channel reaches the hook through Codex's environment, kept from its commands; its directory, the hook, and node are bound back read-only.
     expect(Object.keys(s.lastClient.env!)).toEqual(expect.arrayContaining(['SYSTEM_CODEX_GATE_SOCKET', 'SYSTEM_CODEX_GATE_KEY']))
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [SHELL_HOME, expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [SHELL_HOME, expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath, WORKSPACE_READS_SCRIPT] })
     // Closed with the run: nothing of the channel is left.
     expect(readdirSync(runDir).filter((f) => f.startsWith('codex-gate-'))).toEqual([])
     const ungated = scripted()
@@ -354,6 +410,21 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     // A web search is a tool no hook sees.
     const web = scripted(() => turn({ type: 'item.completed', item: { id: 'w1', type: 'web_search', query: 'x' } }, answer('done')))
     await expect(runtime(web).run(gated(async () => ({ decision: 'allow' })), new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+  })
+
+  it('asks the gate about a workspace reads server call by its MCP name, and an allowed one accounts for its MCP item; one never allowed stops the run (T200b)', async () => {
+    const read = { id: 'm1', type: 'mcp_tool_call', server: 'workspace', tool: 'read_file', arguments: { path: 'a.ts' }, status: 'completed' } as never
+    const asked: ToolCall[] = []
+    const s = scripted(() => turn({ call: { tool: 'mcp__workspace__read_file', input: { path: 'a.ts' } }, item: read }, answer('done')))
+    const allow: ToolGate = async (call) => {
+      asked.push(call)
+      return { decision: 'allow' }
+    }
+    await expect(runtime(s).run(gated(allow), new AbortController().signal)).resolves.toMatchObject({ text: 'done' })
+    expect(asked).toEqual([{ tool: 'mcp__workspace__read_file', input: { path: 'a.ts' }, callId: 'call_1' }])
+    const unasked = scripted(() => turn({ type: 'item.completed', item: read }, answer('done')))
+    await expect(runtime(unasked).run(gated(async () => ({ decision: 'allow' })), new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('mcp_tool_call item that the run\'s tool gate never allowed') })
   })
 
   it('refuses a gated run whose hook cannot be read, before anything runs', async () => {

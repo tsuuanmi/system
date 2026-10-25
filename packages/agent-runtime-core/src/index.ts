@@ -12,6 +12,12 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+import type { WorkspaceReadBounds } from './workspace-reads.ts'
+
+export {
+  SECRET_NAMES, WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READS_SERVER, WORKSPACE_READ_BOUNDS, WORKSPACE_READ_TOOLS, type WorkspaceReadBounds, WorkspaceReads,
+  answerMessage, parseWorkspaceReadArgs, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem, workspaceReadTools,
+} from './workspace-reads.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -59,6 +65,14 @@ export interface RuntimeEvidence {
    * show, and Claude Code starts its shells its own way, after sourcing its own shell snapshot.
    */
   cleanShells?: boolean
+  /**
+   * It gives every run's agent the workspace reads server ({@link WORKSPACE_READS_SCRIPT}, T200b),
+   * started under the run's read confinement with the workspace bound read-only, proven to start on
+   * this host now: its three read-only tools (`read_file`, `list_dir`, `search`) reach the agent as
+   * MCP tools of the server {@link WORKSPACE_READS_SERVER}, so it reads without a shell. Absent or
+   * false: it offers none (Claude Code keeps its own Read, Grep, and Glob).
+   */
+  workspaceReads?: boolean
   /**
    * It runs in the home a run or probe names ({@link RunSpec.home}, {@link ProbeOptions.home}), one
    * account's own sign-in, binding back only that home (ADR-0051). Absent or false: it runs in its
@@ -205,6 +219,13 @@ export interface RunSpec {
    * before running anything, never ignores it.
    */
   home?: string | undefined
+  /**
+   * The bounds of the workspace reads server (operator configuration, INV-9), for a runtime that
+   * gives its agent one ({@link RuntimeEvidence.workspaceReads}); absent: every bound at its default.
+   * Such a runtime refuses bounds out of their ranges (`config_error`); one that offers no server
+   * has nothing they bound.
+   */
+  workspaceReads?: Partial<WorkspaceReadBounds> | undefined
 }
 
 /**

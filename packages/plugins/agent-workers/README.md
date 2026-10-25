@@ -49,9 +49,20 @@ The **`agents` Worker source**: agent runtimes as Workers
   name one of them, never a step that names none; unset, it takes any work. A
   malformed or repeated kind, an empty list, or kinds on a review member (whose
   steps name no kind) is refused at load (`config_error`). `checkConfig(config)`
-  makes the same checks of the row's Workers and roles, and of its `worktreeSetup`
-  entries (ADR-0058), without a host, so `system check` names such a problem
-  before a restart.
+  makes the same checks of the row's Workers and roles, of its `worktreeSetup`
+  entries (ADR-0058), and of its `workspaceReads` bounds, without a host, so
+  `system check` names such a problem before a restart.
+- **The workspace reads server's bounds** (`workspaceReads`, T200b,
+  [design](../../../docs/design/agent-runtimes.md#the-workspace-reads-server)):
+  each within its range (agent-runtime-core's `WORKSPACE_READ_BOUNDS`), the rest
+  at their defaults, passed with every run as `RunSpec.workspaceReads`. For a run
+  whose runtime reports `workspaceReads` (its evidence, threaded to the gate as
+  `shellReads` is), the gate classifies exactly that server's
+  `mcp__workspace__read_file`, `…list_dir`, and `…search` as reads and refuses any
+  other tool of it (`unclassified-tool`); elsewhere it refuses every
+  `mcp__workspace__…` tool. Such a Worker's Tools section (`unaskedNote`, never a
+  review member's) names them as its reading tools and tells it to read with them,
+  never with a shell.
 - **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
   [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
   - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,

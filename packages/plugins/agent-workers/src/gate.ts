@@ -13,7 +13,7 @@ import { lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolCall, ToolGate, ToolVerdict } from '@tsuuanmi/system-agent-runtime-core'
+import { type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
 import { type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
@@ -31,7 +31,7 @@ export const DENIAL_REASONS = {
   'metacharacter': 'A Bash command word holds a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like). A command is words split on single spaces and never parsed by a shell, so such a word is denied before the policy is asked.',
   'empty-word': 'A Bash command has an empty word: a doubled, leading, or trailing space. A command is words split on single spaces, so it is denied before the policy is asked.',
   'outside-workspace': 'The call names a path that is not inside the run\'s workspace, as written or on disk (every symlink followed), or a Glob pattern that reaches outside it.',
-  'git-data': 'The call writes git\'s own data (a .git entry in its path): only a command the operator approved, or the operator, changes it.',
+  'git-data': 'The call writes git\'s own data (a .git entry in its path), or reads it through the workspace reads server: only a command the operator approved, or the operator, changes it, and that server never reads it.',
   'unclassified-tool': 'The tool is not one the gate classifies, so no autonomy rule can judge it, and it is denied (INV-2).',
   'unsupported-field': 'The tool input carries a field the gate does not classify, or a known field of another type, so it is denied.',
   'invalid-input': 'The tool input is not an object, or names no path, file, command, patch, URL, or query where the tool needs one.',
@@ -75,7 +75,8 @@ export interface ToolAction {
  * with `command` only, `apply_patch` with the patch as `command`, `view_image`); and the Antigravity
  * CLI's file tools as its PreToolUse hook reports them (`read_file`, `write_file`, `edit_file`,
  * each naming its file in `Path`). Its `run_command` is not classified, so it is denied: no
- * confinement of its commands is proven.
+ * confinement of its commands is proven. And the three tools of System's own workspace reads
+ * server, as an MCP client names them (`mcp__workspace__read_file`, …, T200b).
  */
 /** What a classification knows of the run's runtime. */
 export interface ClassifyOptions {
@@ -85,7 +86,23 @@ export interface ClassifyOptions {
    * `read`. Absent: it is not.
    */
   shellReads?: boolean | undefined
+  /**
+   * The runtime gives the run's agent System's own workspace reads server
+   * (`RuntimeEvidence.workspaceReads`, T200b): only then are its three tools
+   * (`mcp__workspace__read_file`, `…list_dir`, `…search`) a `read`. Absent: every tool of that
+   * name is refused, since no server of System's started under it.
+   */
+  workspaceReads?: boolean | undefined
 }
+
+/**
+ * The tools of the workspace reads server (agent-runtime-core, T200b) as an MCP client names them
+ * (`mcp__<server>__<tool>`, as Codex's hook reports an MCP tool): System's own read-only server,
+ * started under the run's confinement with its root fixed to the run's workspace. They run no
+ * program, so they are reads. No other tool of that server is classified.
+ */
+const SERVER_PREFIX = `mcp__${WORKSPACE_READS_SERVER}__`
+const SERVER_TOOLS: readonly string[] = WORKSPACE_READ_TOOLS.map((tool) => `${SERVER_PREFIX}${tool}`)
 
 /** Tools that only read, and the input field that names where; a field that may be absent reads the workspace. */
 const READS: Record<string, { field: string; required: boolean }> = {
@@ -96,6 +113,9 @@ const READS: Record<string, { field: string; required: boolean }> = {
   Grep: { field: 'path', required: false },
   view_image: { field: 'path', required: true },
   read_file: { field: 'Path', required: true },
+  [`${SERVER_PREFIX}read_file`]: { field: 'path', required: true },
+  [`${SERVER_PREFIX}list_dir`]: { field: 'path', required: false },
+  [`${SERVER_PREFIX}search`]: { field: 'path', required: false },
 }
 /** Tools that change one file, and the input field that names it. */
 const WRITES: Record<string, string> = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path', write_file: 'Path', edit_file: 'Path' }
@@ -140,6 +160,10 @@ const FIELDS: Record<string, Record<string, FieldType>> = {
   read_file: { Path: 'string', StartLine: 'number', EndLine: 'number', ByteOffset: 'number' },
   write_file: { Path: 'string', Content: 'string', Append: 'boolean', Overwrite: 'boolean' },
   edit_file: { Path: 'string', Target: 'string', Replacement: 'string' },
+  // The workspace reads server's own input schemas (agent-runtime-core `workspaceReadTools`).
+  [`${SERVER_PREFIX}read_file`]: { path: 'string', startLine: 'number', endLine: 'number' },
+  [`${SERVER_PREFIX}list_dir`]: { path: 'string' },
+  [`${SERVER_PREFIX}search`]: { pattern: 'string', regex: 'boolean', ignoreCase: 'boolean', path: 'string' },
 }
 const EDIT_FIELDS: Record<string, FieldType> = { old_string: 'string', new_string: 'string', replace_all: 'boolean' }
 
@@ -408,6 +432,12 @@ export interface ToolsNoteOptions {
    * no writing tool and no commands list, and says writing is unavailable. Absent: `workspace-write`.
    */
   sandbox?: 'read-only' | 'workspace-write' | undefined
+  /**
+   * The runtime gives the agent the workspace reads server (T200b): its reading tools are the
+   * server's read_file, list_dir, and search, and it is told to read with them, never with a
+   * shell. Absent: it gives none.
+   */
+  workspaceReads?: boolean | undefined
 }
 
 /**
@@ -421,7 +451,9 @@ export interface ToolsNoteOptions {
  * effective modes and its commands list, the exact lines, never a guess. A call it does not name
  * may still run (the gate decides each call); one it names as unasked is never one the policy asks
  * about now. A Bash inspection command is named as a read only where the runtime enforces clean
- * shells, as the gate judges it. At most {@link TOOLS_NOTE_MAX} characters: the commands list is
+ * shells, as the gate judges it; where the runtime gives the agent the workspace reads server
+ * (T200b), its tools are the reading tools named, and the agent is told to read with them, never
+ * with a shell. At most {@link TOOLS_NOTE_MAX} characters: the commands list is
  * cut first, its rest counted.
  */
 export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; effective: ReadonlyArray<{ actionClass: ActionClass; mode: string }> }, workspace: string, options: ToolsNoteOptions = {}): string {
@@ -430,9 +462,10 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
   const ws = workspace.length > NOTE_PATH_CHARS ? `${workspace.slice(0, NOTE_PATH_CHARS - 1)}…` : workspace
   const resumes = options.resumes !== false
   const readOnly = options.sandbox === 'read-only'
+  const workspaceReads = options.workspaceReads === true
   const lines: string[] = []
   if (unasked('read')) {
-    lines.push(`- Reading tools (Read, Glob, Grep, LS) on paths inside your workspace ${ws}.`)
+    lines.push(`- Reading tools (${workspaceReads ? 'the workspace server\'s read_file, list_dir, and search' : 'Read, Glob, Grep, LS'}) on paths inside your workspace ${ws}.`)
     if (options.shellReads === true) {
       lines.push(`- Bash read-only inspection, every path absolute and inside ${ws} (a relative path, or a form that names none, asks): cat, head, tail, wc, ls, stat, file, sed -n <a>,<b>p, rg, grep, and find without actions; and echo, pwd, true, false with no argument but echo's.`)
     }
@@ -447,7 +480,7 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
   }
   const bashReads = options.shellReads === true
     ? ''
-    : ' Under this runtime no Bash command is a read (cat, ls, rg, and the like are commands, judged as one): read with the reading tools.'
+    : ` Under this runtime no Bash command is a read (cat, ls, rg, and the like are commands, judged as one): read with the ${workspaceReads ? 'workspace server\'s tools, never with a shell' : 'reading tools'}.`
   // Whether an approval resumes the step is said whatever the command mode: a read or a write the
   // policy asks about defers (and resumes) or is denied at once just as a command does.
   const commandsForbidden = mode('command') === 'forbid'
@@ -458,6 +491,9 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
   const head = [
     'Tools (your tool gate and the autonomy policy now):',
     `- Workspace: ${ws}. A tool's path outside it is denied, and so is a write in its .git.`,
+    ...(workspaceReads
+      ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Each path is relative to the workspace, or absolute inside it, with no "..".']
+      : []),
     ...(readOnly ? ['- Your sandbox is read-only: no tool call writes a file (Write, Edit, and any command that changes one fail), so read, and answer with what you found.'] : []),
     'Tool calls that run without asking the operator:',
   ]
@@ -542,6 +578,12 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  * - `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image`, `read_file`: `read`, when the path
  *   they name is inside the workspace (absent for `Glob` and `Grep`: the workspace); a `Glob`
  *   pattern whose literal leading directory is outside it, or that climbs with `..`, is refused;
+ * - the workspace reads server's `mcp__workspace__read_file`, `mcp__workspace__list_dir`, and
+ *   `mcp__workspace__search` (T200b): `read`, when the `path` they name is inside the workspace
+ *   (absent or empty for `list_dir` and `search`: the workspace), holds no `..` segment, and is not
+ *   git's own data; they run no program. Only for a run whose runtime gives its agent that server
+ *   (`options.workspaceReads`, its evidence); otherwise, and for any other tool of that server
+ *   (`mcp__workspace__…`), refused;
  * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `write_file`, `edit_file`: `workspace-write`, for
  *   a file inside the workspace; outside it is refused (the runtime refuses it too), and so is a
  *   file in git's own data (a `.git` entry in its path, as written or on disk);
@@ -583,6 +625,12 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
 export function classify(call: ToolCall, workspace: string, options: ClassifyOptions = {}): ToolAction | Refusal {
   const { tool } = call
   const input = call.input
+  if (tool.startsWith(SERVER_PREFIX)) {
+    // The read class rests on the runtime's evidence that this server is System's own (T200b): a
+    // server of that name a runtime did not start is no read.
+    if (options.workspaceReads !== true) return { refused: `${tool.slice(0, 100)} is not a tool the gate classifies: this run's runtime gives its agent no workspace reads server`, reason: 'unclassified-tool' }
+    if (!SERVER_TOOLS.includes(tool)) return { refused: `${tool.slice(0, 100)} is not one of the workspace reads server's tools (${WORKSPACE_READ_TOOLS.join(', ')}); no other tool of it runs`, reason: 'unclassified-tool' }
+  }
   if (!isObject(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
   const fields = Object.hasOwn(FIELDS, tool) ? FIELDS[tool] : undefined
   if (!fields) return { refused: `${tool} is not a tool the gate classifies`, reason: 'unclassified-tool' }
@@ -599,9 +647,15 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
         return { refused: `the Glob pattern ${JSON.stringify(pattern)} reaches outside the workspace`, reason: typeof pattern === 'string' ? 'outside-workspace' : 'invalid-input' }
       }
     }
-    const where = input[read.field]
+    // The workspace reads server reads an empty path as its root, the workspace.
+    const where = SERVER_TOOLS.includes(tool) && input[read.field] === '' ? '.' : input[read.field]
     if (where === undefined && !read.required) return { class: 'read', summary: clamp(`${tool} in the workspace`), consequences: `Reads inside the run's workspace. ${ANSWER}` }
     if (typeof where !== 'string' || !within(workspace, where)) return { refused: `${tool} reads ${typeof where === 'string' ? where : 'no path'}, which is not inside the workspace`, reason: typeof where === 'string' ? 'outside-workspace' : 'invalid-input' }
+    // The server refuses these itself; the gate does not ask the policy about a call it would refuse.
+    if (SERVER_TOOLS.includes(tool)) {
+      if (where.split(/[\\/]/).includes('..')) return { refused: `${tool} names ${where}, which climbs with "..": the workspace reads server never reads such a path`, reason: 'outside-workspace' }
+      if (gitData(workspace, where)) return { refused: `${tool} names ${where}, which is git's own data (.git): the workspace reads server never reads it`, reason: 'git-data' }
+    }
     return { class: 'read', summary: clamp(`${tool} ${where}`), consequences: `Reads ${where} inside the run's workspace. ${ANSWER}` }
   }
   const patchField = Object.hasOwn(PATCHES, tool) ? PATCHES[tool] : undefined
@@ -671,6 +725,12 @@ export interface GateRun {
    * T198): only then does the gate take a `Bash` probe or inspection command for a read ({@link classify}).
    */
   shellReads?: boolean | undefined
+  /**
+   * The run's runtime gives its agent System's own workspace reads server
+   * (`RuntimeEvidence.workspaceReads`, T200b): only then does the gate take that server's three
+   * tools for reads ({@link classify}); otherwise every `mcp__workspace__…` call is denied.
+   */
+  workspaceReads?: boolean | undefined
 }
 
 /** The call a run's gate deferred: the run stops there and does not complete. */
@@ -920,7 +980,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`, 'run-stopped')
     const approvals = ctx.get('approvals')
     if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision', 'no-approvals')
-    const action = classify(call, run.workspace, { shellReads: run.shellReads === true })
+    const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true })
     if ('refused' in action) return refuse(call, action.refused, action.reason)
     const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}) })
     switch (verdict.mode) {

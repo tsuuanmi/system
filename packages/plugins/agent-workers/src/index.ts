@@ -35,7 +35,8 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf, readLimits,
+  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, WORKSPACE_READ_BOUNDS, type WorkspaceReadBounds,
+  meteringOf, readLimits, workspaceReadBounds,
 } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
@@ -220,6 +221,14 @@ export interface Config {
    * `checkScratch` paths (./checks.ts, T151).
    */
   worktreeSetup?: WorktreeSetupConfig[]
+  /**
+   * The bounds of the workspace reads server a runtime gives its agent (T200b, INV-9): bytes a
+   * `read_file` returns and a file is read through, entries a `list_dir` returns, and a `search`'s
+   * matches, files, line length, pattern length, and deadline. Each within its range
+   * (`WORKSPACE_READ_BOUNDS` in agent-runtime-core), at its default when not given; passed with every
+   * run (`RunSpec.workspaceReads`).
+   */
+  workspaceReads?: Partial<WorkspaceReadBounds>
 }
 
 interface RunRow {
@@ -384,6 +393,15 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
   }
 }
 
+/** The workspace reads server's bounds (T200b): each given one within its range, the rest at their defaults; `config_error` otherwise (INV-9). */
+function readBoundsOf(bounds: Partial<WorkspaceReadBounds> | undefined): WorkspaceReadBounds {
+  try {
+    return workspaceReadBounds(bounds)
+  } catch (error) {
+    throw new ProviderError('config_error', `agent Workers: workspaceReads: ${(error as Error).message}`)
+  }
+}
+
 /**
  * What the load would refuse in this row's Workers and their worktree setups, before a host starts
  * on it (`system check`): the first problem {@link configuredWorkers} or {@link loadSetups} finds, or
@@ -394,6 +412,7 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
   try {
     const { workers } = configuredWorkers(config)
     loadSetups(config.worktreeSetup, [...workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
+    readBoundsOf(config.workspaceReads)
     return []
   } catch (error) {
     return [(error as Error).message]
@@ -491,6 +510,9 @@ export class AgentWorkers extends Service {
         commands: z.array(z.string()).description('1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked'),
       }).description('The repository\'s generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run\'s worktree in this setup\'s confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166)'),
     })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
+    workspaceReads: z.object(Object.fromEntries(Object.entries(WORKSPACE_READ_BOUNDS).map(([name, bound]) => [
+      name, z.natural().min(bound.min).max(bound.max).default(bound.default).description(`${bound.description} (${bound.min} to ${bound.max})`),
+    ]))).description('The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range'),
   }) as unknown as z<Config>
 
   private readonly workers = new Map<string, WorkerSpec>()
@@ -534,6 +556,8 @@ export class AgentWorkers extends Service {
   /** The runs in flight on each account, for whether a draw was confounded (PROP-0015 E2). */
   private readonly overlaps = new Overlaps()
   private sweeping: Promise<SweepOutcome> | undefined
+  /** The workspace reads server's bounds every run is given (T200b), checked at load. */
+  private readonly readBounds: WorkspaceReadBounds
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
@@ -553,6 +577,7 @@ export class AgentWorkers extends Service {
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
     this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'))
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
+    this.readBounds = readBoundsOf(config.workspaceReads)
     const slots = new Map<string, number>()
     for (const entry of providers) {
       if (entry.slots === undefined) continue
@@ -902,8 +927,11 @@ export class AgentWorkers extends Service {
   private rowOf(plan: MigrationPlan): Record<string, unknown> {
     const { workers: _, providers: __, roles: ___, assignments: ____, ...settings } = this.config
     // A setting at its default (an empty worktreeSetup among them) is left out.
-    const kept = Object.fromEntries(Object.entries(settings).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
-    return { ...kept, providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
+    const { workspaceReads, ...rest } = settings
+    const kept = Object.fromEntries(Object.entries(rest).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
+    // So is each workspace reads bound at its default, and the setting when all are (T200b).
+    const reads = Object.fromEntries(Object.entries(workspaceReads ?? {}).filter(([name, value]) => value !== WORKSPACE_READ_BOUNDS[name as keyof WorkspaceReadBounds]?.default))
+    return { ...kept, ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
   }
 
   /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */
@@ -1910,7 +1938,9 @@ export class AgentWorkers extends Service {
    * and whether an approval resumes the step, so the agent asks the operator less and is denied
    * less: for every Worker, fit to its sandbox (a read-only one is told it writes nothing and given
    * no writing tool or commands list), never for a review member (its gate allows no call). Read from `ctx.approvals.policy()` now, and the
-   * runtime's evidence of clean shells, as the gate reads it (a probe that fails: none); with no
+   * runtime's evidence of clean shells and of the workspace reads server (T200b: its tools are the
+   * reading tools, and the agent is told to read with them, never with a shell), as the gate reads
+   * it (a probe that fails: neither); with no
    * queue, or one that cannot be read, the turn is sent as it is (logged), since the gate still
    * decides every call. Appended before the egress check, which sees it.
    */
@@ -1920,8 +1950,10 @@ export class AgentWorkers extends Service {
     if (!approvals) return turn
     const workspace = worker.worktreePerRun && row.workflow_run_id && RUN_ID.test(row.workflow_run_id) ? this.worktrees.pathOf(worker.workspace, row.workflow_run_id) : worker.workspace
     try {
-      const shellReads = await this.evidence(worker, 'proven').then((evidence) => evidence.cleanShells === true, () => false)
-      const note = unaskedNote(await approvals.policy(), workspace, { shellReads, resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox })
+      const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
+      const note = unaskedNote(await approvals.policy(), workspace, {
+        shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
+      })
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
       this.ctx.logger.warn(`agent Workers: the autonomy policy could not be read for ${row.run_id}'s note of the calls that run unasked; it is sent without it: ${(error as Error).message}`)
@@ -2013,6 +2045,8 @@ export class AgentWorkers extends Service {
       classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : {}),
       // A shell command is taken for a read only where the runtime enforces shells that read no startup code (T198).
       shellReads: evidence.cleanShells === true,
+      // The workspace reads server's tools are reads only where the runtime gives its agent that server (T200b).
+      workspaceReads: evidence.workspaceReads === true,
     })
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,
@@ -2022,6 +2056,8 @@ export class AgentWorkers extends Service {
       ...(turn.resume ? { resume: turn.resume } : {}),
       // A derived Worker's account in another home than the runtime's own runs there, and only there (ADR-0051).
       ...(named ? { home: named.home } : {}),
+      // A runtime that gives its agent the workspace reads server bounds it so (T200b); one that gives none ignores it.
+      workspaceReads: this.readBounds,
       toolGate: gate.gate,
     }
     // Metered: nothing runs without a reservation (INV-2, INV-9).

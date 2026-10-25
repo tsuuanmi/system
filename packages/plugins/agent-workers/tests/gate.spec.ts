@@ -231,6 +231,15 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     for (const e of shown) expect(agentToolEventOf(e.type, e.data), e.type).toBeDefined()
   })
 
+  it('denies a workspace reads server call under a runtime that reports no such server, whatever the policy lets read, and tells it of no such server (T200b)', async () => {
+    const agent = new GatedAgent([[{ tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts' } }, { tool: 'Read', input: { file_path: join(WORKSPACE, 'src/a.ts') } }]])
+    const { ctx, run } = await boot(agent)
+    expect((await run()).status).toBe('completed')
+    expect(agent.verdicts[0]!.map((v) => v.decision)).toEqual(['deny', 'allow'])
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['unclassified-tool'])
+    expect(agent.runs[0]!.prompt).not.toContain('workspace server')
+  })
+
   it('denies a call the policy forbids, with the reason its autonomy decision records', async () => {
     // A command that is no read-only inspection stays `command`, which the policy decides.
     const agent = new GatedAgent([[bash('npm test')]])
@@ -301,6 +310,21 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(sent).toContain('Any other command waits for the operator; unanswered in time, or rejected, it is denied and you go on without it')
     expect(sent).toContain('An approval resumes this step')
     expect(sent.length - 'step 1\n\n'.length).toBeLessThanOrEqual(TOOLS_NOTE_MAX)
+    // Nor is it told of a workspace reads server its runtime does not give it.
+    expect(sent).not.toContain('workspace server')
+  })
+
+  it('names Bash inspection among the unasked calls only where shells are clean, and the workspace server\'s tools where the runtime gives them, telling the Worker to read with them, never with a shell (T198, T200b)', () => {
+    const effective = [{ actionClass: 'read' as const, mode: 'auto' }]
+    expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('Bash read-only inspection')
+    expect(unaskedNote({ policies: [], effective }, '/ws', { shellReads: true })).toContain('- Bash read-only inspection, every path absolute and inside /ws')
+    const reads = unaskedNote({ policies: [], effective }, '/ws', { workspaceReads: true })
+    expect(reads).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace /ws.')
+    expect(reads).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range)')
+    expect(reads).toContain('read with the workspace server\'s tools, never with a shell.')
+    // A read-only Worker is told the same, whatever the policy runs unasked.
+    expect(unaskedNote({ policies: [], effective: [] }, '/ws', { workspaceReads: true, sandbox: 'read-only' })).toContain('- Read your workspace with the workspace server\'s tools, never with a shell')
+    expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('workspace server')
   })
 
   it('tells a read-only Worker its Tools section too, fit to its sandbox: the workspace, its reads, the refusals, and whether an approval resumes the step, with no writing tool, and the exact commands the gate runs unasked whatever the sandbox (T207)', async () => {
@@ -955,6 +979,45 @@ describe('classify: a tool call as the action the policy judges', () => {
     }
   })
 
+  it('classifies exactly the workspace reads server\'s three tools as reads inside the workspace, for a run whose runtime gives its agent that server, and refuses any other tool of it (T200b)', () => {
+    const served = { workspaceReads: true }
+    for (const options of [served, { ...served, shellReads: false }, { ...served, shellReads: true }]) {
+      expect(classify({ tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', startLine: 1, endLine: 2 } }, ws, options)).toMatchObject({ class: 'read', summary: 'mcp__workspace__read_file src/a.ts' })
+      expect(classify({ tool: 'mcp__workspace__list_dir', input: {} }, ws, options)).toMatchObject({ class: 'read' })
+      expect(classify({ tool: 'mcp__workspace__list_dir', input: { path: '' } }, ws, options)).toMatchObject({ class: 'read' })
+      expect(classify({ tool: 'mcp__workspace__search', input: { pattern: 'x', regex: true, ignoreCase: false, path: join(ws, 'src') } }, ws, options)).toMatchObject({ class: 'read' })
+    }
+    // Outside the workspace, through a symlink out, climbing with "..", or into git's data: refused, the policy never asked.
+    mkdirSync(join(ws, '.git'), { recursive: true })
+    const reasons: Record<string, string> = {
+      '/etc/hostname': 'outside-workspace', [join(outside, 'secret')]: 'outside-workspace', 'link-file': 'outside-workspace', 'link-dir': 'outside-workspace', 'src/up/secret': 'outside-workspace',
+      '../outside/secret': 'outside-workspace', 'src/../src/a.ts': 'outside-workspace', '.git/config': 'git-data', '.git': 'git-data',
+    }
+    for (const [path, reason] of Object.entries(reasons)) {
+      expect(classify({ tool: 'mcp__workspace__read_file', input: { path } }, ws, served), path).toMatchObject({ refused: expect.any(String), reason })
+      expect(classify({ tool: 'mcp__workspace__search', input: { pattern: 'x', path } }, ws, served), path).toMatchObject({ refused: expect.any(String), reason })
+    }
+    expect(classify({ tool: 'mcp__workspace__read_file', input: {} }, ws, served)).toMatchObject({ reason: 'invalid-input' })
+    // An argument the server does not take, or one of another type.
+    expect(classify({ tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', offset: 1 } }, ws, served)).toMatchObject({ refused: expect.stringContaining('"offset"'), reason: 'unsupported-field' })
+    expect(classify({ tool: 'mcp__workspace__search', input: { pattern: 'x', regex: 'yes' } }, ws, served)).toMatchObject({ reason: 'unsupported-field' })
+    // Any other tool of that server is refused by name, whatever its input.
+    for (const tool of ['mcp__workspace__write_file', 'mcp__workspace__exec', 'mcp__workspace__', 'mcp__workspace__read_file_x']) {
+      expect(classify({ tool, input: { path: 'src/a.ts' } }, ws, served), tool).toMatchObject({ refused: expect.stringContaining('is not one of the workspace reads server\'s tools'), reason: 'unclassified-tool' })
+    }
+  })
+
+  it('takes the workspace reads server\'s tools for reads only where the runtime reports it gives its agent that server: otherwise any tool of that name is refused (T200b)', () => {
+    for (const options of [{}, { workspaceReads: false }, { shellReads: true }, { shellReads: true, workspaceReads: false }]) {
+      for (const call of [
+        { tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts' } }, { tool: 'mcp__workspace__list_dir', input: {} }, { tool: 'mcp__workspace__search', input: { pattern: 'x' } },
+        { tool: 'mcp__workspace__write_file', input: { path: 'src/a.ts' } }, { tool: 'mcp__workspace__read_file', input: 'a' },
+      ]) {
+        expect(classify(call, ws, options), `${call.tool} ${JSON.stringify(options)}`).toMatchObject({ refused: expect.stringContaining('gives its agent no workspace reads server'), reason: 'unclassified-tool' })
+      }
+    }
+  })
+
   it('refuses a tool it does not know and an input that is not an object', () => {
     for (const call of [{ tool: 'mcp__x__y', input: {} }, { tool: 'Agent', input: {} }, { tool: 'request_user_input', input: { questions: [] } }, { tool: 'write_stdin', input: { session_id: 1, chars: 'x' } }, { tool: 'Read', input: 'a' }, { tool: 'Read', input: null }]) {
       expect(classify(call, ws)).toHaveProperty('refused')
@@ -1082,8 +1145,33 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
       confine: (bind) => ({ bwrap: '/usr/bin/bwrap', hide: [], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }),
       prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => undefined, status: async () => undefined, launcher: () => '/launcher',
     })
-    return { runtime, hooks: () => s.calls.flatMap((c) => c.hooks) }
+    return { runtime, hooks: () => s.calls.flatMap((c) => c.hooks), prompts: () => s.calls.map((c) => c.prompt) }
   }
+
+  it('reads its workspace through the workspace reads server with no approval request, as its brief tells it; another tool of that server is denied, and Bash cat stays a command (T200b)', async () => {
+    const a = join(WORKSPACE, 'src/a.ts')
+    const { runtime, hooks, prompts } = codex([
+      { tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', startLine: 1, endLine: 20 }, item: 'mcp_tool_call' },
+      { tool: 'mcp__workspace__search', input: { pattern: 'needle' }, item: 'mcp_tool_call' },
+      { tool: 'mcp__workspace__write_file', input: { path: 'src/a.ts' }, item: 'mcp_tool_call' },
+      { tool: 'Bash', input: { command: `cat ${a}` }, item: 'command_execution' },
+    ])
+    expect(await runtime.probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false, workspaceReads: true })
+    const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
+    const done = await run()
+    // The two reads run unasked; the server's other tool is denied by the gate's own rule; the shell read waits for the operator.
+    expect(hooks().map((h) => h.blocked)).toEqual([false, false, true, true])
+    expect(hooks()[2]!.reason).toContain('mcp__workspace__write_file is not one of the workspace reads server\'s tools')
+    expect(decisionOf(ctx, hooks()[2]!.reason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['unclassified-tool'])
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
+    // One request, for the shell command alone: no read asked the operator.
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
+    // Its brief says to read with the server's tools, never with a shell, and names no shell read as unasked.
+    expect(prompts()[0]).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file')
+    expect(prompts()[0]).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace')
+    expect(prompts()[0]).not.toContain('Bash read-only inspection')
+  })
 
   it('is admitted on its probe, patches its workspace through the hook, is denied outside it, and waits for the operator on a command', async () => {
     const patch = (path: string) => ({ command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch\n` })

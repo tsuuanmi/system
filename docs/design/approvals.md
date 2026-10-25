@@ -269,6 +269,7 @@ another type, is denied, its reason naming the field.
 | Tool | Action |
 |---|---|
 | `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image` | `read`, for a path inside the run's workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal leading directory is outside it, or that climbs with `..`, is denied |
+| `mcp__workspace__read_file`, `mcp__workspace__list_dir`, `mcp__workspace__search` | `read`: the three tools of System's own [workspace reads server](agent-runtimes.md#the-workspace-reads-server) (T200b), which run no program, only for a run whose runtime reports it gives its agent that server (`workspaceReads`; elsewhere every `mcp__workspace__…` tool is denied, `unclassified-tool`); for the `path` they name inside the workspace (absent or empty for `list_dir` and `search`: the workspace), with no `..` segment and not in git's own data. Their other fields are the server's own: `read_file`'s `startLine` and `endLine` (numbers), `search`'s `pattern` (text) and `regex` and `ignoreCase` (booleans). Any other tool of that server (`mcp__workspace__…`) is denied by name (`unclassified-tool`); a `..` segment is `outside-workspace`, git's data `git-data` |
 | `read_file` | `read`, for the file `Path` names inside the workspace; its other fields are `StartLine`, `EndLine`, and `ByteOffset` (numbers) |
 | `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `workspace-write`, for a file inside the workspace; outside it is denied (and refused by the runtime), and so is a file in git's own data (`.git` anywhere in its path, as written or on disk; the same for `write_file`, `edit_file`, and `apply_patch`), whose configuration a git command would run |
 | `write_file`, `edit_file` | `workspace-write`, for the file `Path` names inside the workspace; `write_file`'s other fields are `Content` (text), `Append`, and `Overwrite` (booleans), `edit_file`'s `Target` and `Replacement` (text); `ArtifactMetadata`, which writes one of agy's own artifacts, is denied |
@@ -319,8 +320,8 @@ code too. The codes ([events reference](../reference/schemas.md#event)):
 |---|---|
 | `metacharacter`, `empty-word` | a `Bash` word holds a shell metacharacter, or is empty; denied before the policy is asked |
 | `outside-workspace` | names a path outside the workspace, as written or on disk, or a `Glob` pattern that reaches out |
-| `git-data` | writes git's own data (`.git`) |
-| `unclassified-tool` | a tool the gate does not classify |
+| `git-data` | writes git's own data (`.git`), or reads it through the workspace reads server |
+| `unclassified-tool` | a tool the gate does not classify (a workspace reads server tool under a runtime that gives no such server among them) |
 | `unsupported-field` | an input field the gate does not classify, or one of another type |
 | `invalid-input`, `invalid-patch` | an input that is no object or names nothing where it must; a patch outside the grammar |
 | `policy-forbid` | the policy forbids its class |
@@ -382,18 +383,22 @@ characters, a field no denial carries) is counted apart, never by reason.
 - **A run with no session** cannot be continued, so an `ask` there is denied, not deferred, and
   nothing is queued: the operator is never asked for an approval no run could use.
 - **Asking less.** Every Worker but a review member (whose gate allows no call) is given, with
-  every turn's prompt, one Tools section (T199, extended by T207) from its gate, its sandbox, and
-  the policy as it stands (`ctx.approvals.policy()`): its workspace path; for a read-only
-  sandbox, that no tool call writes a file (it is then given no writing tool and no commands
-  list); the calls its gate lets run unasked, reading
-  tools when `read` runs unasked (and the read-only inspection commands of the table above only
-  under a runtime that enforces clean shells, where the gate takes them for reads; elsewhere it
-  says no `Bash` command is a read), writing tools when `workspace-write` does, and the studio
-  policy's commands list, its exact lines (at most 50 shown), when `workspace-write` runs
-  unasked and `command` is not forbidden (every command when `command` itself runs unasked), or
-  that none runs unasked; that a word with a shell metacharacter or an empty word is refused,
-  and that a relative path makes no command a read; and whether an approval resumes the step
-  (the run has a session) or a call that would ask is denied at once (it has none). At most
+  every turn's prompt, one Tools section (T199, extended by T207) from its gate, its sandbox, its
+  runtime's evidence, and the policy as it stands (`ctx.approvals.policy()`): its workspace path;
+  under a runtime that gives its agent the
+  [workspace reads server](agent-runtimes.md#the-workspace-reads-server) (T200b), to read with
+  its `read_file`, `list_dir`, and `search`, never with a shell; for a read-only sandbox, that no
+  tool call writes a file (it is then given no writing tool); the calls its gate lets run
+  unasked, reading tools when `read` runs unasked (the workspace reads server's where the runtime
+  gives it, else the runtime's own; and the read-only inspection commands of the table above
+  only under a runtime that enforces clean shells, where the gate takes them for reads; elsewhere
+  it says no `Bash` command is a read), writing tools when `workspace-write` does (never in a
+  read-only sandbox), and the studio policy's commands list, its exact lines (at most 50 shown),
+  when `workspace-write` runs unasked and `command` is not forbidden, whatever the sandbox, since
+  the gate runs a listed command unasked in either (every command when `command` itself runs
+  unasked), or that none runs unasked; that a word with a shell metacharacter or an empty word is
+  refused, and that a relative path makes no command a read; and whether an approval resumes the
+  step (the run has a session) or a call that would ask is denied at once (it has none). At most
   4,000 characters: the commands list is cut first, its rest counted. Nothing it names as
   unasked is a call the policy asks about now; the gate still judges every call. With no queue,
   or a policy that cannot be read, the prompt goes without it.

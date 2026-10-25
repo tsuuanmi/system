@@ -28,6 +28,15 @@ operator's installed `codex` through the official Codex TypeScript SDK.
     `shell` program and `login`, which the hook does not show, so it never
     reports `cleanShells`, and the gate takes none of its shell commands for a
     read;
+  - so it **reads through the workspace reads server** (T200b): every run, the
+    read-only sandbox's included, registers agent-runtime-core's server
+    (`mcp_servers.workspace`, a per-run `--config` override; `readsOverride`),
+    started as `node` and its script under a bubblewrap of their own inside the
+    run's confinement: the host and the workspace read-only, no network
+    (`readsServer`, the script, defaults to `WORKSPACE_READS_SCRIPT`). Its bounds
+    are the run's `workspaceReads` (out of range: `config_error`). The probe's
+    self-test starts it nested as a run does before it reports `workspaceReads`;
+    otherwise no Worker is offered;
   - Codex runs in **its own Codex home** (`CODEX_HOME`, config `home`, default
     `<DSH_HOME>/system/codex-home`, created owner-only), never the operator's
     `~/.codex`, where `system mcp-config codex` puts the `system` MCP server.
