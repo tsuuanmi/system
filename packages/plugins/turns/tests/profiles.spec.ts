@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { canRunBrowser } from '../../browser-patchright/tests/support.ts'
 import { phase } from '../src/index.ts'
