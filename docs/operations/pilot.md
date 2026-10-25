@@ -2,9 +2,9 @@
 
 How the operator runs Base's pilot ([PROP-0010](../proposals/0010-base-version.md) B8): one
 algorithm-development project, chosen by the operator, run from its charter over at least five
-working days, through at least one restart, on Claude Code Workers only, and measured against the
-baseline ([Base exit criteria](../requirements/release-scope.md#base-exit-criteria) 3, 4, 5, and
-7). The code it uses: the [`algorithm-development`](../reference/workflow-templates.md#algorithm-development)
+working days, through at least one restart, with Claude Code Workers writing every change (other
+agent Workers may validate and review), and measured against the baseline
+([Base exit criteria](../requirements/release-scope.md#base-exit-criteria) 3, 4, 5, and 7). The code it uses: the [`algorithm-development`](../reference/workflow-templates.md#algorithm-development)
 template, the board, the approval queue, the resource ledger, digests, and the
 [baseline report](../design/reports.md). Routine procedures it leans on are in the
 [runbooks](runbooks.md).
@@ -12,7 +12,19 @@ template, the board, the approval queue, the resource ledger, digests, and the
 Roles: you are the investor (the operator): you approve the charter, answer the queue, accept or
 reject results, merge them, and pause or close the project. The lead is your own Claude Code session connected to `system`
 over MCP (`system mcp-config claude`): it proposes tasks and starts their runs with the client
-tools. The Workers are Claude Code Workers that `system` runs, each in a run's own worktree.
+tools. The Workers are agent Workers that `system` runs, each in a run's own worktree: Claude Code
+Workers write every change; a Codex Worker may run the validation and review.
+
+## The pilot: project `system`
+
+From 2026-10-25 the pilot is the project `system`, on the system repository itself. Its charter is
+version 2 of the project (proposed 2026-10-25); the board holds it, so read it there. The roles
+are the live install's split ([route work by kind](runbooks.md#route-work-by-kind)): a Claude Code
+Worker develops, with `kinds: [code, docs, tests]`; a Codex Worker takes the validation
+(`kinds: [validation]`) and reviews. Read its progress on `/ui`'s **Board** (the project's header and its
+tasks by state, [web UI](../reference/web-ui.md)) and **Home** (what waits for you), and in `system report --project <its id>`
+([a working day](#a-working-day)). The sections below are the procedure for any pilot, with an
+example repository.
 
 ## Before you start
 
@@ -102,12 +114,16 @@ repository at `/home/me/src/align`:
 
 Then `system check` until it says `ok`, `system shutdown`, `system start`, and `system health`:
 the three Workers `ready`. The developer proves `develop` and `validate`, the reviewer and the
-digester `review`. Keep `workspace-write`'s required checks: the engine never reports `tests`
-from a model's account of a command, so with them every result waits for your acceptance, which
-is where the checks bind ([accept or reject a review](runbooks.md#accept-or-reject-a-review)).
+digester `review`. Keep `workspace-write`'s required checks: the engine never takes `tests` from a
+model's account of a command. It runs them itself on the result's exact tree when the
+repository's checks are configured, and a result whose checks pass no longer waits for you to run
+them ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md),
+[let a run pass the required checks](runbooks.md#let-a-run-pass-the-required-checks)); otherwise
+every result waits for your acceptance, which is where the checks bind
+([accept or reject a review](runbooks.md#accept-or-reject-a-review)).
 
 On an install where other Workers are on too, such as the live install with its website and
-reviewer Workers, also put the pilot's Claude Code Workers first in the `workers` row's
+reviewer Workers, also put the pilot's Workers first in the `workers` row's
 `priority`, keeping the row's other options (the patch replaces the whole row). Routing reads that
 list after tier, quota, and load, so it decides between Workers those leave equal
 ([routing](../design/routing.md)).

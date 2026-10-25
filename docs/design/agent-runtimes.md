@@ -461,7 +461,7 @@ and the retention removes it as any other; its branch keeps the carry commit, wh
 ### A run's checks
 
 > Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)
-> (proposed), T151. Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (accepted 2026-10-25, D67), T151. Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/checks.ts`); the engine asks ([a run's required checks](workflow-engine.md#a-runs-required-checks)).
 
 The `agents` source answers `check(step, signal)` on the `workers` seam for the worktrees it holds:

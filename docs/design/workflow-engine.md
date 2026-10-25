@@ -1072,7 +1072,7 @@ stateDiagram-v2
 ## A run's required checks
 
 > Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)
-> (proposed), T151, REQ-WF-15. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (accepted 2026-10-25, D67), T151, REQ-WF-15. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
 > (`src/checks.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/checks.ts`, [a run's checks](agent-runtimes.md#a-runs-checks)).
 

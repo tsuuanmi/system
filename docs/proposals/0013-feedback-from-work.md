@@ -651,7 +651,7 @@ no completion gate. The lease rule narrows when `lost` fires and changes no reco
    its checks even when `develop:1`'s Worker has no commands? **Taken up by T151 (2026-10-25)** in
    another form: after the run's last step, the source that holds its worktree runs the required
    checks with the operator's commands on the result's exact tree, and the acceptance reports them
-   ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md), proposed).
+   ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md), accepted 2026-10-25, D67).
 
 ## Decision
 

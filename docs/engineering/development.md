@@ -159,8 +159,12 @@ serves per attempt. The [board](../design/board.md), the
    MCP `board_update` `answers`; the next attempt goes through the gate, its brief pointing at the
    answers ([a question from a run](../design/workflow-engine.md#a-question-from-a-run)).
 
-After the run, under the studio policy, which requires `tests` and `lint` that the engine never
-reports itself, the board holds the review for the operator
+After the run, the engine runs the checks the studio policy requires (`tests` and `lint`) on the
+result's exact tree, with the commands configured for the repository
+([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md),
+[runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)). A result whose required
+checks pass at acceptance no longer waits for the operator to run them; a failed check is another
+attempt; a check still pending holds the review for the operator
 ([a review held for the operator](../design/board.md#a-review-held-for-the-operator)):
 
 - **Accepted**, the task is `done`. The system commits the worktree on `system/run/<runId>` and

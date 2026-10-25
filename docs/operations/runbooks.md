@@ -485,7 +485,9 @@ does.
    - `claude-member` keeps its empty directory, never a worktree.
 3. **The approval policy that gates the writers' commands** (ADR-0038) is the bundle's studio
    policy, unchanged: reads and edits run (`workspace-write` is `auto`, with `tests` and `lint`
-   required at acceptance, so every result waits for your review), and every command asks. In a
+   required at acceptance, so a result waits for your review unless the run passed them
+   ([let a run pass the required checks](#let-a-run-pass-the-required-checks))), and every command
+   asks. In a
    step with a session (`develop:1`) a command waits on the approval queue
    ([a deferred tool call](#a-workers-tool-call-is-deferred-on-an-approval)); in `validate:1`, which
    has none, it is denied and reported not run. Listing a command

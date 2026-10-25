@@ -1,6 +1,7 @@
 # ADR-0063: A run's required checks run on its exact result
 
-- **Status:** Proposed (2026-10-25, T151; built on the operator's go-ahead for T151). It changes what
+- **Status:** Accepted (2026-10-25, by the operator, D67; proposed 2026-10-25, T151, and built on the
+  operator's go-ahead for T151). It changes what
   the core accepts only for a repository whose checks the operator configures: with none
   configured, every result is accepted as before.
 - **Date:** 2026-10-25
