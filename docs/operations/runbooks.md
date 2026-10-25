@@ -1676,8 +1676,9 @@ check` (37 rows, checked on a copy, 2026-10-23).
    It changes nothing. It checks the tools, the live checkout (clean, at e218ae7), the target (a
    descendant), the vault key, free space, and the candidate patch against the target's code
    (`system check --env-file` on a scratch copy of the profile, with the unit's environment file);
-   that the daemon runs under `system.service`; captures what the profile answers now (a read); and
-   prints `system health` and the plan. Fix what it reports until it ends with the plan.
+   that the daemon runs under `system.service`; captures what the profile answers now (a read),
+   with each Worker's availability from its roster (`system roster --json`) as a table; and prints
+   `system health` and the plan. Fix what it reports until it ends with the plan.
 3. **Apply:** the same command with `--apply`, in a shell that outlives a disconnect (`tmux`, or
    `nohup … > ~/system-backups/live-update.out 2>&1 &`): the drain alone may take ten minutes. The
    unit starts the daemon with its environment file, never this shell's environment. Notes and the
@@ -1688,7 +1689,9 @@ check` (37 rows, checked on a copy, 2026-10-23).
      (unavailable)`): [Codex Workers](#codex-workers) and [Antigravity CLI
      Workers](#antigravity-cli-workers) list the reasons and what to do.
    - Exit 1, `STOP` (nothing was changed) or `rolled back`: e218ae7 runs, on its store as it was at the
-     stop. The notes say why.
+     stop. The notes say why. A Worker that took work before and stays unavailable names its reason
+     in the table of the Workers before and after: fix its cause on the host (a runtime's probe, its
+     sandbox), then update again.
    - Exit 2, `LOOK FIRST`: the script will not act on what it found, or the rollback failed. It prints
      the checkout, the daemon, and the backup; recover by hand (below).
 
@@ -1714,7 +1717,20 @@ check` (37 rows, checked on a copy, 2026-10-23).
 - Before the start: `system check --env-file` of the profile as it will start, with the unit's
   environment file. Then `systemctl --user start system.service` (a unit the updated code made fail
   at its start limit is reset first).
-- After the start: `/healthz`, then the [upgrade suite's](../../packages/cli/tests/upgrade/upgrade.e2e.ts)
+- After the start: `/healthz`, then the Workers. The capture read each Worker's availability from
+  the roster (`ready`, `busy`, `resting`, `unavailable`, `quarantined`). The check reads the roster
+  again every 10 s, up to `--workers-wait` seconds (600 by default: two of `agent-workers`'
+  `probeTtlMs`, so each runtime's first probe after the start, and one more, have had their time),
+  until every Worker that took work before (`ready` or `busy`) takes work again. One that stays
+  `unavailable` or `quarantined`, or is no longer listed, fails the check with the roster's reason
+  (its account's, else its source's `unavailableReason`: a failed probe's detail, say), and the update
+  rolls back. One `resting` at a usage limit is a note, as are the Workers that took no work before
+  and the ones new in the update. The script prints the Workers before and after, one line each,
+  with why each one that takes no work does not. On 2026-10-26 the update to 803ac4b8 passed every
+  other check while all four Codex Workers were unavailable for about 40 minutes (their probe failing
+  on the host's bubblewrap 0.4.0); this check stops such an update. A capture from a profile whose
+  roster could not be read, or from before this check, compares no Workers and says so.
+  Then the [upgrade suite's](../../packages/cli/tests/upgrade/upgrade.e2e.ts)
   expectations, on the live store: every run explains and answers `result` as before (one running at
   the capture may have moved on), no migration went backwards, and every step, session, and artifact
   record of a post-update snapshot validates. No health check is worse than it was (ok, degraded,

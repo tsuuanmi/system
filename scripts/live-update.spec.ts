@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { baselineProblems, type Health, healthOf, healthProblems, runProblems } from './live-update-check.ts'
+import { awaitWorkers, baselineProblems, type Health, healthOf, healthProblems, runProblems, workerProblems, type Workers, workersNow, workersOf, workersTable } from './live-update-check.ts'
 import { daemonEnv, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
 
 // Each test runs the script end to end, once or several times, and each run starts git, Node, and
@@ -242,6 +242,13 @@ describe('live-update.sh', () => {
     expect(f.git('rev-parse', 'HEAD')).toBe(f.from)
   })
 
+  it('takes --workers-wait in whole seconds only', () => {
+    const f = fixture()
+    const { status, output } = run(f, f.target, '--workers-wait', 'ten')
+    expect(status).toBe(2)
+    expect(output).toContain('[--workers-wait <seconds>]')
+  })
+
   it('refuses to check the profile with a checkout of other code than the target', () => {
     const f = fixture()
     const other = join(f.root, 'other')
@@ -380,5 +387,137 @@ describe('live-update-check: what the update may not make worse', () => {
     const running = { ...done, status: 'running', result: 'running' }
     expect(runProblems(running, { ...done, nodes: 4 })).toEqual([])
     expect(runProblems(running, { ...done, template: 'plan' })).toEqual(['run r1: template plan, was ask'])
+  })
+})
+
+/** A roster entry as MCP `roster` gives it (`mcp-roster@1.9`), with only what the check reads and a name. */
+const entry = (worker: string, availability: Record<string, unknown>) => ({ worker, name: worker, provider: worker.split(':')[0], availability })
+const PROBE_FAILED = 'its codex probe failed: bwrap: Unknown option --argv0 (bubblewrap 0.4.0)'
+
+/** The live roster before the update to 803ac4b8 (2026-10-26): four Codex Workers ready or busy, a website Worker waiting on its sign-in. */
+const ROSTER_BEFORE = {
+  asOf: '2026-10-26T09:00:00.000Z',
+  workers: {
+    value: [
+      entry('agent:codex-main/develop', { state: 'ready', summary: 'ready' }),
+      entry('agent:codex-main/review', { state: 'busy', summary: 'busy 1 of 2', running: 1, slots: 2 }),
+      entry('agent:codex-second/develop', { state: 'ready', summary: 'ready' }),
+      entry('agent:codex-second/review', { state: 'ready', summary: 'ready' }),
+      entry('worker:gemini-main/flash', { state: 'unavailable', summary: 'unavailable: its account must sign in again (system account login)', reason: { value: 'its account must sign in again (system account login)' } }),
+    ],
+  },
+  unlisted: 0,
+  counts: { ready: 3, busy: 1, resting: 0, unavailable: 1, quarantined: 0 },
+}
+
+/** The same roster after it: every Codex Worker unavailable, its probe failing on the host's bubblewrap. */
+const ROSTER_AFTER = {
+  ...ROSTER_BEFORE,
+  asOf: '2026-10-26T09:12:00.000Z',
+  workers: {
+    value: ROSTER_BEFORE.workers.value.map((w) => (w.worker.startsWith('agent:codex-')
+      ? entry(w.worker, { state: 'unavailable', summary: `unavailable: ${PROBE_FAILED}`, reason: { value: PROBE_FAILED } })
+      : w)),
+  },
+  counts: { ready: 0, busy: 0, resting: 0, unavailable: 5, quarantined: 0 },
+}
+
+describe('live-update-check: the Workers take work again after the update (T219)', () => {
+  it('reads each Worker\'s availability, and why one takes no work, from the roster', async () => {
+    expect(workersOf(ROSTER_BEFORE)).toEqual({
+      workers: [
+        { worker: 'agent:codex-main/develop', state: 'ready' },
+        { worker: 'agent:codex-main/review', state: 'busy' },
+        { worker: 'agent:codex-second/develop', state: 'ready' },
+        { worker: 'agent:codex-second/review', state: 'ready' },
+        { worker: 'worker:gemini-main/flash', state: 'unavailable', reason: 'its account must sign in again (system account login)' },
+      ],
+    })
+    expect(workersOf({ workers: { unknown: 'the Worker registry (ctx.workers) is not mounted' } })).toEqual({ unread: "the roster's Workers are unknown: the Worker registry (ctx.workers) is not mounted" })
+    expect(workersOf({ workers: { value: [entry('agent:x', { state: 'unavailable', summary: 's', reason: { unknown: 'its Worker source gives no reason' } })] } }))
+      .toEqual({ workers: [{ worker: 'agent:x', state: 'unavailable', reason: 'unknown (its Worker source gives no reason)' }] })
+    // Read as the operator, through MCP `roster`; a profile that refuses it (one from before the roster) is unread, never an empty roster.
+    const asked: string[] = []
+    expect(await workersNow(async (name) => { asked.push(name); return { isError: false, text: '', structured: ROSTER_BEFORE } }, '/nowhere')).toEqual(workersOf(ROSTER_BEFORE))
+    expect(asked).toEqual(['roster'])
+    expect(await workersNow(async () => ({ isError: true, text: 'unknown tool roster', structured: undefined }), '/nowhere')).toEqual({ unread: 'roster: unknown tool roster' })
+    expect(await workersNow(async () => { throw new Error('connect ECONNREFUSED') }, '/nowhere')).toEqual({ unread: 'roster: connect ECONNREFUSED' })
+  })
+
+  it('a Worker that took work before and is unavailable after fails the check with its reason; one that took none before is not held to it', () => {
+    const { problems, notes, waiting } = workerProblems(workersOf(ROSTER_BEFORE), workersOf(ROSTER_AFTER))
+    expect(problems).toEqual([
+      `Worker agent:codex-main/develop was ready before the update and is unavailable now: ${PROBE_FAILED}`,
+      `Worker agent:codex-main/review was busy before the update and is unavailable now: ${PROBE_FAILED}`,
+      `Worker agent:codex-second/develop was ready before the update and is unavailable now: ${PROBE_FAILED}`,
+      `Worker agent:codex-second/review was ready before the update and is unavailable now: ${PROBE_FAILED}`,
+    ])
+    expect(notes).toEqual([])
+    expect(waiting).toEqual(['agent:codex-main/develop', 'agent:codex-main/review', 'agent:codex-second/develop', 'agent:codex-second/review'])
+    expect(workerProblems(workersOf(ROSTER_BEFORE), workersOf(ROSTER_BEFORE))).toEqual({ problems: [], notes: [], waiting: [] })
+  })
+
+  it('a Worker gone from the roster, or a roster that cannot be read, is a problem; one resting at a limit is a note', () => {
+    const before: Workers = { workers: [{ worker: 'a', state: 'ready' }, { worker: 'b', state: 'ready' }, { worker: 'c', state: 'unavailable', reason: 'x' }] }
+    const after: Workers = { workers: [{ worker: 'b', state: 'resting', reason: 'resting at a limit until 2026-10-26T12:00:00Z' }, { worker: 'd', state: 'unavailable', reason: 'new' }] }
+    expect(workerProblems(before, after)).toEqual({
+      problems: ['Worker a was ready before the update and is not listed now (its source does not describe it)'],
+      notes: ['Worker b was ready before the update and is resting at a limit now: resting at a limit until 2026-10-26T12:00:00Z'],
+      waiting: ['a'],
+    })
+    expect(workerProblems(before, { unread: 'roster: connect ECONNREFUSED' })).toEqual({
+      problems: ['the Workers cannot be read after the update (roster: connect ECONNREFUSED): 2 took work before it'], notes: [], waiting: ['a', 'b'],
+    })
+  })
+
+  it('a capture without the Workers, or that could not read them, compares nothing and says so', () => {
+    expect(workerProblems(undefined, workersOf(ROSTER_AFTER))).toEqual({ problems: [], notes: ['the capture holds no Workers (made before the check read them): their availability is not compared'], waiting: [] })
+    expect(workerProblems({ unread: 'roster: unknown tool roster' }, workersOf(ROSTER_AFTER)).notes).toEqual(['the Workers were not read before the update (roster: unknown tool roster): their availability is not compared'])
+  })
+
+  it('waits, bounded, until every Worker that took work before takes work again', async () => {
+    let clock = 0
+    const sleeps: number[] = []
+    const sleep = async (ms: number) => { sleeps.push(ms); clock += ms }
+    const options = { waitMs: 600_000, everyMs: 10_000, sleep, now: () => clock }
+    // Unavailable while each runtime's first probe runs after the start, then ready again.
+    const reads = [ROSTER_AFTER, ROSTER_AFTER, ROSTER_BEFORE]
+    let read = 0
+    const back = await awaitWorkers(async () => workersOf(reads[Math.min(read++, reads.length - 1)]), workersOf(ROSTER_BEFORE), options)
+    expect(back.problems).toEqual([])
+    expect(read).toBe(3)
+    expect(sleeps).toEqual([10_000, 10_000])
+
+    // Still unavailable at the bound: the check fails with each one's reason, after no more than the wait.
+    clock = 0
+    sleeps.length = 0
+    const stuck = await awaitWorkers(async () => workersOf(ROSTER_AFTER), workersOf(ROSTER_BEFORE), options)
+    expect(stuck.problems).toHaveLength(4)
+    expect(stuck.problems[0]).toContain(PROBE_FAILED)
+    expect(clock).toBe(600_000)
+    expect(sleeps).toHaveLength(60)
+
+    // Nothing to wait for: one read.
+    clock = 0
+    sleeps.length = 0
+    expect((await awaitWorkers(async () => workersOf(ROSTER_AFTER), undefined, options)).problems).toEqual([])
+    expect(sleeps).toEqual([])
+  })
+
+  it('prints the Workers before and after the update, with why one takes no work', () => {
+    // Columns as wide as their widest cell (the id, and the before column's sign-in reason), two spaces apart.
+    const signIn = 'unavailable: its account must sign in again (system account login)'
+    const row = (worker: string, before: string, after: string): string => `${worker.padEnd(26)}  ${before.padEnd(signIn.length)}  ${after}`
+    expect(workersTable(workersOf(ROSTER_BEFORE), workersOf(ROSTER_AFTER))).toEqual([
+      row('Worker', 'before', 'after'),
+      row('agent:codex-main/develop', 'ready', `unavailable: ${PROBE_FAILED}`),
+      row('agent:codex-main/review', 'busy', `unavailable: ${PROBE_FAILED}`),
+      row('agent:codex-second/develop', 'ready', `unavailable: ${PROBE_FAILED}`),
+      row('agent:codex-second/review', 'ready', `unavailable: ${PROBE_FAILED}`),
+      row('worker:gemini-main/flash', signIn, signIn),
+    ])
+    expect(workersTable({ workers: [{ worker: 'a', state: 'ready' }] }, { workers: [{ worker: 'b', state: 'ready' }] })).toEqual(['Worker  before        after', 'a       ready         (not listed)', 'b       (not listed)  ready'])
+    expect(workersTable({ workers: [{ worker: 'a', state: 'ready' }] })).toEqual(['Worker  before', 'a       ready'])
+    expect(workersTable(undefined, { unread: 'roster: refused' })).toEqual(['Workers before the update: not captured', 'Workers after the update: not read (roster: refused)'])
   })
 })

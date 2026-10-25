@@ -4,13 +4,17 @@
  * it as it is (types stripped); it needs no install of its own.
  *
  *   node scripts/live-update-check.ts capture <cli> <DSH_HOME> <before.json>
- *   node scripts/live-update-check.ts verify <cli> <DSH_HOME> <before.json> <snapshot dir> [--new-workers <prefix,…>] [--settle <seconds>]
+ *   node scripts/live-update-check.ts verify <cli> <DSH_HOME> <before.json> <snapshot dir> [--new-workers <prefix,…>] [--settle <seconds>] [--workers-wait <seconds>]
  *
  * `<cli>` is the installed CLI module, `packages/cli/lib/index.js` of the checkout the profile runs:
  * every call goes through its `callTool`, as the operator. `capture`, before the update, records the
- * profile's health, every run's `explain` and `result`, and the store's migration versions (the store
- * opened read-only); a profile already down is no baseline, and it refuses it (`baselineProblems`).
- * `verify`, after the update, holds the updated profile to the upgrade suite's
+ * profile's health, every run's `explain` and `result`, the store's migration versions (the store
+ * opened read-only), and each Worker's availability from its roster (`system roster --json`); a
+ * profile already down is no baseline, and it refuses it (`baselineProblems`). `verify`, after the
+ * update, first waits, up to `--workers-wait` seconds (600 by default: two probe TTLs), until every
+ * Worker that took work before takes work again, and prints the Workers before and after; one that
+ * stays unavailable is a problem with its reason (`workerProblems`, T219: on 2026-10-26 an update
+ * passed every check while all four Codex Workers were unavailable). It then holds the updated profile to the upgrade suite's
  * expectations (packages/cli/tests/upgrade/upgrade.e2e.ts): every old run still explains and answers
  * as it did (a run still running at the capture may have moved on; one that retention expired says
  * so in the event log), no migration went backwards, and every record of the post-update snapshot
@@ -38,7 +42,21 @@ export interface RunAnswer {
   result?: string | null
 }
 
-export interface Capture { capturedAt: string; health: Health; migrations: Record<string, number>; runs: RunAnswer[] }
+/**
+ * One Worker's availability as the roster gives it (MCP `roster`, docs/design/roster.md):
+ * `ready`, `busy`, `resting`, `unavailable`, or `quarantined`, and why when it takes no work (the
+ * roster's reason: its account's, else its source's `unavailableReason`, T214).
+ */
+export interface WorkerAvailability { worker: string; state: string; reason?: string }
+
+/** The Workers' availability, or why the roster could not tell it. */
+export type Workers = { workers: WorkerAvailability[] } | { unread: string }
+
+/**
+ * `workers` (T219): each Worker's availability at the capture; absent from a capture made before
+ * the check read it.
+ */
+export interface Capture { capturedAt: string; health: Health; migrations: Record<string, number>; runs: RunAnswer[]; workers?: Workers }
 
 interface ToolOutcome { isError: boolean; text: string; structured: Record<string, unknown> | undefined }
 type CallTool = (name: string, args: Record<string, unknown>, home: string) => Promise<ToolOutcome>
@@ -104,6 +122,121 @@ export function runProblems(before: RunAnswer, after: RunAnswer): string[] {
   return problems
 }
 
+/** The states in which a Worker takes work. */
+const TAKES_WORK = new Set(['ready', 'busy'])
+
+const known = (value: unknown): string | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const k = value as { value?: unknown; unknown?: unknown }
+  if (typeof k.value === 'string') return k.value
+  if (typeof k.unknown === 'string') return `unknown (${k.unknown})`
+  return undefined
+}
+
+/**
+ * Each Worker's availability in a roster record (`mcp-roster@1.x`): its `availability`'s state, and
+ * its reason or summary when it takes no work. A record without its Workers says why they are unread.
+ */
+export function workersOf(roster: unknown): Workers {
+  const listed = (roster as { workers?: unknown } | undefined)?.workers as { value?: unknown; unknown?: unknown } | undefined
+  if (!listed || typeof listed !== 'object') return { unread: 'the roster gave no Workers' }
+  if (!Array.isArray(listed.value)) return { unread: `the roster's Workers are unknown: ${typeof listed.unknown === 'string' ? listed.unknown : 'no reason given'}` }
+  const workers: WorkerAvailability[] = []
+  for (const entry of listed.value as Array<{ worker?: unknown; availability?: { state?: unknown; summary?: unknown; reason?: unknown } }>) {
+    if (typeof entry?.worker !== 'string') continue
+    const state = typeof entry.availability?.state === 'string' ? entry.availability.state : 'unknown'
+    const reason = TAKES_WORK.has(state) ? undefined
+      : known(entry.availability?.reason) ?? (typeof entry.availability?.summary === 'string' ? entry.availability.summary : undefined)
+    workers.push({ worker: entry.worker, state, ...(reason ? { reason } : {}) })
+  }
+  return { workers: workers.sort((a, b) => (a.worker < b.worker ? -1 : a.worker > b.worker ? 1 : 0)) }
+}
+
+/** The profile's Workers, read from its roster (`system roster --json`); a refused or failed read says why. */
+export async function workersNow(call: CallTool, home: string): Promise<Workers> {
+  try {
+    const outcome = await call('roster', {}, home)
+    if (outcome.isError || !outcome.structured) return { unread: `roster: ${outcome.text.slice(0, 300) || 'no roster record'}` }
+    return workersOf(outcome.structured)
+  } catch (error) {
+    return { unread: `roster: ${(error as Error).message.split('\n')[0]}` }
+  }
+}
+
+/**
+ * What the update did to the Workers: each one that took work before it (`ready` or `busy`) must
+ * take work again. One that is `unavailable` or `quarantined` now, or no longer listed, is a problem
+ * with its reason; one `resting` at a usage limit is a note (a limit is no update's doing). Workers
+ * that took no work before, and Workers new in the update, are not held to it. `waiting` names the
+ * Workers that do not take work again yet.
+ */
+export function workerProblems(before: Workers | undefined, after: Workers): { problems: string[]; notes: string[]; waiting: string[] } {
+  const problems: string[] = []
+  const notes: string[] = []
+  const waiting: string[] = []
+  if (!before) return { problems, notes: ['the capture holds no Workers (made before the check read them): their availability is not compared'], waiting }
+  if ('unread' in before) return { problems, notes: [`the Workers were not read before the update (${before.unread}): their availability is not compared`], waiting }
+  const ready = before.workers.filter((w) => TAKES_WORK.has(w.state))
+  if ('unread' in after) {
+    if (ready.length) {
+      problems.push(`the Workers cannot be read after the update (${after.unread}): ${ready.length} took work before it`)
+      waiting.push(...ready.map((w) => w.worker))
+    }
+    return { problems, notes, waiting }
+  }
+  const now = new Map(after.workers.map((w) => [w.worker, w]))
+  for (const was of ready) {
+    const is = now.get(was.worker)
+    if (!is) {
+      problems.push(`Worker ${was.worker} was ${was.state} before the update and is not listed now (its source does not describe it)`)
+      waiting.push(was.worker)
+    } else if (is.state === 'resting') {
+      notes.push(`Worker ${was.worker} was ${was.state} before the update and is resting at a limit now: ${is.reason ?? 'no reason given'}`)
+    } else if (!TAKES_WORK.has(is.state)) {
+      problems.push(`Worker ${was.worker} was ${was.state} before the update and is ${is.state} now: ${is.reason ?? 'no reason given'}`)
+      waiting.push(was.worker)
+    }
+  }
+  return { problems, notes, waiting }
+}
+
+/**
+ * Read the Workers until every one that took work before the update takes work again, or `waitMs`
+ * has passed (bounded: two probe TTLs by default, so a runtime's first probe after the start, and one
+ * more, have had their time). Returns the last read and what it judged.
+ */
+export async function awaitWorkers(read: () => Promise<Workers>, before: Workers | undefined, options: { waitMs: number; everyMs: number; sleep?: (ms: number) => Promise<unknown>; now?: () => number }): Promise<{ after: Workers; problems: string[]; notes: string[] }> {
+  const wait = options.sleep ?? sleep
+  const clock = options.now ?? Date.now
+  const until = clock() + options.waitMs
+  for (;;) {
+    const after = await read()
+    const judged = workerProblems(before, after)
+    if (!judged.waiting.length || clock() >= until) return { after, problems: judged.problems, notes: judged.notes }
+    await wait(Math.max(0, Math.min(options.everyMs, until - clock())))
+  }
+}
+
+/** A Worker's availability in one cell: its state, and why when it takes no work. */
+const cell = (w: WorkerAvailability | undefined): string => (!w ? '(not listed)' : w.reason ? `${w.state}: ${w.reason}` : w.state)
+
+/**
+ * The Workers before and after the update, one line each, in id order: the table the update prints.
+ * Without `after`, the capture's column only.
+ */
+export function workersTable(before: Workers | undefined, after?: Workers): string[] {
+  const unread = (side: string, w: Workers | undefined): string[] => (!w ? [`Workers ${side}: not captured`] : 'unread' in w ? [`Workers ${side}: not read (${w.unread})`] : [])
+  const lines = [...unread('before the update', before), ...(after ? unread('after the update', after) : [])]
+  const was = before && 'workers' in before ? new Map(before.workers.map((w) => [w.worker, w])) : undefined
+  const is = after && 'workers' in after ? new Map(after.workers.map((w) => [w.worker, w])) : undefined
+  const ids = [...new Set([...(was?.keys() ?? []), ...(is?.keys() ?? [])])].sort()
+  if (!ids.length) return lines.length ? lines : ['Workers: none listed']
+  const rows: string[][] = [['Worker', ...(was ? ['before'] : []), ...(after && is ? ['after'] : [])]]
+  for (const id of ids) rows.push([id, ...(was ? [cell(was.get(id))] : []), ...(after && is ? [cell(is.get(id))] : [])])
+  const widths = rows[0]!.map((_, i) => Math.max(...rows.map((row) => (i < row.length - 1 ? row[i]!.length : 0))))
+  return [...lines, ...rows.map((row) => row.map((text, i) => (i < row.length - 1 ? text.padEnd(widths[i]!) : text)).join('  ').trimEnd())]
+}
+
 /** The operator's `callTool` of the installed CLI. */
 async function callToolOf(cli: string): Promise<CallTool> {
   const module = (await import(pathToFileURL(resolve(cli)).href)) as { callTool?: CallTool }
@@ -160,18 +293,29 @@ export async function capture(cli: string, home: string, out: string): Promise<n
   }
   const runs: RunAnswer[] = []
   for (const runId of runIds) runs.push(await answerOf(call, home, runId))
-  const captured: Capture = { capturedAt: new Date().toISOString(), health, migrations: versions, runs }
+  const workers = await workersNow(call, home)
+  const captured: Capture = { capturedAt: new Date().toISOString(), health, migrations: versions, runs, workers }
   writeFileSync(out, `${JSON.stringify(captured, null, 2)}\n`, { mode: 0o600 })
   const unexplained = runs.filter((run) => !run.explained).length
-  console.log(`captured: health ${health.state}, ${runs.length} run(s)${unexplained ? ` (${unexplained} did not explain before the update)` : ''}, ${Object.keys(versions).length} store owner(s)`)
+  const ready = 'workers' in workers ? `${workers.workers.filter((w) => TAKES_WORK.has(w.state)).length} of ${workers.workers.length} Worker(s) taking work` : 'the Workers not read'
+  console.log(`captured: health ${health.state}, ${runs.length} run(s)${unexplained ? ` (${unexplained} did not explain before the update)` : ''}, ${Object.keys(versions).length} store owner(s), ${ready}`)
+  for (const line of workersTable(workers)) console.log(`  ${line}`)
   return 0
 }
 
-export async function verify(cli: string, home: string, beforePath: string, snapshot: string, newWorkers: readonly string[], settleSeconds: number): Promise<number> {
+export async function verify(cli: string, home: string, beforePath: string, snapshot: string, newWorkers: readonly string[], settleSeconds: number, workersWaitSeconds: number): Promise<number> {
   const before = JSON.parse(readFileSync(beforePath, 'utf8')) as Capture
   const call = await callToolOf(cli)
   const problems: string[] = []
   const notes: string[] = []
+
+  // The Workers, given up to the wait to take work again: a start probes each runtime anew, and a
+  // Worker that took work before and stays unavailable (a probe failing on the host) fails the check.
+  const workers = await awaitWorkers(() => workersNow(call, home), before.workers, { waitMs: workersWaitSeconds * 1000, everyMs: 10_000 })
+  console.log('the Workers before and after the update:')
+  for (const line of workersTable(before.workers, workers.after)) console.log(`  ${line}`)
+  problems.push(...workers.problems)
+  notes.push(...workers.notes)
 
   // Health, given time to settle: a start reads the Workers and accounts again.
   let health = await healthOf(call, home)
@@ -249,8 +393,11 @@ export async function verify(cli: string, home: string, beforePath: string, snap
   return problems.length ? 1 : 0
 }
 
+/** How long `verify` waits for the Workers to take work again by default: two of agent-workers' default `probeTtlMs` (5 min). */
+export const WORKERS_WAIT_SECONDS = 600
+
 const USAGE = `usage: node scripts/live-update-check.ts capture <cli> <DSH_HOME> <before.json>
-       node scripts/live-update-check.ts verify <cli> <DSH_HOME> <before.json> <snapshot dir> [--new-workers <prefix,…>] [--settle <seconds>]`
+       node scripts/live-update-check.ts verify <cli> <DSH_HOME> <before.json> <snapshot dir> [--new-workers <prefix,…>] [--settle <seconds>] [--workers-wait <seconds>]`
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv
@@ -262,7 +409,10 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'verify') {
     const newWorkers = option('--new-workers', '').split(',').filter(Boolean)
     const settle = Number(option('--settle', '120'))
-    if (args.length === 4 && Number.isFinite(settle) && settle >= 0) return verify(args[0]!, args[1]!, args[2]!, args[3]!, newWorkers, settle)
+    const workersWait = Number(option('--workers-wait', String(WORKERS_WAIT_SECONDS)))
+    if (args.length === 4 && Number.isFinite(settle) && settle >= 0 && Number.isFinite(workersWait) && workersWait >= 0) {
+      return verify(args[0]!, args[1]!, args[2]!, args[3]!, newWorkers, settle, workersWait)
+    }
   }
   console.error(USAGE)
   return 2

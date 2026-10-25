@@ -4,8 +4,8 @@
 #
 # A dry run by default: it checks what it can without changing anything (the running profile is
 # only read) and prints the plan. With --apply it acts:
-#   1. capture what the running profile answers: its health, every run's explain and result; and
-#      where its unit, system.service, sends the daemon's output;
+#   1. capture what the running profile answers: its health, every run's explain and result, each
+#      Worker's availability (its roster); and where its unit, system.service, sends the daemon's output;
 #   2. `systemctl --user stop system.service`: the unit's ExecStop drains (`system shutdown
 #      --deadline`), then stops the daemon (it is never killed); wait until it has exited;
 #   3. back up the store and the vault (`system backup`, verified by a restore preview) and the
@@ -15,9 +15,11 @@
 #   5. link the profile's bundle from the live installation (`system init`, when it links another
 #      checkout), put the candidate profile patch in place (--patch), and `system check` the profile;
 #   6. `systemctl --user start system.service`, and wait for /healthz;
-#   7. the upgrade checks (scripts/live-update-check.ts): no health check worse, every old run
-#      explains and answers as before, no migration backwards, every record valid; then
-#      `system plugins` and the MCP header helper.
+#   7. the upgrade checks (scripts/live-update-check.ts): every Worker that took work before takes
+#      work again within --workers-wait seconds (one that stays unavailable fails, with its reason;
+#      the Workers before and after are printed), no health check worse, every old run explains and
+#      answers as before, no migration backwards, every record valid; then `system plugins` and the
+#      MCP header helper.
 # The daemon runs only under its unit, with the unit's environment file: the script refuses a daemon
 # started any other way. A failure after step 2 rolls back: the unit stopped, the profile's files
 # and the previous commit put back, installed and built, the store and vault restored from step 3's
@@ -31,13 +33,15 @@ usage() {
 usage: scripts/live-update.sh <target sha> [--apply] [--check-with <built checkout of the target>]
          [--patch <candidate cordis.patch.yml>] [--from <sha>] [--live <checkout>] [--dsh-home <dir>]
          [--node-dir <dir>] [--pnpm-dir <dir>] [--backups <dir>] [--new-workers <prefix,...>]
+         [--workers-wait <seconds>]
 
 A dry run unless --apply. --apply needs --check-with: the profile is checked against the target's
 code before anything is stopped. The daemon runs under the user unit system.service, which is
 stopped and started (its ExecStop drains). The defaults are this host's live install: --from e218ae7,
 --live ~/workspaces/system-live, --dsh-home $DSH_HOME or ~/.dsh, --node-dir Node 24's bin,
 --pnpm-dir Node 22's bin (appended to PATH, for pnpm only), --backups ~/system-backups,
---new-workers agent:.
+--new-workers agent:, --workers-wait 600 (how long the Workers that took work before the update
+have to take work again after it: two probe TTLs).
 Exit status: 0 done (or nothing to do), 1 stopped or rolled back, 2 usage, or a state to look at.
 EOF
 }
@@ -52,13 +56,14 @@ NODE_DIR=$HOME/.nvm/versions/node/v24.21.0/bin
 PNPM_DIR=$HOME/.nvm/versions/node/v22.23.2/bin
 BACKUPS=$HOME/system-backups
 NEW_WORKERS=agent:
+WORKERS_WAIT=600
 CHECK_WITH=''
 PATCH_CANDIDATE=''
 
 while (($#)); do
   case $1 in
     --apply) APPLY=1 ;;
-    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers)
+    --check-with | --patch | --from | --live | --dsh-home | --node-dir | --pnpm-dir | --backups | --new-workers | --workers-wait)
       if (($# < 2)); then usage >&2; exit 2; fi
       case $1 in
         --check-with) CHECK_WITH=$2 ;;
@@ -70,6 +75,9 @@ while (($#)); do
         --pnpm-dir) PNPM_DIR=$2 ;;
         --backups) BACKUPS=$2 ;;
         --new-workers) NEW_WORKERS=$2 ;;
+        --workers-wait)
+          if [[ ! $2 =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi
+          WORKERS_WAIT=$2 ;;
       esac
       shift ;;
     -h | --help) usage; exit 0 ;;
@@ -604,9 +612,9 @@ verify() {
     log "system backup $after (a snapshot of the updated store, for the record checks)"
     cli "$LIVE" backup "$after" 2>&1 | tee -a "$LOG_FILE" >&2 || return 1
   fi
-  log "the upgrade checks: health, old runs, migrations, records"
+  log "the upgrade checks: the Workers (up to ${WORKERS_WAIT} s for each that took work before to take work again), health, old runs, migrations, records"
   node24 --disable-warning=ExperimentalWarning "$SCRIPT_DIR/live-update-check.ts" verify "$LIVE/packages/cli/lib/index.js" "$DSH_HOME_DIR" \
-    "$ATTEMPT/before.json" "$after" --new-workers "$NEW_WORKERS" 2>&1 | tee -a "$LOG_FILE" >&2 || return 1
+    "$ATTEMPT/before.json" "$after" --new-workers "$NEW_WORKERS" --workers-wait "$WORKERS_WAIT" 2>&1 | tee -a "$LOG_FILE" >&2 || return 1
   log "system plugins"
   if ! cli "$LIVE" plugins >"$ATTEMPT/plugins.txt" 2>&1; then
     cat "$ATTEMPT/plugins.txt" >&2
@@ -763,7 +771,8 @@ dry_run() {
   cat >&2 <<EOF
 
 Plan for --apply (this dry run changed nothing):
-  1. capture: health, and the explain and result of $runs -> $BACKUPS/<date>-before-base/before.json
+  1. capture: health, the explain and result of $runs, and each Worker's availability (its roster)
+     -> $BACKUPS/<date>-before-base/before.json
   2. systemctl --user stop $UNIT (its ExecStop: system shutdown --deadline, a drain); the daemon and
      system start exit (never killed)
   3. system backup <that directory>/store (store and vault, verified by a restore preview);
@@ -774,8 +783,10 @@ Plan for --apply (this dry run changed nothing):
   5. $(if profile_linked; then echo 'the profile links its bundle from the live checkout already;'; else echo "system init: the profile links its bundle from $LIVE;"; fi)
      $(if [[ -n $PATCH_CANDIDATE ]]; then echo "the patch candidate replaces $LIVE_PATCH;"; else echo 'the live patch stays;'; fi) system check --env-file $ENV_FILE must say ok
   6. systemctl --user start $UNIT; /healthz within 3 minutes
-  7. checks: no health check worse (new Workers '$NEW_WORKERS' may be unavailable), every old run
-     explains and answers as before, migrations forward, every record valid, system plugins, mcp-headers
+  7. checks: every Worker that took work before takes work again within ${WORKERS_WAIT} s (one that
+     stays unavailable fails, with its reason; the Workers before and after are printed), no health
+     check worse (new Workers '$NEW_WORKERS' may be unavailable), every old run explains and answers
+     as before, migrations forward, every record valid, system plugins, mcp-headers
   A failure after step 2 rolls back: $UNIT stopped, the profile's files put back, ${FROM:0:12}
   checked out, installed, and built, system restore <that directory>/store --yes when the updated
   code started, $UNIT started, system health. Exit 1; 2 if the rollback fails too.
