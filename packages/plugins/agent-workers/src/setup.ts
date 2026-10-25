@@ -224,8 +224,9 @@ function loadGenerated(repository: string, generated: WorktreeGeneratedConfig | 
   if (generated === undefined) return undefined
   if (typeof generated !== 'object' || generated === null || Array.isArray(generated)) fail(`${repository}: generated holds paths and commands`)
   const { paths, commands } = generated
-  // The config schema gives an omitted `generated` as an object with neither: none declared.
-  if (paths === undefined && commands === undefined) return undefined
+  // The config schema gives an omitted `generated` as an object with both lists empty (or absent): none declared.
+  const none = (list: unknown): boolean => list === undefined || (Array.isArray(list) && !list.length)
+  if (none(paths) && none(commands)) return undefined
   if (!Array.isArray(paths) || !paths.length || paths.length > SETUP_LIMITS.generatedPaths) fail(`${repository}: generated.paths holds 1 to ${SETUP_LIMITS.generatedPaths} paths`)
   for (const [i, pattern] of paths.entries()) {
     const problem = patternProblem(pattern)

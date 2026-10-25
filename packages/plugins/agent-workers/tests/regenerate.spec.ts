@@ -282,6 +282,8 @@ describe('a landing\'s conflict confined to generated files (worktreeSetup gener
     const declared = loadSetups([{ repository: repo, commands: ['true'], generated: { paths: ['packages/*/plugin-manifest.json'], commands: ['corepack pnpm gen:manifests'] } }], [repo]).get(repo)!
     expect(declared).toMatchObject({ hash: plain.hash, generated: { paths: ['packages/*/plugin-manifest.json'], lines: ['corepack pnpm gen:manifests'], commands: [['corepack', 'pnpm', 'gen:manifests']] } })
     expect(plain.generated).toBeUndefined()
+    // An omitted `generated`, as the plugin's config schema fills it in (both lists empty), declares none.
+    expect(loadSetups([{ repository: repo, commands: ['true'], generated: { paths: [], commands: [] } }], [repo]).get(repo)!.generated).toBeUndefined()
     const patterns = ['docs/validation/traceability.md', 'packages/*/plugin-manifest.json', 'packages/plugins/*/plugin-manifest.json']
     expect(generatedPath(patterns, 'docs/validation/traceability.md')).toBe(true)
     expect(generatedPath(patterns, 'packages/workers-core/plugin-manifest.json')).toBe(true)
