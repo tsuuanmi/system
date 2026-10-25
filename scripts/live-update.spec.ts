@@ -9,9 +9,15 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { baselineProblems, type Health, healthProblems, runProblems } from './live-update-check.ts'
 import { daemonEnv, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
+
+// Each test runs the script end to end, once or several times, and each run starts git, Node, and
+// the stand-ins as real processes: 1 to 3 s a test on an idle core, up to 10 s on a loaded one,
+// where the 5 s default failed them. A run is synchronous: the bound cannot stop a hung one, it
+// only fails a slow one.
+vi.setConfig({ testTimeout: 60_000 })
 
 const SCRIPT = fileURLToPath(new URL('./live-update.sh', import.meta.url))
 
@@ -308,7 +314,7 @@ describe('live-update.sh and system.service', () => {
     } finally {
       f.unit.cleanup()
     }
-  }, 60_000)
+  })
 })
 
 describe('live-update-check: what the update may not make worse', () => {

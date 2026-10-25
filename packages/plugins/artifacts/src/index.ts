@@ -184,14 +184,6 @@ export interface Config {
   collectBatch?: number
 }
 
-let shared: SchemaRegistry | undefined
-/**
- * The process's schema registry, made on first use. Each instance making its own compiled every
- * schema file again (about 60 ms) and each schema it validated (120 to 180 ms per boot): CPU that a
- * test booting several kernels paid each time, and that grew with the host's load.
- */
-const registry = (): SchemaRegistry => (shared ??= new SchemaRegistry())
-
 export class Artifacts extends Service {
   static inject = ['store']
   static Config: z<Config> = z.object({
@@ -201,8 +193,7 @@ export class Artifacts extends Service {
     collectBatch: z.natural().min(1).default(1000).description('Artifacts deleted per write transaction (the pass continues in further ones)'),
   })
 
-  /** One registry per process, as the experiment registry's: the schemas are fixed files, and it only caches their compiled validators. */
-  private readonly schemas = registry()
+  private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, private readonly config: Config) {
     super(ctx, 'artifacts')

@@ -7,8 +7,14 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { daemonEnv, standInUnit } from './systemd-stand-in.ts'
+
+// Each test runs a pass of the script end to end, once or several times, and a pass that updates
+// runs live-update.sh's dry run too, each starting git, Node, and the stand-ins as real processes:
+// 1 to 3 s a test on an idle core, up to 8 s on a loaded one, where the 5 s default failed them. A
+// pass is synchronous: the bound cannot stop a hung one, it only fails a slow one.
+vi.setConfig({ testTimeout: 60_000 })
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(SCRIPTS, 'live-auto-update.sh')
@@ -145,9 +151,10 @@ describe('live-auto-update.sh', () => {
     const f = fixture()
     expect(pass(f, ['--settle', '30']).status).toBe(0)
     expect(lines(f).at(-1)).toMatch(/ wait: \w+ settles for 30 more minute\(s\)$/)
+    // Two hours ahead: the hour may turn before the pass reads it, and the next one is still outside.
     const hour = new Date().getHours()
     const pad = (h: number): string => String(h % 24).padStart(2, '0')
-    expect(pass(f, ['--hours', `${pad(hour + 1)}-${pad(hour + 2)}`]).status).toBe(0)
+    expect(pass(f, ['--hours', `${pad(hour + 2)}-${pad(hour + 3)}`]).status).toBe(0)
     expect(lines(f).at(-1)).toMatch(/ wait: outside the hours \d\d-\d\d$/)
     expect(pass(f, ['--hours', '7-9']).status).toBe(2)
     expect(f.git(f.check, 'rev-parse', 'HEAD')).toBe(f.from)

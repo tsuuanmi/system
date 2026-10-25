@@ -1,0 +1,17 @@
+diff --git a/lib/coreBundle.js b/lib/coreBundle.js
+index a8815ac09d0e0ad9d0b291e9ed6ae98b9bba2130..e2daf0f263b526684b50b1a5cf2f2862adb78ed3 100644
+--- a/lib/coreBundle.js
++++ b/lib/coreBundle.js
+@@ -39366,7 +39366,11 @@ var init_crPage = __esm({
+         this.updateOffline();
+         this.updateExtraHTTPHeaders();
+         this.updateHttpCredentials();
+-        this._networkManager.setRequestInterception(true);
++        // Patched by system (docs/engineering/dependencies.md#patches): not awaited, so its sends on the
++        // page's session, which reject once that session closes, were left unhandled.
++        this._networkManager.setRequestInterception(true).catch((e) => {
++          if (!isSessionClosedError(e)) throw e;
++        });
+         this.initScriptTag = import_crypto16.default.randomBytes(20).toString("hex");
+         this._mainFrameSession = new FrameSession(this, client, targetId, null);
+         this._sessions.set(targetId, this._mainFrameSession);

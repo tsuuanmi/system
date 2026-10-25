@@ -9,6 +9,12 @@ import { agentRuntimeLimitsConformance, agentRuntimeProviderConformance, expectC
 import { HOOK_COMMAND, HOOK_ENV, HOOK_NAME, HOOKS_JSON, openChannel, TOKEN_ENV } from '../src/bridge.ts'
 import { AntigravityRuntime, type HookProof, limitsFromUsage, refusal, type RuntimeOptions, USAGE_ARGS, usageFrom, VERIFIED_HOOK_VERSIONS, VERIFIED_LIMIT_VERSIONS, workspaceCustomizations } from '../src/index.ts'
 
+// The tests start the scripted agy, its hook, and bubblewrap as real processes, most of them several
+// times (a probe alone starts five: agy --version, models, and plugin list, and the hook twice), at
+// about 0.3 s a Node start on this host: up to 4 s a test on an idle core, so the 5 s default failed
+// them whenever the host was loaded. A hang still fails at this bound.
+vi.setConfig({ testTimeout: 30_000 })
+
 const PASSTHROUGH = fileURLToPath(new URL('../../../agent-runtime-core/conformance/passthrough-bwrap.sh', import.meta.url))
 const FAKE = fileURLToPath(new URL('./fake-agy.mjs', import.meta.url))
 
@@ -379,8 +385,7 @@ describe('antigravity-cli: every tool call passes the hook: the runtime\'s rules
       await runtime({ env: s.env, timing: { gateMs: 50, killMs: 500 } }).run({ prompt: 'go', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)
       expect(answers(s.log())).toEqual([['read_file', 'deny', expect.stringMatching(/the tool gate/)]])
     }
-    // Four scripted agy runs: about 5 s on a loaded host, the default's own bound.
-  }, 15_000)
+  })
 })
 
 describe('antigravity-cli: the hook fails closed on its own', () => {
@@ -442,7 +447,7 @@ describe('antigravity-cli: the hook fails closed on its own', () => {
   })
 })
 
-describe('antigravity-cli: agy 1.4.6\'s hook inputs, recorded in the supervised live check, replayed through the bridge', { timeout: 30_000 }, () => {
+describe('antigravity-cli: agy 1.4.6\'s hook inputs, recorded in the supervised live check, replayed through the bridge', () => {
   interface Recorded { toolCall: { name: string; args: Record<string, unknown> }; stepIdx: number; conversationId: string }
   interface Bridged extends Recorded { sandbox: 'read-only' | 'workspace-write'; answer: 'allow' | 'deny'; by: 'gate' | 'rules'; reason?: string; gateSaw?: ToolCall }
   const live = join(root, 'live')
@@ -534,8 +539,7 @@ describe('antigravity-cli: the outcome, and what a run consumed, from agy\'s own
     const none = await failure({ result: null, stderr: 'panic: runtime error' })
     expect(none).toMatchObject({ kind: 'session_broken', message: expect.stringContaining('without a result (exit 1): panic: runtime error') })
     expect(await failure({ exitCode: 3 })).toMatchObject({ kind: 'session_broken', message: expect.stringContaining('SUCCESS') })
-    // Five scripted agy runs: about 5 s on a loaded host, the default's own bound.
-  }, 15_000)
+  })
 
   it('stops agy when aborted, and reports what it saw', async () => {
     const controller = new AbortController()

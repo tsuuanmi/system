@@ -143,6 +143,16 @@ scenario of the suite, on the same provider, does not stay.
   it must see (a row's state, the next read of a poll or sweep), or runs a long
   timer on fake time. A fixed sleep stays only where a test shows that nothing
   happens during a window, and nothing it could wait for marks that window.
+- **A test's bound fits its work.** The 5 s default is for in-process tests. A test whose work
+  is real processes (a script end to end, the CLI started from source, a scripted agent or its
+  hook, bubblewrap) sets a bound for them, for the whole file when every test there does: under
+  load a process start costs several times what it does alone. So does a test whose point is time
+  passing on real timers (a stall bound firing, a slow stream). A test whose CPU outgrows the
+  default holds too much: it is split by its independent cases (one per golden dataset). A larger
+  bound never stands in for waiting on an event the test could wait for.
+- **An unhandled rejection is a failure.** vitest fails a run on one even when every test passed,
+  and under the `dsh` launcher the same rejection exits the daemon. Find whose promise it is and
+  fix it there: a dependency's, until a release of it does, with a [patch](dependencies.md#patches).
 - **Pin the time a test reads.** A test that formats or compares a clock time, a
   day, or a reset passes whenever and wherever it runs. Its data names fixed
   instants, not offsets from the host's now. A page that shows them opens in a
@@ -197,9 +207,11 @@ absence of automation leaks are properties of the real browser.
 
 ## Test groups
 
-`pnpm test` runs the whole suite. Every workspace package's tests, and the repository scripts',
-belong to one functional group: `kernel`, `workflow`, `workers`, `websites`, `surfaces`, and
-`libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
+`pnpm test` runs the whole suite, at most 32 test files at once, one per CPU but one on a smaller
+host ([`vitest.config.ts`](../../vitest.config.ts)): vitest's own default of one per CPU ran every
+file at once on a 256-CPU host, where in-process tests passed their bounds. Every workspace
+package's tests, and the repository scripts', belong to one functional group: `kernel`,
+`workflow`, `workers`, `websites`, `surfaces`, and `libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
 `pnpm test:group` with no name lists each with its packages; its own test fails when a package or
 a test file is in no group, or in two.
 

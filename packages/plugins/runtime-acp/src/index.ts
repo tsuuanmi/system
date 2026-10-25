@@ -9,7 +9,8 @@
  * - what ACP cannot express exactly (a tool list, a model, a turn limit, a tool gate) is refused;
  * - the agent starts without the daemon's credentials: only the variables the operator forwards
  *   by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
- * - an aborted run cancels the prompt, then ends the agent: SIGTERM, then SIGKILL. Under the
+ * - an aborted run cancels the prompt, then ends the agent: SIGTERM, then SIGKILL. A run aborted
+ *   before its prompt was sent never sends it, and ends the agent at once. Under the
  *   confinement the signal ends bubblewrap, and everything in the agent's PID namespace dies
  *   with it, children included;
  * - the agent runs under the read confinement (ADR-0024): it can act on the disk without asking,
@@ -131,8 +132,11 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
       },
     }))
     let sessionId: string | undefined
+    let prompted = false
     const abort = (): void => {
-      if (sessionId) void session.connection.cancel({ sessionId }).catch(() => undefined)
+      // Before the prompt is sent there is nothing to cancel: the agent is ended at once.
+      if (!prompted) return session.close()
+      void session.connection.cancel({ sessionId: sessionId! }).catch(() => undefined)
       setTimeout(() => session.close(), this.timing.cancelMs).unref()
     }
     signal.addEventListener('abort', abort, { once: true })
@@ -150,7 +154,9 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
         sessionId = (await session.connection.newSession({ cwd: spec.workspace, mcpServers: [] })).sessionId
       }
       onHandle?.(sessionId)
-      if (signal.aborted) abort()
+      // Aborted while the session was being made: the prompt is never sent.
+      if (signal.aborted) throw new ProviderError('aborted', `${this.kind}: aborted`)
+      prompted = true
       const response = await session.connection.prompt({ sessionId, prompt: [{ type: 'text', text: spec.prompt }] })
       if (signal.aborted || response.stopReason === 'cancelled') throw new ProviderError('aborted', `${this.kind}: aborted`)
       if (response.stopReason !== 'end_turn') throw new ProviderError(stopKind(response.stopReason), `${this.kind}: stopped (${response.stopReason})`)

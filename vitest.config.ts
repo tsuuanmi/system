@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
@@ -71,5 +72,10 @@ export default defineConfig({
     // Setup starts real displays and browsers: on a loaded 4-vCPU CI runner that can pass the
     // 10 s default, which fails a whole suite before any of its tests runs.
     hookTimeout: 60_000,
+    // At most 32 files at once (vitest's own default is one per CPU but one). On a 256-CPU host that
+    // was 255: every file, its imports served by the one main process, its stores and processes at
+    // once, and in-process tests of 1 to 2 s passed their 5 s bound (two copies of the suite: 9
+    // failures, none capped, in the same 3.6 minutes). A 4-vCPU runner keeps its 3.
+    maxWorkers: Math.max(1, Math.min(32, availableParallelism() - 1)),
   },
 })

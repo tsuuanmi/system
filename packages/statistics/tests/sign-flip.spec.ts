@@ -65,14 +65,16 @@ describe('the sign-flip test against SciPy (golden)', () => {
     for (const d of lost) for (const a of ['greater', 'less', 'two-sided'] as const) expect(d.exact![a], `${d.id} ${a}`).toBeGreaterThanOrEqual(d.scipy[a])
   })
 
-  it('gives the exact interval SciPy\'s test inverts to at every confidence: the K-th smallest and largest subset means, unbounded when K is 0', () => {
-    for (const d of fixture.datasets) {
+  // One test per dataset: an interval over 20 pairs sorts 2^20 subset means, and all of them in one
+  // test took 3.3 s of CPU, past the default bound whenever the host was loaded.
+  for (const d of fixture.datasets) {
+    it(`gives the exact interval SciPy's test inverts to at every confidence: the K-th smallest and largest subset means, unbounded when K is 0 (${d.id})`, () => {
       for (const g of d.intervals) {
         const interval = signFlipInterval(d.candidate, d.baseline, g.confidence)
         expect({ rank: interval.rank, ...interval.exact }, `${d.id} at ${g.confidence}`).toEqual({ rank: g.rank, lower: g.lower ?? -Infinity, upper: g.upper ?? Infinity })
       }
-    }
-  })
+    })
+  }
 
   it('rejects every shift just outside a bound and none just inside it, with SciPy\'s own one-sample p-values at those shifts', () => {
     let checks = 0

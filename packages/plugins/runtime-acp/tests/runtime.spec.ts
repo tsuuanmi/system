@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import type { Confinement } from '@tsuuanmi/system-agent-runtime-core'
 import { AcpAgentRuntime, type AcpConfinement } from '../src/index.ts'
@@ -62,7 +62,9 @@ describe('acp: the client side enforces the policy', () => {
     expect(await look(join(base, 'secret.txt'), reads)).toBe('look: absent')
     expect(await look(join(workspace, 'inside.txt'), reads)).toBe('look: present')
     expect(await runtime(true, {}, undefined, reads).probe()).toMatchObject({ readsConfined: true })
-  })
+    // Four agent starts, three under the real bubblewrap, and the probe's proof of it: up to 3.8 s of
+    // the 5 s default on a loaded host.
+  }, 15_000)
 
   it('rejects every permission request', async () => {
     expect((await runtime().run({ prompt: 'ask permission', workspace, sandbox: 'read-only' }, signal())).text).toBe('permission: no')
@@ -97,17 +99,50 @@ describe('acp: the client side enforces the policy', () => {
     }
   })
 
+  /** A directory the scripted agent marks where it is in (SCRIPTED_MARKS), and a wait for one mark. */
+  const marked = () => {
+    const dir = mkdtempSync(join(base, 'marks-'))
+    return { dir, env: { SCRIPTED_MARKS: dir }, at: (name: string) => vi.waitFor(() => expect(existsSync(join(dir, name)), name).toBe(true), { timeout: 10_000, interval: 10 }) }
+  }
+
   it('kills an agent that ignores both the cancel and SIGTERM, so an aborted run still ends', async () => {
+    const marks = marked()
     const controller = new AbortController()
-    const running = runtime(true, {}, { cancelMs: 200, killMs: 300 }).run({ prompt: 'stubborn', workspace, sandbox: 'read-only' }, controller.signal)
-    setTimeout(() => controller.abort(), 300)
+    const running = runtime(true, { env: marks.env }, { cancelMs: 200, killMs: 300 }).run({ prompt: 'stubborn', workspace, sandbox: 'read-only' }, controller.signal)
+    // Aborted once the agent ignores SIGTERM, on its prompt.
+    await marks.at('stubborn')
+    controller.abort()
     await expect(running).rejects.toMatchObject({ kind: 'aborted' })
   }, 10_000)
 
   it('cancels a running prompt when aborted, and reports it as aborted', async () => {
+    const marks = marked()
     const controller = new AbortController()
-    const running = runtime().run({ prompt: 'hang', workspace, sandbox: 'read-only' }, controller.signal)
-    setTimeout(() => controller.abort(), 500)
+    // Ended within the test's bound only by the cancel: the agent is not stopped for a minute.
+    const running = runtime(true, { env: marks.env }, { cancelMs: 60_000 }).run({ prompt: 'hang', workspace, sandbox: 'read-only' }, controller.signal)
+    await marks.at('hanging')
+    controller.abort()
     await expect(running).rejects.toMatchObject({ kind: 'aborted' })
+    expect(existsSync(join(marks.dir, 'cancelled'))).toBe(true)
+  })
+
+  it('ends the agent at once when aborted while it makes the session: there is no prompt to cancel', async () => {
+    const marks = marked()
+    // The session never comes: only ending the agent ends the run (no cancel timer for a minute).
+    writeFileSync(join(marks.dir, 'hold'), '')
+    const controller = new AbortController()
+    const running = runtime(true, { env: marks.env }, { cancelMs: 60_000 }).run({ prompt: 'hang', workspace, sandbox: 'read-only' }, controller.signal)
+    await marks.at('session')
+    controller.abort()
+    await expect(running).rejects.toMatchObject({ kind: 'aborted' })
+    expect(existsSync(join(marks.dir, 'prompted'))).toBe(false)
+  })
+
+  it('never sends the prompt of a run aborted once its session exists, before the prompt', async () => {
+    const marks = marked()
+    const controller = new AbortController()
+    const running = runtime(true, { env: marks.env }, { cancelMs: 60_000 }).run({ prompt: 'hang', workspace, sandbox: 'read-only' }, controller.signal, () => controller.abort())
+    await expect(running).rejects.toMatchObject({ kind: 'aborted' })
+    expect(existsSync(join(marks.dir, 'prompted'))).toBe(false)
   })
 })

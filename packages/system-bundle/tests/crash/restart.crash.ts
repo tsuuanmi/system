@@ -194,6 +194,10 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     const runId = await first.runId
     await until(() => fake.sent.length === 1 && bound(dir), 120_000)
     await crash(first)
+    // The site finishes the answer the dead engine never saw before the restart looks. A page opened
+    // while it streams shows the prompt alone, which is AMBIGUOUS (resending would duplicate it), and
+    // whether the restart's first look came before the last word was a race on a loaded host.
+    await until(() => [...fake.conversations.values()].some((turns) => turns.some((turn) => turn.role === 'answer')), 120_000)
     const second = engine(dir, fake, ['resume', runId], PROFILE_HARNESS)
     const done = await second.done
     expect(done).toMatchObject({ status: 'completed', answer: expect.stringMatching(/Done\.$/) })

@@ -66,6 +66,12 @@ describe('SchemaRegistry', () => {
     expect(() => registry.assertDef('mcp-board@1.0', '../x', {})).toThrow(/malformed definition/)
     expect(() => registry.assertDef('mcp-board@9.0', 'board-claim-input', {})).toThrow(/unsupported major/)
   })
+
+  it('loads the schema files once per process: every registry shares what is compiled, and each still validates', () => {
+    const another = new SchemaRegistry()
+    expect(another.schemaOf('decision@1.0')).toBe(registry.schemaOf('decision@1.0'))
+    expect(() => another.assert('decision@1.0', {})).toThrow(SchemaError)
+  })
 })
 
 describe('usage the ledger could not count (usage-unknown@1.0)', () => {

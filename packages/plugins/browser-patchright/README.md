@@ -20,7 +20,11 @@
   for those, at most 10 s. patchright attaches a new page's session in steps of
   its own, and one of them (`Network.setCacheDisabled`) rejected with no handler
   when the context closed under it: unhandled rejections under load. Nothing
-  handles them at the process level.
+  handles them at the process level: under the `dsh` launcher one exits the
+  daemon. That step can still be running once the page has opened, and a crash
+  or a lost display does not wait, so patchright itself is patched to handle a
+  rejection that says the page's session closed
+  ([patches](../../../docs/engineering/dependencies.md#patches)).
 - **`openTurn(account, { profile: { dir, gapMs }, signal })`: a session-bound
   account** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md);
   `src/profiles.ts`).
