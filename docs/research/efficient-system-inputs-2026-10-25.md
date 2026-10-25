@@ -1,7 +1,41 @@
 # Efficient System: research and brainstorm inputs (2026-10-25)
 
 Non-normative. The raw outputs of System's own research, brainstorm and audit runs of 2026-10-25, which
-[PROP-0015](../proposals/README.md) condenses; kept here as evidence. Each section is one run's answer as it was returned.
+[PROP-0015](../proposals/0015-right-worker-right-job.md) condenses; kept here as evidence. Each section after the summary is
+one run's answer as it was returned.
+
+## Summary
+
+Non-normative; the proposal holds the design.
+
+- **What the runs agree on.** Use hard gates before any scoring: routing's checks, kinds, policy,
+  bounds, and quota known and above the reserve. Record every choice with a reason on every
+  candidate. Measure before optimizing. T177, T178 (O1), and T182 (O1) all put deterministic
+  eligibility first and adaptive or learned routing last, in shadow against a pinned baseline.
+- **Quota (front 1).** Admission by account and window, atomic reservations, and cooldowns are well
+  precedented (Kubernetes, Slurm, LiteLLM). A fixed 80 % ceiling and task-cost multipliers are not
+  supported by evidence for System (T177 H1). The T179 audit found two quota rules in the code:
+  dispatch's `quotaScoreOf` (a 20 % reserve, staleness bound, every window known) and the roster's
+  capacity summary (`100 − used`, no reserve, a per-minute urgency order). An account at 85 % is
+  free in one and not in the other.
+- **Strengths (front 2).** Capability and kind constraints are supported; learned routing's gains
+  (RouteLLM, FrugalGPT) come from other workloads and do not transfer as numbers (T177 H2, T181
+  H2). System records no acceptance by Worker and kind today (T179).
+- **The operator (front 3).** An evidence-first inbox and alerts only on what needs a person are
+  supported as practice, not as a measured gain (T177 H3). Board questions sit outside Home's list
+  and have no notification (T179).
+- **Similar systems (front 4).** Strengthen the existing engine (T177 H4, high confidence); borrow
+  provenance (SLSA, in-toto), durable transitions (Temporal), and task-centric review, not a
+  framework.
+- **Handoffs (front 5).** Content-bound, typed handoff contracts are supported. The elephant–goldfish
+  model (an informed author, fresh-context critics, a human accountable) is a documented method
+  without a measured gain, so it is used selectively (T177 H5). Today a Worker cannot commission
+  another's test or research from inside a step (T179).
+- **Jev (front 6).** Jev exists and offers typed multi-question decisions with probabilities. Its
+  probabilities are not System's acceptance probabilities until calibrated on System's own outcomes,
+  and its data terms are unverified (T181). The path is feasibility, then shadow, visible advice,
+  and bounded advice behind a provider-neutral seam with a deterministic fallback (T181, T182). The
+  operator asked for one query per decision with every question's distribution recorded.
 
 ## Operator guidance on Jev
 

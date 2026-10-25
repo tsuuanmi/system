@@ -86,6 +86,22 @@ operator's go-ahead.
 | **D3** Quota in every route | accepted, not started | the score as a routing order key for every step, with its ADR | D1 |
 | **D4** Metered pools | not to be built (D65: dispatch never starts work on a metered pool by itself) | — | — |
 
+## Right worker, right job (PROP-0015)
+
+Proposed on 2026-10-25, from the operator's request of that day; not accepted. What each increment
+delivers is in [PROP-0015](0015-right-worker-right-job.md#increments); each would start on the
+operator's go-ahead.
+
+| Increment | State | Delivers | Depends on |
+|---|---|---|---|
+| **E1** One quota rule | proposed | capacity reads `accountQuotaOf` with the reserve; `free` in the quota score's order; `inReserve`; `mcp-roster@1.8` | — |
+| **E2** Quota drawn per attempt | proposed | `quota-draw@1.0` from the readings before and after each agent run; draws by kind in the report | — |
+| **E3** Fit before start | proposed | the fit key and light band, shadow first | E1, E2 |
+| **E4** Measured strengths | proposed | acceptance by Worker and kind, with counts | — |
+| **E5** Needs you | proposed | one list on Home, board questions included; `board.question` notifications | — |
+| **E6** Handoffs | proposed | `handoff@1.0`, child tasks, the `handoff` wait, fresh-context briefs | E5 |
+| **J0** to **J3** Jev advisor | proposed | feasibility, shadow, visible, bounded advice behind `ctx.decisions` | J0: the operator's answer on data; J1: E2, E4; J3: PROP-0011 F4 |
+
 ## Done and open milestones
 
 | Milestone | State | What remains | Evidence |

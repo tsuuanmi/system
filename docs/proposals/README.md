@@ -117,6 +117,17 @@ accepted/implemented -> superseded
   account, per project, and in total, with one task per write subject. Starts are capped per
   hour, and dispatch can be paused per project.
 
+- [PROP-0015: Right worker, right job](0015-right-worker-right-job.md), **proposed** (2026-10-25,
+  from the operator's request of that day and research runs T177 to T182). One quota rule: the
+  roster's capacity summary reads `accountQuotaOf` with the reserve, so "free" means what it means
+  to dispatch (E1, buildable now, no new vendor). Then the quota each attempt drew, recorded from
+  the account's readings; a start refused when its kind's observed draw would not fit, with a
+  light band below the reserve, shadow first; each Worker's acceptance by kind measured from
+  recorded decisions; one *Needs you* list on Home with board questions in it; a step's typed
+  handoffs becoming child board tasks with fresh-context briefs; and Jev as an advisor behind
+  PROP-0002's `ctx.decisions` seam, one query per decision with the whole distribution recorded,
+  in shadow, never widening a gate.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
