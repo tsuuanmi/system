@@ -4,7 +4,10 @@
  * at its top: that registers the file's one Xvfb and returns the boots, whose stacks are stopped
  * when their test finishes. The files are split by theme so they run side by side, and page opens
  * are not paced (the driver's `pageGapMs` and the runtime's `providerPageGapMs` are 0): the pool's
- * own tests show the spacing.
+ * own tests show the spacing. An answer counts as complete after {@link STABLE_MS} of unchanged
+ * text, as in the drivers' own specs: the fake sites stream an answer word by word 60 ms apart and
+ * then mark it done, so the production window (1.5 s, for a live site's pauses) would only add
+ * idle time to every turn.
  */
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -33,7 +36,10 @@ import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtur
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
 import Turns from '../src/index.ts'
 
-export type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string>; description?: string }
+/** The drivers' answer-stable window on the fake sites, in milliseconds (`stableMs`; production keeps 1.5 s). */
+export const STABLE_MS = 300
+
+export type CatalogEntry ={ id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string>; description?: string }
 export const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
 
 export type AskSpec = { prompt: string; tier?: Tier; sessionId?: string; persist?: boolean; research?: boolean; search?: boolean; classification?: WorkRequirement['data']['classification']; key?: string }
@@ -109,7 +115,7 @@ export function turnsStack() {
       ctx.plugin(TestDisplay),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, stableMs: STABLE_MS, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
       ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
@@ -154,7 +160,7 @@ export function turnsStack() {
       ctx.plugin(TestDisplay),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(GeminiWeb, { origin: fake.origin, pageGapMs: 0 }),
+      ctx.plugin(GeminiWeb, { origin: fake.origin, pageGapMs: 0, stableMs: STABLE_MS }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
       ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, ...options.turns }),
@@ -195,7 +201,7 @@ export function turnsStack() {
       ctx.plugin(TestDisplay),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, stableMs: STABLE_MS, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
       ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, ...options.turns }),

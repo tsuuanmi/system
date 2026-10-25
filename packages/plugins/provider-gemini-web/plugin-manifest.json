@@ -48,6 +48,10 @@
     {
       "key": "pageGapMs",
       "sensitive": false
+    },
+    {
+      "key": "stableMs",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED",

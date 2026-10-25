@@ -28,7 +28,15 @@ export interface Config {
   defaultMode?: string
   /** The account's page opens (turns, checks, deletions) are spaced at least this far apart, in milliseconds (default 10 s, at most 10 min); navigations within a page are not. */
   pageGapMs?: number
+  /**
+   * How long an answer's text must stay unchanged, with generation stopped, before it counts as
+   * complete, in milliseconds (default 1.5 s, from 100 ms to 1 min). Test stacks on the fake site use 300 ms.
+   */
+  stableMs?: number
 }
+
+/** The answer-stable window in production (the driver's own default). */
+const STABLE_MS = 1500
 
 const DEFAULT_MODES: Record<string, ProviderMode> = {
   instant: { model: 'Latest', effort: 'Instant' },
@@ -44,6 +52,7 @@ export const Config: z<Config> = z.object({
   modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift'),
   defaultMode: z.string().default('instant').description('Preset when a caller names none'),
   pageGapMs: z.natural().max(600_000).default(10_000).description('Minimum gap between the opens of the account\'s pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced'),
+  stableMs: z.natural().min(100).max(60_000).default(STABLE_MS).description('How long an answer\'s text must stay unchanged, with generation stopped, before it counts as complete, in milliseconds, from 100 ms to 1 min; test stacks on the fake site use 300'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
@@ -55,6 +64,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     modes: config.modes ?? DEFAULT_MODES,
     defaultMode: config.defaultMode ?? 'instant',
     pageGapMs: config.pageGapMs ?? 10_000,
+    timeouts: { stableMs: config.stableMs ?? STABLE_MS },
   })
   wireHealAudit(ctx, driver, overlayPath)
   ctx.providers.register(driver)

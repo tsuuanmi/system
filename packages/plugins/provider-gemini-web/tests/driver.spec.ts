@@ -67,6 +67,20 @@ describe('the Gemini Web UI map and driver contract', () => {
     expect(ctx.providers.get('gemini-web').title).toBe('Gemini')
   })
 
+  it('takes the answer-stable window as configuration: 1.5 s by default, from 100 ms to 1 min, handed to the driver (T161)', async () => {
+    expect(GeminiWebPlugin.Config({})).toMatchObject({ stableMs: 1500 })
+    expect(() => GeminiWebPlugin.Config({ stableMs: 50 })).toThrow()
+    expect(() => GeminiWebPlugin.Config({ stableMs: 60_001 })).toThrow()
+    const stableOf = async (config: Record<string, unknown>): Promise<number> => {
+      const ctx = new Context()
+      await ctx.plugin(Providers)
+      await ctx.plugin(GeminiWebPlugin, { origin: 'http://127.0.0.1:9', ...config })
+      return (ctx.providers.get('gemini-web') as unknown as { timeouts: { stableMs: number } }).timeouts.stableMs
+    }
+    expect(await stableOf({ stableMs: 300 })).toBe(300)
+    expect(await stableOf({})).toBe(1500)
+  })
+
   it('logs drift as ui.drift, its outline kept as local-private evidence (drift evidence, INV-12)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-gemini-'))
     const ctx = new Context()

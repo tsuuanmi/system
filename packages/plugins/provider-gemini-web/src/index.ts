@@ -35,7 +35,15 @@ export interface Config {
   maxPromptChars?: number
   /** The account's page opens (turns, checks, deletions) are spaced at least this far apart, in milliseconds (default 10 s, at most 10 min); navigations within a page are not. */
   pageGapMs?: number
+  /**
+   * How long an answer's text must stay unchanged, with generation stopped, before it counts as
+   * complete, in milliseconds (default 1.5 s, from 100 ms to 1 min). Test stacks on the fake site use 300 ms.
+   */
+  stableMs?: number
 }
+
+/** The answer-stable window in production (the driver's own default). */
+const STABLE_MS = 1500
 
 const DEFAULT_MODES: Record<string, ProviderMode> = {
   'flash-lite': { model: 'Flash-Lite', effort: 'Low' },
@@ -54,6 +62,7 @@ export const Config: z<Config> = z.object({
   researchMode: z.string().description('Preset Deep research selects, whatever its turn names; unset, the picker is left as the site has it. A thinking level not shown with Deep research chosen is skipped'),
   maxPromptChars: z.natural().min(1).default(30_000).description('The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error)'),
   pageGapMs: z.natural().max(600_000).default(10_000).description('Minimum gap between the opens of the account\'s pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced'),
+  stableMs: z.natural().min(100).max(60_000).default(STABLE_MS).description('How long an answer\'s text must stay unchanged, with generation stopped, before it counts as complete, in milliseconds, from 100 ms to 1 min; test stacks on the fake site use 300'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
@@ -64,6 +73,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     ...(config.researchMode !== undefined ? { researchMode: config.researchMode } : {}),
     maxPromptChars: config.maxPromptChars ?? 30_000,
     pageGapMs: config.pageGapMs ?? 10_000,
+    timeouts: { stableMs: config.stableMs ?? STABLE_MS },
   })
   // A stale element, with the outline of its region as local-private evidence (docs/design/ui-operations.md#drift-evidence).
   driver.onDrift = (e) => ctx.get('eventLog')?.append({ type: 'ui.drift', data: driftData(e, ctx.get('artifacts')) })

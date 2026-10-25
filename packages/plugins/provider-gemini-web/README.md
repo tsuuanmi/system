@@ -229,7 +229,7 @@ driver, its operations are data: a UI map,
   again, and its sign-in is checked as it is. `pageIdle` (map state `page.idle`:
   nothing generating, no `page.overlay` dialog or menu) tells the turn runtime it
   may keep the page for the session's next turn.
-- **Config:** `origin`, `modes`, `defaultMode`, `researchMode`, `maxPromptChars`, `pageGapMs`.
+- **Config:** `origin`, `modes`, `defaultMode`, `researchMode`, `maxPromptChars`, `pageGapMs`, `stableMs` (the answer-stable window, default 1.5 s, 100 ms to 1 min).
 - **Injects:** `providers`. It uses `eventLog` and `artifacts` when present, for
   its `ui.drift`, `provider.stall`, `provider.reload`, and `provider.copy-refused`
   events and their evidence.

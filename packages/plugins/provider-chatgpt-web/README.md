@@ -161,7 +161,7 @@ The **ChatGPT Web provider driver**
   never resent. For Deep research only the run after the last prompt counts.
 - **Live checks:** what was verified on the live site, and when, is in the
   [release checklist](../../../docs/validation/release-checklist.md).
-- **Config:** `origin`, `overlayPath`, `modes`, `defaultMode`, `pageGapMs`.
+- **Config:** `origin`, `overlayPath`, `modes`, `defaultMode`, `pageGapMs`, `stableMs` (the answer-stable window, default 1.5 s, 100 ms to 1 min).
 - **Injects:** `providers`. It uses `artifacts` and `eventLog` when present,
   for the heal audit.
 - **Not yet:**
