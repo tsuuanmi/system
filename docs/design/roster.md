@@ -157,25 +157,27 @@ decides nothing and stores nothing.
 | List | What | Order |
 |---|---|---|
 | `accounts` | each account: its pools' windows (`used`, `resets`, `state`), whether it takes new work now (`canWork`), and why in one line | by account id |
-| `free` | the Workers that take work now: `ready`, their account not at a limit, and its quota known; each with its id, name, account, role, kinds, tier, load, and `quota`, the window with the least left among those with a current reading (`null`: no account quota applies to it, it names no account or its account has no pool) | below |
+| `free` | the Workers that take work now: `ready`, their account not at a limit, and its quota known; each with its id, name, account, role, kinds, tier, load, and `quota`, its account's binding window (the one with the least headroom) with its used share, what is left, its `headroom` above the reserve, and its reset when the reading names one (`null`: no account quota applies to it, it names no account or its account has no pool) | below |
 | `quotaUnknown` | the Workers ready as their source says whose account's quota cannot be read now, with why | by id |
 | `stalled` | each stalled agent run: the Worker, the run, since when; `unread` when a Worker's liveness could not be told | the longest stalled first |
 | `noQuota` | each account at a limit (its `limitUntil`, a closed pool, or a window at its limit), and until when: its `limitUntil`, else its closed pools' latest `until` when each names one, else its limited windows' latest reset, else `unknown` | by account id |
 | `cannotWork` | each `unavailable` or `quarantined` Worker, with its availability's summary | by id |
 | `ready` | the ready tasks of the active board projects (a paused project's cannot start), each with `likely`, the Worker a start would most likely go to | by project id, each project's oldest first |
 
-**Use it or lose it.** `free` lists first the Worker whose quota would be lost unused fastest: what
-is left of its window over the minutes until that window resets, the highest first; then the most
-left, the soonest reset, and the id. Of two free accounts, one at 10 % used resetting in 40 min
-and one at 85 % used resetting in 4 h, the first comes first (2.25 % a minute against 0.06 %). A
-Worker no account quota applies to comes after every one that has a quota, by id: it loses nothing
-by waiting.
+**Use it or lose it.** `free` lists the Workers in the quota score's one headroom order
+([quota in every route](routing.md#quota-in-every-route), `headroomOrderOf` in `libs`, T185): the
+same function routing and dispatch call, never a second computation. An account over its reserve
+(used above 80 % of a window with the default 20 % reserve) comes last while another has headroom;
+then the window that resets soonest with headroom first; then the most headroom; then the id. Of two
+free accounts, one at 10 % used resetting in 40 min and one at 85 % used resetting in 4 h, the
+first comes first. A Worker no account quota applies to comes after every one that has a quota, by
+id: it loses nothing by waiting. The reserve is the ledger's `quota()` (the defaults when it gives
+none).
 
 **Unknown is never free** ([INV-2](../architecture/invariants.md#inv-2-fail-closed)). A window
-with no reading, no used share, no reset, or a reset already past (the reading is older than the
-window it reads) is never read as room. A Worker whose account has no current reading in any
-window, or whose pools cannot be read, is listed in `quotaUnknown`, never in `free`, and its
-account's `canWork` is `unknown`. An account is `canWork: false` when it is at a limit or none of
+with no reading, a stale reading, no used share, or a reading from before its reset is never read
+as room. A Worker whose account has a window not read now, or whose pools cannot be read, is listed
+in `quotaUnknown`, never in `free`, and its account's `canWork` is `unknown`. An account is `canWork: false` when it is at a limit or none of
 its Workers takes work (ready, or busy with a slot its source says is free). With no Workers read,
 every list is `unknown`, never empty; with no board, `ready` is.
 

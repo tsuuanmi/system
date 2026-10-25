@@ -6,11 +6,14 @@
  * accounts with no quota left, the Workers that cannot work, and the ready board tasks with the
  * Worker a start would most likely go to. It decides nothing and stores nothing.
  *
- * A reading that is not known is never read as room (INV-2): a Worker whose account's quota cannot be
- * read is listed apart (`quotaUnknown`), never among the free, and an account whose windows have no reading
- * is `canWork: unknown`. Every list is bounded (INV-9, {@link CAPACITY_BOUNDS}), the rest counted in `more`.
+ * An account's headroom and the order free Workers are listed in are libs' one implementation
+ * (`accountQuotaOf`, `headroomOrderOf`, the quota score's: T185), never computed here. A reading that
+ * is not known is never read as room (INV-2): a Worker whose account's quota cannot be read is listed
+ * apart (`quotaUnknown`), never among the free, and an account with a window not read now is
+ * `canWork: unknown`. Every list is bounded (INV-9, {@link CAPACITY_BOUNDS}), the rest counted in `more`.
  * @module
  */
+import { type AccountQuota, accountQuotaOf, compareHeadroom, headroomOrderOf, QUOTA_DEFAULTS, type QuotaPool, type QuotaSettings } from '@tsuuanmi/system-libs'
 import type { Known, Roster, RosterDescriptor, RosterEntry, RosterPoolView } from './roster.ts'
 
 /** What capacity now lists and reads at most (INV-9). */
@@ -28,10 +31,11 @@ export interface CapacityWindow { pool: string; id: string; seconds?: number; st
 /** An account: its pools' windows, and whether it takes new work now, with why. */
 export interface CapacityAccount { account: string; name: string; windows: Known<CapacityWindow[]>; canWork: Known<boolean>; summary: string }
 /**
- * The quota a free Worker has left: its account's window with the least left among those with a
- * current reading (one whose reset is still ahead), its used share, and when it resets.
+ * The quota a free Worker has left: its account's binding window (the one with the least headroom,
+ * every window read now), its used share, what is left of it, its headroom above the operator's
+ * reserve, and when it resets (absent when its reading names no reset).
  */
-export interface CapacityQuota { pool: string; window: string; seconds?: number; used: number; left: number; resetsAt: string }
+export interface CapacityQuota { pool: string; window: string; seconds?: number; used: number; left: number; headroom: number; resetsAt?: string }
 /** A Worker that takes work now. `quota` is `null` when no account quota applies to it (no account, or none tracked for its account). */
 export interface CapacityFree {
   worker: string
@@ -75,6 +79,8 @@ export interface CapacityInput {
   ready: Known<{ tasks: CapacityTaskRead[]; unread?: string }>
   /** Each listed task's template's steps, by name: `null` when the engine does not serve it now. */
   steps: ReadonlyMap<string, Known<CapacityStep[] | null>>
+  /** The operator's quota settings (the ledger's `quota()`); the defaults when the ledger gives none. */
+  quota?: QuotaSettings | undefined
 }
 
 const known = <T>(value: T): Known<T> => ({ value })
@@ -121,37 +127,46 @@ function limitOf(entries: RosterEntry[], pools: Known<RosterPoolView[]>): { unti
   return { until: unknown('no reset is known: neither its account nor every closed pool or limited window names one') }
 }
 
-/**
- * The quota an account has left now: the window with the least left among those with a current
- * reading, `null` when its account has no pool, or why it cannot be read. A window with no reading,
- * no used share, no reset, or a reset already past (the reading is older than the window) is never read as room.
- */
-function quotaOf(pools: Known<RosterPoolView[]>, now: Date): Known<CapacityQuota | null> {
-  if (!isKnown(pools)) return unknown(pools.unknown)
-  if (!pools.value.length) return known(null)
-  const current = pools.value.flatMap((p) => p.windows.flatMap((w): CapacityQuota[] => {
-    if (!isKnown(w.used) || !isKnown(w.resets) || Date.parse(w.resets.value) <= now.getTime()) return []
-    return [{ pool: p.pool, window: w.id, ...(w.seconds !== undefined ? { seconds: w.seconds } : {}), used: w.used.value, left: Math.max(0, 100 - w.used.value), resetsAt: w.resets.value }]
+/** An account's pools as the ledger gave them (the roster's view of them read back): what libs' headroom reads. */
+export function quotaPoolsOf(pools: readonly RosterPoolView[]): QuotaPool[] {
+  return pools.map((p) => ({
+    pool: p.pool, kind: p.kind, available: p.available, ...(p.until ? { until: p.until } : {}),
+    windows: p.windows.map((w) => ({ id: w.id, kind: w.kind, ...(w.seconds !== undefined ? { seconds: w.seconds } : {}) })),
+    // A window the roster shows with no observation has no reading; `resets` is already the later of resetsAt and cooldownUntil.
+    readings: p.windows.filter((w) => w.observedAt !== undefined).map((w) => ({
+      window: { id: w.id }, state: w.state, observedAt: w.observedAt!,
+      ...(isKnown(w.used) ? { usedPercentage: w.used.value } : {}), ...(isKnown(w.resets) ? { resetsAt: w.resets.value } : {}),
+    })),
   }))
-  if (!current.length) return unknown('no window of its account has a current reading (none yet, or each one\'s reset has passed)')
-  return known(current.sort((a, b) => a.left - b.left || cmp(a.resetsAt, b.resetsAt) || cmp(a.pool, b.pool) || cmp(a.window, b.window))[0]!)
 }
 
 /**
- * How much of a quota would be lost unused per minute if no work is given to it: what is left over
- * the minutes until it resets. The free Workers are listed by it, the highest first (use it or lose
- * it): of two accounts, one resetting in 40 min at 10 % used and one at 85 % resetting in 4 h, the
- * first comes first.
+ * The quota an account has left now, by libs' one headroom rule: its binding window when every window
+ * is read now, `null` when its account has no pool, or why it cannot be read. A window with no reading,
+ * a stale one, no used share, or a reset already past is never read as room.
  */
-export const urgency = (quota: CapacityQuota, now: Date): number => quota.left / Math.max(1, (Date.parse(quota.resetsAt) - now.getTime()) / 60_000)
-
-/** Free Workers in the order a lead should give them work: the most urgent quota first, then the most left, the soonest reset, the id; those no quota applies to last, by id. */
-function orderFree(free: CapacityFree[], now: Date): CapacityFree[] {
-  return [...free].sort((a, b) => {
-    if (a.quota && b.quota) return urgency(b.quota, now) - urgency(a.quota, now) || b.quota.left - a.quota.left || cmp(a.quota.resetsAt, b.quota.resetsAt) || cmp(a.worker, b.worker)
-    if (a.quota || b.quota) return a.quota ? -1 : 1
-    return cmp(a.worker, b.worker)
+function quotaOf(quota: AccountQuota | null): Known<CapacityQuota | null> {
+  if (quota === null) return known(null)
+  const b = quota.binding
+  if (quota.knowledge !== 'known' || !b) {
+    const read = quota.pools.some((p) => p.windows.some((w) => w.known))
+    return unknown(`${read ? 'not every' : 'no'} window of its account has a current reading (${quota.why[0] ?? 'its quota is unknown'})`)
+  }
+  return known({
+    pool: b.pool, window: b.window, ...(b.seconds !== undefined ? { seconds: b.seconds } : {}), used: b.used!, left: Math.max(0, Math.round((100 - b.used!) * 10) / 10),
+    headroom: b.headroom!, ...(b.resets !== undefined ? { resetsAt: b.resets } : {}),
   })
+}
+
+/**
+ * Free Workers in the order a lead should give them work: libs' headroom order (use it or lose it: an
+ * account over its reserve last while another has headroom, then the window that resets soonest with
+ * headroom, then the most headroom), then the id; those no quota applies to last, by id.
+ */
+function orderFree(free: CapacityFree[], pools: ReadonlyMap<string, QuotaPool[]>, settings: QuotaSettings, now: Date): CapacityFree[] {
+  const quoted = headroomOrderOf(free.filter((f) => f.quota), (f) => pools.get(f.account!) ?? [], settings, now)
+    .sort((a, b) => compareHeadroom(a.keys, b.keys) || cmp(a.item.worker, b.item.worker)).map((o) => o.item)
+  return [...quoted, ...free.filter((f) => !f.quota).sort((a, b) => cmp(a.worker, b.worker))]
 }
 
 /** Whether a Worker takes new work now: ready, or busy with a slot its source says is free. */
@@ -176,13 +191,16 @@ export function projectCapacity(input: CapacityInput, now: Date): Capacity {
   const accounts: CapacityAccount[] = []
   const noQuota: CapacityNoQuota[] = []
   const quotas = new Map<string, Known<CapacityQuota | null>>()
+  const ledger = new Map<string, QuotaPool[]>()
+  const settings = input.quota ?? QUOTA_DEFAULTS
   const limits = new Set<string>()
   for (const id of ids) {
     const mine = groups.get(id)!
     const name = accountName(mine[0]!.name)
     const pools = poolsOf(mine)
     const limit = limitOf(mine, pools)
-    const quota = quotaOf(pools, now)
+    if (isKnown(pools)) ledger.set(id, quotaPoolsOf(pools.value))
+    const quota = !isKnown(pools) ? unknown<CapacityQuota | null>(pools.unknown) : quotaOf(pools.value.length ? accountQuotaOf(ledger.get(id)!, settings, now) : null)
     quotas.set(id, quota)
     if (limit) {
       limits.add(id)
@@ -193,7 +211,7 @@ export function projectCapacity(input: CapacityInput, now: Date): Capacity {
       return all.length > CAPACITY_BOUNDS.windows ? unknown(`its account has ${all.length} windows, more than the ${CAPACITY_BOUNDS.windows} listed`) : known(all)
     })()
     const taking = mine.filter(takesWork).length
-    const left = (q: CapacityQuota): string => `${q.left} % left of ${q.window} (used ${q.used} %), resets ${q.resetsAt}`
+    const left = (q: CapacityQuota): string => `${q.left} % left of ${q.window} (used ${q.used} %), resets ${q.resetsAt ?? 'at an unknown time'}`
     const [canWork, summary]: [Known<boolean>, string] = limit
       ? [known(false), `at its limit until ${isKnown(limit.until) ? limit.until.value : 'an unknown time'}`]
       : !taking ? [known(false), `none of its ${mine.length} Worker(s) takes work now (${[...new Set(mine.map((e) => e.availability.state))].join(', ')})`]
@@ -220,7 +238,7 @@ export function projectCapacity(input: CapacityInput, now: Date): Capacity {
       tier: e.tier, load: e.load, quota: quota.value,
     })
   }
-  const ordered = orderFree(free, now)
+  const ordered = orderFree(free, ledger, settings, now)
   // The stalled runs, the longest stalled first; a Worker whose liveness could not be told is said, never read as none.
   const stalled = entries.flatMap((e) => (e.liveness && isKnown(e.liveness) ? e.liveness.value.filter((r) => r.state === 'stalled').map((r): CapacityStalled => ({ worker: e.worker, name: e.name, execution: r.execution, ...(r.runId ? { runId: r.runId } : {}), since: r.since })) : []))
     .sort((a, b) => cmp(a.since, b.since) || cmp(a.worker, b.worker) || cmp(a.execution, b.execution))
@@ -271,7 +289,7 @@ const listed = <T>(k: Known<CapacityList<T>>, line: (item: T) => string): string
 
 /** Capacity now as the operator and the lead read it in a terminal: one line per list. */
 export function formatCapacity(c: Capacity): string[] {
-  const quota = (q: CapacityQuota | null): string => (q ? `${q.left} % left of ${q.window}, resets ${q.resetsAt}` : 'no quota tracked')
+  const quota = (q: CapacityQuota | null): string => (q ? `${q.left} % left of ${q.window}, resets ${q.resetsAt ?? 'at an unknown time'}` : 'no quota tracked')
   return [
     `Right now (as of ${c.asOf}):`,
     `  free         ${listed(c.free, (f) => `${f.name} (${f.worker}; ${quota(f.quota)})`)}`,

@@ -479,7 +479,7 @@ free Worker it chose.
 | `notify` | the same, and a notice of the start (`workflow.dispatch.notice`, told by the notifier as `dispatch.started`) | the same, and the notice |
 
 - **The request** binds to exactly that start (INV-5): subject `{ type: content, ref:
-  dispatch:<taskId>:attempt:<n>, version: quota-score@1:<sha256 of the Worker and the score's
+  dispatch:<taskId>:attempt:<n>, version: quota-score@2:<sha256 of the Worker and the score's
   inputs> }` (`n`, the attempts already made), class `dispatch`, requester `workflow` with the task
   and project; its summary names the task, the attempt, the Worker, and each window it would draw on,
   its consequences what each verdict does and why that Worker.

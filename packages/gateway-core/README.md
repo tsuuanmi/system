@@ -99,7 +99,10 @@ Tests: `tests/guard.spec.ts`.
 - **`readCapacity(services, { scope, now? })`**: the roster's `now`, capacity now
   ([capacity now](../../docs/design/roster.md#capacity-now), `capacity.ts`):
   each account's windows and whether it takes new work now; the free Workers,
-  the one whose quota would be lost unused soonest first (`urgency`); those
+  in `libs`' one headroom order (`headroomOrderOf`, the quota score's: an account
+  over its reserve last while another has headroom, then the window that resets
+  soonest with headroom, then the most headroom; ties by id), each with its
+  binding window's headroom; those
   whose quota cannot be read, never counted free (`quotaUnknown`); the stalled
   runs; the accounts with no quota left; the Workers that cannot work; and the
   ready tasks with the Worker a start would most likely go to (`canTakeStep`,

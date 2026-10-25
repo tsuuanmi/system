@@ -17,7 +17,7 @@ export {
 } from './roster.ts'
 export {
   accountName, canTakeStep, type Capacity, type CapacityAccount, CAPACITY_BOUNDS, type CapacityCannotWork, type CapacityFree, type CapacityInput, type CapacityList, type CapacityNoQuota, type CapacityQuota,
-  type CapacityReady, type CapacityStalled, type CapacityStep, type CapacityTaskRead, type CapacityUnread, type CapacityWindow, formatCapacity, projectCapacity, urgency,
+  type CapacityReady, type CapacityStalled, type CapacityStep, type CapacityTaskRead, type CapacityUnread, type CapacityWindow, formatCapacity, projectCapacity, quotaPoolsOf,
 } from './capacity.ts'
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
 export { outline, reply } from './reply.ts'

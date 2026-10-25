@@ -44,7 +44,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
 | [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
 | [resources-core](../../packages/resources-core/README.md) | routing | defines `resources` | — | — | — |
-| [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts` | `libs`, `workers-core` |
+| [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts`, `resources` (optional) | `libs`, `workers-core` |
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
 | [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
@@ -281,6 +281,7 @@ flowchart TB
   worker_sessions --> artifacts
   worker_sessions -.-> mcp_server
   workers --> artifacts
+  workers -.-> resources
   workflow --> store
   workflow --> artifacts
   workflow --> event_log

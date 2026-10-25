@@ -7,7 +7,7 @@
  *   `dispatch.sweepSeconds` and once at start: a restart is a pass, not a replay (INV-4). It takes the
  *   ready tasks of active projects that name a template the engine serves, oldest first, at most
  *   `maxPerPass` a pass.
- * - **The Worker** of a task's writing step is chosen by `quotaScoreOf` (`quota-score@1`) among the
+ * - **The Worker** of a task's writing step is chosen by `quotaScoreOf` (`quota-score@2`) among the
  *   Workers routing admits (`ctx.workers.candidates`, nothing reserved): the first free one. An unknown
  *   or stale reading, or a metered pool, is never free (INV-2, D65).
  * - **The policy** for `dispatch` decides: `ask` opens one request bound to the task, its attempt, and

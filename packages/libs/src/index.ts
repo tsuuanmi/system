@@ -16,7 +16,7 @@ export {
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, probeProcess, type ReadText,
 } from './liveness.ts'
 export {
-  type AccountQuota, accountQuotaOf, QUOTA_DEFAULTS, QUOTA_RANGES, QUOTA_SCORE, type QuotaCandidate, type QuotaKeys, type QuotaPool, type QuotaReading, type QuotaScore, quotaScoreOf, type QuotaSettings,
+  type AccountQuota, accountQuotaOf, compareHeadroom, HEADROOM_KEYS, type HeadroomKeys, headroomKeysOf, headroomLine, headroomOrderOf, headroomReason, QUOTA_DEFAULTS, QUOTA_RANGES, QUOTA_SCORE, type QuotaCandidate, type QuotaKeys, type QuotaPool, type QuotaReading, type QuotaScore, quotaScoreOf, type QuotaSettings,
   quotaSettingsProblems, type QuotaWindow, type ScoredCandidate, type WindowQuota, windowName,
 } from './quota.ts'
 export {

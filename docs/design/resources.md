@@ -158,22 +158,31 @@ its own use, with no plan written into configuration:
 > Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
 > (accepted 2026-10-25, D61, D63). Contract 1.2.
 
-The `resources` row's `quota` holds what the quota score (`quota-score@1`,
-[routing](routing.md#candidates-without-a-reservation)) reads besides the pools, each a whole number
+The `resources` row's `quota` holds what the quota score (`quota-score@2`,
+[routing](routing.md#quota-in-every-route)) reads besides the pools, each a whole number
 validated when the row loads; one out of its range refuses the row with its path. The ledger itself
-counts, reserves, and closes nothing by them: they are read through `quota()`.
+counts, reserves, and closes nothing by them: they are read through `quota()`. One implementation in
+`libs` turns them and the pools into each account's headroom and its order (T185,
+[ADR-0066](../decisions/adr/0066-every-route-orders-workers-by-their-accounts-quota-headroom.md)): dispatch's
+choice, every route's order, and the roster's capacity now all read it.
 
 | Key | Default | Range | Meaning |
 |---|---|---|---|
-| `reservePercent` | 20 (D63) | 0 to 90 | share of every window kept for the operator's own use: work System starts by itself never starts into it. It gates starts only: a run that crosses into it keeps going, and a run the lead or the operator starts is routed as before |
+| `reservePercent` | 20 (D63) | 0 to 90 | share of every window kept for the operator's own use: work System starts by itself never starts into it, and every route ranks a Worker whose account is over it (used above `100 − reservePercent` % of a window, or at its limit) last while another admitted Worker has headroom, so it gets no new step then. It refuses nothing: a run that crosses into it keeps going, and a Worker over it still takes work when no other can |
 | `useSoonMinutes` | 90 | 0 to 1440 | a window that resets this soon, with headroom, is used first; 0 never |
 | `minHeadroomPercent` | 10 | 1 to 100 | the headroom a window about to reset needs to be used first |
 | `headroomBucketPercent` | 5 | 1 to 25 | headroom is compared in buckets this wide |
 | `staleReadingSeconds` | 1800 | 60 to 86400 | a reading older than this leaves its window unknown, never capacity; keep it above the agent providers' `limitReadSeconds` (default 600), so the account's own report keeps windows fresh |
 
 - A ledger without `quota()` keeps no reserve: the dispatch pass then finds no Worker free (INV-2).
-- A window with no reading, a stale, `unknown`, or `limited` one, or one with no used share is not
-  known, and a pool configured `unknown: available` is never read as having headroom.
+  Routing and the roster read the defaults then (the 20 % reserve), so the order still keeps it.
+- A window with no reading, a stale, `unknown`, or `limited` one, one with no used share, or one
+  whose reading is from before its reset is not known, and a pool configured `unknown: available`
+  is never read as having headroom.
+- **The canonical gauge** of an account is the windows its pool lists, which the operator
+  configures. A Claude Code plan's pool lists only its five-hour window (operator D70): its weekly
+  windows are not read into headroom
+  ([read each account's quota](../operations/runbooks.md#read-each-accounts-quota)).
 - A per-template reserve and dispatch onto metered pools are not built (PROP-0014; D65: never).
 
 ## Counting

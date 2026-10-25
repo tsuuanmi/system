@@ -175,7 +175,7 @@ describe('the dispatch pass (ADR-0064, REQ-WF-16)', () => {
     const ask = askOf(status, first.taskId)!
     const request = requests.find((r) => r.requestId === ask.requestId)!
     expect(request).toMatchObject({ state: 'open', subject: { type: 'content', ref: `dispatch:${first.taskId}:attempt:0` }, requester: { component: 'workflow', taskId: first.taskId, projectId: 'p1' } })
-    expect(request.subject.version).toMatch(/^quota-score@1:sha256:[0-9a-f]{64}$/)
+    expect(request.subject.version).toMatch(/^quota-score@2:sha256:[0-9a-f]{64}$/)
     expect(request.action.summary).toMatch(/^Start attempt 1 of "first" .* on agent:acc-a\/develop: 5 h: used 0 %, headroom 80 above the 20 % reserve/)
     expect(ask).toMatchObject({ state: 'asked', worker: 'agent:acc-a/develop', account: 'acc-a', attempt: 1, windows: [{ name: '5 h', used: 0, headroom: 80, reserve: 20 }] })
     // The decisions: the select over the ready tasks, the choice over every Worker, the policy's verdict.
@@ -185,7 +185,7 @@ describe('the dispatch pass (ADR-0064, REQ-WF-16)', () => {
     expect(select.candidates.map((c) => [c.option, c.selected])).toEqual([[first.taskId, true], [second.taskId, false], [third.taskId, false]])
     expect(select.candidates[1]!.reasons[0]).toBe(`after ${first.taskId} in the order (the oldest ready task first)`)
     const choice = decisionOf(ctx, choiceId)
-    expect(choice).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice', version: '1' }, outcome: { option: 'agent:acc-a/develop', detail: { score: 'quota-score@1', nodeId: 'develop:1', version: request.subject.version } } })
+    expect(choice).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice', version: '1' }, outcome: { option: 'agent:acc-a/develop', detail: { score: 'quota-score@2', nodeId: 'develop:1', version: request.subject.version } } })
     expect(choice.inputs).toEqual(expect.arrayContaining([selectId, autonomyId]))
     const reasons = Object.fromEntries(choice.candidates.map((c) => [c.option, c.reasons]))
     expect(reasons['agent:acc-a/develop']![0]).toBe('free: every window has headroom above the 20 % reserve')
@@ -497,7 +497,7 @@ describe('dispatch starting by itself (PROP-0014 D2, ADR-0064)', () => {
     expect(decisionOf(ctx, selectId)).toMatchObject({ decider: { id: 'dispatch.select' }, outcome: { option: task.taskId } })
     expect(decisionOf(ctx, selectId).candidates[0]!.reasons[0]).toMatch(/the policy gives dispatch auto in project p1, so it starts with nothing asked/)
     const choice = decisionOf(ctx, choiceId)
-    expect(choice).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice' }, outcome: { option: 'agent:acc-a/develop', detail: { score: 'quota-score@1' } } })
+    expect(choice).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice' }, outcome: { option: 'agent:acc-a/develop', detail: { score: 'quota-score@2' } } })
     const reasons = Object.fromEntries(choice.candidates.map((c) => [c.option, c.reasons]))
     expect(reasons['agent:acc-a/develop']![0]).toBe('free: every window has headroom above the 20 % reserve')
     expect(reasons['agent:acc-b/develop']![0]).toBe('not free: load 1 of 1 (dispatch.maxRunningPerAccount 1)')

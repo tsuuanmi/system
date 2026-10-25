@@ -214,7 +214,7 @@ guesses.
   why it is not free, or routing's refusal, and the sources that did not answer, at most 255 (the
   last counting the rest), its inputs the select decision, the stored requirement, and the policy's
   `autonomy` decision, `detail` naming the `taskId`, `attempt`, `nodeId`, `score`
-  (`quota-score@1`), the `settings`, the request's `version`, the chosen Worker's `account`,
+  (`quota-score@2`), the `settings`, the request's `version`, the chosen Worker's `account`,
   `repository`, and `windows`; a `gate` (rule `dispatch.approval`) whose outcome `board-approval`
   names the board's approved request for the attempt (D62); and a `gate` (decider `operator`,
   `dispatch.pause`) whose outcome `pause` or `run` is the operator's pause or resume.
@@ -777,7 +777,7 @@ guesses.
   refuses the requester `approvals` (`invalid`). Its subject is
   `{type: content, ref: autonomy-policy-set, version: <the proposed set's hash>}`.
 - A `dispatch` request (ADR-0064) stays `@1.0`: requester `workflow` with the task and project, its
-  subject `{type: content, ref: dispatch:<taskId>:attempt:<n>, version: quota-score@1:<sha256 of
+  subject `{type: content, ref: dispatch:<taskId>:attempt:<n>, version: quota-score@2:<sha256 of
   the Worker and the score's inputs>}` (`n`, the attempts the task had made), so an approval binds
   the task, the attempt, and the Worker; its `refs` name the `dispatch.choice` decision.
   Examples: [`approval-request.batched.json`](../../schemas/examples/approval-request.batched.json),
@@ -1199,6 +1199,11 @@ guesses.
   a start through MCP `run` or `task` or the CLI, `operator` for Start on `/ui`; absent when the
   engine does not tell (workflow contract below 1.10). The step's `summary` then ends with
   `started by itself`. A 1.7 record stays valid. Readers accept 1.0 to 1.8.
+- `mcp-roster@1.9` adds, per free Worker of capacity now (`capacityQuota`), `headroom`: what its
+  account's binding window has left above the operator's reserve (from -90 to 100), by the one headroom rule
+  dispatch and routing use ([PROP-0014](../proposals/0014-dispatch-by-quota.md) D3); the binding window is
+  the one with the least headroom, and its `resetsAt` is absent when its reading names no reset. A 1.8
+  record stays valid. Readers accept 1.0 to 1.9.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

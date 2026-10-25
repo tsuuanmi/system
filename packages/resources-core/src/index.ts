@@ -21,7 +21,7 @@ declare module '@deepseek-ai/cordis' {
 export const RESOURCES_CONTRACT = '1.2'
 
 /**
- * The operator's quota settings (contract 1.2, ADR-0064), read by the quota score (`quota-score@1` in
+ * The operator's quota settings (contract 1.2, ADR-0064), read by the quota score (`quota-score@2` in
  * `@tsuuanmi/system-libs`): the share of every window kept free of work System starts by itself, and
  * how the score reads windows. Each is a whole number in its range, validated when the provider loads.
  */

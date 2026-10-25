@@ -7,7 +7,7 @@ summary: System starts ready board tasks on free Workers by itself instead of wa
 owners: [operator]
 evidence: [operator observation 2026-10-25 (16 ready tasks, 18 free Workers, both Codex accounts at 0 %)]
 related: [PROP-0008, PROP-0010, PROP-0012, PROP-0013, ADR-0033, ADR-0036, ADR-0041, ADR-0047, ADR-0052, ADR-0055, ADR-0057, ADR-0058, ADR-0059, ADR-0060, REQ-WRK-8, REQ-WRK-11, REQ-HOST-8]
-implementation: [ADR-0064]
+implementation: [ADR-0064, ADR-0066]
 ---
 
 # Proposal: Dispatch by quota — System starts ready work on free Workers, chosen by quota
@@ -639,6 +639,35 @@ hold:
   says so (Start on `/ui`), every other start by hand is `lead`; under `notify` Home shows the start
   as under `auto`, the notice is the difference. Not built in D2: `board-task@1.2` `priority` (the
   pass still orders by age) and the withdrawal of open asks whose Worker's pool closed.
-- Follow-up: dispatch's quota score (`quotaScoreOf` in `libs`) and the roster's capacity now
-  (`packages/gateway-core/src/capacity.ts`, T152) each compute a window's headroom and the order free
-  Workers are taken in; the two must become one function.
+- Follow-up (done in D3, below): dispatch's quota score (`quotaScoreOf` in `libs`) and the roster's
+  capacity now (`packages/gateway-core/src/capacity.ts`, T152) each computed a window's headroom and
+  the order free Workers are taken in.
+
+D3, quota in every route (T185), as
+[ADR-0066](../decisions/adr/0066-every-route-orders-workers-by-their-accounts-quota-headroom.md)
+decides it and [routing](../design/routing.md#quota-in-every-route) and
+[resources](../design/resources.md#quota-settings) now hold it:
+
+- **One headroom function.** `libs` holds the one implementation of a pool's headroom and its order
+  (`accountQuotaOf`, `headroomOrderOf`). `quotaScoreOf`, routing, and capacity now all call it; capacity's
+  own window pick and `urgency` order are gone. Its order: an account over its reserve last while
+  another is free; known before unknown; the window that resets soonest with headroom first; the most
+  headroom. Ties fall to the caller's next keys, and last to id.
+- **`quota-score@2`.** Two changes of behavior: a reading from before its reset is not known, and an
+  account over its reserve ranks last while another is free. Dispatch's ask versions name `@2`, so an
+  ask opened under `@1` is asked again after the upgrade.
+- **Every route.** `ctx.workers` reads the ledger's `pools()` and `quota()` once per route, for every
+  step of every run, dispatched or not. The reserve key comes before tier, so a Worker over its
+  reserve gets no new step, writing or not, while another admitted Worker has headroom. The rest of
+  the headroom order comes after quota class and before load. The route decision
+  (`workers.route.deterministic` version 2) gives every admitted Worker's score in one line and the
+  quota key a Worker lost on. With no ledger mounted, every quota key ties and routing orders as
+  before.
+- **Differs from the text above.** The proposal ranked headroom before load for dispatch only and
+  put the reserve's effect on starts only. D3 ranks every route, and the reserve orders but never
+  refuses. It ships on, not behind `quota.routeOrder`: ADR-0066 records the policy, accepted
+  with the operator's go-ahead for D3 (T185). The reserve shown on each window of
+  the Workers tab is not built. Capacity now shows each free Worker's headroom (`mcp-roster@1.9`
+  `capacityQuota.headroom`), and its `resetsAt` is optional when a reading names no reset.
+- **The canonical gauge** is the windows an account's pool lists, configured by the operator; a
+  Claude Code plan lists only its five-hour window (D70).

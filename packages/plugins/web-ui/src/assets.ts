@@ -1774,7 +1774,7 @@ export const APP_JS = `'use strict'
       return el('li', {}, el('strong', {}, label + ': '), String(items.length + (k.value.more || 0)),
         items.length ? [' — ', named(items.slice(0, SHOWN)), items.length > SHOWN ? fold((items.length - SHOWN) + ' more', named(items.slice(SHOWN))) : null, k.value.more ? ' · ' + k.value.more + ' not listed' : null] : null, extra)
     }
-    const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left, resets ' + clockOf(q.resetsAt) : 'quota not tracked'
+    const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left' + (q.headroom !== undefined ? ' (headroom ' + q.headroom + ' above the reserve)' : '') + (q.resetsAt ? ', resets ' + clockOf(q.resetsAt) : ', reset unknown') : 'quota not tracked'
     const likely = (t) => isKnown(t.likely) ? (t.likely.value ? 'likely ' + t.likely.value.name : 'no Worker that takes work now can take it') : 'its Worker is unknown (' + t.likely.unknown + ')'
     const stalled = now.stalled
     return el('section', { class: 'panel', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'),

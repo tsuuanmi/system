@@ -1,6 +1,6 @@
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { describe, expect, it } from 'vitest'
-import { type Capacity, CAPACITY_BOUNDS, formatCapacity, formatRoster, type Known, readCapacity, readRoster, type RosterDescriptor, type RosterPool, type RosterServices, urgency } from '../src/index.ts'
+import { type Capacity, CAPACITY_BOUNDS, formatCapacity, formatRoster, type Known, readCapacity, readRoster, type RosterDescriptor, type RosterPool, type RosterServices } from '../src/index.ts'
 
 const NOW = new Date('2026-10-24T09:30:00.000Z')
 const AT = '2026-10-24T09:29:58.000Z'
@@ -48,7 +48,13 @@ describe('capacity now: the Right now summary, made once on the server from the 
     // No agent account is enrolled here, so the Worker serves no role: it is named by its tier.
     expect(value(c.free).items[0]).not.toHaveProperty('role')
     expect(value(c.free).items[0]).toMatchObject({ name: `Claude · ${soon} · standard`, account: soon, tier: 'standard', load: { value: { running: 0, slots: 2 } }, quota: { pool: `plan/${soon}`, window: 'five-hour', seconds: 18_000, used: 10, left: 90, resetsAt: IN(40) } })
-    expect(urgency(value(c.free).items[0]!.quota!, NOW)).toBeGreaterThan(urgency(value(c.free).items[1]!.quota!, NOW))
+    // The headroom is libs' one rule (T185): what is left above the 20 % reserve; 85 % used is over it, so that account ranks last.
+    expect(value(c.free).items.map((f) => f.quota!.headroom)).toEqual([70, -5])
+    // The order is libs' alone: with the reserve at 0, 85 % used is not over it, and the soonest reset still comes first.
+    const level = await readCapacity(services([worker(late), worker(soon)], [pool(soon, { used: 10, resetsAt: IN(40) }), pool(late, { used: 85, resetsAt: IN(240) })], {
+      resources: { pools: async () => [pool(soon, { used: 10, resetsAt: IN(40) }), pool(late, { used: 85, resetsAt: IN(240) })], usage: async () => ({ records: [] }), quota: () => ({ reservePercent: 0, useSoonMinutes: 90, minHeadroomPercent: 10, headroomBucketPercent: 5, staleReadingSeconds: 1800 }) },
+    }), { scope: 'operator', now: NOW })
+    expect(value(level.free).items.map((f) => [f.account, f.quota!.headroom])).toEqual([[soon, 90], [late, 15]])
     // Each account takes work now, and says why.
     expect(value(c.accounts).items.map((a) => [a.account, a.canWork])).toEqual([[late, { value: true }], [soon, { value: true }]])
     expect(value(c.accounts).items[1]!.summary).toBe(`1 of its Worker(s) take work now; 90 % left of five-hour (used 10 %), resets ${IN(40)}`)
@@ -58,6 +64,10 @@ describe('capacity now: the Right now summary, made once on the server from the 
     // A Worker no account quota applies to (it names no account, or its account has no pool) comes after every one that has a quota.
     const mixed = await readCapacity(services([worker('q'), worker('none', { worker: 'model:fast', account: undefined }), worker('bare')], [pool('q', { used: 99, resetsAt: IN(600) })]), { scope: 'operator', now: NOW })
     expect(value(mixed.free).items.map((f) => [f.worker, f.quota === null])).toEqual([['agent:q/develop', false], ['agent:bare/develop', true], ['model:fast', true]])
+    // An account over its reserve (85 %) comes after one with headroom whatever their resets; an unread one is never free.
+    const over = await readCapacity(services([worker('a-over'), worker('b-room'), worker('c-unread')], [pool('a-over', { used: 85, resetsAt: IN(10) }), pool('b-room', { used: 10, resetsAt: IN(600) }), pool('c-unread')]), { scope: 'operator', now: NOW })
+    expect(value(over.free).items.map((f) => f.account)).toEqual(['b-room', 'a-over'])
+    expect(value(over.quotaUnknown).items.map((u) => u.account)).toEqual(['c-unread'])
   })
 
   it('never counts an unknown reading as free capacity (INV-2): no reading, no used share, a reset already past, or no ledger', async () => {

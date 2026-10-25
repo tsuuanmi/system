@@ -8,11 +8,11 @@
  * (INV-8): an account's id, state, and the operator's label only.
  * @module
  */
-import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
+import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, type QuotaSettings, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 import { type Capacity, CAPACITY_BOUNDS, type CapacityStep, type CapacityTaskRead, formatCapacity, projectCapacity } from './capacity.ts'
 
-/** The schema of the roster (`mcp-roster@1.8`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.8'
+/** The schema of the roster (`mcp-roster@1.9`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.9'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -152,7 +152,12 @@ export interface RosterServices {
       providers?(): Array<{ provider: string; title?: string | undefined }>
     }
   } | undefined
-  resources?: { pools(): Promise<RosterPool[]>; usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }> } | undefined
+  resources?: {
+    pools(): Promise<RosterPool[]>
+    usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }>
+    /** The operator's quota settings (the reserve), which capacity now's headroom reads; the defaults when absent. */
+    quota?(): QuotaSettings
+  } | undefined
   eventLog?: { query(filter: { type: string; since?: string; afterSeq: number; limit: number; runId?: string; nodeId?: string }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
   workflow?: {
     usage(limit: number): RosterRun[]
@@ -712,7 +717,14 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
     }
   }
   const descriptors = new Map(isKnown(listed) ? listed.value.map((d) => [d.worker, d] as const) : [])
-  const record: Roster = { ...roster, now: projectCapacity({ roster, descriptors, ready, steps }, now) }
+  // The operator's reserve: a ledger that cannot tell its settings gives the defaults (20 %, D63), never none.
+  let quota: QuotaSettings | undefined
+  try {
+    quota = resources?.quota?.()
+  } catch {
+    quota = undefined
+  }
+  const record: Roster = { ...roster, now: projectCapacity({ roster, descriptors, ready, steps, quota }, now) }
   schemas().assertDef(ROSTER_SCHEMA, 'roster-output', record)
   return record
 }

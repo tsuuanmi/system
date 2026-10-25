@@ -102,7 +102,7 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect((await workOf('operator')).startedBy).toBe('operator')
     // An engine below workflow 1.10 tells none: absent, never a guess.
     expect(await workOf()).not.toHaveProperty('startedBy')
-    expect(ROSTER_SCHEMA).toBe('mcp-roster@1.8')
+    expect(ROSTER_SCHEMA).toBe('mcp-roster@1.9')
   })
 
   it('says, for the operator, why a window has no reading yet when its account\'s last usage report could not be read (T111)', async () => {

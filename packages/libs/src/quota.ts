@@ -1,26 +1,44 @@
 /**
- * The quota score (`quota-score@1`, PROP-0014, ADR-0064): how much of each window of an account's
- * pools a Worker may still draw on, and the order in which the Workers routing admits for a step are
- * offered work by quota. A pure rule over the resource ledger's recorded readings and the operator's
- * quota settings, pinned by version as `livenessOf` is: the same inputs always give the same order.
+ * The quota score (`quota-score@2`, PROP-0014, ADR-0064): how much of each window of an account's
+ * pools a Worker may still draw on, and the order in which Workers are offered work by quota. A pure
+ * rule over the resource ledger's recorded readings and the operator's quota settings, pinned by
+ * version as `livenessOf` is: the same inputs always give the same order.
+ *
+ * **One implementation** (T185, PROP-0014 D3): an account's headroom is {@link accountQuotaOf}, and
+ * its place in the use-it-or-lose-it order is {@link headroomOrderOf} ({@link headroomKeysOf},
+ * {@link compareHeadroom}). Dispatch's score ({@link quotaScoreOf}), routing's order (`ctx.workers`,
+ * every step of every run), and the roster's capacity summary (`gateway-core`) all call them; none
+ * computes headroom itself.
  *
  * - A window is **known** when its latest reading is at most `staleReadingSeconds` old, reads `ok`,
- *   and gives a used share. Anything else (no reading yet, a stale, `unknown`, or `limited` reading, a
- *   reading with no used share) is not known, and an unknown window never counts as capacity (INV-2).
- * - Its **headroom** is `100 − used − reservePercent`: what dispatched work may draw, the reserve kept
- *   for the operator's own use of the plan. Its **reset** is the later of `resetsAt` and `cooldownUntil`.
+ *   gives a used share, and its reset (when it names one) is still ahead. Anything else (no reading
+ *   yet, a stale, `unknown`, or `limited` reading, a reading with no used share, one from before its
+ *   reset) is not known, and an unknown window never counts as headroom (INV-2).
+ * - Its **headroom** is `100 − used − reservePercent`: what work may draw, the reserve (20 % of each
+ *   window by default, D63) kept for the operator's own use of the plan. Its **reset** is the later of
+ *   `resetsAt` and `cooldownUntil`. A window read now as `limited`, or known with no headroom left, is
+ *   **over the reserve**: its account is used above `100 − reservePercent` %.
  * - An account is **free** by its quota when every pool of it is available, every window is known, and
  *   every window has headroom above the reserve (above 0). A pool available only because it is
  *   configured `unknown: available` is never read as having headroom.
- * - Candidates are ordered by tier, quota class (metered last), known before unknown, a window about
- *   to reset first, headroom in buckets, then load, the priority list, and id; the chosen one is the
- *   first that is free. Every candidate says why, in words a decision records (INV-13).
+ * - The headroom order: an account over its reserve last while another one is free; then known before
+ *   assumed before unknown; then the window that resets soonest (within `useSoonMinutes`, with at
+ *   least `minHeadroomPercent` left) first, the earlier reset first; then the most headroom, in buckets.
+ * - Candidates are ordered by that order's reserve key, tier, quota class (metered last), the rest of
+ *   the headroom order, then load, the priority list, and id; the chosen one is the first that is free.
+ *   Every candidate says why, in words a decision records (INV-13).
  *
- * The rule names no vendor, model, or tool (INV-11): it compares opaque pools, classes, and ids.
+ * The rule names no vendor, model, or tool (INV-11): it compares opaque pools, classes, and ids. Which
+ * windows an account has is the operator's pool configuration: an account's canonical gauge is the
+ * windows its pool lists (D70: a Claude Code plan's five-hour window only).
  */
 
-/** The rule's version, as a decision that applies it names it. A change of behavior is a new version. */
-export const QUOTA_SCORE = 'quota-score@1'
+/**
+ * The rule's version, as a decision that applies it names it. A change of behavior is a new version.
+ * 2 (T185): a reading from before its reset is not known; an account over its reserve ranks last
+ * while another is free.
+ */
+export const QUOTA_SCORE = 'quota-score@2'
 
 /** The operator's quota settings (the resource ledger's `quota`, ADR-0064), each a whole number in its range. */
 export interface QuotaSettings {
@@ -106,6 +124,8 @@ export interface WindowQuota {
   /** Whole minutes until `resets`, when that is still ahead. */
   resetsInMinutes?: number
   observedAt?: string
+  /** Read now (not stale, its reset ahead) as `limited`, or known with no headroom above the reserve. */
+  overReserve?: true
 }
 
 /** The pools of one account as the rule reads them. */
@@ -119,6 +139,8 @@ export interface AccountQuota {
   soonest?: WindowQuota
   /** Every pool available, every window known with headroom above the reserve. */
   free: boolean
+  /** The first window (by pool, then window) read now above `100 − reservePercent` %, or at its limit: the account is over its reserve. */
+  over?: WindowQuota
   /** Why it is not free by its quota, in words; empty when free. */
   why: string[]
 }
@@ -159,12 +181,17 @@ function windowOf(pool: QuotaPool, w: QuotaWindow, settings: QuotaSettings, now:
     ...(resets !== undefined ? { resets } : {}), ...(ahead !== undefined ? { resetsInMinutes: ahead } : {}),
   }
   const age = now - Date.parse(r.observedAt)
+  const current = Number.isFinite(age) && age <= settings.staleReadingSeconds * 1000
+  const past = resets !== undefined && !(Date.parse(resets) > now)
   const unknown = !Number.isFinite(age) ? 'its latest reading has no valid time'
-    : age > settings.staleReadingSeconds * 1000 ? `its latest reading is ${minutesText(Math.floor(age / 60_000))} old, more than ${minutesText(Math.floor(settings.staleReadingSeconds / 60))} (stale)`
-      : r.state === 'limited' ? `it is at its limit${resets ? ` until ${resets}` : ''}`
-        : r.state === 'unknown' ? 'its latest reading is unknown'
-          : used === undefined ? 'its latest reading gives no used share' : undefined
-  return unknown ? { ...read, unknown } : { ...read, known: true }
+    : !current ? `its latest reading is ${minutesText(Math.floor(age / 60_000))} old, more than ${minutesText(Math.floor(settings.staleReadingSeconds / 60))} (stale)`
+      : past ? `its latest reading is from before its reset at ${resets}, so its used share is no longer current`
+        : r.state === 'limited' ? `it is at its limit${resets ? ` until ${resets}` : ''}`
+          : r.state === 'unknown' ? 'its latest reading is unknown'
+            : used === undefined ? 'its latest reading gives no used share' : undefined
+  // Over the reserve: read now as at its limit, or known with no headroom left above the reserve.
+  const over = current && !past && (r.state === 'limited' || (unknown === undefined && read.headroom! <= 0))
+  return { ...read, ...(unknown ? { unknown } : { known: true }), ...(over ? { overReserve: true as const } : {}) }
 }
 
 /**
@@ -199,9 +226,89 @@ export function accountQuotaOf(pools: readonly QuotaPool[] | { unknown: string }
   const knowledge = allKnown ? 'known' : assumed ? 'assumed' : 'unknown'
   const binding = allKnown ? [...windows].sort((a, b) => a.headroom! - b.headroom! || compare(a.pool, b.pool) || compare(a.window, b.window))[0] : undefined
   const ahead = allKnown ? windows.filter((w) => w.resetsInMinutes !== undefined).sort((a, b) => a.resetsInMinutes! - b.resetsInMinutes! || compare(a.pool, b.pool) || compare(a.window, b.window)) : []
+  const over = windows.find((w) => w.overReserve)
   return {
     pools: read.map(({ pool, windows: ws }) => ({ pool: pool.pool, available: pool.available, ...(pool.until ? { until: pool.until } : {}), windows: ws })),
-    knowledge, ...(binding ? { binding } : {}), ...(ahead[0] ? { soonest: ahead[0] } : {}), free: why.length === 0, why,
+    knowledge, ...(binding ? { binding } : {}), ...(ahead[0] ? { soonest: ahead[0] } : {}), free: why.length === 0, ...(over ? { over } : {}), why,
+  }
+}
+
+/** An account's place in the headroom order (use it or lose it), each key lower first. */
+export interface HeadroomKeys {
+  /** 1 when the account is over its reserve while another account compared with it is free; else 0. */
+  reserve: number
+  /** 0 known, 1 assumed (`unknown: available`), 2 unknown. */
+  knowledge: number
+  /** 0 when a window resets within `useSoonMinutes` with at least `minHeadroomPercent` headroom; else 1. */
+  useSoon: number
+  /** Minutes to that reset, among those used soon; 0 otherwise. */
+  resetsIn: number
+  /** Minus the binding window's headroom bucket (more headroom first); 0 when not known. */
+  headroom: number
+}
+
+/** The headroom order's keys, in the order they are compared. */
+export const HEADROOM_KEYS: ReadonlyArray<keyof HeadroomKeys> = ['reserve', 'knowledge', 'useSoon', 'resetsIn', 'headroom']
+
+const KNOWLEDGE = { known: 0, assumed: 1, unknown: 2 } as const
+
+/**
+ * An account's keys in the headroom order. `othersFree`: whether another account it is compared with is
+ * free by its quota; only then does an account over its reserve rank last (it gets no new work while
+ * another account has headroom, and still ranks by its readings when none has).
+ */
+export function headroomKeysOf(quota: AccountQuota, settings: QuotaSettings, othersFree: boolean): HeadroomKeys {
+  const soon = settings.useSoonMinutes > 0 && quota.knowledge === 'known' && quota.soonest !== undefined && quota.soonest.resetsInMinutes! <= settings.useSoonMinutes
+    && quota.binding !== undefined && quota.binding.headroom! >= settings.minHeadroomPercent
+  return {
+    reserve: quota.over && othersFree ? 1 : 0, knowledge: KNOWLEDGE[quota.knowledge],
+    useSoon: soon ? 0 : 1, resetsIn: soon ? quota.soonest!.resetsInMinutes! : 0,
+    headroom: quota.knowledge === 'known' && quota.binding ? -Math.floor(Math.max(0, quota.binding.headroom!) / settings.headroomBucketPercent) : 0,
+  }
+}
+
+/** The headroom order: negative when `a` comes first, 0 when the keys tie (the caller's next key decides). */
+export function compareHeadroom(a: HeadroomKeys, b: HeadroomKeys): number {
+  for (const key of HEADROOM_KEYS) if (a[key] !== b[key]) return a[key] - b[key]
+  return 0
+}
+
+/**
+ * Many accounts in the headroom order at once: each one's quota and keys, an account over its reserve
+ * keyed last when another one of them is free. The one way any caller orders accounts by quota.
+ */
+export function headroomOrderOf<T>(items: readonly T[], poolsOf: (item: T) => readonly QuotaPool[] | { unknown: string } | undefined, settings: QuotaSettings, now: Date): Array<{ item: T; quota: AccountQuota; keys: HeadroomKeys }> {
+  const quotas = items.map((item) => ({ item, quota: accountQuotaOf(poolsOf(item), settings, now) }))
+  return quotas.map(({ item, quota }) => ({ item, quota, keys: headroomKeysOf(quota, settings, quotas.some((o) => o.quota !== quota && o.quota.free)) }))
+}
+
+/** An account's quota in one clause: "known, 5 h: used 10 %, resets in 40 min, headroom 70" (its binding and soonest windows). */
+export function headroomLine(quota: AccountQuota): string {
+  const parts: string[] = [quota.knowledge]
+  const shown = [quota.binding, quota.soonest].filter((w, i, all): w is WindowQuota => w !== undefined && all.findIndex((x) => x?.pool === w.pool && x?.window === w.window) === i)
+  for (const w of shown) parts.push(`${windowName(w)}: used ${w.used} %${w.resetsInMinutes !== undefined ? `, resets in ${minutesText(w.resetsInMinutes)}` : ''}`)
+  if (quota.binding) parts.push(`headroom ${quota.binding.headroom}`)
+  if (quota.over && !quota.binding) parts.push(`${windowName(quota.over)} over the reserve${quota.over.used !== undefined ? ` (used ${quota.over.used} %)` : ' (at its limit)'}`)
+  return parts.join(', ')
+}
+
+/**
+ * Why `first` comes before `other` on the first headroom key that differs, in words; undefined when
+ * every headroom key ties.
+ */
+export function headroomReason(first: { who: string; quota: AccountQuota; keys: HeadroomKeys }, other: { quota: AccountQuota; keys: HeadroomKeys }, settings: QuotaSettings): string | undefined {
+  const who = first.who
+  const key = HEADROOM_KEYS.find((k) => first.keys[k] !== other.keys[k])
+  switch (key) {
+    case 'reserve': {
+      const w = other.quota.over!
+      return `${who}'s account has headroom; this one's ${windowName(w)} window is ${w.used !== undefined ? `used ${w.used} %, above ${100 - settings.reservePercent} % (the ${settings.reservePercent} % reserve)` : 'at its limit'}, so it ranks last while another has headroom`
+    }
+    case 'knowledge': return `${who}'s windows are ${first.quota.knowledge === 'known' ? 'all known' : 'assumed available by configuration'}; this one's are ${other.quota.knowledge}`
+    case 'useSoon': return `${who}'s ${windowName(first.quota.soonest!)} window resets in ${minutesText(first.keys.resetsIn)}, within ${settings.useSoonMinutes} min, with headroom ${first.quota.binding!.headroom}: its unused share is used before it is lost`
+    case 'resetsIn': return `${who}'s window resets sooner (in ${minutesText(first.keys.resetsIn)}; this one in ${minutesText(other.keys.resetsIn)})`
+    case 'headroom': return `${who} has more headroom (${first.quota.binding!.headroom} against ${other.quota.binding!.headroom}, in ${settings.headroomBucketPercent}-point buckets)`
+    default: return undefined
   }
 }
 
@@ -228,20 +335,12 @@ export interface QuotaCandidate {
   busy?: readonly string[]
 }
 
-/** The keys a candidate is ordered by, each lower first. */
-export interface QuotaKeys {
+/** The keys a candidate is ordered by, each lower first: the headroom order's, with routing's own around them. */
+export interface QuotaKeys extends HeadroomKeys {
   tier: number
   /** 1 for metered, then the quota class's rank. */
   metered: number
   quota: number
-  /** 0 known, 1 assumed (`unknown: available`), 2 unknown. */
-  knowledge: number
-  /** 0 when a window resets within `useSoonMinutes` with at least `minHeadroomPercent` headroom; else 1. */
-  useSoon: number
-  /** Minutes to that reset, among those used soon; 0 otherwise. */
-  resetsIn: number
-  /** Minus the binding window's headroom bucket (more headroom first); 0 when not known. */
-  headroom: number
   load: number
   priority: number
 }
@@ -269,27 +368,13 @@ export interface QuotaScore {
   candidates: ScoredCandidate[]
 }
 
-const KNOWLEDGE = { known: 0, assumed: 1, unknown: 2 } as const
 const loadOf = (load: QuotaCandidate['load']): number => (load ? load.running + load.queued + load.pending : 0)
 
-function keysOf(c: QuotaCandidate, quota: AccountQuota, settings: QuotaSettings): QuotaKeys {
-  const soon = settings.useSoonMinutes > 0 && quota.knowledge === 'known' && quota.soonest !== undefined && quota.soonest.resetsInMinutes! <= settings.useSoonMinutes
-    && quota.binding !== undefined && quota.binding.headroom! >= settings.minHeadroomPercent
-  return {
-    tier: c.tierRank, metered: c.metered ? 1 : 0, quota: c.quotaRank, knowledge: KNOWLEDGE[quota.knowledge],
-    useSoon: soon ? 0 : 1, resetsIn: soon ? quota.soonest!.resetsInMinutes! : 0,
-    headroom: quota.knowledge === 'known' && quota.binding ? -Math.floor(Math.max(0, quota.binding.headroom!) / settings.headroomBucketPercent) : 0,
-    load: loadOf(c.load), priority: c.priorityRank,
-  }
-}
-
-const KEY_ORDER: ReadonlyArray<keyof QuotaKeys> = ['tier', 'metered', 'quota', 'knowledge', 'useSoon', 'resetsIn', 'headroom', 'load', 'priority']
+/** The reserve key first (an account over its reserve last while another has headroom), then routing's tier and class, the rest of the headroom order, then load and priority. */
+const KEY_ORDER: ReadonlyArray<keyof QuotaKeys> = ['reserve', 'tier', 'metered', 'quota', 'knowledge', 'useSoon', 'resetsIn', 'headroom', 'load', 'priority']
 
 function lineOf(c: QuotaCandidate, quota: AccountQuota): string {
-  const parts = [`tier ${c.tier}`, c.quotaClass + (c.metered ? ' (metered)' : ''), quota.knowledge]
-  const shown = [quota.binding, quota.soonest].filter((w, i, all): w is WindowQuota => w !== undefined && all.findIndex((x) => x?.pool === w.pool && x?.window === w.window) === i)
-  for (const w of shown) parts.push(`${windowName(w)}: used ${w.used} %${w.resetsInMinutes !== undefined ? `, resets in ${minutesText(w.resetsInMinutes)}` : ''}`)
-  if (quota.binding) parts.push(`headroom ${quota.binding.headroom}`)
+  const parts = [`tier ${c.tier}`, c.quotaClass + (c.metered ? ' (metered)' : ''), headroomLine(quota)]
   parts.push(c.load ? `load ${c.load.running} of ${c.load.slots}${c.load.queued ? `, ${c.load.queued} queued` : ''}${c.load.pending ? `, ${c.load.pending} pending` : ''}` : 'no load reported')
   return parts.join(', ')
 }
@@ -302,29 +387,25 @@ function beats(chosen: { c: QuotaCandidate; q: AccountQuota; k: QuotaKeys }, oth
     case 'tier': return `${who} has the lower tier ${chosen.c.tier}`
     case 'metered': return `${who} is not metered; metered pools come last`
     case 'quota': return `${who} has the preferred quota class ${chosen.c.quotaClass}`
-    case 'knowledge': return `${who}'s windows are ${chosen.q.knowledge === 'known' ? 'all known' : 'assumed available by configuration'}; this one's are ${other.q.knowledge}`
-    case 'useSoon': return `${who}'s ${windowName(chosen.q.soonest!)} window resets in ${minutesText(chosen.k.resetsIn)}, within ${settings.useSoonMinutes} min, with headroom ${chosen.q.binding!.headroom}: its unused share is used before it is lost`
-    case 'resetsIn': return `${who}'s window resets sooner (in ${minutesText(chosen.k.resetsIn)}; this one in ${minutesText(other.k.resetsIn)})`
-    case 'headroom': return `${who} has more headroom (${chosen.q.binding!.headroom} against ${other.q.binding!.headroom}, in ${settings.headroomBucketPercent}-point buckets)`
     case 'load': return `${who} is less busy (${loadOf(chosen.c.load)} running, queued, or pending; this one ${loadOf(other.c.load)})`
     case 'priority': return `${who} comes first in the configured priority list`
-    default: return `${who} comes first by id`
+    case undefined: return `${who} comes first by id`
+    default: return headroomReason({ who, quota: chosen.q, keys: chosen.k }, { quota: other.q, keys: other.k }, settings)!
   }
 }
 
 /**
  * Rank the Workers routing admits for one step by quota, and choose the first free one
- * (`quota-score@1`). Refused candidates keep routing's reasons and are never ranked or chosen; an
+ * (`quota-score@2`). Refused candidates keep routing's reasons and are never ranked or chosen; an
  * admitted candidate that is not free is ranked anyway, so the decision says why it lost. Pure and
  * total: the same candidates, settings, and time always give the same order and choice.
  */
 export function quotaScoreOf(candidates: readonly QuotaCandidate[], settings: QuotaSettings, now: Date): QuotaScore {
   const problems = quotaSettingsProblems(settings)
   if (problems.length) throw new RangeError(`quotaScoreOf: ${problems.join('; ')}`)
-  const admitted = candidates.filter((c) => !c.refused?.length).map((c) => {
-    const q = accountQuotaOf(c.pools, settings, now)
-    return { c, q, k: keysOf(c, q, settings) }
-  })
+  const admitted = headroomOrderOf(candidates.filter((c) => !c.refused?.length), (c) => c.pools, settings, now).map(({ item: c, quota: q, keys }) => ({
+    c, q, k: { ...keys, tier: c.tierRank, metered: c.metered ? 1 : 0, quota: c.quotaRank, load: loadOf(c.load), priority: c.priorityRank } as QuotaKeys,
+  }))
   admitted.sort((a, b) => {
     for (const key of KEY_ORDER) if (a.k[key] !== b.k[key]) return a.k[key] - b.k[key]
     return compare(a.c.worker, b.c.worker)

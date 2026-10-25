@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountQuotaOf, QUOTA_DEFAULTS, QUOTA_SCORE, type QuotaCandidate, type QuotaPool, quotaScoreOf, type QuotaSettings, quotaSettingsProblems, windowName } from '../src/index.ts'
+import { accountQuotaOf, compareHeadroom, headroomOrderOf, QUOTA_DEFAULTS, QUOTA_SCORE, type QuotaCandidate, type QuotaPool, quotaScoreOf, type QuotaSettings, quotaSettingsProblems, windowName } from '../src/index.ts'
 
 const NOW = new Date('2026-10-25T12:00:00.000Z')
 const minutes = (n: number): string => new Date(NOW.getTime() + n * 60_000).toISOString()
@@ -115,7 +115,44 @@ describe('accountQuotaOf: the windows of an account by its readings (INV-2)', ()
   })
 })
 
-describe('quotaScoreOf (quota-score@1): the order of admitted Workers by quota (REQ-WRK-12)', () => {
+describe('headroomOrderOf: the one headroom order, which the score, routing, and capacity now all call (T185)', () => {
+  const ordered = (accounts: Record<string, QuotaCandidate['pools']>, settings = S): string[] =>
+    headroomOrderOf(Object.keys(accounts), (id) => accounts[id], settings, NOW).sort((a, b) => compareHeadroom(a.keys, b.keys) || (a.item < b.item ? -1 : 1)).map((o) => o.item)
+
+  it('puts an account above its reserve (85 % of a 20 % reserve) last while another has headroom, whatever resets sooner', () => {
+    expect(ordered({ a: open(85, 20), b: open(10, 600) })).toEqual(['b', 'a'])
+    const [a] = headroomOrderOf(['a', 'b'], (id) => (id === 'a' ? open(85, 20) : open(10, 600)), S, NOW)
+    expect(a!.quota.over).toMatchObject({ window: 'w0', used: 85, headroom: -5, overReserve: true })
+    expect(a!.keys.reserve).toBe(1)
+    // At the edge: 80 % leaves no headroom, so it is over; 79 % is not.
+    expect(accountQuotaOf(open(80), S, NOW).over).toBeDefined()
+    expect(accountQuotaOf(open(79), S, NOW).over).toBeUndefined()
+    // A reading at its limit is over its reserve too; with the reserve at 0, 85 % is not.
+    expect(accountQuotaOf([pool('p', [{ seconds: FIVE_H, state: 'limited', resetsIn: 30 }])], S, NOW).over).toBeDefined()
+    expect(ordered({ a: open(85, 20), b: open(10, 600) }, { ...S, reservePercent: 0 })).toEqual(['a', 'b'])
+  })
+
+  it('never prefers an unknown reading, and with no account free orders those above the reserve by their readings', () => {
+    expect(ordered({ a: [pool('u', [{ seconds: FIVE_H, none: true }])], b: open(50) })).toEqual(['b', 'a'])
+    expect(ordered({ a: undefined, b: { unknown: 'the ledger could not be read' }, c: open(85) })).toEqual(['c', 'a', 'b'])
+  })
+
+  it('reads a reading from before its reset as unknown, never as headroom', () => {
+    const q = accountQuotaOf(open(5, -10), S, NOW)
+    expect(q).toMatchObject({ knowledge: 'unknown', free: false })
+    expect(q.why[0]).toMatch(/from before its reset/)
+  })
+
+  it('ties by id, and gives quotaScoreOf the same order', () => {
+    expect(ordered({ y: open(30, 300), x: open(30, 300) })).toEqual(['x', 'y'])
+    const score = quotaScoreOf([candidate('a', open(85, 20)), candidate('b', open(10, 600)), candidate('c', [pool('u', [{ seconds: FIVE_H, none: true }])])], S, NOW)
+    expect(order(score)).toEqual(['b', 'c', 'a'])
+    expect(score.chosen).toBe('b')
+    expect(score.candidates[2]!.reasons[0]).toMatch(/^not free: 5 h window of p: used 85 %, no headroom above the 20 % reserve/)
+  })
+})
+
+describe('quotaScoreOf (quota-score@2): the order of admitted Workers by quota (REQ-WRK-12)', () => {
   it('in the operator\'s case chooses a free account at 0 % with a known reset, and says why each other one lost', () => {
     const score = quotaScoreOf([
       candidate('agent:codex-1/develop', open(0, 40)),

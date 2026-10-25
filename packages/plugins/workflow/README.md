@@ -469,14 +469,14 @@ second execution path (INV-1).
     throws: a pass that fails starts nothing and is logged. A pass keeps its reason for every task
     it looked at as the last pass (`workflow_dispatch_control`).
   - **The Worker** of the run's writing step (its first step that proves `develop`, else its first
-    Worker step) is the first free one in `quotaScoreOf`'s order (`quota-score@1`, libs) among those
+    Worker step) is the first free one in `quotaScoreOf`'s order (`quota-score@2`, libs) among those
     `ctx.workers.candidates` admits, over the ledger's `pools()` and `quota()`. Free: `ready`, its
     account's load below `maxRunningPerAccount`, no running step on it, every pool available, every
     window known (fresh, `ok`, a used share) with headroom above `quota.reservePercent`, not metered
     (D65), and its account and repository (its workspace) within their bounds. No account, no
     reading, a stale one, or a ledger without `quota()`: never free (INV-2).
   - **The policy** (`ctx.approvals.check` on `dispatch`, once per project per pass): `ask` opens one
-    request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@1:<sha256>}` after the ask's
+    request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@2:<sha256>}` after the ask's
     row (`asking`) and its decisions are recorded, adopted after a crash; an attempt the operator
     approved through the board's gate (the task's `lastDecision` is the operator's approval of the
     board's own request for this attempt) starts with no request, a `gate` decision

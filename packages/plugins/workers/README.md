@@ -72,12 +72,21 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   - its tier is within `[min, max]`.
 
   Every failed check is kept with its reason.
-- **Order (REQ-WRK-2, -8).** Lowest tier first, then the requirement's
-  `budget.preferQuota`, then `quotaPreference` (default `subscription-chat`,
-  `local`, `agent-plan`, `metered`; the `api-first` preset sets `local`, `metered`,
-  `agent-plan`, `subscription-chat`), then the least `load` (running, queued, and
-  pending; a source that reports none reads 0), then `priority` (Worker ids), then the
-  id in code-point order. The result does not depend on the locale or on source order.
+- **Order (REQ-WRK-2, -8, -12).** A Worker whose account is over its quota reserve
+  ranks last while another admitted Worker's account has headroom. Then lowest tier
+  first, then the requirement's `budget.preferQuota`, then `quotaPreference` (default
+  `subscription-chat`, `local`, `agent-plan`, `metered`; the `api-first` preset sets
+  `local`, `metered`, `agent-plan`, `subscription-chat`), then the quota score's headroom
+  order (known before unknown, the window that resets soonest with headroom, the most
+  headroom), then the least `load` (running, queued, and pending; a source that reports
+  none reads 0), then `priority` (Worker ids), then the id in code-point order. The
+  result does not depend on the locale or on source order.
+- **Quota (PROP-0014 D3).** On every route, the router reads the resource ledger's
+  `pools()` and `quota()` when `ctx.resources` is mounted. Each admitted Worker's
+  account is scored by `libs`' one headroom implementation (`headroomOrderOf`,
+  `quota-score@2`), and the route decision lists every admitted Worker's score. With
+  no ledger, every quota key ties and the order is as above without them
+  ([quota in every route](../../../docs/design/routing.md#quota-in-every-route)).
 - **Load (ADR-0033).** `route` runs under one lock across every caller. The chosen
   Worker's source `reserve`s it, so the admission counts as `pending` until the caller
   calls `release()` on the admitted Worker (idempotent), once the work is started or
@@ -114,4 +123,4 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   opens a new execution at the next tier and routes it again
   ([workflow](../workflow/README.md)).
 - **Config:** `quotaPreference`, `priority`.
-- **Injects:** `artifacts`.
+- **Injects:** `artifacts`; reads `resources` when it is mounted (optional).
