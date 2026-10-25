@@ -216,9 +216,22 @@ absence of automation leaks are properties of the real browser.
 `pnpm test` runs the whole suite, at most 32 test files at once, one per CPU but one on a smaller
 host ([`vitest.config.ts`](../../vitest.config.ts)): vitest's own default of one per CPU ran every
 file at once on a 256-CPU host, where in-process tests passed their bounds. Its wall time is the
-longer of its slowest file and the sum of its files over those 32. vitest starts first the files
-that took longest in its last run on that checkout, and, for a file it has no time for (a fresh
-worktree, CI, a new file), the largest, so a short file of slow tests starts among the last. A
+longer of its slowest file and the sum of its files over those 32, so the slow files must start
+first. vitest's own order reads its duration cache from the last run on that checkout; with none (a
+fresh worktree, every CI run) it starts the largest files first, so a short file of slow tests
+started among the last, and a cold run took about 40 s more than a warm one. The suite's sequencer
+([`scripts/test-durations.ts`](../../scripts/test-durations.ts)) orders by a committed table
+instead, [`scripts/test-durations.json`](../../scripts/test-durations.json) (each file's path →
+seconds): the files the table does not hold first (a new file is not known to be short), in
+vitest's own order, then the rest longest first, cache or none. Refresh the table after adding,
+splitting, or slowing files, from a full run on a quiet host, and commit it:
+
+```sh
+pnpm test --reporter=json --outputFile=$TMPDIR/vitest-report.json
+pnpm gen:test-durations $TMPDIR/vitest-report.json
+```
+
+A stale table only costs time: a removed file is ignored, and a new one starts first. A
 file whose tests take about a minute or more together is split by theme, its shared setup in a
 module beside it (the agent Worker source's specs on `agent-workers/tests/stack.ts`, the login
 profile pool's on `browser-patchright/tests/profile-stack.ts`, the

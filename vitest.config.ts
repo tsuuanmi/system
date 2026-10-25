@@ -1,8 +1,22 @@
 import { availableParallelism } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
+import { BaseSequencer, type TestSpecification } from 'vitest/node'
+import { durationKey, order, readDurations } from './scripts/test-durations.ts'
 
 const src = (path: string): string => fileURLToPath(new URL(path, import.meta.url))
+
+/**
+ * Starts the test files by the committed duration table (scripts/test-durations.ts): the files it
+ * does not hold first, in vitest's own order, then the rest longest first. vitest's own order
+ * needs its duration cache, which a fresh worktree and CI lack.
+ */
+class DurationSequencer extends BaseSequencer {
+  override async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
+    const durations = readDurations()
+    return order(await super.sort(files), (spec) => durationKey(this.ctx.config.root, spec.moduleId), durations)
+  }
+}
 
 export default defineConfig({
   resolve: {
@@ -77,5 +91,7 @@ export default defineConfig({
     // once, and in-process tests of 1 to 2 s passed their 5 s bound (two copies of the suite: 9
     // failures, none capped, in the same 3.6 minutes). A 4-vCPU runner keeps its 3.
     maxWorkers: Math.max(1, Math.min(32, availableParallelism() - 1)),
+    // Longest first by scripts/test-durations.json (`pnpm gen:test-durations`), cache or none.
+    sequence: { sequencer: DurationSequencer },
   },
 })
