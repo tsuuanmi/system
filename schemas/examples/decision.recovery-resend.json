@@ -1,0 +1,29 @@
+{
+  "schema": "decision@1.9",
+  "decisionType": "recovery",
+  "question": "How does node review:m2:propose of run run_0123456789abcdef recover from overloaded?",
+  "inputs": ["sha256:9b1c4d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f80"],
+  "candidates": [
+    { "option": "resend", "selected": true, "reasons": [
+      "the site answered the sent prompt with its own error in place of an answer (execution turn_5f0e3d2c1b0a9f8e), so nothing was answered",
+      "member m2's first step writes nothing and its prompt is the whole request: it is resent once, in a new conversation of session sess_0123456789abcdef (D60)",
+      "error: gemini-web: the site answered with its own error instead of an answer (\"Sorry, something went wrong. Please try your request again.\"); the prompt was sent, so it is not resent"
+    ] },
+    { "option": "retry", "selected": false, "reasons": ["not retry: the prompt was sent; only a resend in a new conversation may run it again"] },
+    { "option": "failover", "selected": false, "reasons": ["not failover: the prompt was sent, and the member stays on its session's Worker worker:gemini-main/standard"] },
+    { "option": "fail", "selected": false, "reasons": ["not fail: it was never resent, and 2 attempt(s) of 3 remain"] }
+  ],
+  "decider": { "type": "rule", "id": "workflow.recovery", "version": "2" },
+  "outcome": {
+    "option": "resend",
+    "detail": {
+      "kind": "overloaded",
+      "disposition": "BACKOFF",
+      "attempt": 1,
+      "sessionId": "sess_0123456789abcdef",
+      "failed": { "execution": "turn_5f0e3d2c1b0a9f8e" },
+      "next": { "attempt": 2, "key": "workflow:run_0123456789abcdef:review:m2:propose:2:0:sha256:4f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0", "conversation": "new" }
+    }
+  },
+  "deterministic": true
+}

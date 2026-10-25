@@ -61,7 +61,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.8.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.9.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -194,6 +194,17 @@ guesses.
     the node first waited, kept across waits), and `maxLimitWaitHours`. A recovery decision with any
     other outcome keeps its version. Example:
     [`decision.recovery-wait.json`](../../schemas/examples/decision.recovery-wait.json).
+- `decision@1.9` adds the `recovery` outcome `resend`: a read-only team member's first step
+  (`propose`) that a site answered with its own error after the prompt was sent runs once more, in
+  a new conversation of its session ([ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md),
+  operator decision D60). Such a decision must be `@1.9`; every other decision keeps its version.
+  Its candidates are `resend`, `retry`, `failover`, and `fail`; the decider is the rule
+  `workflow.recovery` version 2. `detail` names the `kind` and `disposition`, the failed `attempt`,
+  the `sessionId` whose conversation was reset, the failed execution (`failed.execution`, the
+  failed turn), and the new attempt (`next.attempt`, the `key` its execution starts under, the new
+  turn, and `conversation: new`). A site's own error that is not resent fails as before, at its own
+  version, with a candidate `resend` saying why not. Example:
+  [`decision.recovery-resend.json`](../../schemas/examples/decision.recovery-resend.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
