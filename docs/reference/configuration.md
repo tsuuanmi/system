@@ -345,7 +345,13 @@ No options.
 
 [@tsuuanmi/system-profile-software-development](../../packages/plugins/profile-software-development/README.md)
 
-No options.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `kinds` | object | `{}` | The kind of work (ADR-0057) each algorithm-development step names, by step, so which Worker takes which step is the Workers' kinds: a Worker given kinds takes a step only when it lists that step's kind. The review names none |
+| `kinds.develop` | string | `"code"` | The kind of work develop:1 is, and the fix a review grows from it (default code) |
+| `kinds.docs` | string | `"docs"` | The kind of work develop:1 is in the docs variant (default docs) |
+| `kinds.tests` | string | `"tests"` | The kind of work develop:1 is in the tests variant (default tests) |
+| `kinds.validate` | string | `"validation"` | The kind of work validate:1 is: it runs the checks and tests and changes nothing (default validation). A Worker given kinds takes it only when it lists this one, so a writer given tests does not run it |
 
 ## `provider-chatgpt-web`
 

@@ -42,7 +42,7 @@ export const Config: z<Config> = z.object({
     develop: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.develop).description('The kind of work develop:1 is, and the fix a review grows from it (default code)'),
     docs: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.docs).description('The kind of work develop:1 is in the docs variant (default docs)'),
     tests: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.tests).description('The kind of work develop:1 is in the tests variant (default tests)'),
-    validate: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.validate).description('The kind of work validate:1 is: it runs the checks and tests and changes nothing (default validation)'),
+    validate: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.validate).description('The kind of work validate:1 is: it runs the checks and tests and changes nothing (default validation). A Worker given kinds takes it only when it lists this one, so a writer given tests does not run it'),
   }).description('The kind of work (ADR-0057) each algorithm-development step names, by step, so which Worker takes which step is the Workers\' kinds: a Worker given kinds takes a step only when it lists that step\'s kind. The review names none'),
 }) as unknown as z<Config>
 

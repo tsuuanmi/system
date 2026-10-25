@@ -14,5 +14,11 @@
       "range": "^1.8.0"
     }
   ],
+  "config": [
+    {
+      "key": "kinds",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

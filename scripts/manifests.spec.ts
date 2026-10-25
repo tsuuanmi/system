@@ -53,7 +53,8 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }])
     expect(of('store').manifest.config?.map((c) => c.key)).toEqual(['path', 'busyTimeoutMs', 'synchronous'])
     expect(of('report').manifest.config).toBeUndefined()
-    expect(derived.filter((d) => d.manifest.config).length).toBe(35)
+    expect(derived.filter((d) => d.manifest.config).length).toBe(36)
+    expect(of('profile-software-development').manifest.config).toEqual([{ key: 'kinds', sensitive: false }])
     // The notifier's webhook URL is a credential reference's value, never configuration.
     expect(of('notify').manifest.config?.find((c) => c.key === 'webhook')).toEqual({ key: 'webhook', sensitive: false })
     expect(of('notify').manifest).toMatchObject({ class: { kind: 'family', family: 'surface' }, provides: [] })
