@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,15 +43,20 @@ describe('the suite decides what its environment can do by doing it, the same on
     it('the tests that once failed only there pass there: the Codex launcher\'s command line and the brief\'s file mode', async () => {
       // vitest keeps no results cache here; anything else under node_modules/.vite goes to a private directory, as a check's checkScratch.
       const cache = join(ROOT, 'node_modules', '.vite')
+      // vite also bundles the config into node_modules/.vite-temp: a check needs it writable too (checkScratch).
+      const temp = join(ROOT, 'node_modules', '.vite-temp')
+      mkdirSync(temp, { recursive: true })
       const scratch = mkdtempSync(join(tmpdir(), 'system-host-cache-'))
+      const tempScratch = mkdtempSync(join(tmpdir(), 'system-host-vite-temp-'))
       try {
         const files = ['packages/plugins/runtime-codex-sdk/tests/runtime.spec.ts', 'packages/plugins/agent-workers/tests/worktrees.spec.ts']
         const only = 'starts Codex through bubblewrap|writes a board task brief|replaces the brief'
         const vitest = join(ROOT, 'node_modules', 'vitest', 'vitest.mjs')
-        const { stdout } = await check(`exec ${process.execPath} ${vitest} run --no-cache ${files.join(' ')} -t '${only}'`, existsSync(cache) ? [{ source: scratch, path: cache, writable: true }] : [])
+        const { stdout } = await check(`exec ${process.execPath} ${vitest} run --no-cache ${files.join(' ')} -t '${only}'`, [...(existsSync(cache) ? [{ source: scratch, path: cache, writable: true }] : []), { source: tempScratch, path: temp, writable: true }])
         expect(stdout).toMatch(/Tests\s+3 passed/)
       } finally {
         rmSync(scratch, { recursive: true, force: true })
+        rmSync(tempScratch, { recursive: true, force: true })
       }
     })
   })
