@@ -82,10 +82,16 @@ const DEVELOP_PROMPT = [
  * the diff and the criteria, never the maker's context), so this text points at no step's result.
  * The engine appends the exact subject, the request, and the assessment it asks for; a remediation
  * cycle's re-review is given this text composed as the review's is.
+ *
+ * The reviewer reads and judges; it never runs the project's tests or builds. `validate:1` runs them,
+ * and the run's required checks at acceptance (ADR-0063). A reviewer runs read-only, so a command it
+ * could not run is an environment limit, not a finding about the change: at most `info`, never a
+ * blocking finding that would grow a remediation cycle no fix can satisfy.
  */
 const REVIEW_PROMPT = [
   'Review this change as an independent reviewer: you see the task, its acceptance criteria, and the exact change, never its developer\'s conversation.',
   'Judge whether the change does what the task asks, correctly, and nothing beyond it. A defect, a change the task does not need, or a test or benchmark weakened, skipped, or made unreliable is a blocking finding.',
+  'You read and judge the change; you never run the project\'s tests or builds: the validation step after you runs them, and so do the run\'s required checks. A command you could not run is not a finding about the change; an environment limit is at most an info finding.',
 ].join('\n')
 
 /** The `docs` variant's develop step: the attempt changes the documentation the task names, never the code it documents. */
@@ -131,8 +137,9 @@ const VALIDATE_PROMPT = [
  *
  * - `develop:1` states one hypothesis and changes the code in the run's own worktree, in the run's
  *   session, which the task's next attempt resumes;
- * - `review:1` reviews that exact change on a read-only Worker; blocking findings grow a fix and a
- *   re-review, the fix waiting on the approval queue (engine remediation);
+ * - `review:1` reviews that exact change on a read-only Worker, reading and judging it and running
+ *   no test or build; blocking findings grow a fix and a re-review, the fix waiting on the approval
+ *   queue (engine remediation);
  * - `validate:1` runs the task's tests and benchmarks on the reviewed change, confined to the
  *   worktree, on a Worker that proves `validate` (its commands proven confined). It reads the task's
  *   criteria and their checks from its brief, never the caller's input (the develop step's orders)

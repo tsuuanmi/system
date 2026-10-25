@@ -78,6 +78,12 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     const asked = (prompt: string): string => prompt.split('\n\n## The exact subject of this review')[0]!
     expect(asked(reviews[1]!.prompt)).toBe(asked(reviews[0]!.prompt))
     expect(asked(reviews[1]!.prompt)).toContain('Review this change as an independent reviewer')
+    // The review and its re-review read and judge, and run no test or build: an environment limit is at most info.
+    for (const review of reviews) {
+      expect(asked(review.prompt)).toContain('you never run the project\'s tests or builds')
+      expect(asked(review.prompt)).toContain('A command you could not run is not a finding about the change; an environment limit is at most an info finding.')
+      expect(review.prompt).toContain('never run the project\'s tests or builds, which the validation and the run\'s required checks run.')
+    }
 
     // Validation came last, on the fixed change: its listed command ran as the workspace write the policy judges it, asking no one.
     expect(agent.calls.filter((c) => c.role === 'validate')).toEqual([{ role: 'validate', tool: 'Bash', verdict: { decision: 'allow' } }])
