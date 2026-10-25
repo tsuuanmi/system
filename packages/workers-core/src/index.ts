@@ -225,7 +225,12 @@ export interface WorkerExecution {
   submitted: boolean
   /** The stored result, once completed. */
   result?: ArtifactRef
-  error?: { kind: string; disposition: string; message: string }
+  /**
+   * Why it failed. `siteError` (optional, ADR-0062): the input was sent, and the site answered it with
+   * its own error in place of an answer, read on the execution's own page; nothing was answered. Only
+   * a source that read that says so; absent, nothing is known of it.
+   */
+  error?: { kind: string; disposition: string; message: string; siteError?: true }
   /** Decisions the runtime made for this execution, such as `egress`. */
   decisions: ArtifactRef[]
 }
