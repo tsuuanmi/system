@@ -16,7 +16,7 @@ import { checksFor } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
-import { admissionKind, assignmentOf, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForLimit } from './recovery.ts'
+import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
@@ -676,54 +676,72 @@ export class Engine {
         if (!failed.length || !(error instanceof AdmissionFailure)) throw error
         return this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...pinned })
       })
-      // The Worker dispatch chose for a run's writing step is tried first, on its first execution only
-      // (ADR-0064); refused (its state changed since), the step routes as any other, both decisions kept.
+      // The Worker dispatch chose for a run's writing step, on its first execution (ADR-0064): the step
+      // runs there or nowhere, so every start dispatch made is the one its decisions explain (INV-13).
+      // Refused (its state changed since), it waits for that Worker within dispatch.approvedHoldMinutes
+      // of the run's start, sending nothing, then fails; no other Worker takes it.
       const prefer = this.tasks.preferred(run.run_id, node)
-      let preferRefused: ArtifactRef | undefined
-      try {
-        try {
-          let preferred: AdmittedWorker | undefined
-          if (prefer && (!restricted.restrict || restricted.restrict.workers.includes(prefer.worker))) {
-            preferred = await route({ ...restricted, ...(exclude ? { exclude } : {}), restrict: { workers: [prefer.worker], reason: `dispatch chose ${prefer.worker} for this step (decision ${prefer.decision})` } }).catch((error: unknown) => {
-              if (!(error instanceof AdmissionFailure)) throw error
-              preferRefused = error.decision
-              return undefined
-            })
-          }
-          admitted = preferred ?? await route({ ...restricted, ...(exclude ? { exclude } : {}) })
-        } catch (error) {
-          if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
-          // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
-          // A session's own Worker still binds it; only the family and distinct-account rules are
-          // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and
-          // so does one the operator's teams.excludeWorkers leaves out of teams.
-          // First the family rule alone: a team on one provider keeps distinct accounts while it can
-          // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
-          // When nothing passes even then, the first refusal, with what the team needs, stands.
-          const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
-          if (kept) {
-            admitted = kept
-            sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
-          } else {
-            admitted = await route(distinctAccounts ? (teams ? { restrict: teams } : {}) : restricted).catch(() => {
-              throw error
-            })
-            const rules = [exclude?.reason, distinctAccounts].filter((r): r is string => !!r)
-            sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
-          }
+      if (prefer) {
+        // A step that waited for it is held to the deadline before it is routed again (ADR-0064).
+        if (choiceHoldEnded(this, run, node, prefer, lease)) {
+          done()
+          return
         }
-      } catch (error) {
-        done()
-        if (!(error instanceof AdmissionFailure)) throw error
-        const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
-        // A team member short of provider families: say what the team needs, beside why this one failed.
-        const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
-        // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
-        const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
-        if (waiting && 'waited' in waiting) return
-        const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
-        return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
-          { sent: false, decisions: [error.decision] }, lease)
+        let got: AdmittedWorker | AdmissionFailure | undefined
+        try {
+          got = !restricted.restrict || restricted.restrict.workers.includes(prefer.worker)
+            ? await route({ ...restricted, ...(exclude ? { exclude } : {}), restrict: { workers: [prefer.worker], reason: `dispatch chose ${prefer.worker} for this step (decision ${prefer.decision})` } })
+            : undefined
+        } catch (error) {
+          if (!(error instanceof AdmissionFailure)) {
+            done()
+            throw error
+          }
+          got = error
+        }
+        if (!got || got instanceof AdmissionFailure) {
+          done()
+          return waitForChoice(this, run, node, prefer, got, restricted.restrict?.reason, lease)
+        }
+        admitted = got
+      } else {
+        try {
+          try {
+            admitted = await route({ ...restricted, ...(exclude ? { exclude } : {}) })
+          } catch (error) {
+            if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
+            // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
+            // A session's own Worker still binds it; only the family and distinct-account rules are
+            // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and
+            // so does one the operator's teams.excludeWorkers leaves out of teams.
+            // First the family rule alone: a team on one provider keeps distinct accounts while it can
+            // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
+            // When nothing passes even then, the first refusal, with what the team needs, stands.
+            const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
+            if (kept) {
+              admitted = kept
+              sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
+            } else {
+              admitted = await route(distinctAccounts ? (teams ? { restrict: teams } : {}) : restricted).catch(() => {
+                throw error
+              })
+              const rules = [exclude?.reason, distinctAccounts].filter((r): r is string => !!r)
+              sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
+            }
+          }
+        } catch (error) {
+          done()
+          if (!(error instanceof AdmissionFailure)) throw error
+          const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
+          // A team member short of provider families: say what the team needs, beside why this one failed.
+          const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
+          // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
+          const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
+          if (waiting && 'waited' in waiting) return
+          const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
+          return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
+            { sent: false, decisions: [error.decision] }, lease)
+        }
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
       if (signal.aborted) {
@@ -745,8 +763,8 @@ export class Engine {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
         // The account it runs on, so a failure of it is recovered by its group's mode (ADR-0052).
         account: admitted.worker.account ? JSON.stringify(admitted.worker.account) : null,
-        // The same-family decision and a refused preference first: the last two stay the tier and route decisions.
-        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), ...(preferRefused ? [preferRefused] : []), admitted.decisions.tier, admitted.decisions.route]),
+        // The same-family decision first: the last two stay the tier and route decisions.
+        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), admitted.decisions.tier, admitted.decisions.route]),
       }
       try {
         this.ctx.store.transaction(() => {

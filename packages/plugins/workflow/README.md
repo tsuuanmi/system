@@ -465,7 +465,8 @@ second execution path (INV-1).
     reconciled, one at a time (`sweepDispatch(at)`, a test seam): it settles the live asks first
     (adopts an open request on its subject, reads verdicts, starts approved ones, withdraws stale
     ones), then looks at the `ready` tasks of `active` projects that name a template it serves,
-    oldest first (`createdAt`, then id), at most 128, and takes at most `maxPerPass` (2). It never
+    oldest first (`createdAt`, then id), at most 128. One `maxPerPass` (2) allowance covers the whole
+    pass, settlement included: each run admitted and each request newly opened is charged. It never
     throws: a pass that fails starts nothing and is logged. A pass keeps its reason for every task
     it looked at as the last pass (`workflow_dispatch_control`).
   - **The Worker** of the run's writing step (its first step that proves `develop`, else its first
@@ -484,14 +485,18 @@ second execution path (INV-1).
     `auto`, its decisions the select, the choice, and the policy's `autonomy`; PROP-0014 D2);
     `notify` the same, with a `workflow.dispatch.notice` event appended with the start, which the
     notifier tells as `dispatch.started`; `forbid` dispatches nothing.
-  - **The start**: the approval binds the task, its attempt, and the Worker (INV-5): while the task
-    is still ready at that attempt and the Worker still admitted and free, within
-    `approvedHoldMinutes` (30), the engine's own `tasks.start` (`clientRequestId`
-    `dispatch:<askId>`), its `workflow.task-admission` naming the dispatch decisions, and the
-    run's `workflow_tasks.dispatch` naming the ask and the Worker its writing step routes to first
-    (`preferred`: the writing step's first execution only; refused, it routes as any step, the
-    refused admission kept on the step). Past the hold, or once the task moved on, the approval is
-    used for nothing; a denied or expired request is never asked again for that attempt; one
+  - **The start**: the approval binds the task, its attempt, and the Worker (INV-5). A run already
+    admitted for the row is adopted first. Otherwise, whether the row is `approved` or was left
+    `starting` by a crash before the admission, it starts only while dispatch is not paused there,
+    the task is still ready at that attempt, the approval is within `approvedHoldMinutes` (30,
+    checked first), and the Worker is still admitted and free within the bounds. It goes through
+    the engine's own `tasks.start` (`clientRequestId` `dispatch:<askId>`), with its
+    `workflow.task-admission` naming the dispatch decisions. The run's `workflow_tasks.dispatch`
+    names the ask and the Worker its writing step is bound to (`preferred`: that step's first
+    execution only). Refused at routing, the step routes nowhere else: it waits for that Worker
+    within the hold from the run's start, sending nothing, then fails for the operator
+    (`waitForChoice`, `src/recovery.ts`). Past the hold, paused, or once the task moved on, the
+    approval is used for nothing; a denied or expired request is never asked again for that attempt; one
     withdrawn on a policy change is put to the policy in force.
   - **Bounds**, counted from the rows each pass: `maxRunning` (8), `maxRunningPerProject` (2),
     `maxRunningPerAccount` (1), `maxRunningPerRepository` (4, D64), `maxOpenAsks` (4), and

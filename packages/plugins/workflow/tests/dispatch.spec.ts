@@ -644,3 +644,181 @@ describe('dispatch starting by itself (PROP-0014 D2, ADR-0064)', () => {
     }
   })
 })
+
+/** A node's row, as the store keeps it. */
+const nodeRowOf = (ctx: Context, runId: string, nodeId: string) => ctx.store.db.prepare('SELECT state, worker, not_before, error, attempt FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(runId, nodeId) as { state: string; worker: string | null; not_before: string | null; error: string | null; attempt: number }
+const closedOf = (ctx: Context) => ctx.eventLog.query({ type: 'workflow.dispatch.closed', limit: 50 }).map((e) => e.data?.['status'])
+
+describe('every dispatched start stays explained (review T202 of PR #37)', () => {
+  it('keeps a dispatched start on the Worker dispatch chose: refused at routing, the step waits for it within approvedHoldMinutes and never routes to another; past the hold the run fails with nothing sent (INV-13, ADR-0064)', async () => {
+    const { ctx, workers, read, restartWorkflow } = await boot({ policy: withDispatch('auto'), workflow: { dispatch: { approvedHoldMinutes: 1 } } })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b', { load: { running: 1, queued: 0, pending: 0, slots: 1 } })]
+    await read('acc-a', 0)
+    await read('acc-b', 0)
+    // Between dispatch's choice and the engine's routing, the chosen Worker signs out, and another one is idle now.
+    const route = ctx.workers.route.bind(ctx.workers)
+    ctx.workers.route = async (...args) => {
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a', { state: 'unavailable' }), agent('agent:acc-b/develop', 'acc-b')]
+      return route(...args)
+    }
+    const task = await ready(ctx, 'bound to its choice')
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => [t.worker, t.how])).toEqual([['agent:acc-a/develop', 'started']])
+    const runId = (await ctx.board.task(task.taskId))!.run!.runId
+    await vi.waitFor(() => expect(workers.started.length + (nodeRowOf(ctx, runId, 'develop:1').error ? 1 : 0)).toBeGreaterThan(0), { timeout: 30_000 })
+    // No Worker dispatch did not choose takes it: the step waits for the chosen one, nothing sent, no attempt spent.
+    expect(workers.started).toEqual([])
+    const waiting = nodeRowOf(ctx, runId, 'develop:1')
+    expect(waiting).toMatchObject({ state: 'READY', worker: null, attempt: 0, not_before: expect.any(String) })
+    expect(JSON.parse(waiting.error!).message).toMatch(/dispatch chose agent:acc-a\/develop for this step .*it waits for that Worker/)
+    // Past the hold (the run started more than approvedHoldMinutes ago), the run fails on it, still with nothing sent.
+    ctx.store.db.prepare('UPDATE workflow_runs SET created_at = ? WHERE run_id = ?').run(new Date(Date.now() - 2 * 60_000).toISOString(), runId)
+    ctx.store.db.prepare('UPDATE workflow_nodes SET not_before = ? WHERE run_id = ?').run(new Date().toISOString(), runId)
+    await restartWorkflow()
+    await vi.waitFor(() => expect(ctx.workflow.get(runId)!.status).toBe('failed'), { timeout: 30_000 })
+    expect(workers.started).toEqual([])
+    expect(nodeRowOf(ctx, runId, 'develop:1').error).toMatch(/dispatch chose agent:acc-a\/develop for this step/)
+  })
+
+  it('never starts a waiting step on its chosen Worker once the hold has expired, even when that Worker is free again (ADR-0064)', async () => {
+    const { ctx, workers, read, restartWorkflow } = await boot({ policy: withDispatch('auto'), workflow: { dispatch: { approvedHoldMinutes: 1 } } })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    // Between dispatch's choice and the engine's routing, the chosen Worker signs out.
+    const route = ctx.workers.route.bind(ctx.workers)
+    ctx.workers.route = async (...args) => {
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a', { state: 'unavailable' })]
+      return route(...args)
+    }
+    const task = await ready(ctx, 'free again too late')
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => [t.worker, t.how])).toEqual([['agent:acc-a/develop', 'started']])
+    const runId = (await ctx.board.task(task.taskId))!.run!.runId
+    await vi.waitFor(() => expect(nodeRowOf(ctx, runId, 'develop:1').error).toMatch(/it waits for that Worker/), { timeout: 30_000 })
+    expect(workers.started).toEqual([])
+    // The chosen Worker is free again, with fresh readings, but only after the hold expired.
+    ctx.workers.route = route
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    ctx.store.db.prepare('UPDATE workflow_runs SET created_at = ? WHERE run_id = ?').run(new Date(Date.now() - 2 * 60_000).toISOString(), runId)
+    ctx.store.db.prepare('UPDATE workflow_nodes SET not_before = ? WHERE run_id = ?').run(new Date().toISOString(), runId)
+    await restartWorkflow()
+    await vi.waitFor(() => expect(ctx.workflow.get(runId)!.status).toBe('failed'), { timeout: 30_000 })
+    expect(workers.started).toEqual([])
+    expect(JSON.parse(nodeRowOf(ctx, runId, 'develop:1').error!).message).toMatch(/dispatch chose agent:acc-a\/develop for this step .*waited more than dispatch\.approvedHoldMinutes \(1\)/)
+  })
+
+  it('revalidates a row a crash left starting before its run was admitted: a pause closes it, an expired hold closes it, a Worker not free holds it, and nothing starts (INV-4)', async () => {
+    for (const crash of ['paused', 'expired', 'busy'] as const) {
+      const { ctx, workers, read, restartWorkflow } = await boot()
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+      await read('acc-a', 0)
+      const task = await ready(ctx, `starting, then ${crash}`)
+      await ctx.workflow.sweepDispatch()
+      const ask = askOf(ctx.workflow.dispatchStatus(), task.taskId)!
+      // Approved while its Worker is busy: the row waits, approved.
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a', { load: { running: 1, queued: 0, pending: 0, slots: 1 } })]
+      await approve(ctx, ask.requestId!)
+      await ctx.workflow.sweepDispatch()
+      expect(rowsOf(ctx, task.taskId)).toEqual([expect.objectContaining({ state: 'approved' })])
+      // The host marked it starting, then died before the engine admitted its run.
+      ctx.store.db.prepare("UPDATE workflow_dispatch SET state = 'starting' WHERE ask_id = ?").run(ask.askId)
+      if (crash !== 'busy') {
+        workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+        await read('acc-a', 0)
+      }
+      if (crash === 'paused') ctx.workflow.pauseDispatch('stopped while it restarted')
+      if (crash === 'expired') ctx.store.db.prepare('UPDATE workflow_dispatch SET approved_at = ? WHERE ask_id = ?').run(new Date(Date.now() - 31 * 60_000).toISOString(), ask.askId)
+      await restartWorkflow()
+      await ctx.workflow.sweepDispatch()
+      expect(workers.started, crash).toEqual([])
+      expect((await ctx.board.task(task.taskId))!.state, crash).toBe('ready')
+      const row = rowsOf(ctx, task.taskId).find((r) => r.ask_id === ask.askId)!
+      if (crash === 'busy') expect(row.state).toBe('approved')
+      else {
+        expect(row.state, crash).toBe('closed')
+        expect(closedOf(ctx), crash).toContain(crash === 'paused' ? 'paused' : 'hold-expired')
+      }
+    }
+  })
+
+  it('uses an approval past approvedHoldMinutes for nothing, even with its Worker free and fresh readings', async () => {
+    const { ctx, workers, read } = await boot({ workflow: { dispatch: { approvedHoldMinutes: 30 } } })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const task = await ready(ctx, 'expired, then free')
+    await ctx.workflow.sweepDispatch()
+    const ask = askOf(ctx.workflow.dispatchStatus(), task.taskId)!
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a', { load: { running: 1, queued: 0, pending: 0, slots: 1 } })]
+    await approve(ctx, ask.requestId!)
+    await ctx.workflow.sweepDispatch()
+    expect(askOf(ctx.workflow.dispatchStatus(), task.taskId)).toMatchObject({ state: 'approved', askId: ask.askId })
+    // Its Worker is free again, read a minute ago; the approval is 31 minutes old.
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    ctx.store.db.prepare('UPDATE workflow_dispatch SET approved_at = ? WHERE ask_id = ?').run(new Date(Date.now() - 31 * 60_000).toISOString(), ask.askId)
+    await ctx.workflow.sweepDispatch()
+    expect(workers.started).toEqual([])
+    expect((await ctx.board.task(task.taskId))!.state).toBe('ready')
+    expect(rowsOf(ctx, task.taskId).find((r) => r.ask_id === ask.askId)!.state).toBe('closed')
+    expect(closedOf(ctx)).toEqual(['hold-expired'])
+  })
+
+  it('charges the starts settlement makes to the same maxPerPass as the asks and starts selection makes', async () => {
+    const { ctx, workers, read } = await boot({ workflow: { dispatch: { maxPerPass: 1, maxRunningPerProject: 4 } } })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const first = await ready(ctx, 'approved first')
+    await ctx.workflow.sweepDispatch()
+    await approve(ctx, askOf(ctx.workflow.dispatchStatus(), first.taskId)!.requestId!)
+    // A second ready task, with a free Worker of its own.
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
+    await read('acc-b', 0)
+    const second = await ready(ctx, 'ready second')
+    await ctx.workflow.sweepDispatch()
+    // The pass started the approved one: that was its one.
+    expect((await ctx.board.task(first.taskId))!.state).toBe('running')
+    expect(askOf(ctx.workflow.dispatchStatus(), second.taskId)).toBeUndefined()
+    expect(reasonOf(ctx.workflow.dispatchStatus(), second.taskId)).toBe('this pass took its 1 (dispatch.maxPerPass); a later pass looks again')
+    // The next pass has its own.
+    await ctx.workflow.sweepDispatch()
+    expect(askOf(ctx.workflow.dispatchStatus(), second.taskId)).toMatchObject({ state: 'asked', worker: 'agent:acc-b/develop' })
+  })
+
+  it('charges a request the queue opened to maxPerPass even when recording it on its row then fails, so the pass opens no second one (review of T205)', async () => {
+    const { ctx, workers, read } = await boot({ workflow: { dispatch: { maxPerPass: 1, maxRunningPerProject: 4 } } })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
+    await read('acc-a', 0)
+    await read('acc-b', 0)
+    const first = await ready(ctx, 'asking first')
+    const second = await ready(ctx, 'asking second')
+    await ctx.workflow.sweepDispatch()
+    await ctx.workflow.sweepDispatch()
+    const asks = [askOf(ctx.workflow.dispatchStatus(), first.taskId)!, askOf(ctx.workflow.dispatchStatus(), second.taskId)!]
+    expect(asks.map((a) => a.state)).toEqual(['asked', 'asked'])
+    // Both rows are back to asking with no open request: a crash before either was asked.
+    for (const ask of asks) {
+      await ctx.approvals.withdraw(ask.requestId!)
+      ctx.store.db.prepare("UPDATE workflow_dispatch SET state = 'asking', request_id = NULL WHERE ask_id = ?").run(ask.askId)
+    }
+    // The queue opens each request it is given, but the row's record of it then fails.
+    const opened: string[] = []
+    const request = ctx.approvals.request.bind(ctx.approvals)
+    ctx.approvals.request = async (...args) => {
+      const created = await request(...args)
+      opened.push(created.requestId)
+      if (opened.length === 1) ctx.store.db.exec("CREATE TRIGGER t205_fail_ask BEFORE UPDATE ON workflow_dispatch WHEN NEW.state = 'asked' BEGIN SELECT RAISE(ABORT, 'the store failed'); END")
+      return created
+    }
+    await ctx.workflow.sweepDispatch()
+    // One request opened: it spent the pass's one, though its row still says asking.
+    expect(opened).toHaveLength(1)
+    expect(rowsOf(ctx, first.taskId).concat(rowsOf(ctx, second.taskId)).map((r) => r.state)).toEqual(['asking', 'asking'])
+    // The store recovers: the next pass adopts that request (asking once, INV-4) and spends nothing on it, so it opens the other's.
+    ctx.store.db.exec('DROP TRIGGER t205_fail_ask')
+    await ctx.workflow.sweepDispatch()
+    expect(opened).toHaveLength(2)
+    expect((await dispatchRequests(ctx)).filter((r) => r.state === 'open').map((r) => r.requestId).sort()).toEqual([...opened].sort())
+    expect([askOf(ctx.workflow.dispatchStatus(), first.taskId)!.state, askOf(ctx.workflow.dispatchStatus(), second.taskId)!.state]).toEqual(['asked', 'asked'])
+  })
+})

@@ -582,7 +582,7 @@ No options.
 | `dispatch` | object | `{}` | Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself) |
 | `dispatch.enabled` | boolean | `true` | System asks to start ready board tasks on free Workers chosen by quota (ADR-0064); false: nothing is asked or started |
 | `dispatch.sweepSeconds` | number (10…3600) | `60` | Seconds between dispatch passes; one runs at start too, after the runs are reconciled |
-| `dispatch.maxPerPass` | number (1…16) | `2` | Starts or asks one pass makes at most |
+| `dispatch.maxPerPass` | number (1…16) | `2` | Starts and new asks one pass makes at most, approved asks it starts included |
 | `dispatch.maxRunning` | number (1…10000) |  | Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less) |
 | `dispatch.maxRunningPerProject` | number (1…16) | `2` | The same, per project |
 | `dispatch.maxRunningPerAccount` | number (1…16) | `1` | The same, per account of the chosen Worker; and the most its account's load may be for it to be free |

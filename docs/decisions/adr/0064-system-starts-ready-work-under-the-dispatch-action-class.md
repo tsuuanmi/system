@@ -52,8 +52,8 @@ What constrains it:
    engine reconciled its runs, the engine reads the board, the Workers, the ledger, the queue, and its
    own records again; it keeps nothing in memory a restart would lose, so a restart is a pass, not a
    replay (INV-4). It takes the ready tasks of active projects that name a template it serves, oldest
-   first (`createdAt`, then id; D1 orders by age, priority is D2), at most `dispatch.maxPerPass` a
-   pass, and starts them through the engine's own start: claim as the run, run first, then work. A
+   first (`createdAt`, then id; D1 orders by age, priority is D2), at most `dispatch.maxPerPass` starts
+   and new asks a pass (approved asks it starts included), and starts them through the engine's own start: claim as the run, run first, then work. A
    lead's or the operator's start of the same task races only at the board's fenced claim.
 2. **The action class `dispatch`** (`common@1`'s `actionClass` gains it; the approvals contract
    stays 1.1, its vocabulary amended in place as for `promotion`): System starting a ready task's
@@ -115,9 +115,12 @@ What constrains it:
    `dispatch.approval`); the run's `workflow.task-admission` decision names them, so `explain` on the
    run shows why it started and on what. A pass that takes nothing changes nothing and records no
    decision; its reason for each task is kept as the last pass, which `dispatch_status` shows.
-9. **The run prefers the chosen Worker.** Its writing step's first route is restricted to that Worker;
-   refused (its state changed), it routes again without the restriction, both decisions kept on the
-   step. A refused preference spends no attempt.
+9. **The run is bound to the chosen Worker** (amended after review T202). Its writing step's first
+   route is restricted to that Worker. Refused (its state changed since), it routes nowhere else: it
+   waits for that Worker within `dispatch.approvedHoldMinutes` of the run's start, sending nothing and
+   spending no attempt, then the attempt fails for the operator; the deadline is checked before a
+   waiting step is routed again, so the Worker free again after it does not start it. So every start dispatch makes is on
+   the Worker its decisions name.
 
 ## Consequences
 
@@ -145,5 +148,18 @@ What constrains it:
   `operator`, `TaskView.startedBy`), which the roster gives on each step (`mcp-roster@1.8`) and the
   Workers tab and Home's *Started by itself* show. The `workflow` contract becomes 1.10. A restart in
   the middle of a start adopts the run already admitted for its row, so an attempt starts once.
+- **After review T202 of PR #37** (T205), every dispatched start stays explained (INV-13) and
+  revalidated (INV-4):
+  - A writing step whose chosen Worker routing refuses no longer routes to another Worker with no
+    dispatch decision for it. It waits for that Worker within `approvedHoldMinutes` of the run's
+    start, then fails (point 9). We took this over choosing a replacement through dispatch's
+    reserve, bounds, and decisions because it is simpler: a later attempt is put to dispatch again.
+  - A row a crash left `starting` before its run was admitted is checked again like an approved
+    one: a run already admitted for it is adopted first; otherwise the pause, the hold, the task,
+    the Worker, and the bounds are all checked before a run is admitted.
+  - The hold is checked before any start, so an approval older than `approvedHoldMinutes` starts
+    nothing, even on a free Worker with fresh readings.
+  - `maxPerPass` is one allowance a pass, shared by settlement and selection. Each run admitted and
+    each request newly opened is charged to it; a row left waiting is not.
 - Still open after D2: a task's priority (the pass orders by age), withdrawing an ask whose Worker's
   pool closed mid-wait, and D3 (the score in every route, its own ADR).

@@ -142,7 +142,7 @@ export class Workflow extends Service {
     dispatch: z.object({
       enabled: z.boolean().default(true).description('System asks to start ready board tasks on free Workers chosen by quota (ADR-0064); false: nothing is asked or started'),
       sweepSeconds: z.natural().min(10).max(3600).default(60).description('Seconds between dispatch passes; one runs at start too, after the runs are reconciled'),
-      maxPerPass: z.natural().min(1).max(16).default(2).description('Starts or asks one pass makes at most'),
+      maxPerPass: z.natural().min(1).max(16).default(2).description('Starts and new asks one pass makes at most, approved asks it starts included'),
       maxRunning: z.natural().min(1).max(10_000).description('Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less)'),
       maxRunningPerProject: z.natural().min(1).max(16).default(2).description('The same, per project'),
       maxRunningPerAccount: z.natural().min(1).max(16).default(1).description('The same, per account of the chosen Worker; and the most its account\'s load may be for it to be free'),

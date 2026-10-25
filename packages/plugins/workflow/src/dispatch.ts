@@ -5,8 +5,9 @@
  *
  * - **A pass** reads the board, the Workers, the ledger, the queue, and its own rows again, every
  *   `dispatch.sweepSeconds` and once at start: a restart is a pass, not a replay (INV-4). It takes the
- *   ready tasks of active projects that name a template the engine serves, oldest first, at most
- *   `maxPerPass` a pass.
+ *   ready tasks of active projects that name a template the engine serves, oldest first. One
+ *   allowance of `maxPerPass` a pass covers its settlement and its selection: each run admitted and
+ *   each request newly opened is charged to it.
  * - **The Worker** of a task's writing step is chosen by `quotaScoreOf` (`quota-score@2`) among the
  *   Workers routing admits (`ctx.workers.candidates`, nothing reserved): the first free one. An unknown
  *   or stale reading, or a metered pool, is never free (INV-2, D65).
@@ -17,7 +18,9 @@
  *   records a notice (`workflow.dispatch.notice`, which the notifier tells); `forbid` starts nothing.
  * - **An approval** starts exactly that attempt on exactly that Worker, through the engine's own start
  *   (claim as the run, run first, then work), while the task is still ready at that attempt and the
- *   Worker still free, within `approvedHoldMinutes`; otherwise it is used for nothing, recorded.
+ *   Worker still free, within `approvedHoldMinutes`; otherwise it is used for nothing, recorded. A row
+ *   a crash left `starting` with no run admitted is checked again alike (INV-4). The step runs on
+ *   that Worker or on none: refused at routing, it waits for it within the hold, then fails (engine.ts).
  * - **Bounds** (INV-9) count the rows of runs not finished and of asks open or approved, per project,
  *   account, repository, and in all, so approvals never exceed them; the starts of the last rolling hour,
  *   in all and per project (D2); a subject a task writes is held by one task at a time (INV-15).
@@ -284,6 +287,14 @@ interface Counts {
   subjects: Map<string, string>
 }
 
+/**
+ * What one pass may still start or ask (`maxPerPass`), shared by its settlement and its selection:
+ * charged by each run admitted and each request newly opened, never by a row left waiting.
+ */
+interface Allowance {
+  left: number
+}
+
 const subjectKey = (s: Subject): string => `${s.type}\0${s.ref}`
 const bump = (map: Map<string, number>, key: string | null | undefined, by = 1): void => {
   if (key) map.set(key, (map.get(key) ?? 0) + by)
@@ -494,8 +505,10 @@ export class Dispatcher {
     if (this.e.stopped.signal.aborted) return { ...view, state: 'waiting', reason: 'the engine is stopping' }
     const board = this.e.board
     if (!board) return this.keep({ ...view, state: 'waiting', reason: 'no board is loaded (ctx.board): nothing is dispatched' })
+    // One allowance for the whole pass: settlement's starts and selection's starts and new asks all count against it.
+    const allowance: Allowance = { left: this.settings.maxPerPass }
     try {
-      await this.settle(board, at)
+      await this.settle(board, at, allowance)
     } catch (error) {
       this.e.ctx.logger.warn(`workflow: dispatch could not settle its asks; the next pass tries again: ${errorText(error)}`)
     }
@@ -510,7 +523,7 @@ export class Dispatcher {
           : !this.e.ctx.workers.candidates ? 'the router cannot list candidates (ctx.workers.candidates): no Worker can be shown free' : undefined
     if (missing) return this.keep({ ...view, state: 'waiting', reason: missing })
     try {
-      return this.keep(await this.select(board, at, view))
+      return this.keep(await this.select(board, at, view, allowance))
     } catch (error) {
       return this.keep({ ...view, state: 'waiting', reason: `the pass failed and starts nothing; the next pass tries again: ${errorText(error)}` })
     }
@@ -530,7 +543,7 @@ export class Dispatcher {
   }
 
   /** Take the ready tasks of active projects, oldest first, within the bounds. */
-  private async select(board: Board, at: Date, view: DispatchPass): Promise<DispatchPass> {
+  private async select(board: Board, at: Date, view: DispatchPass, allowance: Allowance): Promise<DispatchPass> {
     const s = this.settings
     const projects = await board.projects()
     const ready: Array<{ task: BoardTask; project: Project }> = []
@@ -586,7 +599,7 @@ export class Dispatcher {
         why(`it names template ${task.template}, which the engine does not serve now${this.e.refused.has(task.template) ? ` (refused at load: ${this.e.refused.get(task.template)})` : ''}`)
         continue
       }
-      if (view.took.length >= s.maxPerPass) {
+      if (allowance.left <= 0) {
         why(`this pass took its ${s.maxPerPass} (dispatch.maxPerPass); a later pass looks again`)
         continue
       }
@@ -668,7 +681,7 @@ export class Dispatcher {
       })
       const select = this.e.ctx.artifacts.recordDecision({
         decisionType: 'admission',
-        question: `Which ready board task does dispatch take next (pass at ${view.at}, ${view.took.length + 1} of at most ${s.maxPerPass})?`,
+        question: `Which ready board task does dispatch take next (pass at ${view.at}, ${s.maxPerPass - allowance.left + 1} of at most ${s.maxPerPass}, settlement's starts counted)?`,
         inputs: [],
         candidates: others.slice(0, MAX_CANDIDATES),
         decider: SELECT,
@@ -728,7 +741,8 @@ export class Dispatcher {
         // About to start: it counts in the hour from now (started, or approved and waiting for its Worker).
         hour.total += 1
         bump(hour.projects, project.projectId)
-        await this.tryStart(board, this.ask(askId)!, at)
+        // Its start counts against the pass's allowance (tryStart charges it once a run is admitted).
+        await this.tryStart(board, this.ask(askId)!, at, undefined, allowance)
         const started = this.ask(askId)?.state === 'started'
         // Started, it is a running run now, which the engine's own count holds.
         if (started) counts.pending -= 1
@@ -739,7 +753,8 @@ export class Dispatcher {
         counts.open += 1
         why(`taken: asks for your go to start attempt ${n + 1} on ${chosen.worker}`)
         view.took.push({ askId, taskId: task.taskId, worker: chosen.worker, how: 'asked' })
-        await this.request(this.ask(askId)!)
+        // A request newly opened is charged inside request(), before its row's record.
+        await this.request(this.ask(askId)!, allowance)
       }
     }
     view.tasks = looked.slice(0, MAX_REPORTED).map(({ task, project }) => ({ taskId: task.taskId, projectId: project.projectId, title: task.title, reason: reasons.get(task.taskId) ?? 'not looked at' }))
@@ -931,17 +946,19 @@ export class Dispatcher {
   /**
    * Ask the queue for a row's start: adopt an open request on its subject first (a crash between the
    * request and the row's record asks once, INV-4), else request one with the verdict that said ask.
+   * A request newly opened is charged to the pass's allowance as soon as the queue opens it, before
+   * the row's record, so a record that fails still spends it (one adopted was charged when opened).
    */
-  private async request(row: AskRow): Promise<void> {
+  private async request(row: AskRow, allowance: Allowance): Promise<'opened' | 'adopted' | 'not-asked' | undefined> {
     const choice = JSON.parse(row.choice) as AskChoice
     const subject = this.subjectOf(row)
     const approvals = this.e.ctx.get('approvals')
-    if (!approvals) return
+    if (!approvals) return undefined
     const open = (await approvals.list({ projectId: row.project_id })).filter((r) => r.requester.component === 'workflow' && r.requester.taskId === row.task_id && r.subject.ref === subject.ref && r.action.class === 'dispatch')
     const mine = open.find((r) => r.subject.version === row.version)
     if (mine) {
       this.move(row, 'asked', { request_id: mine.requestId })
-      return
+      return 'adopted'
     }
     // A request on another choice for this attempt belongs to no live ask (one closed whose withdrawal
     // failed): it is withdrawn, so the operator is never shown two starts of one attempt.
@@ -951,42 +968,45 @@ export class Dispatcher {
         subject, action: { class: 'dispatch', summary: choice.summary, consequences: choice.consequences, refs: [choice.decisions[1]!] },
         requester: { component: 'workflow', taskId: row.task_id, projectId: row.project_id }, verdict: choice.verdict!, classification: choice.classification,
       })
+      allowance.left -= 1
       this.move(row, 'asked', { request_id: created.requestId })
+      return 'opened'
     } catch (error) {
       // Any other failure (a crash, a store that failed) leaves the row asking: the next pass adopts the
       // request, if one was made, or asks again (INV-4).
       if (!(error instanceof ApprovalsError)) throw error
       // The policy no longer asks (changed since the verdict), or the request is invalid: nothing is asked.
       this.closeAsk(row, 'not-asked', `the approval queue did not take the request: ${errorText(error)}`)
+      return 'not-asked'
     }
   }
 
   /** Settle the live asks, oldest first: adopt or ask, read the queue's verdicts, start approved ones, withdraw stale ones. */
-  private async settle(board: Board, at: Date): Promise<void> {
+  private async settle(board: Board, at: Date, allowance: Allowance): Promise<void> {
     const rows = this.e.ctx.store.db.prepare(`SELECT * FROM workflow_dispatch WHERE state IN ('asking', 'asked', 'approved', 'starting') ORDER BY updated_at, ask_id LIMIT ?`).all(MAX_SETTLED) as unknown as AskRow[]
     const paused = this.pausedNow()
     const projects = this.projectPauses()
     for (const row of rows) {
       if (this.e.stopped.signal.aborted) return
       try {
-        await this.settleOne(board, row, at, paused ?? projects.get(row.project_id))
+        await this.settleOne(board, row, at, paused ?? projects.get(row.project_id), allowance)
       } catch (error) {
         this.e.ctx.logger.warn(`workflow: dispatch ask ${row.ask_id} could not be settled; the next pass tries again: ${errorText(error)}`)
       }
     }
   }
 
-  private async settleOne(board: Board, row: AskRow, at: Date, paused: DispatchPause | undefined): Promise<void> {
+  private async settleOne(board: Board, row: AskRow, at: Date, paused: DispatchPause | undefined, allowance: Allowance): Promise<void> {
     const approvals = this.e.ctx.get('approvals')
     if (row.state === 'asking') {
       if (paused) return this.closeAsk(row, 'paused', `${pausedText(paused)} before it was asked`)
-      return this.request(row)
+      // A request it opens counts against this pass's maxPerPass; one adopted was counted when it was opened.
+      if (allowance.left <= 0) return
+      await this.request(row, allowance)
+      return
     }
-    if (row.state === 'starting') return this.tryStart(board, row, at)
-    if (row.state === 'approved') {
-      if (paused) return this.closeAsk(row, 'paused', `${pausedText(paused)}; the approval is used for nothing`)
-      return this.tryStart(board, row, at)
-    }
+    // Approved, or starting with no run admitted yet (a crash): revalidated alike before any start.
+    if (row.state === 'starting' || row.state === 'approved') return this.tryStart(board, row, at, paused, allowance)
     // Asked: the queue's word on it.
     if (!approvals) return
     const request = await approvals.get(row.request_id!)
@@ -1002,8 +1022,7 @@ export class Dispatcher {
       if (!this.binds(request, row)) return this.closeAsk(row, 'unbound', `request ${request.requestId} was approved, but not exactly as asked (subject, requester, class, or verdict): an approval binds only the exact start it was asked on (INV-5)`)
       const choice = JSON.parse(row.choice) as AskChoice
       this.move(row, 'approved', { approved_at: request.resolution!.at, choice: JSON.stringify({ ...choice, decisions: [...choice.decisions, request.resolution!.decision] }) })
-      if (paused) return this.closeAsk(this.ask(row.ask_id)!, 'paused', `${pausedText(paused)}; the approval is used for nothing`)
-      return this.tryStart(board, this.ask(row.ask_id)!, at)
+      return this.tryStart(board, this.ask(row.ask_id)!, at, paused, allowance)
     }
     const resolution = request.resolution
     if (resolution?.cause === 'verdict') return this.closeAsk(row, 'denied', `the operator denied request ${request.requestId}`)
@@ -1033,26 +1052,35 @@ export class Dispatcher {
   }
 
   /**
-   * Start an approved row's run, exactly that attempt on exactly that Worker first: only while the
-   * task is still ready at that attempt and the Worker still admitted and free, within the hold; past
-   * the hold, or once the task moved on, the approval is used for nothing.
+   * Start an approved row's run, exactly that attempt on exactly that Worker: a run already admitted
+   * for it is adopted first (INV-4); otherwise, whether the row is approved or was left starting by a
+   * crash, only while dispatch is not paused there, the task is still ready at that attempt, the hold
+   * has not passed, the Worker is still admitted and free, the bounds leave room, and the pass's
+   * allowance is not spent. Paused, past the hold, or once the task moved on, the approval is used for
+   * nothing; otherwise it waits, approved, for a later pass.
    */
-  private async tryStart(board: Board, row: AskRow, at: Date): Promise<void> {
+  private async tryStart(board: Board, row: AskRow, at: Date, paused: DispatchPause | undefined, allowance: Allowance): Promise<void> {
     // A start a crash interrupted after the engine admitted its run: that run is this ask's (INV-4).
     const admitted = this.e.ctx.store.db.prepare("SELECT run_id FROM workflow_tasks WHERE json_extract(dispatch, '$.askId') = ?").get(row.ask_id) as { run_id: string } | undefined
     if (admitted) return this.move(row, 'started', { run_id: admitted.run_id, outcome: { status: 'started', reason: `run ${admitted.run_id} serves attempt ${row.attempt + 1}`, at: now() } })
+    // No run was admitted: whatever the row's state (approved, or starting when a crash came before
+    // the admission), everything is checked again before one is (INV-4).
     const moved = await this.movedOn(board, row)
     if (moved) return this.closeAsk(row, 'moved-on', `${moved}; the approval is used for nothing`)
-    const choice = JSON.parse(row.choice) as AskChoice
-    if (row.state !== 'starting') {
-      const waiting = await this.notStartable(row, at)
-      if (waiting) {
-        const held = at.getTime() - Date.parse(row.approved_at ?? row.created_at)
-        if (held > this.settings.approvedHoldMinutes * 60_000) return this.closeAsk(row, 'hold-expired', `approved, but ${waiting} for more than ${this.settings.approvedHoldMinutes} min (dispatch.approvedHoldMinutes): the approval is used for nothing, and dispatch chooses again`)
-        return
-      }
-      this.move(row, 'starting')
+    if (paused) return this.closeAsk(row, 'paused', `${pausedText(paused)}; the approval is used for nothing`)
+    // The hold first: an approval older than it starts nothing, even on a free Worker.
+    const since = row.approved_at ?? row.created_at
+    if (at.getTime() - Date.parse(since) > this.settings.approvedHoldMinutes * 60_000) {
+      return this.closeAsk(row, 'hold-expired', `approved at ${since}, more than ${this.settings.approvedHoldMinutes} min before it could start (dispatch.approvedHoldMinutes): the approval is used for nothing, and dispatch chooses again`)
     }
+    const waiting = await this.notStartable(row, at)
+    // Not startable now, or this pass has started and asked all it may: it waits, approved, for a later pass.
+    if (waiting || allowance.left <= 0) {
+      if (row.state === 'starting') this.move(row, 'approved')
+      return
+    }
+    const choice = JSON.parse(row.choice) as AskChoice
+    if (row.state !== 'starting') this.move(row, 'starting')
     const task = await board.task(row.task_id)
     if (!task || task.state !== 'ready' || task.attempts.count !== row.attempt) return this.closeAsk(row, 'moved-on', 'the task moved on before its run started; the approval is used for nothing')
     const dispatch: TaskDispatch = { askId: row.ask_id, decisions: choice.decisions, prefer: { node: row.node_id, worker: row.worker, decision: choice.decisions[1]! } }
@@ -1060,11 +1088,13 @@ export class Dispatcher {
       const run = await this.e.tasks.start({
         template: choice.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId: task.taskId, revision: task.revision }, clientRequestId: `dispatch:${row.ask_id}`,
       }, { dispatch })
+      allowance.left -= 1
       this.move(row, 'started', { run_id: run.runId, outcome: { status: 'started', reason: `run ${run.runId} serves attempt ${row.attempt + 1}`, at: now() } })
     } catch (error) {
       const pending = (error as { runId?: unknown }).runId
       if (typeof pending === 'string') {
         // Admitted all the same: it starts once the board shows it recorded.
+        allowance.left -= 1
         this.move(row, 'started', { run_id: pending, outcome: { status: 'started', reason: `run ${pending} was admitted; the board had not answered its start yet`, at: now() } })
         return
       }

@@ -9,7 +9,7 @@ import { noteDeferral } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import { MATERIAL, type SourceSnapshot } from './sources.ts'
 import type { ResolvedNode } from './spec.ts'
-import type { NodeRecord, NodeRow, RunRow, WorkflowError } from './types.ts'
+import { type NodeRecord, type NodeRow, type RunRow, TASK_WAIT_MS, type TaskDispatch, type WorkflowError } from './types.ts'
 
 const RETRYABLE = new Set(['IMMEDIATE', 'BACKOFF', 'RECREATE_SESSION'])
 
@@ -194,6 +194,50 @@ export function waitForLimit(e: Engine, run: RunRow, node: NodeRow, failure: Adm
 }
 
 const round = (hours: number): string => (Math.round(hours * 100) / 100).toString()
+
+/**
+ * A dispatched run's writing step whose chosen Worker routing refused (ADR-0064): it runs on that
+ * Worker or on none, so no start is made on a Worker dispatch's decisions do not name (INV-13). It
+ * waits for that Worker, `READY` with `not_before` the next look (at most `TASK_WAIT_MS` on), sending
+ * nothing and spending no attempt, while the run is younger than `dispatch.approvedHoldMinutes` (the
+ * hold an approval keeps); then, or when the Worker can never be admitted (a restriction leaves it
+ * out), the attempt fails for the operator, not retried, the refusal its decision's input. A restart
+ * waits on from the row (INV-4).
+ */
+export function waitForChoice(e: Engine, run: RunRow, node: NodeRow, prefer: TaskDispatch['prefer'], refused: AdmissionFailure | undefined, restricted: string | undefined, lease: () => Lease): void {
+  const hold = e.dispatch.settings.approvedHoldMinutes
+  const until = Date.parse(run.created_at) + hold * 60_000
+  const why = refused ? `routing refused it: ${errorLine(refused.message)}` : `it is outside the Workers this step may take (${restricted ?? 'a restriction'})`
+  const message = `dispatch chose ${prefer.worker} for this step (decision ${prefer.decision}), and ${why}`
+  const decisions = refused ? [refused.decision] : []
+  if (refused && Date.now() < until) {
+    const next = new Date(Math.min(until, Date.now() + TASK_WAIT_MS)).toISOString()
+    const error: WorkflowError = { kind: admissionKind(refused), disposition: 'BACKOFF', message: `${message}; it waits for that Worker until ${new Date(until).toISOString()} (dispatch.approvedHoldMinutes ${hold} from the run's start), and no other Worker takes it` }
+    e.writeNode(node, { state: 'READY', execution_id: null, worker: null, not_before: next, error: JSON.stringify(error), decisions: JSON.stringify(decisions) }, (r) => r, lease)
+    return
+  }
+  const kind = refused ? admissionKind(refused) : 'config_error'
+  const end = refused ? `it waited more than dispatch.approvedHoldMinutes (${hold}) from the run's start` : 'no wait can change that'
+  failAttempt(e, run, { ...node, attempt: node.attempt + 1 }, { kind, disposition: 'USER_ACTION', message: `${message}; ${end}, so the step fails with nothing sent: no Worker dispatch did not choose takes it (ADR-0064)` }, { sent: false, decisions }, lease)
+}
+
+/**
+ * A step that already waited for the Worker dispatch chose (`waitForChoice`) is failed, with
+ * nothing sent, once the hold has ended, before it is routed again: its chosen Worker free again
+ * after the deadline does not start it (ADR-0064). Returns whether it failed it. A step routed for
+ * the first time is not held to the deadline here; refused, `waitForChoice` decides.
+ */
+export function choiceHoldEnded(e: Engine, run: RunRow, node: NodeRow, prefer: TaskDispatch['prefer'], lease: () => Lease): boolean {
+  if (!node.error) return false
+  const waited = JSON.parse(node.error) as WorkflowError
+  const message = `dispatch chose ${prefer.worker} for this step (decision ${prefer.decision})`
+  if (!waited.message.startsWith(`${message}, and `)) return false
+  const hold = e.dispatch.settings.approvedHoldMinutes
+  const until = Date.parse(run.created_at) + hold * 60_000
+  if (Date.now() < until) return false
+  failAttempt(e, run, { ...node, attempt: node.attempt + 1 }, { kind: waited.kind, disposition: 'USER_ACTION', message: `${message}, and it waited for that Worker until ${new Date(until).toISOString()}; it waited more than dispatch.approvedHoldMinutes (${hold}) from the run's start, so the step fails with nothing sent, even with that Worker free now: no Worker dispatch did not choose takes it (ADR-0064)` }, { sent: false }, lease)
+  return true
+}
 
 /** The key an attempt's execution is started under: one per node, attempt, escalation, and input. */
 export function executionKey(runId: string, node: NodeRow, attempt: number): string {
