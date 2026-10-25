@@ -62,8 +62,11 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     expect(said).toContain('Why this Worker?')
     expect(said).not.toContain('tier standard, agent-plan, known')
     expect(await go.textContent()).toMatch(/Why this Worker\?tier standard, agent-plan, known/)
-    // The request itself is in the queue too, described as a start.
-    expect(await page.getByRole('region', { name: 'Approval queue' }).innerText()).toMatch(/Approve: start it/)
+    // The request itself is in the queue too, described as a start: short labels in sight, the effect in each button's name (T186).
+    const queued = page.getByRole('region', { name: 'Approval queue' })
+    expect(await queued.getByRole('button', { name: 'Approve: start it' }).count()).toBe(1)
+    expect(await queued.getByRole('button', { name: 'Deny: do not start it' }).count()).toBe(1)
+    expect(await go.getByRole('button', { name: 'Approve the start of Write the release notes' }).innerText()).toBe('Approve')
     await go.getByRole('button', { name: 'Approve the start of Write the release notes' }).click()
     await vi.waitFor(async () => expect((await ctx.approvals.list({ states: ['approved'] })).filter((r) => r.action.class === 'dispatch')).toHaveLength(1), { timeout: 15_000 })
     await ctx.workflow.sweepDispatch()

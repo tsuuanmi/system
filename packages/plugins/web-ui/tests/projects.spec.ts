@@ -138,13 +138,18 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const card = page.getByRole('article', { name: 'Found project project p1 (charter version 1)' })
     await expect.poll(() => card.count()).toBe(1)
+    // In sight (T186): one line, for which project and until when with what no response does, an irreversible denial as a chip, and two short buttons.
     const text = await card.innerText()
+    for (const said of ['Found project project p1 (charter version 1)', 'for project project p1', 'Expires in', 'No response: denied', 'Deny cannot be undone']) expect(text, said).toContain(said)
+    expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
+    // Who asked, what it is about, what each verdict does, the request's id, its exact expiry, and the board's sweep are under one closed Details, never dropped (T171, T186).
+    for (const folded of ['Asked by', 'charter version 1 of project p1', 'Cannot be undone.', 'request ' + approvalRequest]) expect(text, folded).not.toContain(folded)
+    expect(await card.locator('details.card-details').getAttribute('open')).toBeNull()
+    await card.getByText('Details', { exact: true }).click()
+    const opened = await card.innerText()
     for (const said of ['Asked by the board of project project p1', 'charter version 1 of project p1',
-      '2 proposed task(s) go through the autonomy policy. No run starts by itself.', 'is closed as abandoned, and 2 open task(s) are cancelled. Cannot be undone.', 'Expires in', 'No response: denied']) expect(text, said).toContain(said)
-    // The request's id, its exact expiry, and the board's sweep are folded, never dropped (T171).
-    expect(text).not.toContain('request ' + approvalRequest)
-    const folded = await card.textContent()
-    for (const said of ['request ' + approvalRequest, 'The board activates it on its next sweep, within a minute']) expect(folded, said).toContain(said)
+      '2 proposed task(s) go through the autonomy policy. No run starts by itself.', 'is closed as abandoned, and 2 open task(s) are cancelled. Cannot be undone.',
+      'request ' + approvalRequest, 'The board activates it on its next sweep, within a minute', 'Approve: activate project · Deny: abandon project']) expect(opened, said).toContain(said)
     expect(await card.locator('button.copy', { hasText: 'Copy request ID' }).getAttribute('data-copy')).toBe(approvalRequest)
     await card.getByRole('textbox', { name: 'Note (optional)' }).fill('go')
     await card.getByRole('button', { name: 'Approve: activate project' }).click()
@@ -264,8 +269,11 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await expect.poll(() => page.locator('main').innerText()).toContain('1 task approval')
     await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${waiting}`)
-    // The card names the task by its title, not its id.
-    expect(await page.locator(`#request-${waiting}`).innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
+    // The card names the task by its title, not its id: on its line, and who asked under its Details (T186).
+    const asked = page.locator(`#request-${waiting}`)
+    expect(await asked.locator('.line').innerText()).toContain('for the task "Merge the login fix"')
+    await asked.getByText('Details', { exact: true }).click()
+    expect(await asked.innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
   it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge under Needs your attention, with its merge request\'s Approve and Deny on the card, and the request in words on Home (ADR-0060, T141)', async () => {
@@ -303,9 +311,13 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/?request=${request.requestId}`)
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
     const asked = page.locator(`#request-${request.requestId}`)
-    expect(await asked.innerText()).toContain('the accepted change of "Band the inner loop" · not pushed')
+    // One line names the task it is for (T186); the rest is under its closed Details.
+    expect(await asked.locator('.line').innerText()).toContain('for the task "Band the inner loop"')
+    expect(await asked.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     expect(await asked.innerText()).not.toContain('bbbbbbbbbbbb')
     expect(await asked.textContent()).toContain('branch ' + branch + ' at bbbbbbbbbbbb, onto the base at aaaaaaaaaaaa')
+    await asked.getByText('Details', { exact: true }).click()
+    expect(await asked.innerText()).toContain('the accepted change of "Band the inner loop" · not pushed')
     expect(await asked.innerText()).toContain('Asked by the run of the task "Band the inner loop"')
     expect(await asked.innerText()).toContain('The accepted change of the task "Band the inner loop" is merged as one merge commit. Not pushed.')
     expect(await asked.innerText()).toContain('Not merged: the change stays on its branch; the task stays done.')

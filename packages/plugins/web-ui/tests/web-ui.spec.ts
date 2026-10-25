@@ -458,12 +458,20 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
       expect(await queue.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
     }
     expect(await queue.innerText()).toMatch(/3 approvals · next expiry /)
-    expect(await queue.innerText()).toContain('task apr-1 of project p1, attempt 1')
-    // Each card: who asked and until when, with what no response does; its id and exact expiry folded.
+    // Each card (T186): one line, what is asked, for which task, and until when, with what no response does; two short buttons;
+    // who asked, what it is about, its id, and its exact expiry under one closed Details.
     const third = page.locator('#request-apr-3')
-    expect(await third.innerText()).toMatch(/Asked by the board, for task task-apr-3 of project p1 · Expired .+ ago · No response: denied/)
+    expect(await third.locator('.line').innerText()).toMatch(/^Allow a deploy step: merge apr-3\s+for task apr-3 · Expired .+ ago · No response: denied$/)
+    expect(await third.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
+    expect(await third.locator('details.card-details').getAttribute('open')).toBeNull()
+    expect(await third.innerText()).not.toContain('Asked by')
     expect(await third.innerText()).not.toContain('request apr-3')
     expect(await third.textContent()).toContain('request apr-3')
+    await third.getByText('Details', { exact: true }).click()
+    expect(await third.innerText()).toContain('Asked by the board, for task task-apr-3 of project p1')
+    expect(await third.innerText()).toContain('task apr-3 of project p1, attempt 1')
+    expect(await third.innerText()).toContain('request apr-3')
+    expect(await third.innerText()).toContain('Approve: allow this deploy · Deny: hold the task')
     expect(await page.locator('main').innerText()).not.toContain('null')
     await queue.getByRole('textbox', { name: 'Note for all (optional)' }).fill('ship it')
     await queue.getByRole('button', { name: 'Approve all 2' }).click()
@@ -531,6 +539,125 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await alert.innerText()).toContain('the store is busy')
     await alert.getByRole('button', { name: 'Dismiss' }).click()
     expect(await page.getByRole('alert').count()).toBe(0)
+  }, 60_000)
+
+  // Round 8 (T186): one line and two buttons a card, its facts under one closed Details, at most 5 rows a list.
+  /** Seven runs outside the board that failed in the last minutes: seven lines since the operator last looked, eight runs needing attention with RUN. */
+  const failedRuns = (now: number) => Array.from({ length: 7 }, (_, i) => ({
+    runId: `run_f${i + 1}`, template: 'solo', status: 'failed', specHash: 'sha256:00', createdAt: new Date(now - 600_000).toISOString(), updatedAt: new Date(now - (i + 1) * 60_000).toISOString(),
+    nodes: [], error: { kind: 'timeout', disposition: 'NONE', message: `scripted timeout ${i + 1}` },
+  }))
+
+  it.runIf(canRunBrowser)('keeps every fact of an approval card under its Details, closed by default, and reaches every button by keyboard, those inside Details once it is opened', async () => {
+    const { origin, token } = await boot({ approvals: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const cards = page.locator('article.request[id^="request-"]')
+    await expect.poll(() => cards.count()).toBe(3)
+    for (const id of ['apr-1', 'apr-2', 'apr-3']) {
+      const card = page.locator(`#request-${id}`)
+      // In sight: one line and two buttons, Approve and Deny, each named by its effect for assistive technology.
+      expect(await card.getByRole('button').allInnerTexts(), id).toEqual(['Approve', 'Deny'])
+      expect(await card.getByRole('button', { name: /^Approve: / }).count(), id).toBe(1)
+      expect(await card.getByRole('button', { name: /^Deny: / }).count(), id).toBe(1)
+      expect(await card.locator('.line').innerText(), id).toMatch(/·\s*(Expires|Expired) .+ · No response: denied$/)
+      // Every other fact folded, never dropped: who asked, what it is about, its exact subject, what each verdict does, its id and expiry.
+      const details = card.locator('details.card-details')
+      expect(await details.count(), id).toBe(1)
+      expect(await details.getAttribute('open'), id).toBeNull()
+      const shown = await card.innerText()
+      for (const folded of ['Asked by', 'About', 'Exact subject', `request ${id}`, 'expires ']) expect(shown, `${id}: ${folded}`).not.toContain(folded)
+      const all = await card.textContent()
+      for (const fact of ['Asked by the board', `of project p1, attempt 1`, `content board-task:${id}:attempt:0 @ approval-needed`, `request ${id}`, 'expires ', 'Note (optional)']) expect(all, `${id}: ${fact}`).toContain(fact)
+    }
+    // A merge's consequences as given; a task's step says what approving and denying do.
+    expect(await page.locator('#request-apr-1').textContent()).toContain('the branch lands on main')
+    expect(await page.locator('#request-apr-3').textContent()).toMatch(/If you approve.+If you deny/)
+    expect(await page.locator('main details.fold[open]').count()).toBe(0)
+
+    // Keyboard: from the top of the page, Tab reaches every button in sight.
+    await page.locator('main').focus()
+    const marked = await page.locator('main button:visible').evaluateAll((list) => list.map((b, i) => { b.setAttribute('data-k', String(i)); return (b.getAttribute('aria-label') ?? b.textContent ?? '') }))
+    expect(marked).toEqual(expect.arrayContaining(['Approve all 2', 'Deny all 2', 'Approve: allow this merge', 'Deny: hold the task', 'Approve: allow this deploy']))
+    const reached = new Set<string>()
+    for (let i = 0; i < 400 && reached.size < marked.length; i++) {
+      await page.keyboard.press('Tab')
+      const k = await page.evaluate(() => document.activeElement?.getAttribute('data-k') ?? null)
+      if (k !== null) reached.add(k)
+    }
+    expect(reached.size).toBe(marked.length)
+    // A card's Details opens by keyboard, and its controls then join the keyboard order.
+    const third = page.locator('#request-apr-3')
+    await third.locator('details.card-details > summary').focus()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => third.locator('details.card-details').getAttribute('open')).toBe('')
+    expect(await third.innerText()).toContain('Asked by the board, for task task-apr-3 of project p1')
+    const inside: string[] = []
+    for (let i = 0; i < 8 && !inside.includes('Copy request ID'); i++) {
+      await page.keyboard.press('Tab')
+      inside.push(await page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a?.getAttribute('aria-label') ?? (a?.tagName === 'INPUT' ? 'input:' + a.id : a?.textContent ?? '') }))
+    }
+    expect(inside).toContain('input:note-apr-3')
+    expect(inside).toContain('Copy request ID')
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('shows at most 5 rows in Since you last looked and in Runs needing attention, each with a Show all that reaches every row and stays through the refresh', async () => {
+    const { origin, token, workflow } = await boot({ approvals: true })
+    const now = Date.now()
+    workflow.extra = failedRuns(now)
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/#token=${token}`)
+    await page.evaluate((at) => localStorage.setItem('system.seen', JSON.stringify({ at, workers: {} })), new Date(now - 3_600_000).toISOString())
+    await page.reload()
+    const since = page.getByRole('region', { name: 'Since you last looked' })
+    const lines = since.locator('ul.since > li')
+    await expect.poll(() => lines.count(), { timeout: 15_000 }).toBe(5)
+    // The latest first: the five newest of the seven, then Show all 7.
+    expect(await lines.first().innerText()).toMatch(/^Failed: a solo run — it took longer than its limit/)
+    const more = since.getByRole('button', { name: 'Show all 7' })
+    expect(await more.getAttribute('aria-expanded')).toBe('false')
+    expect(await more.getAttribute('aria-controls')).toBe('since-list')
+    await more.click()
+    await expect.poll(() => lines.count()).toBe(7)
+    expect(await since.getByRole('button', { name: 'Show first 5' }).getAttribute('aria-expanded')).toBe('true')
+    // Each raw text is still under its own fold.
+    expect(await since.locator('li details').count()).toBe(7)
+
+    const look = page.getByRole('region', { name: 'Runs needing attention' })
+    const runs = look.getByRole('article')
+    expect(await runs.count()).toBe(5)
+    await look.getByRole('button', { name: 'Show all 8' }).click()
+    await expect.poll(() => runs.count()).toBe(8)
+    for (let i = 1; i <= 7; i++) expect(await look.locator('button.copy', { hasText: 'Copy run ID' }).evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toContain(`run_f${i}`)
+
+    // A refresh keeps both lists as the operator left them.
+    await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); document.querySelector('main section[aria-label="Since you last looked"]')!.setAttribute('data-old', '1') })
+    await expect.poll(() => page.locator('main section[data-old]').count(), { timeout: 15_000 }).toBe(0)
+    await expect.poll(() => lines.count()).toBe(7)
+    expect(await runs.count()).toBe(8)
+    await look.getByRole('button', { name: 'Show first 5' }).click()
+    await expect.poll(() => runs.count()).toBe(5)
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('heads every page with its title and one short sentence at most', async () => {
+    const { origin, token } = await boot({ roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    for (const path of ['/ui/', '/ui/?run=run_abc', '/ui/?view=board', '/ui/?view=workers', '/ui/?view=policy', '/ui/?view=help']) {
+      if (path !== '/ui/') await page.goto(origin + path)
+      await expect.poll(() => page.locator('main h2.page').count(), { message: path }).toBe(1)
+      const leads = await page.locator('main h2.page ~ p.lead').allInnerTexts()
+      expect(leads, path).toHaveLength(1)
+      // One sentence: a single full stop, at its end, and short.
+      expect(leads[0], path).toMatch(/^[^.!?]+[.!?]$/)
+      expect(leads[0]!.length, path).toBeLessThanOrEqual(48)
+    }
   }, 60_000)
 
   it.runIf(canRunBrowser)('opens on a dashboard: what waits for you, each linked to its section, the Workers at a glance, the runs that need a look with their action, and the recent runs (T97)', async () => {

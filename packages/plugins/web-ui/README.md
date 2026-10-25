@@ -20,7 +20,8 @@ prose capped at a readable line length on a full-width page.
   since they last looked, each a label and its count, *Approvals · 3*, linked, then named one by one
   under its count (up to 5 a group, each linked to its card, with when it expires), and counted in
   the window's title on every page from one route, `GET waiting`: *(3) system — Home*), what happened since the
-  operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`; a failed
+  operator last looked (5 lines, then **Show all N**, as for the runs needing attention, T186;
+  kept in the browser only, until **Mark as seen**; `GET activity`; a failed
   run led by the run page's own plain-words reason, by one function, its raw text folded, T160), the
   Workers at a glance (with **Right now**, the Workers page's own section, so both name the same
   Workers), then those decisions and the recent runs by their tasks' titles, each step
@@ -66,14 +67,18 @@ prose capped at a readable line length on a full-width page.
 - when `ctx.approvals` is present, the **approval queue**
   ([approvals](../../../docs/design/approvals.md)) above the runs, under *3 approvals · next expiry
   in 12 min*: open requests by batch (*2 related requests*, **Approve all 2**, its id folded), each
+  a card of one line (what is asked, for which task, *Expires in 12 min · No response: denied*, an
+  irreversible verdict as a chip) and two buttons, **Approve** and **Deny**, named by their effect
+  for assistive technology; everything else under the card's one closed **Details** (T186), kept
+  open through the refresh once opened: the request
   in plain words (what is asked, who asked by a readable name, what approving and denying change,
   *Expires in 12 min · No response: denied*, the exact subject behind **Exact subject**, and what a
   verdict does in words, its long hashes folded behind **details**; an accepted result's merge
   names its task and *not pushed*, asked by the run of that task, says what approving and denying
   do in words, and folds the branch, both heads, and the requester's own text with its paths and
-  hashes; the request id, its exact expiry, and the requester's run, session, step, and change ids
-  under **Technical details**), and the operator's **Approve / Deny**, labelled by their effect, for
-  one request or a whole batch, each with an optional note. What a verdict did (what happens next,
+  hashes; the request id, its exact expiry, and the requester's run, session, step, and change ids),
+  and the operator's **Approve / Deny** for one request or a whole batch, each with an optional
+  note. What a verdict did (what happens next,
   or not recorded and why, its record ids folded) stays above the page until dismissed
   ([the page](../../../docs/reference/web-ui.md#approval-queue)); a `policy-change`
   request shows the change it asks for (**Show change**: the effective modes it moves and the
@@ -102,7 +107,11 @@ prose capped at a readable line length on a full-width page.
   the checks still pending, its run, and
   until when it waits; what it changed (each file of its worktree's change, folded, read through
   `ctx.workers.changes`), what its reviewers said, and what its checks measured (the run's report),
-  with the checks still pending in warning (those recorded as failed apart from those not run); and the operator's **Accept / Reject**; then, once accepted,
+  with the checks still pending in warning (those recorded as failed apart from those not run); and the operator's **Accept / Send back**.
+  The card (T186) leads with one line, then the change (*3 files +19 −1*), each required check, and
+  each reviewer's verdict as chips, the warnings, and the two buttons; every long text (the diff,
+  the findings, the report, why a check has no result, the exact result) is under its closed
+  **Details**; then, once accepted,
   where the result stands on its way into the repository, until it is merged or refused
   ([what a review shows](../../../docs/reference/web-ui.md#what-a-review-shows)); above them, and on Home's waiting
   line, when the first review held for the operator expires (marked within the hour), since an
@@ -255,7 +264,11 @@ every relative time its exact time on hover and focus, every fold is closed at f
 starts with an id, a count with its unit, and the copy button; a *Loading…* skeleton still under
 reduced motion, and **Skip to content** first in the keyboard order with a visible focus; and a
 stale banner, with when the page was read, while a refresh fails, gone once one succeeds, and a page
-that never loaded said with **Try again**.
+that never loaded said with **Try again**. Its round 8 tests (T186) check that each approval card shows
+one line and **Approve / Deny** only, every fact under its one **Details**, closed at first and
+opened by keyboard; that Tab reaches every button in sight; that *Since you last looked* and *Runs
+needing attention* show 5 rows and a **Show all N** that keeps every row through the refresh; and
+that each page header has one short sentence at most.
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
@@ -270,7 +283,8 @@ the queue's refusal shown), and a queue entry that says
 the queue proposed the change, and why.
 [`tests/reviews.spec.ts`](tests/reviews.spec.ts) runs the UI over the same composition: a run's
 change, verdicts, and report served to the operator only (a source that cannot read its own named),
-and, with a browser, a review card with what changed (stat, files folded, show all), the verdict,
+and, with a browser, a review card led by its chips (the change, each check, the verdict), its
+**Accept** and **Send back** then **Details** reached by Tab, and under them what changed (stat, files folded, show all), the verdict,
 the report, the checks not run in warning, and after Accept where the result stands; a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
 client token, bound to the subject shown, accepted to done; a rejection as another attempt; a
