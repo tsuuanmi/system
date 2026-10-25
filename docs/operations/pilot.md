@@ -167,10 +167,13 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
      and the fix and a re-review run once you approve it
      ([remediation](runbooks.md#a-remediation-fix-waits-on-the-queue));
    - the validation runs the criteria's commands, confined, and reports each command, its exit
-     code, and what it measured (`validate:1`). That report is the attempt's result.
-2. **The result waits for you** in `review` (`tests` and `lint` pending), and its digest is set on
-   the task within minutes: the lead reads the digest, not the transcript (`board_task`,
-   `board_brief`).
+     code, and what it measured (`validate:1`). That report is the attempt's result;
+   - when the repository's checks are configured, the run then runs `tests` and `lint` itself on
+     the result's exact tree, confined ([let a run pass the required checks](runbooks.md#let-a-run-pass-the-required-checks)).
+2. **The result waits for you** in `review` (`tests` and `lint` pending) unless the run passed both
+   (then it is accepted, and only its merge waits for you; a failed one is another attempt), and its
+   digest is set on the task within minutes: the lead reads the digest, not the transcript
+   (`board_task`, `board_brief`).
 3. **You decide, in batches**, on `/ui`: the queue's requests (charters, remediation fixes), and the
    reviews held for you. For a review: read the digest and the validation's report, run the pending
    checks in the run's worktree yourself ([worktree](runbooks.md#a-runs-worktree)), then Accept or

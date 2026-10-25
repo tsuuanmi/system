@@ -216,6 +216,15 @@
   not moved; the writing step builds on it and the review reviews the whole change. Anything else
   starts from HEAD. Each choice is a recorded decision.
 
+- **REQ-WF-15** Before a written result is accepted, the checks the autonomy policy requires of it
+  that are commands (`tests`, `typecheck`, `lint`) run on the exact tree the result is on, each the
+  command the operator configured for the repository, allowed by the policy unasked and run
+  confined. A check is reported passed or failed only by its exit code on that tree, unchanged
+  after it; one that cannot run so stays pending, and a model's account of a command is never a
+  check. What ran is recorded evidence the acceptance decision names
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks),
+  [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)).
+
 ## Artifacts and schemas (`REQ-ART`)
 
 - **REQ-ART-1** Every decision (admission, route, tier, escalation, egress,

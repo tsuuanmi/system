@@ -351,6 +351,10 @@ when the result is accepted:
   request only on an `ask` verdict; the operator decides on `/ui`, the human channel (INV-6).
 - A `reject` applies with or without checks: a failed check goes back to the lead as another
   attempt ([approvals](approvals.md#the-autonomy-policy)).
+- The workflow engine's acceptance reports, beside `schema` and `review`, the required checks that
+  are commands (`tests`, `typecheck`, `lint`) its run ran on the result's exact tree, by their exit
+  codes ([a run's required checks](workflow-engine.md#a-runs-required-checks)); one that could not
+  run is not reported, so it stays pending here.
 - A class the policy asks about needs no check here: the operator approved the attempt before it
   started.
 

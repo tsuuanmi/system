@@ -458,6 +458,46 @@ the tree the previous attempt's writing step left. One change at a time per repo
 Never a force, a reset of a branch, a deletion, or a push. The earlier worktree is clean afterwards,
 and the retention removes it as any other; its branch keeps the carry commit, which is never merged.
 
+### A run's checks
+
+> Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)
+> (proposed), T151. Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/checks.ts`); the engine asks ([a run's required checks](workflow-engine.md#a-runs-required-checks)).
+
+The `agents` source answers `check(step, signal)` on the `workers` seam for the worktrees it holds:
+before a written result's acceptance, the engine asks it to run the checks the policy requires of
+the result on that run's worktree. The operator names each check's command beside the repository's
+setup:
+
+```yaml
+worktreeSetup:
+  - repository: /home/me/src/project
+    commands: [...]                       # the setup, as above
+    checks:                               # tests, typecheck, lint; words split on single spaces
+      tests: corepack pnpm test:affected
+      lint: corepack pnpm lint
+    checkTimeoutSeconds: 1800             # each check's deadline (1 to 3600)
+```
+
+- **Only on the result's tree:** the worktree is still there (`gone`), no agent run of its
+  workflow run is unfinished or not known to be gone (`busy`, INV-15), it is intact and on its
+  branch (`failed`), and it is exactly the subject the result is on (`moved`); else nothing runs.
+- **Each check is an `error`, never run,** when the repository names no command for it, the
+  worktree was not set up under the setup loaded now (the checks run in the environment the setup
+  prepared), no queue is loaded, or the policy does not let its exact argv run unasked: `auto` or
+  `notify`, as for a line on the studio commands list. An `ask` opens no request.
+- **Confined as the setup is** (the same `confineIn`): the host read-only but the worktree and the
+  setup's private views, no network, a private `/tmp`, the daemon's scrubbed environment, the
+  confinement proven first; each check within `checkTimeoutSeconds` (default 1800), in order.
+- **What counts:** exit 0 is `passed` and any other code `failed`, only while the tree, captured
+  again after the command, is still the subject; a check that changed it is an `error`, and the
+  later ones are not run. A timeout, a signal, or a command that cannot start is an `error`.
+- **Recorded:** one `check-run@1.0` `evidence` artifact at the run's classification, its inputs the
+  commands' `autonomy` decisions; per check the argv, exit code or signal, duration, and the last
+  4000 characters of its output with the length and SHA-256 of all of it. The answer carries it.
+- The checks are not part of the setup's hash: changing them neither sets the worktrees up again
+  nor asks again about the setup's commands.
+
 ## Credentials and egress
 
 - **Environment** ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)).

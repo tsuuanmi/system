@@ -113,7 +113,9 @@ request that never expires (INV-9).
 > - A caller that **accepts or applies a result** (the board's `accept`, an acceptance gate)
 >   passes the checks it ran (`action.checks`) and treats a non-empty `failedChecks` as **not yet
 >   allowed**: a failed check is work for the lead, never a reason to accept the result or to ask
->   the operator. Such a caller that reads `mode` alone fails open.
+>   the operator. Such a caller that reads `mode` alone fails open. The workflow engine runs the
+>   required checks that are commands on the result's exact tree first, and reports those
+>   ([a run's required checks](workflow-engine.md#a-runs-required-checks)).
 > - A caller that gates the work **while it runs** (a board task becoming ready, a Worker's tool
 >   call) cannot have run them: it lets the work go on under `auto` or `notify`, records the
 >   checks as pending (the `autonomy` decision's `failedChecks`, and its own record), and they
@@ -349,9 +351,13 @@ ids, never the call's input.
   the workers seam stay as they are.
 - **Where pending checks bind.** The bundle's studio policy gives `workspace-write` `auto` with
   `tests` and `lint` required, so a Claude Code Worker reads and writes inside its workspace,
-  those checks pending. They bind at the board's acceptance of the task's result. A run outside
-  the board applies nothing, so they never block it: when it wrote, its completion records them
-  as pending on an `acceptance` decision (rule `workflow.run-acceptance`) for the operator to see
+  those checks pending. They bind at the board's acceptance of the task's result. Before it, the
+  run runs those that are commands on the result's exact tree, with the commands the operator
+  configured for the repository, and its acceptance reports each that ran to an exit code
+  ([a run's required checks](workflow-engine.md#a-runs-required-checks)); a Worker's own account of
+  a command never counts. A run outside the board applies nothing, so they never block it: when it
+  wrote, its completion records them as passed, failed, or pending on an `acceptance` decision
+  (rule `workflow.run-acceptance`) for the operator to see
   ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)), and they bind
   wherever its result is applied.
 
