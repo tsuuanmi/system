@@ -35,6 +35,25 @@ export interface RanChecks {
 
 type Tree = { subject: Subject & { version: string }; workspace: string }
 
+/** Where a run's worktree would land (ADR-0060): the repository's checked-out branch it was cut from, as its source tells it. */
+export interface LandingTarget { workspace: string; repository: string; branch: string }
+
+/**
+ * The landing targets of a run's worktrees, read from the sources that hold them (`ctx.workers.changes`),
+ * for a board task's acceptance to name (D80): none when no source tells, or it cannot be read now, so
+ * the board's auto-accept rule holds the result for the operator (INV-2).
+ */
+export async function landingTargets(e: Engine, runId: string): Promise<LandingTarget[]> {
+  if (typeof e.ctx.workers.changes !== 'function') return []
+  try {
+    const { changes } = await e.ctx.workers.changes(runId)
+    return changes.map((c) => ({ workspace: c.workspace, repository: c.repository, branch: c.base.branch }))
+  } catch (error) {
+    e.ctx.logger.warn(`workflow: the landing target of run ${runId}'s worktree could not be read; its acceptance names none: ${(error as Error).message}`)
+    return []
+  }
+}
+
 /** The checks that ran on exactly `subject`, to report at its acceptance; none when they ran on another (INV-5). */
 export function ranOn(ran: RanChecks | undefined, subject: Subject): Partial<Record<RunCheck, boolean>> {
   return ran && subject.type === ran.subject.type && subject.ref === ran.subject.ref && subject.version === ran.subject.version ? ran.checks : {}

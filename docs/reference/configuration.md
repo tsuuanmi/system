@@ -157,6 +157,9 @@
 | `pageBound` | number (1…100) | `100` | The most items one page of board_projects or board_tasks holds |
 | `projectionMaxTasks` | number (1…10000) | `200` | The most tasks the TASKS.md projection lists, open ones first |
 | `sweepSeconds` | number (0…3600) | `60` | Seconds between the board's own sweeps, and one at start; 0 sweeps only when called |
+| `autoAccept` | object | `{}` | System accepts a result without holding it for the operator when the run's last review approved it, its required checks passed on it, and it lands on a listed branch (D80, ADR-0067); default off |
+| `autoAccept.projects` | string[] | `[]` | Project ids whose results System accepts without the operator when the conditions hold |
+| `autoAccept.branches` | string[] | `[]` | Branches such a result may land on (the repository's checked-out branch the landing merges into) |
 
 ## `browser-patchright`
 

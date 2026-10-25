@@ -31,7 +31,7 @@ import type { Check } from '@tsuuanmi/system-approvals-core'
 import { recordOutcome } from './advisor.ts'
 import type { TaskFrame } from './briefs.ts'
 import { TaskCarries } from './carries.ts'
-import { type RanChecks, ranOn } from './checks.ts'
+import { type LandingTarget, type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
 import { TaskDigests } from './digests.ts'
 import { TaskLandings } from './landings.ts'
@@ -60,6 +60,8 @@ const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
 
 type Result = { artifacts: ArtifactRef[]; subject: Subject }
 type Lost = { at: string; decision: ArtifactRef; reason: string }
+/** The run's last review as a task's acceptance names it (`outcome.detail.review`, D80). */
+type AcceptanceReview = { node: string; gate: ArtifactRef; assessment: ArtifactRef; verdict: string; blocking: number; cycle: number; maxCycles: number; subject: { ref: string; version: string } }
 
 const describe = (s: Subject): string => `${s.type} ${s.ref}${s.version ? ` at ${s.version}` : ''}`
 const refusal = (error: BoardError): string => `${error.failure}: ${error.message}`
@@ -1258,7 +1260,7 @@ export class TaskRuns {
    * result artifact itself. Undefined when the run is not a task's,
    * or the result binds; else why it does not, and the run fails (INV-5).
    */
-  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks): WorkflowError | undefined {
+  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks, targets: readonly LandingTarget[] = []): WorkflowError | undefined {
     const row = this.row(run.run_id)
     if (!row) return undefined
     const writes = row.writes ? JSON.parse(row.writes) as Subject : undefined
@@ -1297,22 +1299,65 @@ export class TaskRuns {
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
     const option = failed.length ? 'reject' : 'accept'
     const said = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
+    // What the board's auto-accept rule reads (D80, ADR-0067): the run's last review, and where the result would land.
+    const review = this.lastReview(done)
+    const landing = this.landingOf(artifacts, subject, targets)
     const acceptance = this.e.ctx.artifacts.recordDecision({
       decisionType: 'acceptance',
       question: `Does run ${run.run_id}'s result complete its attempt of board task ${row.task_id}?`,
-      inputs: [...artifacts, ...(ran?.evidence ? [ran.evidence] : [])],
+      inputs: [...artifacts, ...(ran?.evidence ? [ran.evidence] : []), ...(review && !artifacts.includes(review.assessment) ? [review.assessment] : [])],
       candidates: [
         { option: 'accept', selected: !failed.length, reasons: failed.length ? [`not accept: the run's own ${failed.join(', ')} check failed`] : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, said, ...notes] },
         { option: 'reject', selected: !!failed.length, reasons: failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`, ...notes] : ['not reject: no check the run ran failed'] },
       ],
-      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '2' },
-      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks, ...(ran ? { checkRun: ran.detail } : {}) } },
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '3' },
+      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks, ...(ran ? { checkRun: ran.detail } : {}), ...(review ? { review } : {}), ...(landing ? { landing } : {}) } },
       deterministic: true,
     }, { ...PRODUCER, runId: run.run_id }).id as ArtifactRef
     const result: Result = { artifacts, subject }
     this.e.ctx.store.transaction((db) => {
       db.prepare('UPDATE workflow_tasks SET result = ?, acceptance = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(result), acceptance, now(), run.run_id)
     })
+    return undefined
+  }
+
+  /**
+   * The run's last review (D80): of its completed steps, the last whose exact-subject gate passed with
+   * an assessment, whatever tree it reviewed: its step, gate decision, assessment, verdict, blocking
+   * findings, and its remediation cycle of the bound. Undefined when no step of the run reviewed a tree.
+   */
+  private lastReview(done: NodeRow[]): AcceptanceReview | undefined {
+    let last: AcceptanceReview | undefined
+    for (const node of done) {
+      for (const ref of node.decisions ? JSON.parse(node.decisions) as ArtifactRef[] : []) {
+        const body = this.e.ctx.artifacts.get(ref)?.body as { decisionType?: string; decider?: { id?: string }; outcome?: { option?: string; detail?: { assessment?: ArtifactRef } } } | undefined
+        if (body?.decisionType !== 'gate' || body.decider?.id !== 'workflow.exact-subject' || body.outcome?.option !== 'pass' || !body.outcome.detail?.assessment) continue
+        const assessment = this.e.ctx.artifacts.get(body.outcome.detail.assessment)?.body as { verdict?: string; findings?: Array<{ severity?: string }>; subject?: Subject } | undefined
+        if (!assessment?.verdict || !assessment.subject) continue
+        last = {
+          node: node.node_id, gate: ref, assessment: body.outcome.detail.assessment, verdict: assessment.verdict,
+          blocking: (assessment.findings ?? []).filter((f) => f.severity === 'blocking').length,
+          cycle: (JSON.parse(node.spec) as ResolvedNode).cycle ?? 1, maxCycles: this.e.config.maxReviewCycles ?? 3,
+          subject: { ref: assessment.subject.ref, version: assessment.subject.version ?? '' },
+        }
+      }
+    }
+    return last
+  }
+
+  /**
+   * Where the result would land (ADR-0060): the repository's checked-out branch its run's worktree was
+   * cut from, as the source that holds the worktree tells it now, for the working tree an agent result
+   * among the result's artifacts names on its exact subject. Undefined when none is known.
+   */
+  private landingOf(artifacts: ArtifactRef[], subject: Subject, targets: readonly LandingTarget[]): { repository: string; branch: string } | undefined {
+    if (subject.type !== 'git-head') return undefined
+    for (const ref of artifacts) {
+      const body = this.e.ctx.artifacts.get(ref)?.body as { schema?: string; workspace?: unknown; subject?: Subject } | undefined
+      if (!body?.schema?.startsWith('agent-result@') || typeof body.workspace !== 'string' || body.subject?.ref !== subject.ref || body.subject.version !== subject.version) continue
+      const target = targets.find((t) => t.workspace === body.workspace)
+      if (target) return { repository: target.repository, branch: target.branch }
+    }
     return undefined
   }
 
@@ -1427,7 +1472,9 @@ export class TaskRuns {
     const task = await board.task(row.task_id)
     // Stopped before the board's record was seen: the record decides whether anything is reported.
     if (row.phase === 'starting' && task?.run?.runId !== runId) return this.settled(row, { status: 'not-started', ...(task ? { state: task.state } : {}) })
-    if (task && row.acceptance && task.lastDecision === row.acceptance) return this.settled(row, { status: task.state === 'done' ? 'accepted' : 'rejected', state: task.state, decision: row.acceptance })
+    // Applied before a crash: as it is, or, done on the board's auto-accept rule (D80), as the result's acceptance.
+    const applied = task?.lastDecision === row.acceptance || (task?.state === 'done' && task.run?.runId === runId && task.result?.acceptance === row.acceptance)
+    if (task && row.acceptance && applied) return this.settled(row, { status: task.state === 'done' ? 'accepted' : 'rejected', state: task.state, decision: row.acceptance as ArtifactRef })
     if (!task || task.run?.runId !== runId) {
       return this.settled(row, { status: 'moved-on', ...(task ? { state: task.state } : {}), reason: task ? `task ${task.taskId} is ${task.state} and no longer waits on run ${runId}` : `task ${row.task_id} is unknown to the board` })
     }

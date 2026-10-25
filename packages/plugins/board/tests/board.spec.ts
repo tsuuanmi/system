@@ -15,7 +15,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { z as zod } from 'zod'
 import { FakeApprovals, POLICIES } from '../../../approvals-core/conformance/approvals.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
-import StoreBoard, { type Config } from '../src/index.ts'
+import StoreBoard, { autoAcceptOf, type Config } from '../src/index.ts'
 import { BOARD_TOOLS, INPUTS } from '../src/tools.ts'
 
 const T0 = new Date('2026-10-22T09:00:00Z')
@@ -648,6 +648,161 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     await ctx.board.sweep(new Date(Date.parse(second.held.waiting!.expiresAt) + 1000))
     expect(events('board.review.ended').map((e) => e.data).at(-1)).toEqual({ taskId: second.taskId, projectId: 'p2', state: 'waiting-for-input', reason: 'review-expired' })
     expect(events('board.review.held')).toHaveLength(2)
+  })
+
+  describe('the auto-accept rule (board.autoAccept, D80, ADR-0067)', () => {
+    const TREE: Subject = { type: 'git-head', ref: 'c0ffee', version: 'sha256:tree' }
+    const AUTO: Config = { autoAccept: { projects: ['p2'], branches: ['dev'] } }
+    /** An `assessment@1.0` of `on`, as the engine's exact-subject review stores it. */
+    const assessed = (ctx: Context, verdict: 'approve' | 'changes-requested', blocking = 0, on: Subject = TREE): ArtifactRef => ctx.artifacts.put({
+      kind: 'assessment', bodySchema: 'assessment@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: { schema: 'assessment@1.0', subject: on, verdict, findings: Array.from({ length: blocking }, (_, i) => ({ severity: 'blocking', title: `defect ${i + 1}` })) },
+    }).id as ArtifactRef
+    /** A `check-run@1.0` record of `on`, as the agents source records the run's required checks. */
+    const checkRun = (ctx: Context, outcomes: Record<string, 'passed' | 'failed' | 'error'>, on: Subject = TREE): ArtifactRef => ctx.artifacts.put({
+      kind: 'evidence', bodySchema: 'check-run@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'agents' },
+      body: {
+        schema: 'check-run@1.0', runId: 'run-1', repository: '/repo', workspace: '/repo/wt', subject: on, setup: `sha256:${'5'.repeat(64)}`,
+        checks: Object.entries(outcomes).map(([check, outcome]) => ({ check, outcome, ...(outcome === 'error' ? {} : { exitCode: outcome === 'passed' ? 0 : 1 }), reason: outcome })),
+      },
+    }).id as ArtifactRef
+    /** The engine's `acceptance` decision (`workflow.task-acceptance` 3): its checks, its last review, its check-run record, and where it lands. */
+    const engineAcceptance = (ctx: Context, taskId: string, on: ArtifactRef, named: { checks?: Action['checks']; review?: ArtifactRef; cycle?: number; evidence?: ArtifactRef; branch?: string }): ArtifactRef => ctx.artifacts.recordDecision({
+      decisionType: 'acceptance', question: `Does the run's result complete its attempt of ${taskId}?`, inputs: [on, ...(named.evidence ? [named.evidence] : []), ...(named.review ? [named.review] : [])],
+      candidates: [{ option: 'accept', selected: true, reasons: ['every step was accepted'] }, { option: 'reject', selected: false, reasons: ['not reject: no check failed'] }],
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '3' },
+      outcome: {
+        option: 'accept',
+        detail: {
+          taskId, subject: TREE, checks: named.checks ?? {},
+          ...(named.review ? { review: { assessment: named.review, cycle: named.cycle ?? 1, maxCycles: 3 } } : {}),
+          ...(named.evidence ? { checkRun: { evidence: named.evidence } } : {}),
+          ...(named.branch ? { landing: { repository: '/repo', branch: named.branch } } : {}),
+        },
+      },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' } }).id as ArtifactRef
+    /** A `workspace-write` task of `projectId` in review on a result on TREE. */
+    const inReview = async (ctx: Context, title: string, projectId = 'p2'): Promise<{ taskId: string; r: ArtifactRef }> => {
+      const t = await ready(ctx, task(projectId, title, { actionClass: 'workspace-write' }))
+      const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+      await ctx.board.start(t.taskId, generation, { runId: `run-${title}` }, at(3))
+      const r = result(ctx, title)
+      await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: TREE }, at(4))
+      return { taskId: t.taskId, r }
+    }
+    const autoReasons = (ctx: Context, held: BoardTask): string[] => {
+      const body = ctx.artifacts.get(held.lastDecision!)?.body as { outcome?: { detail?: { autoAccept?: string[] } } } | undefined
+      return body?.outcome?.detail?.autoAccept ?? []
+    }
+
+    it('accepts a result whose last review approved it and whose required checks passed on it, landing on a listed branch, on a decision naming the review and the check-run record (INV-13)', async () => {
+      const { ctx } = await boot({ board: AUTO, eventLog: true })
+      await active(ctx)
+      const { taskId, r } = await inReview(ctx, 'lands')
+      const review = assessed(ctx, 'approve')
+      const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+      const accepting = engineAcceptance(ctx, taskId, r, { checks: { review: true, tests: true, lint: true }, review, evidence, branch: 'dev' })
+      const done = await ctx.board.accept(taskId, accepting, at(5))
+      expect(done).toMatchObject({ state: 'done', result: { acceptance: accepting, subject: TREE } })
+      expect(done.waiting).toBeUndefined()
+      expect(ctx.artifacts.get(done.lastDecision!)?.body).toMatchObject({
+        decisionType: 'board', decider: { type: 'rule', id: 'board.auto-accept' }, inputs: expect.arrayContaining([accepting, review, evidence]),
+        outcome: { option: 'done', detail: { reason: 'auto-accept', acceptance: accepting, review, checkRun: evidence, checks: ['tests', 'lint'], branch: 'dev' } },
+      })
+      expect(ctx.eventLog.query({ type: 'board.review.held', limit: 10 })).toEqual([])
+    })
+
+    it('holds for the operator, with the reason, a result whose last review left a blocking finding at the cycle bound', async () => {
+      const { ctx } = await boot({ board: AUTO })
+      await active(ctx)
+      const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+      const checks = { tests: true, lint: true }
+      const bound = await inReview(ctx, 'bound')
+      const held = await ctx.board.accept(bound.taskId, engineAcceptance(ctx, bound.taskId, bound.r, { checks, review: assessed(ctx, 'changes-requested', 1), cycle: 3, evidence, branch: 'dev' }), at(5))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
+      expect(autoReasons(ctx, held)).toEqual([expect.stringMatching(/did not approve \(changes-requested\) and left 1 blocking finding\(s\) \(review cycle 3 of 3, the cycle bound\)$/)])
+      // An approval that still lists a blocking finding is no approval either; nor is one with no review at all, or of another tree.
+      const left = await inReview(ctx, 'left')
+      expect(autoReasons(ctx, await ctx.board.accept(left.taskId, engineAcceptance(ctx, left.taskId, left.r, { checks, review: assessed(ctx, 'approve', 2), evidence, branch: 'dev' }), at(5)))).toEqual([expect.stringMatching(/left 2 blocking finding/)])
+      const none = await inReview(ctx, 'none')
+      expect(autoReasons(ctx, await ctx.board.accept(none.taskId, engineAcceptance(ctx, none.taskId, none.r, { checks, evidence, branch: 'dev' }), at(5)))).toEqual([expect.stringMatching(/names no review of the run/)])
+      const other = await inReview(ctx, 'other')
+      expect(autoReasons(ctx, await ctx.board.accept(other.taskId, engineAcceptance(ctx, other.taskId, other.r, { checks, review: assessed(ctx, 'approve', 0, { ...TREE, version: 'sha256:older' }), evidence, branch: 'dev' }), at(5))))
+        .toEqual([expect.stringMatching(/is not of the result's exact tree/)])
+      // Held, only the operator's acceptance accepts it now: another of the run owner's the rule does not apply to is refused.
+      const again = await ctx.board.accept(bound.taskId, engineAcceptance(ctx, bound.taskId, bound.r, { checks, review: assessed(ctx, 'changes-requested', 1), cycle: 3, evidence, branch: 'dev' }), at(6)).catch((e: unknown) => e as BoardError)
+      expect(again).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the auto-accept rule does not apply .*: the review is the operator's$/) })
+      const operator = ctx.artifacts.recordDecision({
+        decisionType: 'acceptance', question: 'Accept it?', inputs: [bound.r], candidates: [{ option: 'accept', selected: true, reasons: ['the operator accepts it'] }],
+        decider: { type: 'operator', id: 'operator.review', version: '1' }, outcome: { option: 'accept', detail: { taskId: bound.taskId, subject: TREE } }, deterministic: false,
+      }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
+      expect(await ctx.board.accept(bound.taskId, operator, at(6))).toMatchObject({ state: 'done', lastDecision: operator })
+    })
+
+    it('holds a result with a required check pending or failed, and one whose check-run record does not show it passed on that tree', async () => {
+      const { ctx } = await boot({ board: AUTO })
+      await active(ctx)
+      const review = assessed(ctx, 'approve')
+      // Pending: lint did not run to an exit code, so the policy's own hold stands.
+      const pending = await inReview(ctx, 'pending')
+      expect(await ctx.board.accept(pending.taskId, engineAcceptance(ctx, pending.taskId, pending.r, { checks: { review: true, tests: true }, review, evidence: checkRun(ctx, { tests: 'passed', lint: 'error' }), branch: 'dev' }), at(5)))
+        .toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['lint'] } })
+      // Failed, though the decision says otherwise: the record decides, never the decision's own account.
+      const failed = await inReview(ctx, 'failed')
+      const held = await ctx.board.accept(failed.taskId, engineAcceptance(ctx, failed.taskId, failed.r, { checks: { review: true, tests: true, lint: true }, review, evidence: checkRun(ctx, { tests: 'passed', lint: 'failed' }), branch: 'dev' }), at(5))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+      expect(autoReasons(ctx, held)).toEqual([expect.stringMatching(/does not show lint passed$/)])
+      // Passed on another tree, or with no record at all.
+      const elsewhere = await inReview(ctx, 'elsewhere')
+      expect(autoReasons(ctx, await ctx.board.accept(elsewhere.taskId, engineAcceptance(ctx, elsewhere.taskId, elsewhere.r, { checks: { tests: true, lint: true }, review, evidence: checkRun(ctx, { tests: 'passed', lint: 'passed' }, { ...TREE, version: 'sha256:older' }), branch: 'dev' }), at(5))))
+        .toEqual([expect.stringMatching(/is not of the result's exact tree/)])
+      const unrecorded = await inReview(ctx, 'unrecorded')
+      expect(autoReasons(ctx, await ctx.board.accept(unrecorded.taskId, engineAcceptance(ctx, unrecorded.taskId, unrecorded.r, { checks: { tests: true, lint: true }, review, branch: 'dev' }), at(5))))
+        .toEqual([expect.stringMatching(/have no check-run record among its inputs/)])
+    })
+
+    it('holds a result that lands on another branch, or on none known; another project\'s result, and every one with the setting off, go as before', async () => {
+      const { ctx } = await boot({ board: AUTO })
+      await active(ctx)
+      const review = assessed(ctx, 'approve')
+      const evidence = checkRun(ctx, { tests: 'passed', lint: 'passed' })
+      const checks = { review: true, tests: true, lint: true }
+      const main = await inReview(ctx, 'main')
+      expect(autoReasons(ctx, await ctx.board.accept(main.taskId, engineAcceptance(ctx, main.taskId, main.r, { checks, review, evidence, branch: 'main' }), at(5)))).toEqual(['it lands on main, not on a listed branch (dev)'])
+      const nowhere = await inReview(ctx, 'nowhere')
+      expect(autoReasons(ctx, await ctx.board.accept(nowhere.taskId, engineAcceptance(ctx, nowhere.taskId, nowhere.r, { checks, review, evidence }), at(5)))).toEqual([expect.stringMatching(/no landing target is known/)])
+      // Not the run owner's: a decision the system did not produce never applies by the rule.
+      const forged = await inReview(ctx, 'forged')
+      const notOwners = ctx.artifacts.recordDecision({
+        decisionType: 'acceptance', question: 'q', inputs: [forged.r, review, evidence], candidates: [{ option: 'accept', selected: true, reasons: ['looks fine'] }],
+        decider: { type: 'rule', id: 'workflow.task-acceptance', version: '3' },
+        outcome: { option: 'accept', detail: { taskId: forged.taskId, subject: TREE, checks, review: { assessment: review }, checkRun: { evidence }, landing: { repository: '/repo', branch: 'dev' } } }, deterministic: true,
+      }, { producer: { type: 'policy', ref: 'test' } }).id as ArtifactRef
+      expect(autoReasons(ctx, await ctx.board.accept(forged.taskId, notOwners, at(5)))).toEqual([expect.stringMatching(/is not the run owner's/)])
+      // A project not listed: as before the setting, the policy alone decides.
+      await active(ctx, 'p3')
+      const unlisted = await inReview(ctx, 'unlisted', 'p3')
+      const plain = engineAcceptance(ctx, unlisted.taskId, unlisted.r, { checks: { tests: true, lint: true }, branch: 'main' })
+      expect(await ctx.board.accept(unlisted.taskId, plain, at(5))).toMatchObject({ state: 'done', lastDecision: plain })
+
+      const off = await boot()
+      await active(off.ctx)
+      const before = await inReview(off.ctx, 'off')
+      const accepting = engineAcceptance(off.ctx, before.taskId, before.r, { checks: { tests: true, lint: true } })
+      expect(await off.ctx.board.accept(before.taskId, accepting, at(5))).toMatchObject({ state: 'done', lastDecision: accepting })
+    })
+
+    it('validates the setting: distinct project ids and plain branch names within the bound; off unless both lists name one', () => {
+      expect(autoAcceptOf(undefined)).toBeUndefined()
+      expect(autoAcceptOf({ projects: ['system'], branches: [] })).toBeUndefined()
+      expect(autoAcceptOf({ projects: [], branches: ['dev'] })).toBeUndefined()
+      expect(autoAcceptOf({ projects: ['system'], branches: ['dev', 'release/1.0'] })).toEqual({ projects: ['system'], branches: ['dev', 'release/1.0'] })
+      for (const branches of [['dev*'], ['de v'], ['-dev'], ['a..b'], ['dev/'], ['dev', 'dev'], [''], Array.from({ length: 65 }, (_, i) => `b${i}`)]) {
+        expect(() => autoAcceptOf({ projects: ['system'], branches }), JSON.stringify(branches)).toThrow(TypeError)
+      }
+      for (const projects of [['sys tem'], ['system', 'system'], [7 as unknown as string]]) expect(() => autoAcceptOf({ projects, branches: ['dev'] })).toThrow(TypeError)
+    })
   })
 
   it('gives a task the attempts its proposal names, else its template\'s from the configuration, else the default 3 (T99 D6)', async () => {

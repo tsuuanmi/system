@@ -707,7 +707,16 @@ is refused (`config_error`), and every other run is unaffected.
   result schema, `review` when an exact-subject review of that subject passed its gate (passed
   when it approved), and the required checks it ran on that subject (`tests`, `typecheck`, `lint`,
   [below](#a-runs-required-checks)). Every result artifact is among its inputs. It accepts unless a
-  check the run ran failed, which rejects: the work goes back as another attempt.
+  check the run ran failed, which rejects: the work goes back as another attempt. Since version 3
+  (D80, [ADR-0067](../decisions/adr/0067-system-accepts-a-listed-branchs-result-on-its-review-and-checks.md))
+  it also names, for the board's auto-accept rule, the run's last review (`review`: of its
+  completed steps, the last whose exact-subject gate passed with an assessment, whatever tree it
+  reviewed: the step, the gate decision, the assessment, its verdict and blocking findings, its
+  remediation cycle and `maxReviewCycles`, and the tree; the assessment among its inputs) and where
+  the result would land (`landing`: the repository and the base branch of the worktree the result
+  is on, as the source that holds it tells it through `ctx.workers.changes`, read before the
+  decision; absent when no source tells). A report the board applied on that rule is reconciled
+  after a restart by `result.acceptance`, as one it applied as it was.
 - **The report** is the board's own move, read against the board's record first, so a report
   repeated after a crash moves nothing twice. With its holder, a completed run's result is
   submitted, then its acceptance applied; when only the operator may accept it (a required check

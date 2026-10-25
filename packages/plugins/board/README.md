@@ -38,6 +38,14 @@ charters, and their tasks.
     event log is loaded (optional; an append that fails is logged), so notify tells the operator
     before the hold expires
     ([a review held for the operator](../../../docs/design/board.md#a-review-held-for-the-operator)).
+  - Under `autoAccept` (D80, ADR-0067), for a listed project's result on a git working tree, the
+    run owner's accepting decision applies only when the run's last review it names approved the
+    exact tree with no blocking finding left, its `check-run@1.0` record shows each command check
+    it reports passed on that tree, and its landing target is a listed branch: the task is done on
+    a `board` decision of rule `board.auto-accept` naming the acceptance, the review, the record,
+    and the autonomy decision. Otherwise the review is held for the operator as above, the hold's
+    decision listing every condition that failed
+    ([System accepts a listed branch's result](../../../docs/design/board.md#system-accepts-a-listed-branchs-result)).
   - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,
     and withdraws it after; a withdrawal that fails is logged, and the request expires on its
     own. The sweep leaves a task waiting on a request the board withdrew itself as it is. A
@@ -162,7 +170,8 @@ charters, and their tasks.
 - **Injects:** `store`, `artifacts`, `leases`, `approvals`; `mcp` is optional.
 - **Config:** `fundingMaxPercent` (default 100, 0 to 1000), `inputExpirySeconds` (default 7
   days), `leaseTtlSeconds` (600), `maxAttempts` (3), `pageBound` (100), `projectionMaxTasks`
-  (200), `sweepSeconds` (60).
+  (200), `sweepSeconds` (60), `autoAccept` (`{ projects, branches }`, off by default; validated
+  at start: project ids and plain branch names, at most 64 each, no repeats).
 - **Bundle:** the `board` row is on, over the `approvals` row
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
   on its `approvals` inject and is not mounted.
