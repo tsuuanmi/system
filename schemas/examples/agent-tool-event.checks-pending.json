@@ -1,0 +1,11 @@
+{
+  "type": "agent-workers.tool.checks-pending",
+  "data": {
+    "agentRun": "arun_5b0c7c1e3f7a",
+    "worker": "agent:dev",
+    "workerKind": "claude-agent-sdk",
+    "tool": "Edit",
+    "actionClass": "workspace-write",
+    "pendingChecks": ["tests", "lint"]
+  }
+}

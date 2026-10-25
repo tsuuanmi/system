@@ -16,7 +16,7 @@ import StoreBoard from '@tsuuanmi/system-board'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { contentId } from '@tsuuanmi/system-libs'
+import { AGENT_TOOL_EVENTS, AGENT_TOOL_EXPLANATION_MAX, agentToolDenialOf, agentToolDenialReasons, agentToolEventOf, contentId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
@@ -194,6 +194,41 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
       expect(explanation.length, code).toBeGreaterThan(0)
       expect(explanation.length, code).toBeLessThanOrEqual(EXPLANATION_MAX)
     }
+  })
+
+  it('declares every reason code the gate emits, and the explanation\'s bound, in the tool events\' schema; an entry from before T207 stays valid (T211)', async () => {
+    // Derived from the gate's own list: a code added there and not to the schema fails here.
+    const declared = agentToolDenialReasons()
+    for (const code of Object.keys(DENIAL_REASONS)) expect(declared, code).toContain(code)
+    const call = { agentRun: 'arun_1', worker: 'agent:dev', tool: 'Bash' }
+    for (const [code, explanation] of Object.entries(DENIAL_REASONS)) {
+      expect(agentToolDenialOf({ ...call, workerKind: 'codex-sdk', reason: code, explanation, actionClass: 'command', requestId: 'apr-1', decision: `sha256:${'a'.repeat(64)}` }), code).toBeDefined()
+    }
+    // From before T207: no reason, no explanation, no Worker kind.
+    expect(agentToolDenialOf(call)).toEqual(call)
+    // The bound is the gate's own: EXPLANATION_MAX characters pass, one more does not.
+    expect(AGENT_TOOL_EXPLANATION_MAX).toBe(EXPLANATION_MAX)
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', explanation: 'x'.repeat(EXPLANATION_MAX) })).toBeDefined()
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', explanation: 'x'.repeat(EXPLANATION_MAX + 1) })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', explanation: '' })).toBeUndefined()
+    // A code the gate does not have, an explanation without a code, a field no denial carries: not a valid denial.
+    expect(agentToolDenialOf({ ...call, reason: 'made-up' })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, explanation: 'why' })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', command: 'rm -rf /' })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, tool: 'x'.repeat(101) })).toBeUndefined()
+
+    // What the gate appends is valid under its event type's definition, every kind.
+    const agent = new GatedAgent([[{ tool: 'Read', input: { file_path: '/etc/passwd' } }, { tool: 'Task', input: {} }, bash('npm test'), bash('echo a;b')]])
+    const { ctx, run } = await boot(agent)
+    await run()
+    const events = Object.keys(AGENT_TOOL_EVENTS).flatMap((type) => ctx.eventLog.query({ type }))
+    expect(events.map((e) => e.type).sort()).toEqual(['agent-workers.tool.deferred', 'agent-workers.tool.denied', 'agent-workers.tool.denied'])
+    for (const e of events) expect(agentToolEventOf(e.type, e.data), e.type).toBeDefined()
+    const pending = await boot(new GatedAgent([[{ tool: 'Write', input: { file_path: 'a.ts', content: 'x' } }, { tool: 'Read', input: { file_path: 'a.ts' } }]]), policy({ 'workspace-write': { mode: 'auto', requires: ['tests'] }, 'read': { mode: 'notify', requires: ['lint'] } }))
+    await pending.run()
+    const shown = Object.keys(AGENT_TOOL_EVENTS).flatMap((type) => pending.ctx.eventLog.query({ type }))
+    expect(shown.map((e) => e.type).sort()).toEqual(['agent-workers.tool.checks-pending', 'agent-workers.tool.notified'])
+    for (const e of shown) expect(agentToolEventOf(e.type, e.data), e.type).toBeDefined()
   })
 
   it('denies a call the policy forbids, with the reason its autonomy decision records', async () => {

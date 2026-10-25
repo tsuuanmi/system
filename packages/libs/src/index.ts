@@ -24,5 +24,8 @@ export {
   unknownUsageOf, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf,
 } from './usage.ts'
 export {
+  AGENT_TOOL_EVENT_SCHEMA, AGENT_TOOL_EVENTS, AGENT_TOOL_EXPLANATION_MAX, type AgentToolCall, type AgentToolDenial, agentToolDenialOf, agentToolDenialReasons, agentToolEventOf, type AgentToolEventType,
+} from './tool-events.ts'
+export {
   DRAW_STATES, type DrawEntry, drawEntries, type DrawFigure, drawFigures, drawFigureText, type DrawReading, type DrawState, MAX_DRAW_WINDOWS, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, quotaDrawOf,
 } from './draws.ts'

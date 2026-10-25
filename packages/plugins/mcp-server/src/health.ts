@@ -4,7 +4,7 @@
  * something needs the operator), or `down` (work cannot run); the report is the worst of them.
  */
 import { statfsSync } from 'node:fs'
-import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources } from '@tsuuanmi/system-libs'
+import { agentToolDenialOf, countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources } from '@tsuuanmi/system-libs'
 
 export type HealthState = 'ok' | 'degraded' | 'down'
 
@@ -136,15 +136,29 @@ export interface DenialCount { day: string; workerKind: string; total: number; r
 /** A value an event names, as a count's key: a short word, else `unrecorded` (an event from before T207, or a value that is no code). */
 const keyOf = (value: unknown): string => (typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,99}$/.test(value) ? value : 'unrecorded')
 
+/** The tool denials counted ({@link countDenials}), and the entries apart that are no valid denial. */
+export interface DenialTally {
+  counts: DenialCount[]
+  /** Entries whose data is not a valid `agent-tool-event@1` denial (T211): counted here, never by reason. */
+  invalid: number
+}
+
 /**
  * The tool denials counted by reason code per Worker kind per UTC day (T207), from
  * `agent-workers.tool.denied` entries: the day of each entry's `at`, its `workerKind` (the
  * Worker's runtime), and its `reason` code; an entry without one (appended before denials carried
- * it) counts as `unrecorded`. Ordered by day, then Worker kind.
+ * it) counts as `unrecorded`. Ordered by day, then Worker kind. Each entry's data is validated
+ * against its contract (`agent-tool-event@1`'s `denied`, T211): one that is not valid is counted
+ * apart (`invalid`), never by reason, so an unknown code or an unbounded field is not read as a cause.
  */
-export function countDenials(entries: ReadonlyArray<{ at: string; data?: Record<string, unknown> | undefined }>): DenialCount[] {
+export function countDenials(entries: ReadonlyArray<{ at: string; data?: Record<string, unknown> | undefined }>): DenialTally {
   const counts = new Map<string, DenialCount>()
+  let invalid = 0
   for (const { at, data } of entries) {
+    if (!agentToolDenialOf(data)) {
+      invalid += 1
+      continue
+    }
     const day = /^\d{4}-\d{2}-\d{2}/.exec(at)?.[0] ?? 'unrecorded'
     const workerKind = keyOf(data?.workerKind)
     const reason = keyOf(data?.reason)
@@ -154,7 +168,7 @@ export function countDenials(entries: ReadonlyArray<{ at: string; data?: Record<
     count.reasons[reason] = (count.reasons[reason] ?? 0) + 1
     counts.set(key, count)
   }
-  return [...counts.values()].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.workerKind < b.workerKind ? -1 : a.workerKind > b.workerKind ? 1 : 0))
+  return { counts: [...counts.values()].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.workerKind < b.workerKind ? -1 : a.workerKind > b.workerKind ? 1 : 0)), invalid }
 }
 
 /** Items a check's detail names from one list at most, and the characters of each; the rest are counted (INV-9). */
@@ -460,9 +474,11 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         afterSeq = page.at(-1)!.seq
       }
       if (!entries.length) return ok('tool-denials', `no tool call was denied in the last ${span(Math.round(sources.driftWindowMs / 1000))}`)
-      const counted = countDenials(entries).map((c) => `${c.day} ${c.workerKind}: ${c.total} (${Object.entries(c.reasons)
+      const tally = countDenials(entries)
+      const counted = tally.counts.map((c) => `${c.day} ${c.workerKind}: ${c.total} (${Object.entries(c.reasons)
         .sort(([a, m], [b, n]) => n - m || (a < b ? -1 : a > b ? 1 : 0)).map(([reason, n]) => `${n} ${reason}`).join(', ')})`)
-      return ok('tool-denials', `${unread ? `more than ${MAX_DENIALS}` : entries.length} tool call(s) denied in the last ${span(Math.round(sources.driftWindowMs / 1000))}, by day, Worker kind, and reason: ${listOf(counted, '; ')}${unread ? ` (only the first ${MAX_DENIALS} were read)` : ''}. Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)`)
+      const apart = tally.invalid ? `${counted.length ? '; ' : ''}${tally.invalid} entry(ies) not a valid denial (agent-tool-event@1), not counted by reason` : ''
+      return ok('tool-denials', `${unread ? `more than ${MAX_DENIALS}` : entries.length} tool call(s) denied in the last ${span(Math.round(sources.driftWindowMs / 1000))}, by day, Worker kind, and reason: ${listOf(counted, '; ')}${apart}${unread ? ` (only the first ${MAX_DENIALS} were read)` : ''}. Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)`)
     }))
   }
 

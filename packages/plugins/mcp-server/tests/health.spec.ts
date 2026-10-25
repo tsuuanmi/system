@@ -313,12 +313,15 @@ describe('host health (REQ-HOST-6)', () => {
       // From before T207: no kind, no code.
       denial(day2, undefined, undefined),
     ]
-    expect(countDenials(entries)).toEqual([
-      { day: '2026-10-25', workerKind: 'claude-agent-sdk', total: 3, reasons: { 'metacharacter': 2, 'outside-workspace': 1 } },
-      { day: '2026-10-25', workerKind: 'codex-sdk', total: 1, reasons: { 'not-listed': 1 } },
-      { day: '2026-10-26', workerKind: 'claude-agent-sdk', total: 1, reasons: { 'request-withdrawn': 1 } },
-      { day: '2026-10-26', workerKind: 'unrecorded', total: 1, reasons: { unrecorded: 1 } },
-    ])
+    expect(countDenials(entries)).toEqual({
+      counts: [
+        { day: '2026-10-25', workerKind: 'claude-agent-sdk', total: 3, reasons: { 'metacharacter': 2, 'outside-workspace': 1 } },
+        { day: '2026-10-25', workerKind: 'codex-sdk', total: 1, reasons: { 'not-listed': 1 } },
+        { day: '2026-10-26', workerKind: 'claude-agent-sdk', total: 1, reasons: { 'request-withdrawn': 1 } },
+        { day: '2026-10-26', workerKind: 'unrecorded', total: 1, reasons: { unrecorded: 1 } },
+      ],
+      invalid: 0,
+    })
     const asked: string[] = []
     const denials = (query: { since: string; afterSeq: number; limit: number }) => {
       asked.push(query.since)
@@ -336,6 +339,26 @@ describe('host health (REQ-HOST-6)', () => {
     // Bounded: past MAX_DENIALS entries it says so, and still counts what it read.
     const many = Array.from({ length: MAX_DENIALS + 5 }, () => denial(day2, 'codex-sdk', 'metacharacter'))
     expect(await check({ denials: paged(many), now }, 'tool-denials')).toMatchObject({ state: 'ok', detail: expect.stringContaining(`more than ${MAX_DENIALS} tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-26 codex-sdk: ${MAX_DENIALS} (${MAX_DENIALS} metacharacter) (only the first ${MAX_DENIALS} were read)`) })
+  })
+
+  it('counts a tool denial whose data is not a valid agent-tool-event@1 denial apart, never by reason (T211)', async () => {
+    const at = '2026-10-26T01:00:00.000Z'
+    const base = { agentRun: 'arun_1', worker: 'agent:dev', workerKind: 'codex-sdk', tool: 'Bash' }
+    const entries = [
+      { at, data: { ...base, reason: 'metacharacter' } },
+      // A code the gate never emits, an explanation past its bound, a field no denial carries, no data at all.
+      { at, data: { ...base, reason: 'made-up' } },
+      { at, data: { ...base, reason: 'metacharacter', explanation: 'x'.repeat(301) } },
+      { at, data: { ...base, reason: 'metacharacter', command: 'rm -rf /' } },
+      { at },
+    ]
+    expect(countDenials(entries)).toEqual({ counts: [{ day: '2026-10-26', workerKind: 'codex-sdk', total: 1, reasons: { metacharacter: 1 } }], invalid: 4 })
+    const now = () => Date.parse('2026-10-26T12:00:00.000Z')
+    expect(await check({ denials: paged(entries), now }, 'tool-denials')).toEqual({
+      name: 'tool-denials', state: 'ok',
+      detail: '5 tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-26 codex-sdk: 1 (1 metacharacter); 4 entry(ies) not a valid denial (agent-tool-event@1), not counted by reason. '
+        + 'Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)',
+    })
   })
 
   it('is degraded by website conversations whose deletion failed every attempt (PROP-0004 Phase 5)', async () => {

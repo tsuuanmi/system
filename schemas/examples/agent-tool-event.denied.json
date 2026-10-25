@@ -1,0 +1,12 @@
+{
+  "type": "agent-workers.tool.denied",
+  "data": {
+    "agentRun": "arun_5b0c7c1e3f7a",
+    "worker": "agent:dev",
+    "workerKind": "claude-agent-sdk",
+    "tool": "Bash",
+    "reason": "metacharacter",
+    "explanation": "A Bash command word holds a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like). A command is words split on single spaces and never parsed by a shell, so such a word is denied before the policy is asked.",
+    "decision": "sha256:67d746282fb5312dda08bd3f441c040e39d5fb7ccb01e3b722c43f2a8bb9c10b"
+  }
+}

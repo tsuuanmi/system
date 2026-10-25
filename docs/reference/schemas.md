@@ -690,7 +690,22 @@ guesses.
   behind it, as on the entry). An entry from before T207 has none of them.
 - `agent-workers.tool.deferred`, `.notified`, and `.checks-pending` carry `agentRun`, `worker`,
   `tool`, and `actionClass` (and `workerKind` since T207); `deferred` adds `requestId`, the others
-  `pendingChecks` when checks are pending.
+  `pendingChecks` when checks are pending (always for `checks-pending`).
+- The data of these four tool events is declared by
+  [`agent-tool-event.v1.json`](../../schemas/agent-tool-event.v1.json) (`agent-tool-event@1.0`,
+  T211), one definition per event type (`$defs/denied`, `deferred`, `notified`, `checks-pending`).
+  The data carries no schema tag: a reader names the definition by the entry's type. `reason` is
+  an enum of the codes above (a test derives the gate's own list, `DENIAL_REASONS`, and requires each
+  in it, so a new code is a minor version of the schema); `explanation` is 1 to 300 characters and
+  only with a `reason`; `workerKind` and `tool` at most 100; no other field. The fields T207 added are
+  optional, so an entry from before T207 stays valid. A reader (`agentToolEventOf`,
+  `agentToolDenialOf` in `@tsuuanmi/system-libs`; health's `tool-denials` check) validates each
+  entry and counts one that is not valid apart, never by reason. Examples:
+  [`agent-tool-event.denied.json`](../../schemas/examples/agent-tool-event.denied.json),
+  [`agent-tool-event.denied-request.json`](../../schemas/examples/agent-tool-event.denied-request.json),
+  [`agent-tool-event.denied-before-t207.json`](../../schemas/examples/agent-tool-event.denied-before-t207.json),
+  [`agent-tool-event.deferred.json`](../../schemas/examples/agent-tool-event.deferred.json),
+  [`agent-tool-event.checks-pending.json`](../../schemas/examples/agent-tool-event.checks-pending.json).
 
 ### `notification`
 

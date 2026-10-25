@@ -332,7 +332,10 @@ code too. The codes ([events reference](../reference/schemas.md#event)):
 
 A code is never renamed or reused; a new cause gets a new code. Health's `tool-denials` check
 counts the denials of its window (`driftWindowHours`, default 24) by reason code per Worker kind
-per UTC day, an event from before the codes as `unrecorded`; it is a notice, never degraded.
+per UTC day, an event from before the codes as `unrecorded`; it is a notice, never degraded. The
+event's data is declared by `agent-tool-event@1.0` (T211; [schemas](../reference/schemas.md#event)):
+an entry that is not a valid denial (a code the schema does not list, an explanation past 300
+characters, a field no denial carries) is counted apart, never by reason.
 
 ### A deferred call
 

@@ -1,0 +1,8 @@
+{
+  "type": "agent-workers.tool.denied",
+  "data": {
+    "agentRun": "arun_1f0e1c3a57b2",
+    "worker": "agent:dev",
+    "tool": "Read"
+  }
+}
