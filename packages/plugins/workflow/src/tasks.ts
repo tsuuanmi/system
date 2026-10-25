@@ -527,7 +527,7 @@ export class TaskRuns {
       }
     }
     if (task.state !== 'ready') refuse(`task ${task.taskId} is ${task.state}, not ready to claim`)
-    const how = chosen.length ? `dispatch chose its start (decisions ${chosen.join(', ')}), and the run claims the ready task ${task.taskId} as ${ownerOf(runId)}` : `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`
+    const how = chosen.length ? `dispatch chose its start (its decisions are this decision's inputs), and the run claims the ready task ${task.taskId} as ${ownerOf(runId)}` : `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`
     const decision = this.admission(task, runId, 'claim', claim, how, [...chosen])
     try {
       const taken = await board.claim(task.taskId, ownerOf(runId), TASK_LEASE_TTL_MS)
