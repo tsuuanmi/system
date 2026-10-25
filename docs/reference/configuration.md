@@ -99,6 +99,11 @@
 | `worktreeSetup[].views[].copy` | string[] | `[]` | Files of it (names) copied into the private directory first, for example a package store's index |
 | `worktreeSetup[].views[].readOnly` | string[] | `[]` | Paths inside it (relative) bound back read-only into the private directory, for example a package store's files |
 | `worktreeSetup[].timeoutSeconds` | number (1…3600) | `600` | The whole setup's deadline |
+| `worktreeSetup[].checks` | object | `{}` | The command of each check a policy can require, run by a workflow run on its result's exact tree in this setup's confinement, only when the autonomy policy allows it unasked (T151) |
+| `worktreeSetup[].checks.tests` | string |  | The command of the tests check, its words split on single spaces (no shell) |
+| `worktreeSetup[].checks.typecheck` | string |  | The command of the typecheck check |
+| `worktreeSetup[].checks.lint` | string |  | The command of the lint check |
+| `worktreeSetup[].checkTimeoutSeconds` | number (1…3600) | `1800` | Each check's deadline |
 
 ## `approvals`
 
