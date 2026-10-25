@@ -3,9 +3,9 @@
   "pool": "claude-max-main.interactive",
   "account": "claude-max-main",
   "window": {
-    "id": "seven-day",
+    "id": "five-hour",
     "kind": "rolling",
-    "seconds": 604800
+    "seconds": 18000
   },
   "state": "limited",
   "cooldownUntil": "2026-10-24T08:00:00Z",

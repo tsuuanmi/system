@@ -68,21 +68,20 @@ repository at `/home/me/src/align`:
         kind: programmatic
         unknown: available
         windows:
-          - { id: five-hour, kind: rolling, seconds: 18000 }
-          - { id: seven-day, kind: rolling, seconds: 604800 }
+          - { id: five-hour, kind: rolling, seconds: 18000 }   # Claude: five-hour only (D70)
 # Three Workers on the repository, each run of a workflow run in that run's own worktree.
 - id: agent-workers
   config:
     workers:
       # Writes and runs the confined commands: develop, and validate.
       - { id: developer, runtime: claude-agent-sdk, workspace: /home/me/src/align, sandbox: workspace-write, tier: standard,
-          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour } }
       # Reads only: the exact-subject review.
       - { id: reviewer, runtime: claude-agent-sdk, workspace: /home/me/src/align, sandbox: read-only, tier: standard,
-          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour } }
       # Reads only, on the economy tier: the digests of the results.
       - { id: digester, runtime: claude-agent-sdk, workspace: /home/me/src/align, sandbox: read-only, tier: economy,
-          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour } }
 # The bundle's studio policy, with the validation commands listed: a listed command runs as the
 # workspace write it is judged as; any other command asks, and a validation step cannot wait, so
 # it is denied and reported not run.

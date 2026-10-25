@@ -104,6 +104,10 @@ a model turn: Claude Code's `get_usage` control request (SDK
   configures `unknown: available` or not at all; the Antigravity CLI beyond its one home (no
   identity reader); website accounts (no pool, and their limits are read only at the limit); the
   Gemini API (at-limit notices only).
+- 2026-10-25 (D70): a Claude Code account is judged by its five-hour window only; its report gives
+  no seven-day reading (null server-side), a spent seven-day quota shows as an unusable five-hour
+  window, and an unread window is never headroom, so a template declaring seven-day kept dispatch
+  from ever picking a Claude account (fixed in the live patch that day).
 - Local transcript reconstruction stays out: it is an estimate, and a `history-estimate` never
   opens a pool.
 
