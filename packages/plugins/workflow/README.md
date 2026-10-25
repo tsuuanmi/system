@@ -219,7 +219,7 @@ second execution path (INV-1).
     exactly one plan; with several waiting, the call is refused and lists them,
     so a plan that arrived later is never approved unseen.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
-- **Teams (REQ-TEAM-1, 2, 4..7, [design](../../../docs/design/teams.md)).**
+- **Teams (REQ-TEAM-1, 2, 4..8, [design](../../../docs/design/teams.md)).**
   - A template node with `team: { kind: brainstorm | review, members (2-5,
     default 2), debateRounds (0-2, default 1) }` is unrolled at admission:
     - `id:m<k>:propose` per member, with no peer text (the independent-first

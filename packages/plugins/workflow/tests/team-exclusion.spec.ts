@@ -180,7 +180,7 @@ describe('a team member\'s allowed Workers under teams.excludeWorkers', () => {
 })
 
 describe('teams.excludeWorkers keeps Workers out of team runs, and only out of them (D58)', () => {
-  it('routes a brainstorm\'s members around the account it names, the first one too, and says why in each route decision', async () => {
+  it('routes a brainstorm\'s members around the account it names, the first one too, and says why in each route decision (REQ-TEAM-8)', async () => {
     // Control: without the option, the website account takes the first member.
     const control = await boot()
     scripted(control, { workers: [...WEB, CHAT, API], accounts: [WEB_TIERS] })
@@ -201,7 +201,7 @@ describe('teams.excludeWorkers keeps Workers out of team runs, and only out of t
     expect(second.find((c) => c.selected)?.option).toBe('m:api')
   }, 60_000)
 
-  it('keeps a review team off it as well', async () => {
+  it('keeps a review team off it as well (REQ-TEAM-8)', async () => {
     const ctx = await boot({ teams: { excludeWorkers: ['web-main'] } })
     const started = scripted(ctx, { workers: [...WEB, CHAT, API], accounts: [WEB_TIERS], answer: reviewer })
     const done = await run(ctx, 'review', 'Review this:\nconst lease = acquire()\nrelease(lease)\n')
@@ -210,7 +210,7 @@ describe('teams.excludeWorkers keeps Workers out of team runs, and only out of t
     expect(started.filter((s) => s.worker.startsWith('w:web/'))).toEqual([])
   }, 60_000)
 
-  it('leaves the Workers to every node that is not a team member', async () => {
+  it('leaves the Workers to every node that is not a team member (REQ-TEAM-8)', async () => {
     const ctx = await boot({ teams: { excludeWorkers: ['w:web/standard'] } })
     scripted(ctx, { workers: [...WEB, CHAT, API], accounts: [WEB_TIERS], answer: () => 'An answer.' })
     const asked = await run(ctx, 'ask', 'What is a lease?')
@@ -218,7 +218,7 @@ describe('teams.excludeWorkers keeps Workers out of team runs, and only out of t
     expect(workerOf(asked, 'ask:1')).toBe('w:web/standard')
   }, 60_000)
 
-  it('fails a member that finds no other family once the Worker it names and its siblings are left out, config_error, naming the exclusion, sending nothing (INV-2)', async () => {
+  it('fails a member that finds no other family once the Worker it names and its siblings are left out, config_error, naming the exclusion, sending nothing (REQ-TEAM-8, INV-2)', async () => {
     const ctx = await boot({ teams: { excludeWorkers: ['w:web/standard'] } })
     // The model Worker is not configured: the website account's other tier is its family's only other Worker.
     const started = scripted(ctx, { workers: [...WEB, CHAT], accounts: [WEB_TIERS] })
@@ -231,7 +231,7 @@ describe('teams.excludeWorkers keeps Workers out of team runs, and only out of t
     expect(started.map((s) => s.worker)).toEqual(['w:chat/standard'])
   }, 60_000)
 
-  it('keeps the exclusion when allowSameFamily lifts the family rule, then the distinct-account rule (ADR-0029, ADR-0035)', async () => {
+  it('keeps the exclusion when allowSameFamily lifts the family rule, then the distinct-account rule (REQ-TEAM-8, ADR-0029, ADR-0035)', async () => {
     const other = member('w:chat-2/standard', 'family-chat', account('chat-2', 'chat'))
     // An account of the same family stays the member's own.
     const ctx = await boot({ allowSameFamily: true, teams: { excludeWorkers: ['web-main'] } })

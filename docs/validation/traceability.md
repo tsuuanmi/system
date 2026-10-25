@@ -5,7 +5,7 @@
 > when it is stale. A test cites an id in its title, for example `... (REQ-WF-7)`. A retired
 > requirement needs no test, and no test may cite it.
 
-**104 of 106** ids have at least one test that cites them.
+**105 of 107** ids have at least one test that cites them.
 Not yet cited by a test: REQ-HOST-5, QA-11. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
 
 ## Requirements
@@ -50,6 +50,7 @@ Not yet cited by a test: REQ-HOST-5, QA-11. Some are covered by live or manual c
 | REQ-TEAM-5 | Reviewers receive the exact subject (for example a diff at a head SHA), the criteria, and the relevant decision artifacts, but not the pr… | [agent-workers.spec.ts:511](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L511), [agent-workers.spec.ts:1492](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L1492) |
 | REQ-TEAM-6 | A team reaches its outcome by a strict-majority vote over sealed ballots, and every ballot is recorded. | [team-votes.spec.ts:33](../../packages/plugins/workflow/tests/team-votes.spec.ts#L33) |
 | REQ-TEAM-7 | A tie is broken by the caller through `vote`, bound to the tie decision. | [team-votes.spec.ts:103](../../packages/plugins/workflow/tests/team-votes.spec.ts#L103) |
+| REQ-TEAM-8 | The operator can keep Workers, named by Worker or by account, out of team membership while they still serve all other work. | [team-exclusion.spec.ts:183](../../packages/plugins/workflow/tests/team-exclusion.spec.ts#L183), [team-exclusion.spec.ts:204](../../packages/plugins/workflow/tests/team-exclusion.spec.ts#L204), [team-exclusion.spec.ts:213](../../packages/plugins/workflow/tests/team-exclusion.spec.ts#L213), [team-exclusion.spec.ts:221](../../packages/plugins/workflow/tests/team-exclusion.spec.ts#L221), [team-exclusion.spec.ts:234](../../packages/plugins/workflow/tests/team-exclusion.spec.ts#L234) |
 | REQ-WF-1 | A workflow is a semantic DAG of nodes, each with an objective, an executor kind, and dependencies. | [spec.spec.ts:20](../../packages/plugins/workflow/tests/spec.spec.ts#L20) |
 | REQ-WF-2 | Activation requires an admitted, hashed specification. | [spec.spec.ts:96](../../packages/plugins/workflow/tests/spec.spec.ts#L96) |
 | REQ-WF-3 | A node whose input hash matches a stored result reuses that result and does not re-execute. | [acceptance.spec.ts:36](../../packages/plugins/workflow/tests/acceptance.spec.ts#L36) |

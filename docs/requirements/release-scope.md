@@ -149,7 +149,7 @@ Messages gateways, the operator Web UI, and packaged installers.
 Adds, as plugins:
 
 - **Orchestration:** the full `workflow` engine, `worker-sessions`, and
-  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1, 2, 4..7,
+  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1, 2, 4..8,
   REQ-SES-1..8). A team is the `team` option of a workflow node, which the
   engine unrolls; its members are durable sessions that propose, vote, and
   debate on prompts the engine composes ([teams](../design/teams.md)).

@@ -164,6 +164,11 @@
   authorizes no effect outside the run.
 - **REQ-TEAM-7** A tie is broken by the caller through `vote`, bound to the tie
   decision. A tie waits a bounded time, then ends inconclusive.
+- **REQ-TEAM-8** The operator can keep Workers, named by Worker or by account, out of
+  team membership while they still serve all other work. No member, the first one
+  included, is formed on such a Worker or on another Worker of its account; no
+  same-family fallback lifts this; and a team left with too few provider families
+  fails with that cause ([Workers left out of teams](../design/teams.md#workers-left-out-of-teams)).
 
 ## Workflows (`REQ-WF`)
 

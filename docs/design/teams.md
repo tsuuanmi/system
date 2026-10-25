@@ -1,7 +1,7 @@
 # Teams
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-TEAM-1, 2, 4..7.
+> Requirements: REQ-TEAM-1, 2, 4..8.
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (the `team` option on a
 > template node, unrolled by the engine; a review's source step; the `vote` tool),
@@ -108,7 +108,8 @@ judged it.
 
 ### Workers left out of teams
 
-The operator may keep Workers out of team membership while they still take every other node:
+The operator may keep Workers out of team membership while they still take every other node
+(REQ-TEAM-8):
 the workflow's `teams.excludeWorkers` (operator decision D58, 2026-10-25: while a website is
 unstable, teams run on the other providers, and the site still takes single asks and research).
 Each entry is a Worker id or an account id, as `system roster` lists them, compared for equality
