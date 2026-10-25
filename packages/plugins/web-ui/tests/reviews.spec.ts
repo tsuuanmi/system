@@ -277,6 +277,26 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article', { name: 'Keep the rate-limit header' })
     await expect.poll(() => card.getByText('What changed').count()).toBe(1)
+    // First, as chips (T186): the change in numbers, each required check, and the reviewer's verdict; then two short buttons.
+    expect(await card.locator('.change-stat').innerText()).toBe('3 files +251 −1')
+    expect(await card.getByRole('list', { name: 'Required checks' }).innerText()).toBe('tests: ▲ Pending\nlint: ▲ Pending')
+    expect(await card.getByRole('list', { name: 'Reviewers\' verdicts' }).innerText()).toBe('● Approved · w:standard')
+    expect(await card.locator(':scope > .actions').getByRole('button').allInnerTexts()).toEqual(['Accept', 'Send back'])
+    expect(await card.locator('.line').innerText()).toMatch(/^Keep the rate-limit header\s+Project project p1 · Expires in .+ · No response: it waits for input$/)
+    // The long texts are under one Details, closed by default: the diff, the findings, the report, why each check is pending.
+    expect(await card.locator('details.card-details').getAttribute('open')).toBeNull()
+    for (const folded of ['The header name is matched case-sensitively', 'reported this, in its own words', 'the run recorded no result of it']) expect(await card.innerText(), folded).not.toContain(folded)
+    // Keyboard: Tab from the card reaches Accept, then Send back, then its Details.
+    await card.focus()
+    const order: string[] = []
+    for (let i = 0; i < 20 && !order.includes('Details'); i++) {
+      await page.keyboard.press('Tab')
+      order.push(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.textContent ?? ''))
+    }
+    expect(order.filter((t) => ['Accept', 'Send back', 'Details'].includes(t))).toEqual(['Accept', 'Send back', 'Details'])
+    await card.getByText('Details', { exact: true }).click()
+    expect(await card.innerText()).toContain('tests: ▲ Pending — the run recorded no result of it')
+    expect(await card.innerText()).toContain('lint: ▲ Pending — the run recorded no result of it')
     const change = card.getByRole('group', { name: `Change on system/run/${run.runId}` })
     expect(await change.locator('.stat').innerText()).toBe(`3 files changed +251 −1 · on system/run/${run.runId}, against main at aaaaaaaaaaaa`)
     // Each file folded: opened, its diff in lines; a long one shows its first 200 lines, then all.
@@ -295,7 +315,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.innerText()).toContain('The header name is matched case-sensitively (src/limits.ts)')
     expect(await card.innerText()).toContain('The run\'s last step, solo, reported this, in its own words:')
     // Each required check with its state (ADR-0063, T160): the run recorded neither, so neither reads as passed.
-    const required = card.getByRole('list', { name: 'Required checks' })
+    const required = card.getByRole('list', { name: 'Each required check' })
     expect(await required.innerText()).toBe('tests: ▲ Pending — the run recorded no result of it\nlint: ▲ Pending — the run recorded no result of it')
     expect(await card.innerText()).not.toContain('Every check the policy requires passed')
     const pending = card.locator('p.pending-checks')
@@ -353,9 +373,12 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article', { name: 'Keep the retry budget' })
+    // Each check a chip first, a failure with its exit code (T186); why one is pending under the card's Details.
     const required = card.getByRole('list', { name: 'Required checks' })
     await expect.poll(() => required.count(), { timeout: 15_000 }).toBe(1)
-    expect(await required.innerText()).toBe('tests: ■ Failed · exit code 1\nlint: ▲ Pending — the run recorded no result of it')
+    expect(await required.innerText()).toBe('tests: ■ Failed · exit code 1\nlint: ▲ Pending')
+    await card.getByText('Details', { exact: true }).click()
+    expect(await card.getByRole('list', { name: 'Each required check' }).innerText()).toBe('tests: ■ Failed · exit code 1\nlint: ▲ Pending — the run recorded no result of it')
     const pending = card.locator('p.pending-checks')
     expect(await pending.innerText()).toMatch(/^Checks that failed: tests\. Checks not run: lint\. Accepting counts them as passed — fix the failed ones and run the others first\./)
     expect(await pending.innerText()).not.toMatch(/not run: [^.]*tests/)

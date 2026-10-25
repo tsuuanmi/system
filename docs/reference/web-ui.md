@@ -19,8 +19,8 @@ Every page reads the count from one route, `GET waiting` ([below](#what-waits-fo
 Home's *Needs your attention* lists the same: the requests open for a verdict, the reviews held for
 the operator, and the runs that need a look. A count that could not be read whole reads *(3+)*, or
 *(?)* with nothing known.
-Each page opens with its title and a few words of what it is for (*Your next actions and recent
-activity.*). On a narrow screen (600 px) no page is wider than the screen: the navigation wraps
+Each page opens with its title and one short sentence at most of what it is for (*Your next actions
+and recent activity.*). On a narrow screen (600 px) no page is wider than the screen: the navigation wraps
 whole links with the refresh line under it, the Board's columns stack, each card the screen's width
 with its **Start…** across it, and the tables keep their first columns.
 
@@ -64,17 +64,18 @@ section the Workers page shows, by the same function from the same roster read, 
 same free, stalled, and no-quota Workers, T160), the approval cards, the reviews as
 cards, under a line saying how many are held for you and when the first expires, marked when
 within the hour, since an unanswered one expires and its task waits for input that nothing
-revives (what was asked, each required check with its state, the checks not run, the run that made the result, the exact result
-folded; **Accept: mark it done** and **Reject: send it back**, each with its own note), *Runs
-needing attention* (waiting for a plan approval or a deciding vote, or outside the board and failed
-since you last marked Home as seen), each by its title with why as a chip, **Open run**, and its
-id behind **Copy run ID**, and the 15 most recent runs, each by its task's title (else its
+revives (each [a review card](#what-a-review-shows): one line, the change, the checks, and the
+reviewers' verdicts as chips, **Accept** and **Send back**, every long text under its closed
+**Details**), *Runs needing attention* (waiting for a plan approval or a deciding vote, or outside
+the board and failed since you last marked Home as seen), each by its title with why as a chip,
+**Open run**, and its id behind **Copy run ID**, at most 5 with **Show all N** for the rest, and
+the 15 most recent runs, each by its task's title (else its
 template), its state as a chip, its progress and current Worker (*1/2 steps · waiting: … · Claude
 Code · science · develop*), and, folded under *Steps*, each step with its Worker's roster `name`,
 its template, and its id. No run yet reads *No runs yet · Open Board*.
 
 *Since you last looked*, under *Needs your attention*, says what happened since the operator last marked
-Home as seen, one line each with a link, the latest first, at most 20 (a part that holds more than it read says *More runs ended than the 50 read here.*, and one that cannot be read says so): the runs that finished or
+Home as seen, one line each with a link, the latest first, at most 5 with **Show all N** for the rest (a part that holds more than it read says *More runs ended than the 50 read here.*, and one that cannot be read says so): the runs that finished or
 failed (a failure led by the same plain-words reason the run page gives, from its kind and
 disposition by one function: *Failed: a solo run — its account must sign in again (it needs you)*;
 the system's own text folded under *What the system said*, T160), the tasks that moved (accepted, merged, waiting for a review, an approval, or
@@ -95,8 +96,8 @@ again from now. When and each Worker's status then are kept in this browser only
 ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself), ADR-0064): the
 task's title, its attempt, the Worker's roster `name`, each window of its account as *5 h · used 12 %
 · reserve 20 % · resets 14:20* with a small bar, *Why this Worker?* folded (the reason, when each
-window was read, the project), *Expires in 40 min · No response: denied*, and **Approve: start it**
-and **Deny**, which are the approval queue's verdicts on the request's exact subject (`POST
+window was read, the project), *Expires in 40 min · No response: denied*, and **Approve** and
+**Deny** (named *Approve the start of …* and *Deny the start of …* for assistive technology), which are the approval queue's verdicts on the request's exact subject (`POST
 approvals/decide`, INV-5); **Review request** goes to the request's full card in the queue, where it
 is described as a start. It also says *Automatic starts off* (`dispatch.enabled: false`, folded) or
 *Automatic starts paused · why · since when* (*How to resume*, `system dispatch resume`, folded),
@@ -266,7 +267,14 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
   characters, `truncated` past them;
 - `landing`: where its accepted result stands, as a card gives it (with the committed `head`).
 
-A review card shows, before **Accept** and **Reject**: *What changed* (`3 files changed +19 −1 ·
+A review card (T186) shows one line (its title, project, and *Expires in 3 h · No response: it
+waits for input*), then as chips the change (*3 files +19 −1*), each required check (*tests: ▲
+Pending*, *lint: ■ Failed · exit code 1*), and each reviewer's verdict (*● Approved · w:standard*,
+*■ Changes requested · …*), then what must stay in sight (a change not read whole, the checks not
+run or failed), then **Accept** and **Send back** (named *Accept: mark it done* and *Send back:
+reject it for another attempt*). Its closed **Details** holds what was asked, the action type and
+task, the run that made the result, the exact result, each check with its exit code or why it has
+none, and the long texts: *What changed* (`3 files changed +19 −1 ·
 on system/run/<id>, against main at <sha>`, then each file folded, its diff in monospace lines
 marked added and removed, the first 200 lines with **Show all N lines**); *What the reviewers said*
 (*Approved* or *Changes requested*, each finding with its severity); *What the checks measured*
@@ -385,7 +393,14 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
   `subject-changed`, `failed`).
 
 The queue opens with its count and next expiry (*3 approvals · next expiry in 12 min*, or *No
-approvals needed.*). The page shows each request as one entry: what is asked in plain words (a
+approvals needed.*). Each request is a card of one line and two buttons (T186): what is asked, for
+which task (else project, else run), and when it expires with what no response means (*Allow a
+deploy step: … · for the task "…" · Expires in 12 min · No response: denied*), an irreversible
+verdict as a chip (*Deny cannot be undone*); then **Approve** and **Deny**, each named by its
+effect for assistive technology (*Approve: activate project*). Everything else below is under the
+card's one **Details**, closed by default and kept open through the refresh once opened: who
+asked, what it is about, the exact subject, what approving and denying do, how it works, the
+buttons' effects in words, **Show change**, the note, and the ids. Within it, the request reads: what is asked in plain words (a
 charter as *Found project …* or *Amend the charter of …*, a board task's step, a tool call, a budget
 raise, a fix, a policy change, an accepted result's merge, with its branch and both heads folded),
 who asked by a readable name (the board for a task or project, *an agent run*, the run of a task,
@@ -405,9 +420,11 @@ task "…"* (by its run when the board lists it), is about *the accepted change 
 says *If you approve: the accepted change of the task "…" is merged as one merge commit. Not
 pushed.* and *If you deny: not merged: the change stays on its branch; the task stays done.*, and
 folds the branch with both heads, and the requester's own text with its paths and hashes, under
-*How it works* and *In detail*. Each button names its effect (*Approve: activate project*, *Deny:
-abandon project*, *Deny: hold the task*, *Approve: merge change*, *Deny: keep branch only*), and
-each entry has its own *Note (optional)*; a batch has *Note for all (optional)*.
+*How it works* and *In detail*. Each button reads **Approve** or **Deny**; its name says its effect
+(*Approve: activate project*, *Deny: abandon project*, *Deny: hold the task*, *Approve: merge
+change*, *Deny: keep branch only*), and so does the card's *Buttons* line under **Details**; each
+entry has its own *Note (optional)* there; a batch has *Note for all (optional)* beside **Approve
+all N** and **Deny all N**. A Board card's own **Approve** and **Deny** read the same.
 
 After a call the page reports, above the page until **Dismiss**, what happened: each verdict
 recorded, with what happens next (*Approved: …*, a batch *2 approved*), the request and approval

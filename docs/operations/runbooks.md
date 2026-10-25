@@ -2716,7 +2716,7 @@ chooses none until:
 
 Then, on Home, **Starts awaiting approval** lists each start: the task, its attempt, the Worker, each
 window of its account (`5 h · used 12 % · reserve 20 % · resets 14:20`), and, folded, why that Worker.
-**Approve: start it** starts it at the next pass (within a minute), on that Worker, while the task is
+**Approve** starts it at the next pass (within a minute), on that Worker, while the task is
 still ready and the Worker free; past `approvedHoldMinutes` (30) waiting for the Worker, the
 approval is used for nothing and System asks again. **Deny**, or no answer by its expiry, and System
 does not ask again for that attempt: start it from the Board when you want it. A task the board's

@@ -231,10 +231,13 @@ describe('web UI: the policy page in a real browser', () => {
     // The queue entry shows the change it asks for, then the operator approves it there.
     await page.getByRole('link', { name: 'system' }).click()
     const queue = page.getByRole('region', { name: 'Approval queue' })
+    const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
+    // Show change and what a verdict does are under the card's Details (T186).
+    await expect.poll(() => entry.locator('details.card-details > summary').count()).toBe(1)
+    await entry.locator('details.card-details > summary').click()
     await queue.getByRole('button', { name: `Show the change of ${request!.requestId}` }).click()
     await expect.poll(() => queue.getByText('studio: merge').count()).toBeGreaterThan(0)
     expect(await queue.innerText()).toContain('ask → forbid')
-    const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
     expect(await entry.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
     await entry.getByRole('button', { name: 'Approve: put the change in force' }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
@@ -264,9 +267,13 @@ describe('web UI: the policy page in a real browser', () => {
     expect(await page.locator('details', { hasText: 'About modes' }).textContent()).toContain('Ask approval: it waits for your approval on Home')
     expect(await page.locator('details', { hasText: 'Exact set' }).getAttribute('open')).toBeNull()
     const card = waiting.locator('article', { hasText: `request ${request.requestId}` })
-    expect(await card.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
-    // The set's hashes are folded behind details and Exact subject: the card reads in words (T116).
+    // One line and two buttons (T186); what a verdict does, what it is about, and the set's hashes under its closed Details.
+    expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
+    expect(await card.innerText()).not.toContain('If approved')
     expect(await card.innerText()).not.toContain(change.hash)
+    await card.locator('details.card-details > summary').click()
+    expect(await card.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
+    // The set's hashes are folded behind details: the card reads in words (T116).
     expect(await card.innerText()).toContain('the policy set this change would put in force')
     await card.getByText('details', { exact: true }).click()
     expect(await card.innerText()).toContain(change.hash)

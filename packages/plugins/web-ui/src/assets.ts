@@ -84,6 +84,11 @@ summary:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:
 @media (prefers-reduced-motion: no-preference) { .loading { animation: pulse 1.2s ease-in-out infinite alternate; } }
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+/* Round 8 (T186): a card is one line and two buttons, every other fact under one closed Details; a review leads with chips; a list shows 5 rows and a "show all". */
+.request .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; } .request .line h3, .request .line h4 { margin: 0; }
+.request .summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 6px 0; } ul.chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.change-stat { border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+details.card-details > .fold-body > * { margin: 6px 0; } button.show-all { margin: 4px 0; }
 code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter, li.capacity meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } li.capacity .no-bar { display: inline-block; width: 64px; margin-right: 8px; } ul.capacities { list-style: none; padding: 0; margin: 6px 0; } li.capacity { margin: 2px 0; } section.account { margin: 20px 0; } section.account > h3 { margin-bottom: 4px; } section.account > h3 .muted { font-weight: 400; } .quota { margin: 4px 0 8px; } details.facts { margin-top: 6px; } details.facts dl { margin-top: 4px; } .panel.worker h4 { margin: 0 0 4px; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
@@ -128,6 +133,31 @@ export const APP_JS = `'use strict'
   const qtyView = (n, one, many) => el('span', { class: 'qty' }, el('span', { class: 'n' }, String(n)), ' ' + unit(n, one, many))
   // A fold for an explanation or a technical fact: closed by default, never deleted.
   const fold = (summary, ...body) => el('details', { class: 'fold' }, el('summary', {}, summary), el('div', { class: 'fold-body' }, body))
+  // A card's one fold (T186): closed by default, and, once the operator opens it, kept open through the 5-second refresh.
+  const openFolds = new Set()
+  const cardFold = (key, ...body) => {
+    const details = fold('Details', ...body)
+    details.classList.add('card-details')
+    if (openFolds.has(key)) details.open = true
+    details.addEventListener('toggle', () => { if (details.open) openFolds.add(key); else openFolds.delete(key) })
+    return details
+  }
+  // A list of at most LIST_SHOWN rows, and a "Show all N" that shows the rest and stays so through the refresh (T186).
+  const LIST_SHOWN = 5
+  const expandedLists = new Set()
+  const capped = (key, container, items, render) => {
+    if (items.length <= LIST_SHOWN) { container.append(...items.map(render)); return [container] }
+    const button = el('button', { type: 'button', class: 'show-all', 'aria-expanded': 'false', ...(container.id ? { 'aria-controls': container.id } : {}) })
+    const draw = () => {
+      const all = expandedLists.has(key)
+      container.replaceChildren(...(all ? items : items.slice(0, LIST_SHOWN)).map(render))
+      button.textContent = all ? 'Show first ' + LIST_SHOWN : 'Show all ' + items.length
+      button.setAttribute('aria-expanded', String(all))
+    }
+    button.addEventListener('click', () => { if (expandedLists.has(key)) expandedLists.delete(key); else expandedLists.add(key); draw() })
+    draw()
+    return [container, button]
+  }
   // A copy button for an id or a hash: the value is behind it, never the first thing in a row. Without a
   // clipboard the value is shown beside it, selected, to copy by hand.
   const copyId = (label, value) => {
@@ -550,7 +580,11 @@ export const APP_JS = `'use strict'
       : r.requester.component === 'approvals' ? 'the approval queue, for a policy change (Show change says who proposed it)'
       : r.requester.component + projectText
     const ids = [['run', r.requester.runId], ['session', r.requester.sessionId], ['step', r.requester.nodeId], ['task', r.requester.taskId], ['policy change', r.requester.policyChangeId]].filter(([, v]) => v)
-    return Object.assign({ yes: 'Approve', no: 'Deny', next: '' }, d, { by, ids })
+    // For which task (else project, else run) it is asked, in the card's one line (T186).
+    const served = runTask(r.requester.runId)
+    const forWhat = task ? taskOf(task[1]) : r.requester.taskId ? taskOf(r.requester.taskId) : served ? 'the task "' + served.title + '"'
+      : charter ? 'project ' + name(charter[1]) : call ? 'an agent run' : r.requester.projectId ? 'project ' + name(r.requester.projectId) : r.requester.runId ? 'a run' : null
+    return Object.assign({ yes: 'Approve', no: 'Deny', next: '' }, d, { by, ids, for: forWhat })
   }
 
   // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
@@ -606,8 +640,9 @@ export const APP_JS = `'use strict'
     }
     const card = (r) => {
       const d = described.get(r.requestId)
-      const yes = el('button', { class: 'primary' }, d.yes)
-      const no = el('button', {}, d.no)
+      // Short labels in sight (T186); each button's name for assistive technology still says its effect ("Approve: activate project").
+      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': d.yes }, 'Approve')
+      const no = el('button', { type: 'button', 'aria-label': d.no }, 'Deny')
       const verdict = (v, clicked) => () => decide([{ requestId: r.requestId, subject: r.subject, verdict: v, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
@@ -623,27 +658,36 @@ export const APP_JS = `'use strict'
           shown.replaceChildren(change ? changeView(change) : el('p', { class: 'muted' }, 'The change of ' + r.requestId + ' is not among the latest.'))
         } catch (error) { shown.replaceChildren(el('p', { class: 'state failed' }, 'The change could not be read: ' + error.message)) }
       }
+      // An irreversible consequence stays in sight, as a chip on the line (T172: never folded).
+      const undone = (text) => /Cannot be undone/.test(text || '')
+      const irreversible = undone(d.deny) ? 'Deny cannot be undone' : undone(d.approve) ? 'Approve cannot be undone' : undone(r.action.consequences) ? 'Cannot be undone' : null
+      // One line, what is asked, for which task, and when it expires with what no response means; then the two buttons; every
+      // other fact (who asked, what it is about, its exact subject, what each verdict does, how it works, the ids) under one closed Details (T186).
       return el('article', { class: 'panel request', id: 'request-' + r.requestId, tabindex: '-1', 'aria-labelledby': 'title-' + r.requestId },
-        el('h3', { id: 'title-' + r.requestId }, d.title),
-        // Who asked, its action type, and when it expires with what no response means; the ids and the exact time folded below (T171).
-        el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class'), ' Asked by ' + d.by + ' · ',
-          expires(r.expiresAt, 'denied')),
-        el('dl', {},
-          d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
-          el('dt', {}, 'About'), el('dd', {}, d.subject, el('details', {}, el('summary', {}, 'Exact subject'), el('code', {}, subjectText(r.subject)))),
-          // A merge says what each verdict does in words first; the requester's own text, with its paths and hashes, is folded (T141).
-          r.action.consequences && d.approve && r.action.class === 'merge' ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny),
-            el('dt', {}, 'In detail'), el('dd', {}, el('details', {}, el('summary', {}, 'what the system will do, exactly'), el('code', { class: 'exact' }, r.action.consequences)))]
-            : r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
-            : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
-            : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
-          r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null),
-        d.more ? fold('How it works', d.more) : null,
-        r.action.class === 'policy-change' && r.requester.policyChangeId ? el('p', {}, el('button', { onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }, 'Show change')) : null,
-        shown,
-        el('div', { class: 'actions' }, noteFor(r.requestId, 'Note (optional)'), yes, no),
-        fold('Technical details', el('div', {}, 'request ' + r.requestId, copyId('Copy request ID', r.requestId)), el('div', {}, 'expires ' + absolute(r.expiresAt)),
-          d.ids.map(([k, v]) => el('div', {}, k + ' ' + v))))
+        el('div', { class: 'line' }, el('h3', { id: 'title-' + r.requestId }, d.title),
+          el('span', { class: 'meta' }, d.for ? 'for ' + d.for + ' · ' : '', expires(r.expiresAt, 'denied')),
+          irreversible ? chip(irreversible, 'warn') : null),
+        el('div', { class: 'actions' }, yes, no),
+        cardFold('request-' + r.requestId,
+          el('p', {}, 'Asked by ' + d.by + ' · ', el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class')),
+          el('dl', {},
+            d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
+            el('dt', {}, 'About'), el('dd', {}, d.subject),
+            el('dt', {}, 'Exact subject'), el('dd', {}, el('code', {}, subjectText(r.subject))),
+            // A merge says what each verdict does in words first; the requester's own text, with its paths and hashes, after it (T141).
+            r.action.consequences && d.approve && r.action.class === 'merge' ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny),
+              el('dt', {}, 'In detail'), el('dd', {}, el('details', {}, el('summary', {}, 'what the system will do, exactly'), el('code', { class: 'exact' }, r.action.consequences)))]
+              : r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
+              : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
+              : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
+            el('dt', {}, 'Buttons'), el('dd', {}, d.yes + ' · ' + d.no),
+            r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null,
+            d.more ? [el('dt', {}, 'How it works'), el('dd', {}, d.more)] : null),
+          r.action.class === 'policy-change' && r.requester.policyChangeId ? el('p', {}, el('button', { type: 'button', onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }, 'Show change')) : null,
+          shown,
+          el('div', { class: 'actions' }, noteFor(r.requestId, 'Note (optional)')),
+          el('div', { class: 'muted' }, 'request ' + r.requestId, copyId('Copy request ID', r.requestId)), el('div', { class: 'muted' }, 'expires ' + absolute(r.expiresAt)),
+          d.ids.map(([k, v]) => el('div', { class: 'muted' }, k + ' ' + v))))
     }
     return { batches, requests, described, card, decide, noteFor, noteOf }
   }
@@ -783,15 +827,36 @@ export const APP_JS = `'use strict'
       notRun.length ? el('strong', {}, 'Checks not run: ' + notRun.join(', ') + '. ') : null,
       'Accepting counts them as passed — ' + (failed.length ? (notRun.length ? 'fix the failed ones and run the others first.' : 'fix them first.') : 'run them first.'), whatIs('checks'))
   }
-  const checksView = (r) => {
-    const warn = pendingWarning(r)
-    if (!r.checks) return warn || el('p', { class: 'muted' }, 'No check is pending on the board; what the checks came to is not known here.')
+  // A review card's first row (T186): the change in numbers, each required check as a chip, each reviewer's verdict as a chip.
+  const changeSummary = (change) => {
+    if (!('value' in change)) return chip('Change unknown', 'bad')
+    const { changes, unread } = change.value
+    if (!changes.length) return unread.length ? chip('Change unread', 'bad') : chip('No file changed', 'idle')
+    const files = changes.reduce((n, c) => n + c.files.length + c.more, 0)
+    const sum = (k) => changes.reduce((n, c) => n + c.files.reduce((m, f) => m + (f[k] || 0), 0), 0)
+    return [el('span', { class: 'change-stat', 'aria-label': 'Change summary' }, qty(files, 'file') + ' ', el('span', { class: 'add' }, '+' + sum('added')), ' ', el('span', { class: 'del' }, '−' + sum('removed'))),
+      unread.length ? chip('Partly unread', 'bad') : null]
+  }
+  // A change that could not be read whole stays in sight: never accepted unseen.
+  const changeWarning = (change, runId) => 'value' in change && !change.value.unread.length ? null
+    : el('p', { class: 'state failed' }, 'What changed could not be read whole. Do not accept what you could not see. ', runId ? readAgain(runId) : null)
+  const checkChips = (r) => !r.checks ? null : [
+    r.checks.value.length ? el('ul', { class: 'chips', 'aria-label': 'Required checks' }, r.checks.value.map((c) => el('li', {}, el('strong', {}, c.check + ': '), chip(...(CHECK_STATE[c.state] || [c.state, 'idle'])),
+      (c.state === 'passed' || c.state === 'failed') && c.exitCode !== undefined ? ' · exit code ' + c.exitCode : ''))) : null,
+    r.checks.requiredUnknown ? chip('Required checks unknown', 'warn') : null]
+  const verdictChips = (assessments) => !('value' in assessments) ? chip('Verdicts unknown', 'idle')
+    : !assessments.value.length ? chip('No reviewer verdict', 'idle')
+      : el('ul', { class: 'chips', 'aria-label': 'Reviewers\\' verdicts' }, assessments.value.map((a) => el('li', {},
+        chip((a.verdict === 'approve' ? 'Approved' : 'Changes requested') + ' · ' + (a.reviewer || a.nodeId || 'a reviewer'), a.verdict === 'approve' ? 'ok' : 'bad'))),
+        assessments.more ? el('li', { class: 'muted' }, '+' + assessments.more + (assessments.moreAtLeast ? ' or more' : '') + ' older') : null)
+  // Each required check in full, under the card's Details: its state, and its exit code or why it has none.
+  const checksDetail = (r) => {
+    if (!r.checks) return el('p', { class: 'muted' }, r.pendingChecks.length ? 'Pending on the board: ' + r.pendingChecks.join(', ') + '; what the checks came to is not known here.' : 'No check is pending on the board; what the checks came to is not known here.')
     const list = r.checks.value
     return el('div', { class: 'checks' },
-      list.length ? el('ul', { class: 'checks', 'aria-label': 'Required checks' }, list.map((c) => el('li', {}, el('strong', {}, c.check + ': '), checkLine(c))))
+      list.length ? el('ul', { class: 'checks', 'aria-label': 'Each required check' }, list.map((c) => el('li', {}, el('strong', {}, c.check + ': '), checkLine(c))))
         : el('p', { class: 'muted' }, 'The policy requires no check of this kind of work.'),
-      r.checks.requiredUnknown ? el('p', { class: 'unknown' }, 'Which checks the policy requires is unknown (' + r.checks.requiredUnknown + '): those listed are the ones the board holds pending.') : null,
-      warn)
+      r.checks.requiredUnknown ? el('p', { class: 'unknown' }, 'Which checks the policy requires is unknown (' + r.checks.requiredUnknown + '): those listed are the ones the board holds pending.') : null)
   }
 
   async function reviews() {
@@ -815,23 +880,33 @@ export const APP_JS = `'use strict'
       await refresh()
     }
     const card = (r, evidence) => {
-      const yes = el('button', { class: 'primary', 'aria-describedby': 'review-title-' + r.taskId }, 'Accept: mark it done')
-      const no = el('button', { 'aria-describedby': 'review-title-' + r.taskId }, 'Reject: send it back')
+      // Short labels in sight (T186): Accept / Send back; each button's name says what it does.
+      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': 'Accept: mark it done', 'aria-describedby': 'review-title-' + r.taskId }, 'Accept')
+      const no = el('button', { type: 'button', 'aria-label': 'Send back: reject it for another attempt', 'aria-describedby': 'review-title-' + r.taskId }, 'Send back')
       yes.addEventListener('click', decide(r, 'accept', [yes, no], yes))
       no.addEventListener('click', decide(r, 'reject', [yes, no], no))
       const key = 'review-' + r.taskId
       const input = el('input', { id: 'note-' + key, value: notes.get(key) || '', oninput: () => notes.set(key, input.value) })
+      const evidenceRead = evidence && !evidence.error
+      // The title, its project, and when it expires with what no response means, in one line; then the change, the checks, and
+      // each reviewer's verdict as chips; the warnings that bear on the verdict; the two buttons; every long text under one Details (T186).
       return el('article', { class: 'panel request', id: 'review-' + r.taskId, tabindex: '-1', 'aria-labelledby': 'review-title-' + r.taskId },
-        el('h3', { id: 'review-title-' + r.taskId }, r.title),
-        el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.actionClass), ' Project ' + (r.project.title || r.project.projectId) + ' · task ' + r.taskId + ' · ',
-          r.expiresAt ? (r.heldFor === 'operator' ? 'yours until ' : 'its reviewer\\'s until ') + relative(r.expiresAt) + ' (' + absolute(r.expiresAt) + ')' : 'no expiry known'),
-        el('dl', {},
-          r.goal ? [el('dt', {}, 'Asked'), el('dd', {}, r.goal)] : null,
-          el('dt', {}, 'Result'), el('dd', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named',
-            el('details', {}, el('summary', {}, 'Exact result (' + r.artifacts.length + ' artifact(s))'), el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a)))))),
-        evidence ? evidenceView(evidence) : null,
-        checksView(r),
-        el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input), yes, no))
+        el('div', { class: 'line' }, el('h3', { id: 'review-title-' + r.taskId }, r.title),
+          el('span', { class: 'meta' }, 'Project ' + (r.project.title || r.project.projectId) + ' · ',
+            !r.expiresAt ? 'no expiry known' : r.heldFor === 'operator' ? expires(r.expiresAt, 'it waits for input') : ['its reviewer\\'s until ', ago(r.expiresAt)])),
+        el('div', { class: 'summary' }, evidenceRead ? changeSummary(evidence.change) : null, checkChips(r), evidenceRead ? verdictChips(evidence.assessments) : null),
+        evidence && evidence.error ? evidenceView(evidence) : null,
+        evidenceRead ? changeWarning(evidence.change, r.run && r.run.runId) : null,
+        pendingWarning(r),
+        el('div', { class: 'actions' }, yes, no),
+        cardFold(key,
+          r.goal ? el('p', {}, el('strong', {}, 'Asked: '), r.goal) : null,
+          el('p', {}, el('span', { class: 'tag' }, r.actionClass), ' task ' + r.taskId, r.expiresAt ? ' · expires ' + absolute(r.expiresAt) : ''),
+          el('p', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named'),
+          el('dl', {}, el('dt', {}, 'Exact result'), el('dd', {}, el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a))))),
+          el('h4', {}, 'Required checks'), checksDetail(r),
+          evidenceRead ? evidenceView(evidence) : null,
+          el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input))))
     }
     // A review held for the operator expires unseen, and its task then waits for input that nothing revives: say when the first does.
     const mine = listed.filter((r) => r.heldFor === 'operator' && r.expiresAt)
@@ -913,7 +988,6 @@ export const APP_JS = `'use strict'
   const seenOf = () => { try { const v = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null'); return v && typeof v.at === 'string' && !Number.isNaN(Date.parse(v.at)) ? v : null } catch { return null } }
   const markSeen = (workers) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify({ at: new Date().toISOString(), workers })) } catch {} }
   const statusSnapshot = (roster) => Object.fromEntries(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.availability.state]) : [])
-  const SINCE_SHOWN = 20
   // One line each, newest first: what happened to runs, tasks, Workers, and requests since then.
   const sinceItems = (activity, roster, seen, titles) => {
     const items = []
@@ -967,8 +1041,9 @@ export const APP_JS = `'use strict'
     mark.addEventListener('click', () => { markSeen(snapshot); refresh() })
     return el('section', { class: 'panel', 'aria-label': 'Since you last looked' },
       el('h3', {}, 'Since you last looked ', el('span', { class: 'muted' }, relative(seen.at) + ' (' + clockOf(seen.at) + ')')),
-      items.length ? el('ul', { class: 'since' }, items.slice(0, SINCE_SHOWN).map((i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at)), i.fold || null))) : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
-      items.length > SINCE_SHOWN ? el('p', { class: 'muted' }, (items.length - SINCE_SHOWN) + ' older not shown.') : null,
+      // The latest 5, then "Show all N" for the rest (T186): every line read stays reachable.
+      items.length ? capped('since', el('ul', { class: 'since', id: 'since-list' }), items, (i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at)), i.fold || null))
+        : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
       'value' in activity.runs ? null : el('p', { class: 'unknown' }, 'The runs that ended are unknown (' + activity.runs.unknown + ').'),
       'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
       'value' in activity.expired ? null : el('p', { class: 'unknown' }, 'The requests that expired are unknown (' + activity.expired.unknown + ').'),
@@ -1016,8 +1091,8 @@ export const APP_JS = `'use strict'
     const name = (worker) => names.get(worker) || worker
     const item = (a) => {
       const r = requests.get(a.requestId)
-      const yes = el('button', { class: 'primary', 'aria-label': 'Approve the start of ' + a.title }, 'Approve: start it')
-      const no = el('button', { 'aria-label': 'Deny the start of ' + a.title }, 'Deny')
+      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': 'Approve the start of ' + a.title }, 'Approve')
+      const no = el('button', { type: 'button', 'aria-label': 'Deny the start of ' + a.title }, 'Deny')
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
@@ -1111,8 +1186,9 @@ export const APP_JS = `'use strict'
       queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
       reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
       // Task title first, the reason as a chip, one action; the run id behind its copy button (T171).
+      // At most 5 runs, then "Show all N" for the rest (T186).
       look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs needing attention' }, el('h2', {}, 'Runs needing attention'),
-        look.map((run) => el('article', { class: 'panel request', 'aria-label': runTitle(run) },
+        capped('needs-look', el('div', { id: 'needs-look-list' }), look, (run) => el('article', { class: 'panel request', 'aria-label': runTitle(run) },
           el('h3', {}, runTitle(run)),
           el('p', {}, chip(lookOf(run)[0], run.status === 'failed' ? 'bad' : 'warn'), lookOf(run)[1] ? ' ' + lookOf(run)[1] : '', el('span', { class: 'muted' }, ' · started '), ago(run.createdAt)),
           el('p', {}, runLink(run, 'Open run'), copyId('Copy run ID', run.runId))))) : null,
@@ -1414,8 +1490,9 @@ export const APP_JS = `'use strict'
     const askOf = (requestId) => open.find((r) => r.requestId === requestId)
     const decideHere = (r) => {
       const d = q.described.get(r.requestId)
-      const yes = el('button', { class: 'primary', 'aria-label': d.yes + ' (' + d.title + ')' }, d.yes)
-      const no = el('button', { 'aria-label': d.no + ' (' + d.title + ')' }, d.no)
+      // Short labels in sight, as on Home's card; the name says the effect and the request (T186).
+      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': d.yes + ' (' + d.title + ')' }, 'Approve')
+      const no = el('button', { type: 'button', 'aria-label': d.no + ' (' + d.title + ')' }, 'Deny')
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
