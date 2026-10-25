@@ -201,6 +201,16 @@ describe('teams.excludeWorkers keeps Workers out of team runs, and only out of t
     expect(second.find((c) => c.selected)?.option).toBe('m:api')
   }, 60_000)
 
+  it('tells a surface which Workers it keeps out of teams, read only: the entries and each Worker they leave out now, its account\'s Workers with it (T141)', async () => {
+    expect(await (await boot()).workflow.teamExclusion()).toEqual({ entries: [], workers: [] })
+    const ctx = await boot({ teams: { excludeWorkers: ['web-main'] } })
+    scripted(ctx, { workers: [...WEB, CHAT, API], accounts: [WEB_TIERS] })
+    expect(await ctx.workflow.teamExclusion()).toEqual({ entries: ['web-main'], workers: [...WEB_TIERS].sort() })
+    // A read decides nothing: no run, no decision.
+    expect(ctx.workflow.usage(10)).toEqual([])
+    expect(ctx.artifacts.list({ kind: 'decision', limit: 10 })).toEqual([])
+  })
+
   it('keeps a review team off it as well (REQ-TEAM-8)', async () => {
     const ctx = await boot({ teams: { excludeWorkers: ['web-main'] } })
     const started = scripted(ctx, { workers: [...WEB, CHAT, API], accounts: [WEB_TIERS], answer: reviewer })

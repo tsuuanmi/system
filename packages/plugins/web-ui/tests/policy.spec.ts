@@ -237,7 +237,7 @@ describe('web UI: the policy page in a real browser', () => {
     await entry.getByRole('button', { name: 'Approve: put the change in force' }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('Recorded as your verdict on request ' + request!.requestId)
-    await page.getByRole('link', { name: 'Autonomy policy' }).click()
+    await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: 'Autonomy policy' }).click()
     await expect.poll(() => page.locator('main').innerText()).toContain('In force: the change pch-')
   }, 60_000)
 

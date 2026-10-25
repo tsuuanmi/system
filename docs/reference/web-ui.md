@@ -25,8 +25,10 @@ the Board's columns stack, each card the screen's width with its **Start…** ac
 tables keep their first columns.
 
 **Home** is a dashboard: *Waiting for you* (the requests waiting for a verdict, the tasks waiting for
-your review, those held for you, with when the first expires, and the runs that need a look, each linking to its section, and
-what of it could not be read), the Workers at a glance (the roster's counts, then each account's capacity in one
+your review, those held for you, with when the first expires, and the runs that need a look, each linking to its section,
+then named one by one under its count, at most 5 a group with how many more: each request by what it
+asks, each review by its task and project, each with when it expires, and each run by its task's title
+(else its template) with why, each linked to its card; and what of it could not be read), the Workers at a glance (the roster's counts, then each account's capacity in one
 line, its 5 h bar beside it: *Claude Code · science: 5 h used 42 %, resets 03:08*, with *resting
 until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*), the approval cards, the reviews as
 cards, under a line saying how many are held for you and when the first expires, marked when
@@ -84,7 +86,8 @@ It reads nothing from the server and shows without a token.
 Its glossary, *Words used here*, gives each word the pages use in one plain sentence (Worker,
 account, role, tier, kind of work, quota, window, resting, project, task, run, step, attempt,
 review, checks, on its way in, merge, branch, approval request, action class, batch, autonomy
-policy, mode, always asks, policy change, quarantined, stalled, not known to be gone, derived),
+policy, mode, always asks, policy change, quarantined, stalled, not known to be gone, derived,
+team, started from earlier work, sent again),
 each entry an anchor (`?view=help#term-<word>`) that a link focuses. Wherever a page shows such a
 word, a **?** button beside it (named *What is <word>?*) opens its sentence in place, and closes it,
 by click, tap, or keyboard, never by hover alone; the sentence links to its entry (*more in Help*).
@@ -105,6 +108,30 @@ long, the run's last event in words and how long ago (*last event: a tool call r
 and, when its Worker's source says it stalled (no activity past its own bound,
 [liveness](../design/agent-runtimes.md#what-the-operator-sees)), *Stalled since 13:05* as an alert.
 A running task's Board card says the same in one line.
+
+A board task's run is headed by its task's title (*Run of "Speed up the image resize"*), with its
+project, its attempt when it carried one, and its run id beside, from `GET projects` (T141). Under
+**What happened** it says, in plain words, what the run view and its decisions record, each with a
+**?** for a new word:
+
+- where its worktree started (the run view's `task.carry`,
+  [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)):
+  *It started from the work attempt 1 left (its run): that change was already in its worktree,
+  saved as <commit>, so its writing step built on it instead of starting over*; or *It started over
+  from the code: the work attempt 1 left was not reused, because <reason>*; or, while due, that it
+  starts from it before its first step;
+- each step sent again after a site's own error (a step's `recovery` decision `resend` in `explain`,
+  [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)):
+  *Team member 1's answer: the site answered with its own error instead of an answer, so it was
+  sent again once, in a new conversation on the same Worker*, and, when it failed again, that it is
+  never sent a third time;
+- where its accepted result stands (`task.landing`): *Accepted and merged into main as <commit> ·
+  not pushed*, or waiting to merge with its request linked, or not merged and why.
+
+A team's steps read by member (*team member 1's answer*, *team member 2's vote*, *the team's count
+of the votes*), the id beside; a failure's kind reads in words first (*its account must sign in
+again — …*); and an earlier attempt's error on a step that went on reads *An earlier attempt
+failed: …*, never as the step's failure.
 
 | Route | Body | Answer |
 |---|---|---|
@@ -193,20 +220,31 @@ Served when `ctx.board` is present; without it, every route answers `503`
 - The move goes to `ctx.board` as the operator's (INV-6), at the server's clock. A refusal by the
   board is `409` with its failure: `invalid-transition` for a move from another state, or a close
   while a task of the project runs or is in review.
-- The **Board** page is a Kanban: a project filter (all projects by default), each shown
-  project's header (title, state, charter version, what of it waits for the operator, linked to
-  its card, and **Pause**, **Resume**, **Close**), how many Workers are free and tasks ready and how
-  a ready task gets a Worker, then a column per state: *Proposed*, *Ready*, *Working* (claimed and
-  running), *Review*, *Waiting for you* (input and approval), with *Done* and *Cancelled* folded.
-  Each card gives the task's title, its project (when several are shown), its action class, when it
-  last changed, what it waits on in words (a link to the approval card or the review), who works
-  on it (the account and role that took it, the Worker's roster `name`, and for how long: *Claude Code · science · develop, 4 min*, from the roster's current work), and a link
-  to its run. A done task's card says where its accepted result is on its way into the repository:
-  **Accepted — waiting to merge into <base>: approve**, linked to its `merge` request
-  (`?request=<id>`), and also shown under *Waiting for you*; **Accepted and merged into <base> as
+- The **Board** page is a Kanban: a project filter (all projects by default; one project is kept
+  in the address, `?view=board&project=<id>`, so a reload or a link keeps it), each shown
+  project's header (title, state, charter version, its state at a glance in words with counts,
+  *Waiting for you: 3 (1 review, 2 merges) · Working: 1 · Ready: 1 · Proposed: 0*, or *Nothing waits
+  for you*, what of it waits for the operator, linked to its card, and **Pause**, **Resume**,
+  **Close**), how many Workers are free and tasks ready and how a ready task gets a Worker, then a
+  column per state: *Proposed*, *Ready*, *Working* (claimed and running), *Review*, *Waiting for
+  you* (input and approval), with *Done* and *Cancelled* folded; on a narrow screen *Waiting for
+  you* comes first. Each card gives the task's title, its project (when several are shown), when it
+  last changed and its action class (*Changed 4 min ago · read*), what it waits on in words (a link
+  to the review, and when the wait ends), who works on it (the account and role that took it, the
+  Worker's roster `name`, and for how long: *Claude Code · science · develop, 4 min*, from the
+  roster's current work), and a link to its run. A request a card waits on that the queue lists (a
+  task's approval, an accepted result's merge) has that request's own buttons on the card (*Approve:
+  merge it*, *Deny: do not merge*), sent on the request's exact subject as on Home (INV-5) and
+  reported the same way (T141). A done task's card says where its accepted result is on its way
+  into the repository: *Accepted — waiting for you to merge it into <base>*, with those buttons
+  (**Accepted — waiting to merge into <base>: approve**, linked to its `merge` request, when the
+  queue cannot be read), also shown under *Waiting for you*; **Accepted and merged into <base> as
   <commit>** (not pushed); **Accepted — not merged:** and why; or that the merge was not approved.
 - A ready task's card says what starts it (*Ready to start: a solo run*, or that it names no
-  template, so the lead starts it) and offers **Start…** ([below](#starting-a-ready-task)).
+  template, so the lead starts it), who its first step would likely go to (*Likely goes to: Claude
+  Code · science · develop — 5 h used 42 % (or 2 others)*, from its start's preview, for at most 8
+  ready cards shown; *None free: it waits for …* when none is free), and offers **Start…**
+  ([below](#starting-a-ready-task)); its confirmation is brought into sight when it opens.
 - A close cancels every open task of the project (`project-closed`), releasing a claimed one's
   lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
   page shows each move's consequences for that project, and sends it only on **Confirm**.
@@ -274,7 +312,11 @@ out, and any other long hash is cut to its first 8 characters, with the exact te
 hash behind **Exact subject**);
 for a board charter or task request without them the page says what the board does with each
 verdict ([board](../design/board.md)), counting the project's proposed and open tasks from
-`GET projects` when the board runs. Each button names its effect (*Approve: activate project p1*,
+`GET projects` when the board runs. An accepted result's merge (T141) is asked by *the run of the
+task "…"* (by its run when the board lists it), says *If you approve: the accepted change of the
+task "…" is merged into the main line of the code, as one merge commit. Nothing is pushed
+anywhere.* and *If you deny: nothing is merged: the change stays on its own branch, and the task
+stays done.*, and folds the requester's own text, with its paths and hashes, under *In detail*. Each button names its effect (*Approve: activate project p1*,
 *Deny: hold the task*, *Approve: merge it*), and each entry has its own note; a batch has a note for all its requests.
 
 After a call the page reports, above the page until **Dismiss**, what happened: each verdict
@@ -338,21 +380,30 @@ Served always; each service it reads that is not mounted reads as unknown with w
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET roster` | — | the roster, an `mcp-roster@1.5` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
+| `GET roster` | — | the roster, an `mcp-roster@1.6` `roster-output` record ([record semantics](schemas.md#mcp-tool-roster)), as the operator reads it: account labels included. A record its schema refuses is a defect: `500` with why |
 
 - Any other method is `405`. The **Workers** tab (`?view=workers`, next to Board) shows the counts
   in the operator's words (working, free, resting with when the first is free again, unavailable,
-  and quarantined when any), then the Workers by account: each account once, under a small header
+  and quarantined when any); **Right now**, by name, each said in words and never by colour alone:
+  *Free:* the Workers that take work now (and how many tasks are ready, linked to the Board), *Stalled:*
+  each Worker with a stalled run (linked), *No quota left:* each account resting or at a limit and
+  until when, and *Cannot work:* each unavailable or quarantined Worker with why (T141); then the
+  Workers by account: each account once, under a small header
   with its name and its Workers' roles (*Claude Code · science: develop [code], review, review-2*),
   what stops it (*Its account is resting until 02:16 (in 2 h)*, signed out, quarantined, signed in
   as the same person as another), and its quota, each window as `5 h: used 9 % — resets 23:30 (read
-  22:05)` beside a small bar ([roster](../design/roster.md#surfaces)); the Workers of no account
+  22:05)` beside a small bar ([roster](../design/roster.md#surfaces)), or that no quota is tracked
+  for it (Home's capacity line says *no quota is tracked for it*, or *its quota is unknown*); the Workers of no account
   last, under their own header. Each Worker's card is calm: its work (its role or tier; its whole
   name for a Worker of no account), what it is for (its `description`), its status and why in plain
   words (*Free: it takes work now*, *Working: 1 of 2 slot(s) in use*, *Resting until 11:40 (in 2 h)*,
   *Unavailable: its account is signed out*, a quarantine with what its reading found), what it does
-  now (each step's `summary` and each run whose liveness needs a look, with a link to its run), and
-  the capabilities held off until when. A reason that blocks work is never folded. Every other
+  now (each step by its task's title and for how long, *Working on "Fix the slow image build", for 4
+  min*, or a team member's answer, the roster's `summary` under its details; and each run whose
+  liveness needs a look, with a link to its run), the capabilities held off until when, and, when
+  the roster's `teams` says the engine's `teams.excludeWorkers` leaves it out (D58), **Kept out of
+  teams by you:** *it is never a team member; it takes every other step* (its `summary` under its
+  details; `unknown (why)` there when the engine could not tell). A reason that blocks work is never folded. Every other
   fact, and every fact that is unknown (shown as `unknown (why)`), is folded under the card's
   **details** (its id, its `derived` line marked *derived* when no description is configured, its
   account's id, kind, and state, what it serves, and its load), and an account's own under the

@@ -26,7 +26,7 @@ import { pollMs } from './queue.ts'
 import { deleteRun, purge } from './retention.ts'
 import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
-import { teamContracts, vote } from './teams.ts'
+import { leftOutOfTeams, teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
 import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageFilter } from './types.ts'
 import { explain, usage } from './views.ts'
@@ -240,6 +240,22 @@ export class Workflow extends Service {
   landing(runId: string): TaskLanding | undefined {
     const row = this.engine.tasks.row(runId)
     return row ? this.engine.tasks.landings.view(row) : undefined
+  }
+
+  /**
+   * The Workers the operator keeps out of teams (`teams.excludeWorkers`, D58), as a surface shows
+   * them: the entries configured, and every Worker they leave out now, each with its account's
+   * other Workers, as a team member's routing leaves them out (`leftOutOfTeams`). A read only: it
+   * routes and decides nothing. With no entry, it lists no Worker.
+   */
+  async teamExclusion(): Promise<{ entries: string[]; workers: string[] }> {
+    const entries = [...(this.engine.config.teams?.excludeWorkers ?? [])]
+    if (!entries.length) return { entries, workers: [] }
+    const workers = this.ctx.workers
+    const listed = await workers.list()
+    const ids = new Set(listed.map((w) => w.worker))
+    // An entry is an id to compare, not a Worker: one that names no Worker listed now is not listed as one.
+    return { entries, workers: [...leftOutOfTeams(entries, listed, (w) => workers.siblings(w))].filter((w) => ids.has(w) || !entries.includes(w)).sort() }
   }
 
   /** The durable node records of a run, in dependency order. */

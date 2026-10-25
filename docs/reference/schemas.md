@@ -1108,6 +1108,12 @@ guesses.
   router reads and says the same
   ([sources that do not answer](../design/routing.md#sources-that-do-not-answer)). Readers accept
   1.0 to 1.5.
+- `mcp-roster@1.6` adds, per Worker, `teams`: `{value: {excluded: true, summary}}` when the
+  workflow engine's `teams.excludeWorkers` keeps it out of teams (named itself, by its account, or
+  as another Worker of a named one's account; [Workers left out of teams](../design/teams.md#workers-left-out-of-teams)),
+  read through the engine's `teamExclusion()`; absent when the engine tells none or leaves it in;
+  `unknown` on every Worker when the engine could not tell. A 1.5 record stays valid. Readers
+  accept 1.0 to 1.6.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

@@ -4,8 +4,9 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
 - **Home**, a dashboard: what waits for the operator and they can act on (open approval requests,
   reviews held for them, runs that wait for their own move or failed outside the board since they
-  last looked, each linked, and counted in the window's title on every page from one route,
-  `GET waiting`: *(3) system — Home*), what happened since the
+  last looked, each counted and linked, then named one by one under its count (up to 5 a group,
+  each linked to its card, with when it expires), and counted in the window's title on every page
+  from one route, `GET waiting`: *(3) system — Home*), what happened since the
   operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`), the
   Workers at a glance, then those decisions and the recent runs by their tasks' titles, each step
   with its Worker's name; a running run's page and Board card say where it is now (its step, Worker,
@@ -19,8 +20,14 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   glossary; a **?** beside each such word on the pages opens its sentence in place by keyboard or
   touch, linked to its entry; every empty state says what would appear and how
   ([help](../../../docs/reference/web-ui.md#help));
-- a run's page: a sentence of where it is, what the operator can do, the answer, and its steps as
-  a timeline in words, decisions folded;
+- a run's page: headed by its task's title (its project, and its attempt when it carried one), a
+  sentence of where it is, **What happened** in plain words (it started from the work its previous
+  attempt left, or over and why, [ADR-0061](../../../docs/decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md);
+  a team member's answer sent again once after a site's own error,
+  [ADR-0062](../../../docs/decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md);
+  where its accepted result stands, ADR-0060), what the operator can do, the answer, and its steps
+  as a timeline in words (a team's steps by member, a failure's kind in words, an earlier attempt's
+  error said as history), decisions folded;
 - runs, each with its steps in one line (how many completed, and those failed, waiting, or
   running, by name) and when it started; the run's page has every step;
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
@@ -33,7 +40,9 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   ([approvals](../../../docs/design/approvals.md)) above the runs: open requests by batch, each
   in plain words (what is asked, who asked, what approving and denying change, when it expires,
   the exact subject behind **Exact subject**, and what a verdict does in words, its long hashes
-  folded behind **details**), and the operator's **Approve / Deny**, labelled by
+  folded behind **details**; an accepted result's merge names its task, asked by the run of that
+  task, says what approving and denying do in words, and folds the requester's own text with its
+  paths and hashes), and the operator's **Approve / Deny**, labelled by
   their effect, for one request or a whole batch, each with an optional note. What a verdict did
   (recorded, with its ids and what happens next, or not recorded and why) stays above the page
   until dismissed ([the page](../../../docs/reference/web-ui.md#approval-queue)); a `policy-change`
@@ -64,14 +73,18 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   unanswered one expires and its task waits for input that nothing revives (T99 D6). Without it
   the reviews routes answer `503`;
 - when `ctx.board` is present, the **board** page (`?view=board`), a Kanban: a project filter (all
-  by default); each project's header with its state, charter version, what of it waits for the
-  operator (linked), and the moves; free Workers and ready tasks; then a column per task state
-  (Proposed, Ready, Working, Review, Waiting for you; Done and Cancelled folded), one card per task
-  with its title, who works on it (the Worker's name, since when), what it waits on, and its run;
-  a done task's card says where its accepted result is on its way into the repository
-  (**Accepted — waiting to merge into main: approve**, linked to its `merge` request and shown under
-  Waiting for you; merged, with the commit; or not merged, and why;
-  [landing](../../../docs/design/workflow-engine.md#landing-an-accepted-result)).
+  by default, kept in the address as `&project=<id>`); each project's header with its state,
+  charter version, its state at a glance (*Waiting for you: 3 (1 review, 2 merges) · Working: 1 ·
+  Ready: 1 · Proposed: 0*), what of it waits for the operator (linked), and the moves; free Workers
+  and ready tasks; then a column per task state (Proposed, Ready, Working, Review, Waiting for you,
+  which comes first on a narrow screen; Done and Cancelled folded), one card per task with its
+  title, when it changed and its action class, who works on it (the Worker's name, since when), who
+  its first step would likely go to on a ready card, what it waits on, and its run; a request a
+  card waits on (a task's approval, an accepted result's merge) has its own **Approve** and
+  **Deny** on the card, on the request's exact subject, as on Home; a done task's card says where
+  its accepted result is on its way into the repository (*Accepted — waiting for you to merge it
+  into main*, with those buttons, under Waiting for you; merged, with the commit; or not merged,
+  and why; [landing](../../../docs/design/workflow-engine.md#landing-an-accepted-result)).
   A ready task's **Start…** starts its run as the lead does (MCP `run` with `task`): a
   confirmation says what runs (its template's steps, each with the kind of Worker it needs, from
   `ctx.workflow.templateSteps`), the start is bound to the task revision and template shown, and a
@@ -86,7 +99,9 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - the **Workers** tab (`?view=workers`, next to Board; REQ-HOST-8), read through `readRoster` in
   [`gateway-core`](../../gateway-core/README.md#the-roster) from the services mounted (`workers`,
   `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`): the counts (working,
-  free, resting and until when the first is, unavailable), then the Workers by account, each
+  free, resting and until when the first is, unavailable); **Right now**, by name: who is free
+  (and how many tasks are ready, linked to the Board), who is stalled, which accounts have no quota
+  left and until when, and who cannot work; then the Workers by account, each
   account once under a small header with its name and roles (`Claude Code · science: develop
   [code], review`, [display names](../../../docs/design/roster.md#display-names)), what stops it
   (resting until when, signed out, quarantined, one person on two accounts), and its quota, each
@@ -97,8 +112,10 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   reading yet: <why>` before any reading, windows of one reason on one line); the Workers of no
   account last. Each Worker's card is calm: its work (role or tier), what it is for, its status and
   why in plain words (*Free*, *Working*, *Resting until 02:16*, *Unavailable*, a quarantine with what
-  its reading found), what it does now (one sentence per step, and each run whose liveness needs a
-  look, each a link to its run), and the capabilities held off; every unknown (`unknown (why)`),
+  its reading found), what it does now (its task by title and for how long, or a team member's
+  answer, and each run whose liveness needs a look, each a link to its run), the capabilities held
+  off, and **Kept out of teams by you** when the engine's `teams.excludeWorkers` leaves it out of
+  teams (D58, the roster's `teams`); an account with no quota tracked says so; every unknown (`unknown (why)`),
   derived, or technical fact (its id, its derived line, its account's id, kind, and state, what it
   serves, its load) is folded under its **details**, and a reason that blocks work never is
   ([roster](../../../docs/design/roster.md)). Home's Workers box shows each account's capacity in
@@ -167,7 +184,7 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), the roster route (operator only, valid against
-`mcp-roster@1.5`, labels shown, display names, a Worker's runs whose liveness needs a look, unknown without a
+`mcp-roster@1.6`, labels shown, display names, a Worker's runs whose liveness needs a look, unknown without a
 Worker registry), and, with a browser, the runs, the queue (labels by effect, a batch verdict, a
 refused one as an alert), a press a refresh lands on that still counts, a verdict not recorded
 that stays as an alert through refreshes until dismissed, and the Workers tab (counts in the
@@ -176,7 +193,10 @@ derived, and technical facts folded under its details, a reason that blocks work
 in one sentence, each pool window's share, reset, and read time or `unknown (why)`, Home's
 capacity line per account, and a run held for want of a verdict with what frees it and a link to
 its run), on a page whose clock stands at a fixed instant in UTC, so each time it shows is named
-exactly whenever the test runs.
+exactly whenever the test runs; Home's waiting items by name, each linked to its card; a run's
+*What happened* (started from the previous attempt's work, a team member's answer sent again once,
+its result merged; an earlier attempt's error as history, never as the step's failure); and a
+Worker kept out of teams, *Right now* by name, and an engine that cannot tell folded (T141).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
@@ -212,7 +232,10 @@ withdrawing the requests a waiting task and a pending amendment were on, in the 
 a ready task's run started for the operator's token only, bound to the revision and template
 shown, refused for a task naming no template; and, with a browser, a ready task started from its
 card after its confirmation (moving to Working) and a task naming no template refused with why;
-every page laid out at 600 px (none wider than the screen, the columns stacked, whole nav links);
+every page laid out at 600 px (none wider than the screen, the columns stacked with Waiting for you
+first, whole nav links); each project's state at a glance and the filter kept in the address; a
+ready card's likely Worker; an accepted result's merge approved by the button on its card, its
+request on Home in words (T141);
 a charter founded from the queue (what approving and denying do, with the
 project's task counts; the approval recorded and reported with its ids; the project active after
 the board's sweep), a pause and a close each made only after its confirmation, and a Cancel that

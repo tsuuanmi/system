@@ -323,6 +323,8 @@ second execution path (INV-1).
     the team has members, the member's message says so; the Workers still take
     every other node, and a member already in its conversation keeps it
     ([Workers left out of teams](../../../docs/design/teams.md#workers-left-out-of-teams)).
+    `ctx.workflow.teamExclusion()` reads them for a surface, deciding nothing: the
+    entries and every Worker they leave out now (the roster's `teams`).
   - When the run finishes, its members' leftover mail is acknowledged.
   - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
     readable with `explain` and `result`; `continue` and `supersede` refuse it

@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.5`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.6`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -35,7 +35,7 @@ that change what runs).
 | website accounts | `ctx.accounts`: `list()`, `duplicateIdentities()` | each catalog account's secret-free view: label and status; the accounts signed in as one person |
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
 | event log | `ctx.eventLog.query({ type: 'usage.unknown' })`; `ctx.eventLog.query({ type: 'workflow.node.started', runId, nodeId })` | the runs whose usage the ledger could not count ([D25](resources.md#usage-the-ledger-cannot-count)); when a running step's current attempt started |
-| workflow engine | `ctx.workflow.usage(500)` | the newest runs, each step's Worker and state, and the board task a run serves |
+| workflow engine | `ctx.workflow.usage(500)`; `teamExclusion()`, when it has it | the newest runs, each step's Worker and state, and the board task a run serves; the Workers the operator keeps out of teams (`teams.excludeWorkers`, [Workers left out of teams](teams.md#workers-left-out-of-teams)) |
 | board | `ctx.board.task(taskId)` | the title, project, and state of a task a listed step serves |
 
 Each source is read once per roster. A surface passes the services it has mounted, so its plugin
@@ -60,6 +60,7 @@ manifest names each one it consumes (optional): the roster works with any subset
 | `siblings` | `ctx.workers.siblings(worker)`, itself left out | the call throws, or there are more than 64 |
 | `work` | the steps of running runs (`status: running`) whose node is `RUNNING` on this Worker, by run and node id; for each, the board task its run serves, with its title, project, and state; `since`, when its current attempt started (the latest `workflow.node.started` of that attempt); and `summary`, the step in one sentence: *Working on "\<title\>" (task \<id\>, project \<id\>): \<template\> run \<id\>, step \<id\>, for 4 min*, or *Running \<template\> run …* for a run that serves no task | the engine is not mounted or its read fails; a task's detail when the board is not mounted, fails, or is past the bound; `since` when the event log is not mounted, no longer holds the start (its retention), or past the bound |
 | `liveness` | `@1.2`, present only when the router tells liveness and the Worker has such a run: its runs that are `stalled`, being looked at (`looking`), or ended without being known to be gone (`unknown`), of the latest 64 the router tells, each with `execution`, `state`, `since`, `runId`, and `summary` in one sentence: *Stalled: agent run … has shown no activity for 10 min or more; nothing is sent to it, and its own deadline ends it*, *Not known to be gone: agent run … lost its holder 2 min ago and is looked at again (1 of 3 verdicts)*, or *Held for 2 h: agent run … ended without being known to be gone, holding session … and worktree …; free it once its agent is gone (system free … --agent-gone)* | the router's read fails, or a source could not tell (then on every Worker without a run listed, never read as none) |
+| `teams` | `@1.6`, present only when the engine tells its `teams.excludeWorkers` and leaves this Worker out: `excluded` and a `summary` in one sentence, *Kept out of teams by the operator: its account is named in teams.excludeWorkers, so it is never a team member; it takes every other step* (named itself, by its account, or as another Worker of a named one's account) | the engine's read fails (then on every Worker, never read as none left out) |
 | `pools` | the ledger's pools whose `account` is the Worker's account id, by pool id; each window with its state, `used` (the latest reading's used share), `resets` (the later of its `resetsAt` and `cooldownUntil`), `observedAt`, `source`; and `unknownUsage`, the runs in the pool's current window whose usage the ledger could not count and has not counted since, by kind | the ledger is not mounted or fails; the Worker names no account; per window, no reading yet (for the operator, with why its agent account's last usage report could not be read, and when, while no later one was: `agentAccounts.unreadReport`), or a reading without the figure; `unknownUsage` when the event log is not mounted, or the entries passed their bound |
 
 A fact a source could not give is `{ "unknown": "<why>" }`, never a default
@@ -138,20 +139,21 @@ Every read and every list is bounded
 | Worker sources | 64 | `sources` is `unknown` |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.5`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.6`](../reference/schemas.md#mcp-tool-roster)).
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.5` before it is sent (a record its schema
+  content is the record, validated against `mcp-roster@1.6` before it is sent (a record its schema
   refuses is a defect, reported as an error); its text content is the rendering for a terminal.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
   record.
 - **The Workers page** (`/ui/?view=workers`, the **Workers** tab, [web UI API](../reference/web-ui.md#roster)):
   the counts (working, free, resting and until when the first is, unavailable), then the Workers by
   account: each account once under a header with its roles, what stops it, and its quota; then its
-  Workers' cards, each calm (what it is for, its status and why, what it does now), every unknown,
+  Workers' cards, each calm (what it is for, its status and why, what it does now, and *Kept out of
+  teams by you* when the operator keeps it out of teams), every unknown,
   derived, or technical fact folded under its details and a reason that blocks work never folded
   ([web UI API](../reference/web-ui.md#roster)); under the page's security headers and the operator
   token, built with DOM methods and text only. What it does now lists its steps, then its runs

@@ -140,6 +140,7 @@
           "limits": [],
           "siblings": { "value": ["worker:chatgpt-plus/frontier"] },
           "work": { "value": { "items": [], "more": 0 } },
+          "teams": { "value": { "excluded": true, "summary": "Kept out of teams by the operator: its account is named in teams.excludeWorkers, so it is never a team member; it takes every other step" } },
           "pools": { "value": [] }
         }
       ]

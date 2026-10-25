@@ -249,7 +249,10 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     await accepted.getByRole('link', { name: 'open its run' }).click()
     const panel = page.getByRole('region', { name: 'What it changed' })
     await expect.poll(() => panel.count()).toBe(1)
-    expect(await panel.innerText()).toContain('Accepted — waiting to merge into main: approve')
+    // Where it stands is said once, under What happened, in the run's own words (T141).
+    const happened = page.getByRole('region', { name: 'What happened' })
+    expect(await happened.innerText()).toContain('Accepted — waiting to merge into main: approve')
+    expect(await panel.innerText()).not.toContain('Accepted —')
     expect(await panel.innerText()).toContain('3 files changed +251 −1')
     landing({ state: 'merged', head: 'b'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) }, commit: 'c'.repeat(40) })
     await page.goto(`${origin}/ui/`)

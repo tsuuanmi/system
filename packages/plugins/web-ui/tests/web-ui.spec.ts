@@ -19,6 +19,21 @@ const RUN = {
   blocked: { kind: 'gate', nodeId: 'plan:1:gate', plan: 'sha256:11' },
 }
 
+/**
+ * A board task's attempt 2 (T141): started from attempt 1's work (ADR-0061), a team member's answer sent
+ * again once after a site's own error (ADR-0062), and its accepted result merged (ADR-0060).
+ */
+const CARRIED = {
+  runId: 'run_carried', template: 'relay', status: 'completed', specHash: 'sha256:00', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:10:00Z', answer: 'done',
+  nodes: [{ nodeId: 'develop:1', state: 'COMPLETED', minTier: 'standard', attempt: 1, worker: 'worker:a/standard', tier: 'standard' },
+    { nodeId: 'review:m1:propose', state: 'COMPLETED', minTier: 'standard', attempt: 2, worker: 'worker:a/standard', tier: 'standard', error: { kind: 'overloaded', disposition: 'BACKOFF', message: 'scripted overloaded' } }],
+  task: {
+    taskId: 'task-7', generation: 1, claim: 'own', phase: 'reported',
+    carry: { state: 'carried', from: { runId: 'run_first', attempt: 1, nodeId: 'develop:1', result: `sha256:${'1'.repeat(64)}`, workspace: '/w/run_first', subject: { ref: 'a'.repeat(40), version: 'b'.repeat(40) } }, decisions: [], commit: 'c'.repeat(40), at: '2026-10-12T00:00:01Z' },
+    landing: { state: 'merged', branch: 'system/run/run_carried', head: 'd'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) }, commit: 'e'.repeat(40), at: '2026-10-12T00:10:00Z' },
+  },
+}
+
 /** A stand-in engine: what the UI reads and what it asks. */
 class StubWorkflow extends Service {
   readonly calls: Array<[string, ...unknown[]]> = []
@@ -32,8 +47,18 @@ class StubWorkflow extends Service {
     return ([RUN, ...this.extra] as Array<{ status: string; updatedAt: string }>)
       .filter((r) => (filter.status === undefined || filter.status.includes(r.status)) && (filter.changedSince === undefined || r.updatedAt > filter.changedSince)).slice(0, limit)
   }
-  get(id: string) { return id === RUN.runId ? RUN : undefined }
-  explain(id: string) { return id === RUN.runId ? { runId: id, nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', decisions: [{ id: 'sha256:22', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason'] }] }] } : undefined }
+  get(id: string) { return id === RUN.runId ? RUN : id === CARRIED.runId ? CARRIED : undefined }
+  explain(id: string) {
+    if (id === CARRIED.runId) return { runId: id, nodes: [{ nodeId: 'develop:1', state: 'COMPLETED', decisions: [] }, { nodeId: 'review:m1:propose', state: 'COMPLETED', decisions: [{ id: 'sha256:44', type: 'recovery', outcome: 'resend', reasons: ['the site answered the sent prompt with its own error'] }] }] }
+    return id === RUN.runId ? { runId: id, nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', decisions: [{ id: 'sha256:22', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason'] }] }] } : undefined
+  }
+  landing() { return undefined }
+  /** When set, the Workers the operator keeps out of teams (D58), or an engine that cannot tell. */
+  excluded: { entries: string[]; workers: string[] } | Error | undefined
+  async teamExclusion() {
+    if (this.excluded instanceof Error) throw this.excluded
+    return this.excluded ?? { entries: [], workers: [] }
+  }
   approve(id: string, input: unknown) { this.calls.push(['approve', id, input]); return RUN }
   async stop(id: string, reason?: string) { this.calls.push(['stop', id, reason]); return RUN }
   continue(id: string, nodeId?: string) { this.calls.push(['continue', id, nodeId]); return RUN }
@@ -296,7 +321,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await fetch(`${origin}/ui/api/runs`, { headers: auth })).status).toBe(200)
   })
 
-  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.5, and what it could not read as unknown (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator only, with account labels, valid against mcp-roster@1.6, and what it could not read as unknown (REQ-HOST-8)', async () => {
     const { origin, token } = await boot({ roster: true })
     const auth = { authorization: `Bearer ${token}` }
     const response = await fetch(`${origin}/ui/api/roster`, { headers: auth })
@@ -304,7 +329,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
     const roster = await response.json() as Record<string, unknown>
-    new SchemaRegistry().assertDef('mcp-roster@1.5', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.6', 'roster-output', roster)
     expect(roster).toMatchObject({
       counts: { busy: 1, resting: 1 },
       workers: { value: [
@@ -315,7 +340,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
           liveness: { value: [{ execution: 'arun_00000000000000a2', state: 'unknown', since: AT, runId: 'run_old', summary: expect.stringContaining('ended without being known to be gone, holding session ses_9') }] } },
       ] },
     })
-    new SchemaRegistry().assertDef('mcp-roster@1.5', 'roster-output', roster)
+    new SchemaRegistry().assertDef('mcp-roster@1.6', 'roster-output', roster)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
     expect((await fetch(`${origin}/ui/api/roster`, { headers: { ...auth, origin: 'https://evil.example' } })).status).toBe(403)
     expect((await fetch(`${origin}/ui/api/roster`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{}' })).status).toBe(405)
@@ -344,14 +369,16 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('standard')
     const shown = await busy.innerText()
     for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
-      'Running review run run_xyz, step review:m1:propose, since an unknown time',
+      // The step in words (T141): a team member's answer, not its node id; the roster's own sentence is under details.
+      'Running team member 1\'s answer in a team run',
       // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013): never folded.
       'agent run arun_00000000000000a2 of run run_old ended without being known to be gone, holding session ses_9; free it once its agent is gone (system free arun_00000000000000a2 --agent-gone)']) expect(shown, said).toContain(said)
     // Nothing technical or unknown up front: it is all under the card's details.
     for (const folded of ['Worker id', 'worker:plus/standard', 'unknown (', 'family', 'role none', 'Load']) expect(shown, folded).not.toContain(folded)
     await busy.getByText('details', { exact: true }).click()
     const opened = await busy.innerText()
-    for (const said of ['Worker id', 'worker:plus/standard', 'plus · website account, ready', 'standard tier, subscription-chat, remote', '1 of 2 running']) expect(opened, said).toContain(said)
+    for (const said of ['Worker id', 'worker:plus/standard', 'plus · website account, ready', 'standard tier, subscription-chat, remote', '1 of 2 running',
+      'Running review run run_xyz, step review:m1:propose, since an unknown time']) expect(opened, said).toContain(said)
     await busy.getByRole('link', { name: 'Open run run_old' }).focus()
     // A reason that blocks work stays visible: resting until when.
     const resting = account.getByRole('article', { name: 'Chatgpt · Studio Plus · frontier' })
@@ -493,6 +520,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const waiting = page.getByRole('region', { name: 'Waiting for you' })
     await expect.poll(() => waiting.innerText()).toContain('3 requests wait for your verdict')
     expect(await waiting.innerText()).toContain('1 run needs a look')
+    // Each one by name under its count, linked to where it is decided (T141).
+    expect(await waiting.innerText()).toMatch(/Allow a merge step: merge apr-1 · expires /)
+    expect(await waiting.innerText()).toContain('an investigate run · its plan waits for your approval')
+    await waiting.getByRole('link', { name: 'Allow a deploy step: merge apr-3' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('request-apr-3')
     expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 free · 1 resting · 0 unavailable')
     // The blocked run is listed with why and where it is decided.
     const look = page.getByRole('region', { name: 'Runs that need a look' })
@@ -555,6 +587,54 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.getByText('proves reason').isVisible()).toBe(true)
     expect(await page.getByText('sha256:00').isVisible()).toBe(false)
     expect(await page.getByText('ends it now: nothing more of it runs').count()).toBe(1)
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('says on a run\'s page what happened to it in plain words: it started from the previous attempt\'s work, a team member\'s answer was sent again once, and its result was merged (ADR-0060, ADR-0061, ADR-0062, T141)', async () => {
+    const { origin, token } = await boot()
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?run=run_carried#token=${token}`)
+    const happened = page.getByRole('region', { name: 'What happened' })
+    await expect.poll(() => happened.count()).toBe(1)
+    const said = await happened.innerText()
+    expect(said).toContain('It started from the work attempt 1 left (its run): that change was already in its worktree, saved as cccccccccccc, so its writing step built on it instead of starting over.')
+    expect(said).toContain('Team member 1\'s answer: the site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker.')
+    expect(said).toContain('Accepted and merged into main as eeeeeeeeeeee · not pushed')
+    expect(await happened.getByRole('link', { name: 'its run' }).getAttribute('href')).toBe('?run=run_first')
+    // Each new word has its "?" (T126), and the step reads by member, its id beside.
+    for (const word of ['started from earlier work', 'sent again']) expect(await happened.getByRole('button', { name: `What is ${word}?` }).count(), word).toBe(1)
+    const steps = page.locator('ol.timeline > li')
+    expect(await steps.nth(1).innerText()).toMatch(/^team member 1's answer \(review:m1:propose\) done/)
+    // The earlier attempt's error on a step that went on is history: said, never as the step's failure.
+    expect(await steps.nth(1).innerText()).toContain('An earlier attempt failed: the site was busy, or answered with its own error — scripted overloaded')
+    expect(await steps.nth(1).locator('.state.failed').count()).toBe(0)
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('says on a Worker\'s card that the operator keeps it out of teams, and folds an engine that cannot tell under its details (D58, T141)', async () => {
+    const { origin, token, workflow } = await boot({ roster: true })
+    workflow.excluded = { entries: ['plus'], workers: ['worker:plus/frontier', 'worker:plus/standard'] }
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await pinnedPage(browser)
+    await page.goto(`${origin}/ui/?view=workers#token=${token}`)
+    const card = page.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
+    await expect.poll(() => card.innerText()).toContain('Kept out of teams by you: it is never a team member; it takes every other step.')
+    expect(await card.getByRole('button', { name: 'What is team?' }).count()).toBe(1)
+    await card.getByText('details', { exact: true }).click()
+    expect(await card.innerText()).toContain('Kept out of teams by the operator: its account is named in teams.excludeWorkers')
+    // Right now, by name: who is free, who is stalled, and which account has no quota left (T141).
+    const now = page.getByRole('region', { name: 'Right now' })
+    expect(await now.innerText()).toContain('Free: none.')
+    expect(await now.innerText()).toContain('Stalled: none.')
+    expect(await now.innerText()).toContain('No quota left: Chatgpt · Studio Plus until 11:00 (in 2 h)')
+    // An engine that cannot tell: no line on the card, the unknown under its details (INV-2).
+    workflow.excluded = new Error('the router is busy')
+    await page.reload()
+    await expect.poll(() => card.count()).toBe(1)
+    expect(await card.innerText()).not.toContain('Kept out of teams')
+    await card.getByText('details', { exact: true }).click()
+    expect(await card.innerText()).toContain('Teams\nunknown (it could not be read: the router is busy)')
   }, 60_000)
 
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
