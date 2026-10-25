@@ -65,7 +65,7 @@ What constrains a fix:
 
 - **When.** Once every step of a run that wrote has completed (in `algorithm-development`, after
   `validate:1`), before its acceptance is decided: a board task's run whose task writes a `git-head`
-  subject, and a plain run with a completed `develop` step, whose result is an agent's on a git
+  subject or (since T165) writes none, and a plain run with a completed `develop` step, whose result is an agent's on a git
   working tree. Not when a check the run judged itself failed (the acceptance rejects anyway).
 - **Which checks.** The engine asks `ctx.approvals.check` on the class the acceptance is judged
   under (the task's action class and project; `workspace-write` for a plain run) with the checks
@@ -114,6 +114,14 @@ What constrains a fix:
 - `validate:1` stays: it measures what the task's criteria name, and its report stays evidence.
 - Only the `agents` source answers `check`; a result on a tree another source holds keeps its
   checks pending.
+- A board task with no write subject (T165, seen 2026-10-25 on the lead's tasks, which name none so
+  several run on one repository at once: D64, board rule 6) is checked too, on the tree its run's
+  latest agent result is on, as a plain run is. When a check ran there to an exit code, the task's
+  result binds to that tree (its subject that `git-head` at that version, its artifacts the agent
+  result naming it and the final result), so the acceptance reporting the checks binds to it
+  (INV-5); a tree that moved since binds the result to its artifact as before, and the checks stay
+  pending. A result on no git working tree keeps them pending. A task with a write subject is
+  unchanged.
 
 ## Rejected alternatives
 

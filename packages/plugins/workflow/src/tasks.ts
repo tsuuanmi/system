@@ -1185,7 +1185,9 @@ export class TaskRuns {
    * A task's run completed: bind its result to the exact subject the task leaves, and decide on it
    * (the `acceptance` decision the board applies). The subject is the task's written subject at
    * the version the run left it (the latest result on that type and ref, still current when it
-   * names a working tree), else the result artifact itself. Undefined when the run is not a task's,
+   * names a working tree); with no write subject, the git working tree the run's required checks
+   * ran on when one ran there to an exit code and the tree is still that version (T165), else the
+   * result artifact itself. Undefined when the run is not a task's,
    * or the result binds; else why it does not, and the run fails (INV-5).
    */
   complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks): WorkflowError | undefined {
@@ -1211,12 +1213,22 @@ export class TaskRuns {
       subject = { type: body!.subject.type, ref: body!.subject.ref, ...(body!.subject.version !== undefined ? { version: body!.subject.version } : {}) }
       artifacts = [...new Set([source!, final])]
     }
+    const notes = [...(ran?.notes ?? [])]
+    if (!writes && ran && Object.keys(ran.checks).length) {
+      // No write subject (T165): the result binds to the tree its checks ran on, through the agent
+      // result that names it, while the working tree is still that version; else to the result
+      // artifact, and the checks, bound to another subject, stay pending (INV-5).
+      const tree = this.treeResult(done, ran.subject)
+      if (tree) {
+        subject = { type: 'git-head', ref: ran.subject.ref, version: ran.subject.version }
+        artifacts = [...new Set([tree, final])]
+      } else notes.push(`the working tree its checks ran on is no longer ${describe(ran.subject)}, so they do not count for the result; they stay pending`)
+    }
     // The required checks the run ran on this very subject (./checks.ts) count with its own; one bound elsewhere never does (INV-5).
     const checks: Partial<Record<Check, boolean>> = { ...this.checksOf(done, subject), ...ranOn(ran, subject) }
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
     const option = failed.length ? 'reject' : 'accept'
     const said = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
-    const notes = ran?.notes ?? []
     const acceptance = this.e.ctx.artifacts.recordDecision({
       decisionType: 'acceptance',
       question: `Does run ${run.run_id}'s result complete its attempt of board task ${row.task_id}?`,
@@ -1233,6 +1245,22 @@ export class TaskRuns {
     this.e.ctx.store.transaction((db) => {
       db.prepare('UPDATE workflow_tasks SET result = ?, acceptance = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(result), acceptance, now(), run.run_id)
     })
+    return undefined
+  }
+
+  /**
+   * The latest agent result of the run's completed steps on exactly `tree`, a git working tree
+   * still at that version: what a result with no write subject binds to when its checks ran there.
+   */
+  private treeResult(done: NodeRow[], tree: Subject & { version: string }): ArtifactRef | undefined {
+    for (const node of [...done].reverse()) {
+      const ref = (JSON.parse(node.record) as NodeRecord).outputReceipt?.result
+      const body = ref ? this.e.ctx.artifacts.get(ref)?.body as { schema?: string; subject?: Subject; workspace?: string } | undefined : undefined
+      if (!body?.schema?.startsWith('agent-result@') || !body.workspace || body.subject?.type !== 'git-head') continue
+      if (body.subject.ref !== tree.ref || body.subject.version !== tree.version) return undefined
+      const current = captureGitSubject(body.workspace)
+      return current && current.subject.ref === tree.ref && current.subject.version === tree.version ? ref : undefined
+    }
     return undefined
   }
 

@@ -101,11 +101,12 @@ function tree(): string {
 
 const DEVELOP = [{ nodeId: 'develop', objective: 'Develop it', prompt: '{{input}}', capabilities: ['develop'], tier: 'standard' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer' }]
 
-async function boot(checker: Checker | undefined) {
+/** `onTree: false`: the Workers' results are plain reports, on no git working tree. */
+async function boot(checker: Checker | undefined, { onTree = true }: { onTree?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-checks-db-'))
   const workspace = tree()
   const ctx = new Context()
-  const workers = new TreeWorkers(workspace, () => ctx.artifacts)
+  const workers = onTree ? new TreeWorkers(workspace, () => ctx.artifacts) : new ScriptedWorkers()
   const config = { ...CONFIG, approvalPollSeconds: 1, templates: { ...TEMPLATES, develop: DEVELOP } }
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
@@ -126,9 +127,9 @@ async function boot(checker: Checker | undefined) {
   })
   await activeProject(ctx)
   const { subject } = captureGitSubject(workspace)!
-  /** A board task writing the tree, of `actionClass`, its run started. */
-  const task = async (actionClass: 'workspace-write' | 'read' = 'workspace-write'): Promise<{ taskId: string; runId: string }> => {
-    const ready = await readyTask(ctx, 'tree', { writes: { type: 'git-head', ref: subject.ref }, actionClass })
+  /** A board task writing the tree (or, `writes: false`, naming no write subject), of `actionClass`, its run started. */
+  const task = async (actionClass: 'workspace-write' | 'read' = 'workspace-write', { writes = true }: { writes?: boolean } = {}): Promise<{ taskId: string; runId: string }> => {
+    const ready = await readyTask(ctx, 'tree', { ...(writes ? { writes: { type: 'git-head' as const, ref: subject.ref } } : {}), actionClass })
     const run = await ctx.workflow.start({ template: 'solo', input: 'change it', classification: 'public', task: { taskId: ready.taskId } })
     return { taskId: ready.taskId, runId: run.runId }
   }
@@ -209,6 +210,47 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(await settled(ctx, taskId)).toMatchObject({ state: 'done' })
     expect(checker.steps).toEqual([])
     expect(acceptanceOf(ctx, runId).outcome.detail).not.toHaveProperty('checkRun')
+  })
+
+  describe('a board task with no write subject (T165: the lead\'s parallel tasks on one repository)', () => {
+    it('runs the checks on the tree its agent result is on and binds the result to that tree: passed, it is accepted without the operator (INV-5)', async () => {
+      const checker = new Checker()
+      const { ctx, workspace, subject, task } = await boot(checker)
+      const { taskId, runId } = await task('workspace-write', { writes: false })
+      const done = await settled(ctx, taskId)
+      expect(done).toMatchObject({ state: 'done', result: { subject: { type: 'git-head', ref: subject.ref, version: subject.version } } })
+      expect(checker.steps).toEqual([{ runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }])
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome).toMatchObject({ option: 'accept', detail: { subject: { type: 'git-head', ref: subject.ref, version: subject.version }, checks: { tests: true, lint: true }, checkRun: { outcome: 'checked' } } })
+      // The result's artifacts name that exact tree: the agent result on it is among them and the decision's inputs.
+      const onTree = done.result!.artifacts.filter((a) => (ctx.artifacts.get(a)?.body as { subject?: { version?: string } } | undefined)?.subject?.version === subject.version)
+      expect(onTree.length).toBeGreaterThan(0)
+      for (const a of done.result!.artifacts) expect(acceptance.inputs).toContain(a)
+    })
+
+    it('sends one whose lint check failed on its tree back as a rejected attempt', async () => {
+      const checker = new Checker()
+      checker.outcomes = { tests: 'passed', lint: 'failed' }
+      const { ctx, task } = await boot(checker)
+      const { taskId, runId } = await task('workspace-write', { writes: false })
+      const back = await settled(ctx, taskId)
+      expect(back.state).toBe('ready')
+      expect(back.attempts.count).toBe(1)
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome).toMatchObject({ option: 'reject', detail: { subject: { type: 'git-head' }, checks: { tests: true, lint: false } } })
+      expect(acceptance.candidates.find((c) => c.selected)!.reasons[0]).toMatch(/the run's own lint check failed on git-head/)
+    })
+
+    it('keeps the checks pending, for the operator, when its result is not on a git working tree (INV-2)', async () => {
+      const checker = new Checker()
+      const { ctx, task } = await boot(checker, { onTree: false })
+      const { taskId, runId } = await task('workspace-write', { writes: false })
+      expect(await settled(ctx, taskId)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] } })
+      expect(checker.steps).toEqual([])
+      const acceptance = acceptanceOf(ctx, runId)
+      expect(acceptance.outcome.detail).toMatchObject({ subject: { type: 'artifact' } })
+      expect(acceptance.outcome.detail).not.toHaveProperty('checkRun')
+    })
   })
 
   it('records a plain run\'s checks as passed or failed on its acceptance, never blocking it', async () => {
