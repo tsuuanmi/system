@@ -11,8 +11,8 @@
 import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 import { type Capacity, CAPACITY_BOUNDS, type CapacityStep, type CapacityTaskRead, formatCapacity, projectCapacity } from './capacity.ts'
 
-/** The schema of the roster (`mcp-roster@1.7`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.7'
+/** The schema of the roster (`mcp-roster@1.8`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.8'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -109,8 +109,11 @@ export interface RosterRun {
   template: string
   status: string
   nodes: Array<{ nodeId: string; state: string; attempt: number; worker?: string | undefined }>
-  task?: { taskId: string } | undefined
+  /** `startedBy` (workflow contract 1.10): who started the task's run. */
+  task?: { taskId: string; startedBy?: RosterStartedBy | undefined } | undefined
 }
+/** Who started a board task's run: dispatch by itself, the lead, or the operator (PROP-0014 D2). */
+export type RosterStartedBy = 'dispatch' | 'lead' | 'operator'
 /** A board task, as much of it as the roster shows. */
 export interface RosterTask { taskId: string; projectId: string; title: string; state: string }
 
@@ -227,6 +230,8 @@ export interface RosterWork {
   nodeId: string
   attempt: number
   task?: { taskId: string; board: Known<{ projectId: string; title: string; state: string }> }
+  /** `@1.8`: who started the task's run (`dispatch`: System by itself); absent when the engine does not tell. */
+  startedBy?: RosterStartedBy
   /** When its current attempt started. */
   since: Known<string>
   /** The step in one sentence: its task, the run, the step, and for how long. */
@@ -432,7 +437,7 @@ function summaryOf(work: Omit<RosterWork, 'summary'>, now: Date): string {
   if (!work.task) return clip(`Running ${step}, ${how}`)
   const board = work.task.board
   const task = isKnown(board) ? `"${board.value.title}" (task ${work.task.taskId}, project ${board.value.projectId})` : `task ${work.task.taskId}`
-  return clip(`Working on ${task}: ${step}, ${how}`, 800)
+  return clip(`Working on ${task}: ${step}, ${how}${work.startedBy === 'dispatch' ? ', started by itself' : ''}`, 800)
 }
 
 function workOf(input: RosterInput, worker: string, now: Date): Known<{ items: RosterWork[]; more: number; unread?: string }> {
@@ -445,7 +450,11 @@ function workOf(input: RosterInput, worker: string, now: Date): Known<{ items: R
       const task = run.task ? input.tasks.get(run.task.taskId) ?? unknown<RosterTask>('the board task was not read') : undefined
       const board = task && (isKnown(task) ? known({ projectId: task.value.projectId, title: task.value.title, state: task.value.state }) : unknown<{ projectId: string; title: string; state: string }>(task.unknown))
       const since = input.starts?.get(stepKey(run.runId, node.nodeId)) ?? unknown<string>('its start was not read')
-      const work = { runId: run.runId, template: run.template, nodeId: node.nodeId, attempt: node.attempt, ...(run.task && board ? { task: { taskId: run.task.taskId, board } } : {}), since }
+      const startedBy = run.task?.startedBy
+      const work = {
+        runId: run.runId, template: run.template, nodeId: node.nodeId, attempt: node.attempt, ...(run.task && board ? { task: { taskId: run.task.taskId, board } } : {}),
+        ...(startedBy === 'dispatch' || startedBy === 'lead' || startedBy === 'operator' ? { startedBy } : {}), since,
+      }
       items.push({ ...work, summary: summaryOf(work, now) })
     }
   }

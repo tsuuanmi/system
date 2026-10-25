@@ -90,7 +90,8 @@ request that never expires (INV-9).
   System starting a ready board task's attempt with no person or lead asking for it
   ([below](#a-start-system-proposes)). It is reversible (the run can be stopped, nothing lands
   without `merge`), so it is not in `ALWAYS_ASK`. A policy that names no rule for it takes its
-  `default`: the bundle's studio policy names none and asks.
+  `default`: the bundle's studio policy names none and asks. Under `auto` or `notify` the dispatch
+  pass asks the queue nothing: the queue's seam is unchanged, it is simply not asked (D2).
 - A failed required check sends the action back to the lead as work, not to the operator. A
   check nobody reported is not a failure: the board holds such a review for the operator's own
   acceptance ([board](board.md#required-checks-bind-at-acceptance)).
@@ -446,7 +447,8 @@ free Worker it chose.
 |---|---|---|
 | `forbid` | not dispatched in that project; the lead and the operator still start its tasks by hand | the `autonomy` decision; the pass's reason for the task |
 | `ask` | one request; started once it is approved, exactly as asked | the `autonomy` decision, the `dispatch.select` and `dispatch.choice` decisions, the request, the operator's `approval` decision |
-| `auto`, `notify` | not dispatched in D1: the queue takes a request only on `ask`, and D1 starts nothing without the operator (D2 honours them) | the `autonomy` decision; the pass's reason for the task |
+| `auto` | started with no request (PROP-0014 D2, D70): the queue is not asked, and nothing enters it; the start is shown on Home under *Started by itself* | the `autonomy` decision (the start's go), the `dispatch.select` and `dispatch.choice` decisions |
+| `notify` | the same, and a notice of the start (`workflow.dispatch.notice`, told by the notifier as `dispatch.started`) | the same, and the notice |
 
 - **The request** binds to exactly that start (INV-5): subject `{ type: content, ref:
   dispatch:<taskId>:attempt:<n>, version: quota-score@1:<sha256 of the Worker and the score's

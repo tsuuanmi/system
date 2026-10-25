@@ -155,6 +155,8 @@ export interface TemplateStep {
 /** A start for a board task: admission is asynchronous, since the board takes the task first. */
 export interface TaskStartInput extends StartInput {
   task: TaskClaim
+  /** Who asks for the start (contract 1.10): `operator` from the operator's own surface (Start on `/ui`), else `lead` (the default). */
+  startedBy?: 'lead' | 'operator' | undefined
 }
 
 /** The board task a run serves, as its view shows it. */
@@ -180,7 +182,15 @@ export interface TaskView {
   landing?: TaskLanding
   /** Whether the run started from the work its task's previous attempt left (docs/design/workflow-engine.md#starting-from-the-previous-attempts-work). */
   carry?: TaskCarry
+  /**
+   * Who started the run (contract 1.10, PROP-0014 D2): `dispatch` when the dispatch pass did (its row
+   * names the ask), `operator` for Start on `/ui`, `lead` for any other start (MCP `run` or `task`, the CLI).
+   */
+  startedBy: StartedBy
 }
+
+/** Who started a board task's run, read from the engine's own rows. */
+export type StartedBy = 'dispatch' | 'lead' | 'operator'
 
 /**
  * Whether a task's run starts from the work its previous attempt left (ADR-0061), decided when the
@@ -482,6 +492,10 @@ export interface DispatchConfig {
   maxOpenAsks?: number
   /** Minutes an approved start waits for its Worker to be free, then is used for nothing (1 to 240, default 30). */
   approvedHoldMinutes?: number
+  /** Starts dispatch makes in any rolling hour, counted from its rows (0 to 120, default 6; 0 starts nothing; PROP-0014 D2). */
+  maxPerHour?: number
+  /** The same, per project (0 to maxPerHour, default 3 or maxPerHour when lower). */
+  maxPerHourPerProject?: number
 }
 
 /**
@@ -491,7 +505,7 @@ export interface DispatchConfig {
  */
 export interface TaskDispatch {
   askId: string
-  /** The `dispatch.select`, `dispatch.choice`, and `autonomy` decisions, then the `approval` or the board approval's `gate` decision. */
+  /** The `dispatch.select`, `dispatch.choice`, and `autonomy` decisions, then the `approval` or the board approval's `gate` decision (none under `auto` or `notify`). */
   decisions: ArtifactRef[]
   prefer: { node: string; worker: string; decision: ArtifactRef }
 }
@@ -581,6 +595,8 @@ export interface TaskRow {
   carry?: string | null
   /** JSON {@link TaskDispatch}: set when dispatch started the run (ADR-0064). */
   dispatch?: string | null
+  /** Who started the run ({@link StartedBy}); null only on a row the migration that added it could not read. */
+  started_by?: StartedBy | null
   created_at: string
   updated_at: string
 }

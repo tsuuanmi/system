@@ -602,7 +602,7 @@ The proposal's new REQ-WF-14 is REQ-WF-16: REQ-WF-14 was taken since by ADR-0061
 ## Implementation
 
 D1, as [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
-decides it (T153). Where it differs from the text above, the ADR and the canonical documents
+decides it (T153), then D2 (T184, below). Where it differs from the text above, the ADR and the canonical documents
 ([workflow engine](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
 [routing](../design/routing.md#candidates-without-a-reservation),
 [resources](../design/resources.md#quota-settings), [approvals](../design/approvals.md#the-autonomy-policy))
@@ -624,6 +624,21 @@ hold:
 - `dispatch_status`, `dispatch_pause`, and `dispatch_resume` carry no output schema, as the other
   workflow tools; the pause is a `gate` decision on a durable row of the engine, with no record
   schema of its own.
+- **D2** (T184; the operator's go-ahead D70, 2026-10-25: using idle quota must be automatic), as
+  ADR-0064's consequences record it. Built: `auto` and `notify` honoured per project (the pass
+  starts the chosen attempt with no request; the queue is not asked and its seam is unchanged; under
+  `notify` a `workflow.dispatch.notice` event, told by the notifier as `dispatch.started`,
+  `notification@1.2`); the hourly bounds (`maxPerHour`, `maxPerHourPerProject`, counted from each
+  row's `started_at`); the per-project pause (`system dispatch pause --project <id>`, MCP
+  `dispatch_pause` with `projectId`); `startedBy` on a task's run (`dispatch`, `lead`, `operator`;
+  workflow contract 1.10) and on the roster's steps (`mcp-roster@1.8`), a *started by itself* chip
+  on the Workers tab; Home's *Started by itself* (the last 24 h, at most 32, one line each with its
+  run's state as a chip); the runbook [set dispatch to auto for a project](../operations/runbooks.md#set-dispatch-to-auto-for-a-project).
+  Where it differs from the row above: an `auto` or `notify` start records no `gate` decision of its
+  own (the policy's `autonomy` decision is its go); `startedBy` is `operator` only for a start that
+  says so (Start on `/ui`), every other start by hand is `lead`; under `notify` Home shows the start
+  as under `auto`, the notice is the difference. Not built in D2: `board-task@1.2` `priority` (the
+  pass still orders by age) and the withdrawal of open asks whose Worker's pool closed.
 - Follow-up: dispatch's quota score (`quotaScoreOf` in `libs`) and the roster's capacity now
   (`packages/gateway-core/src/capacity.ts`, T152) each compute a window's headroom and the order free
   Workers are taken in; the two must become one function.

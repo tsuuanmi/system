@@ -112,14 +112,22 @@ window was read, the project), *Expires in 40 min · No response: denied*, and *
 it on* the Worker) and **Deny** (*does not start it*), which are the approval queue's verdicts on the request's exact subject (`POST
 approvals/decide`, INV-5); **Review request** goes to the request's full card in the queue, where it
 is described as a start. It also says *Automatic starts off* (`dispatch.enabled: false`, folded) or
-*Automatic starts paused · why · since when* (*How to resume*, `system dispatch resume`, folded),
-names the approved starts waiting for their Worker, and folds *Why ready tasks did not start*, each
-ready task the last pass looked at with its reason; *No starts awaiting approval.* when none. It
-reads `GET dispatch` and the queue.
+*Automatic starts paused · why · since when* (*How to resume*, `system dispatch resume`, folded), or
+for each project paused on its own *Automatic starts paused in project … · why · since when · resume:
+system dispatch resume --project …*, names the approved starts waiting for their Worker, and folds
+*Why ready tasks did not start*, each ready task the last pass looked at with its reason; *No starts
+awaiting approval.* when none. It reads `GET dispatch` and the queue.
+
+*Started by itself* (PROP-0014 D2), below it, lists what dispatch started in the last 24 h, newest
+first, at most 32, one line each: its run's state as a chip (*running*, *completed*, *failed*,
+*cancelled*), the task's title (to its run), the Worker's roster `name`, how it was let start (*by
+policy (auto)*, *by policy (notify)*, *on your approval*, *approved on the board*), and when. It is
+absent when there is none. On the Workers tab, a step whose run dispatch started carries a *started
+by itself* chip (the roster's `work[].startedBy`).
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET dispatch` | — | `ctx.workflow.dispatchStatus()` (contract 1.9): `{enabled, settings, paused?, lastPass?, bounds, asks}`: the settings in force; the operator's pause (`since`, `reason`, `decision`); the last pass (`at`, `state` `ran`, `off`, `paused`, or `waiting` with its `reason`, what it `took`, each ready task it looked at with its `reason`, and how many `more`); each bound with how much of it is used (`running`, `openAsks`, per `projects`, `accounts`, and `repositories`, and the `engine`'s active runs against what dispatch may fill); and each live ask (`askId`, `taskId`, `title`, `projectId`, `attempt`, `state` `asking`, `asked`, `approved`, or `starting`, `worker`, `account`, `repository`, `requestId`, `why`, `windows` of `{pool, window, name, seconds, used, headroom, reserve, resets, observedAt}`, `approvedAt`, and its `decisions`) |
+| `GET dispatch` | — | `ctx.workflow.dispatchStatus()` (contract 1.10): `{enabled, settings, paused?, pausedProjects, lastPass?, bounds, asks, started}`: the settings in force; the operator's pause (`since`, `reason`, `decision`), and each project's own (`projectId` too); what dispatch started in the last 24 h (`started`: `askId`, `taskId`, `title`, `projectId`, `attempt`, `worker`, `runId`, `runStatus`, `mode` `auto`, `notify`, `ask`, or `board`, `why`, `startedAt`, and `notice` under `notify`); the starts of the rolling hour (`bounds.hour`, `bounds.hourProjects`); the last pass (`at`, `state` `ran`, `off`, `paused`, or `waiting` with its `reason`, what it `took`, each ready task it looked at with its `reason`, and how many `more`); each bound with how much of it is used (`running`, `openAsks`, per `projects`, `accounts`, and `repositories`, and the `engine`'s active runs against what dispatch may fill); and each live ask (`askId`, `taskId`, `title`, `projectId`, `attempt`, `state` `asking`, `asked`, `approved`, or `starting`, `worker`, `account`, `repository`, `requestId`, `why`, `windows` of `{pool, window, name, seconds, used, headroom, reserve, resets, observedAt}`, `approvedAt`, and its `decisions`) |
 
 ### What waits for you
 

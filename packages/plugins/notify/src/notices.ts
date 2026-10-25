@@ -8,13 +8,13 @@
  */
 import type { SystemEvent } from '@tsuuanmi/system-event-log'
 
-/** The notice kinds, in the order the design names them (`notification@1.x` `kind`; `review.expiring` since 1.1). */
-export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined', 'review.expiring'] as const
+/** The notice kinds, in the order the design names them (`notification@1.x` `kind`; `review.expiring` since 1.1, `dispatch.started` since 1.2). */
+export const KINDS = ['approval.opened', 'approval.expiring', 'run.user-action', 'run.escalated', 'run.waiting', 'pool.limited', 'worker.quarantined', 'review.expiring', 'dispatch.started'] as const
 export type Kind = (typeof KINDS)[number]
 
-/** `notification@1.0`, `@1.1` for a `review.expiring` notice; the schema in `schemas/` is canonical. */
+/** `notification@1.0`, `@1.1` for a `review.expiring` notice, `@1.2` for a `dispatch.started` one; the schema in `schemas/` is canonical. */
 export interface Notice {
-  schema: 'notification@1.0' | 'notification@1.1'
+  schema: 'notification@1.0' | 'notification@1.1' | 'notification@1.2'
   id: string
   kind: Kind
   subject: string
@@ -163,6 +163,21 @@ export function readEvent(event: SystemEvent, options: ReadOptions): Reading {
       })
       return notice ? { notice } : {}
     }
+    case 'workflow.dispatch.notice': {
+      // PROP-0014 D2: the project's policy gives dispatch notify, so System started this run by itself and tells it.
+      const runId = id(data.runId) ?? id(event.runId)
+      const taskId = id(data.taskId)
+      if (!runId || !taskId) return {}
+      const projectId = id(data.projectId)
+      const worker = id(data.worker)
+      const attempt = typeof data.attempt === 'number' && Number.isInteger(data.attempt) && data.attempt > 0 ? data.attempt : undefined
+      const notice = make(event, options, 'dispatch.started', runId, {
+        title: `Started by itself: board task ${clip(taskId, 60)}`,
+        text: `System started ${attempt ? `attempt ${attempt} of ` : ''}board task ${taskId}${projectId ? ` of project ${projectId}` : ''}${worker ? ` on ${worker}` : ''} (run ${runId}), as the project's policy gives dispatch notify. Nothing lands without your merge approval.`,
+        act: [`system explain ${runId}`, `system stop ${runId}`, `system dispatch pause${projectId ? ` --project ${projectId}` : ''}`],
+      })
+      return notice ? { notice } : {}
+    }
     case 'resources.pool.limited': {
       const pool = id(data.pool)
       const until = time(data.until)
@@ -224,7 +239,7 @@ function make(event: Pick<SystemEvent, 'seq' | 'type' | 'at'>, options: ReadOpti
   const at = time(event.at)
   if (!at) return undefined
   return {
-    schema: kind === 'review.expiring' ? 'notification@1.1' : 'notification@1.0', id: clip(`${kind}:${subject}:${event.seq}`, 300), kind, subject, at, event: { seq: event.seq, type: event.type },
+    schema: kind === 'dispatch.started' ? 'notification@1.2' : kind === 'review.expiring' ? 'notification@1.1' : 'notification@1.0', id: clip(`${kind}:${subject}:${event.seq}`, 300), kind, subject, at, event: { seq: event.seq, type: event.type },
     title: clip(body.title, 120), text: clip(body.text, 1000), act: body.act.slice(0, 4).map((line) => clip(line, 300)),
     ...(options.link ? { link: options.link } : {}),
   }

@@ -409,7 +409,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const started = await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' })
     expect(started.status, JSON.stringify(started.value)).toBe(200)
     const run = started.value.run as { runId: string; template: string; task: { taskId: string } }
-    expect(run).toMatchObject({ template: 'solo', task: { taskId: task.taskId } })
+    // Started on the operator's own surface: the run says so (workflow 1.10, PROP-0014 D2).
+    expect(run).toMatchObject({ template: 'solo', task: { taskId: task.taskId, startedBy: 'operator' } })
     expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'running', run: { runId: run.runId } })
     // The run's input is the task's own words; a second press finds the task no longer ready and starts nothing.
     expect(ctx.workflow.get(run.runId)!.nodes).toHaveLength(1)

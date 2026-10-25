@@ -42,7 +42,7 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
 export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
 
 /** The board task a run is admitted for, as the board granted it. */
-export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined; carry?: TaskCarry | undefined; dispatch?: TaskDispatch | undefined }
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined; carry?: TaskCarry | undefined; dispatch?: TaskDispatch | undefined; startedBy?: 'lead' | 'operator' | undefined }
 
 export class Engine {
   readonly schemas = new SchemaRegistry()
@@ -211,9 +211,10 @@ export class Engine {
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
       if (bound) {
-        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, carry, dispatch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, carry, dispatch, started_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null,
-            bound.budget ? JSON.stringify(bound.budget) : null, bound.carry ? JSON.stringify(bound.carry) : null, bound.dispatch ? JSON.stringify(bound.dispatch) : null, now(), now())
+            bound.budget ? JSON.stringify(bound.budget) : null, bound.carry ? JSON.stringify(bound.carry) : null, bound.dispatch ? JSON.stringify(bound.dispatch) : null,
+            bound.dispatch ? 'dispatch' : bound.startedBy ?? 'lead', now(), now())
         return view(this, run)
       }
       this.open(run.run_id)

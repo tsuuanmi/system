@@ -323,7 +323,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring |
+| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring" \| "dispatch.started")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring","dispatch.started"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring, dispatch.started |
 | `expiryLeadMinutes` | number (1…1440) | `60` | How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes |
 | `dedupMinutes` | number (1…1440) | `10` | At most one notice per subject and kind in this many minutes |
 | `maxQueue` | number (1…1000) | `50` | Notices waiting to be sent, at most; one more is dropped, logged, and shown in health |
@@ -589,6 +589,8 @@ No options.
 | `dispatch.leaveRunsFree` | number (0…10000) |  | Active runs dispatch leaves for the lead's and your own starts (at most maxActiveRuns less 1; default 4, or that when less) |
 | `dispatch.maxOpenAsks` | number (1…32) | `4` | Dispatch requests open at once, waiting for your go |
 | `dispatch.approvedHoldMinutes` | number (1…240) | `30` | Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again |
+| `dispatch.maxPerHour` | number (0…120) | `6` | Starts dispatch makes in any rolling hour, counted from its rows (PROP-0014 D2); 0 starts nothing |
+| `dispatch.maxPerHourPerProject` | number (0…120) |  | The same, per project (at most maxPerHour; default 3, or maxPerHour when less) |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |

@@ -1,6 +1,6 @@
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { describe, expect, it } from 'vitest'
-import { formatRoster, type Known, readRoster, type Roster, ROSTER_BOUNDS, type RosterDescriptor, type RosterEntry, type RosterPool, type RosterRun, type RosterServices } from '../src/index.ts'
+import { formatRoster, type Known, readRoster, type Roster, ROSTER_BOUNDS, ROSTER_SCHEMA, type RosterDescriptor, type RosterEntry, type RosterPool, type RosterRun, type RosterServices } from '../src/index.ts'
 
 const NOW = new Date('2026-10-24T09:30:00.000Z')
 const AT = '2026-10-24T09:29:58.000Z'
@@ -87,6 +87,22 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, 'worker:plus/standard')).toMatchObject({ role: { value: null }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } }, pools: { value: [] } })
     expect(roster.counts).toEqual({ ready: 0, busy: 2, resting: 1, unavailable: 0, quarantined: 1 })
     expect(value(roster.sources).map((s) => s.source)).toEqual(['agents', 'website'])
+  })
+
+  it('says who started each step\'s run, and a run dispatch started by itself says so in its sentence (mcp-roster@1.8, PROP-0014 D2)', async () => {
+    const runOf = (startedBy?: 'dispatch' | 'lead' | 'operator'): RosterRun[] => [{ runId: 'run_2', template: 'agent-review', status: 'running', task: { taskId: 'task-42', ...(startedBy ? { startedBy } : {}) }, nodes: [{ nodeId: 'review:1', state: 'RUNNING', attempt: 1, worker: `agent:${CLAUDE}/review` }] }]
+    const workOf = async (startedBy?: 'dispatch' | 'lead' | 'operator') => {
+      const roster = await readRoster(services({ workflow: { usage: () => runOf(startedBy) } }), { scope: 'operator', now: NOW })
+      schemas.assertDef('mcp-roster@1.8', 'roster-output', roster)
+      return value(entry(roster, `agent:${CLAUDE}/review`).work).items[0]!
+    }
+    const dispatched = await workOf('dispatch')
+    expect(dispatched).toMatchObject({ startedBy: 'dispatch', summary: 'Working on "Review the parser change" (task task-42, project studio): agent-review run run_2, step review:1, for 4 min, started by itself' })
+    expect(await workOf('lead')).toMatchObject({ startedBy: 'lead', summary: 'Working on "Review the parser change" (task task-42, project studio): agent-review run run_2, step review:1, for 4 min' })
+    expect((await workOf('operator')).startedBy).toBe('operator')
+    // An engine below workflow 1.10 tells none: absent, never a guess.
+    expect(await workOf()).not.toHaveProperty('startedBy')
+    expect(ROSTER_SCHEMA).toBe('mcp-roster@1.8')
   })
 
   it('says, for the operator, why a window has no reading yet when its account\'s last usage report could not be read (T111)', async () => {

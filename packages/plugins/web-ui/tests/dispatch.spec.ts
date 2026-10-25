@@ -38,7 +38,10 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
       bounds: { openAsks: { used: 1, max: 4 }, running: { used: 1, max: 8 } },
       asks: [{ taskId: task.taskId, title: 'Write the release notes', state: 'asked', worker: 'w:max', attempt: 1, windows: [{ name: '5 h', used: 0, headroom: 80, reserve: 20 }] }],
       lastPass: { state: 'ran', took: [{ taskId: task.taskId, worker: 'w:max', how: 'asked' }] },
+      // PROP-0014 D2: nothing started by itself yet, no project paused, the hour's starts.
+      started: [], pausedProjects: [],
     })
+    expect((read.value['bounds'] as { hour?: unknown }).hour).toEqual({ used: 0, max: 6 })
     expect((await call('dispatch', {})).status).toBe(405)
   })
 
@@ -77,6 +80,11 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     await ctx.workflow.sweepDispatch()
     await vi.waitFor(() => expect(workers.started.map((s) => s.worker)).toEqual(['w:max']), { timeout: 15_000 })
     expect((await ctx.board.task(task.taskId))!.state).toBe('running')
+    // Started by itself (PROP-0014 D2): one line, its run's state as a chip, the task, the Worker, and how it was let start.
+    await page.reload()
+    const started = page.getByRole('region', { name: 'Started by itself' })
+    await expect.poll(() => started.innerText()).toContain('Write the release notes')
+    expect(await started.innerText()).toMatch(/running\s+Write the release notes · .+ · on your approval · /)
     ctx.workflow.pauseDispatch('a quiet afternoon')
     await page.reload()
     await expect.poll(() => go.innerText()).toMatch(/Automatic starts paused · a quiet afternoon · since /)

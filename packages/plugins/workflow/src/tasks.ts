@@ -129,6 +129,7 @@ export class TaskRuns {
       ...(row.question ? { question: JSON.parse(row.question) as TaskQuestion } : {}),
       ...(row.landing ? { landing: this.landings.view(row)! } : {}),
       ...(row.carry ? { carry: this.carries.view(row)! } : {}),
+      startedBy: row.started_by ?? (row.dispatch ? 'dispatch' : 'lead'),
     }
   }
 
@@ -183,7 +184,8 @@ export class TaskRuns {
    */
   async start(input: TaskStartInput, options: { dispatch?: TaskDispatch } = {}): Promise<RunView> {
     const e = this.e
-    const { task: claim, ...plain } = input
+    const { task: claim, startedBy, ...plain } = input
+    if (startedBy !== undefined && startedBy !== 'lead' && startedBy !== 'operator') throw new WorkflowFailure('invalid_input', 'startedBy is lead or operator')
     const prepared = e.prepare(plain)
     const board = e.board
     if (!board) throw new WorkflowFailure('config_error', `no board is loaded: a run for board task ${claim.taskId} needs ctx.board (its bundle row on, over the approval queue); nothing was started`)
@@ -223,6 +225,7 @@ export class TaskRuns {
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
       ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}), ...(options.dispatch ? { dispatch: options.dispatch } : {}),
+      ...(startedBy ? { startedBy } : {}),
     }
     // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
     // and the claim it took lapses back to ready on its own.

@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Roadmap:
 > [B5](../proposals/roadmap.md) (PROP-0010). Requirement: REQ-HOST-9. Record:
-> [`notification@1.1`](../reference/schemas.md#notification).
+> [`notification@1.2`](../reference/schemas.md#notification).
 >
 > Implemented in [`notify`](../../packages/plugins/notify/README.md), its bundle row off; differs
 > from target: no notice when a request expires (it is denied by then, and the waiting work's own
@@ -43,6 +43,7 @@ it. Its row is off by default; the operator turns it on
 | `run.waiting` | `workflow.node.waiting` (ADR-0052 recovery `wait`: assigned accounts at their limit) | `workflow` | the run id | `system explain <run>`, `system account list`, `system stop <run>` |
 | `pool.limited` | `resources.pool.limited` (a reading closed a pool that was open) | `resources` | the pool id | `system health`, MCP `resources_pools` |
 | `worker.quarantined` | `agent-workers.account.quarantined` (a slot newly quarantined, PROP-0012 E) | `agent-workers` | the account id, or `<provider>:slot-<n>` | `system account list`, `system account verify …` (`--accept` for `changed`), `system account login …` |
+| `dispatch.started` (`notification@1.2`) | `workflow.dispatch.notice`: the dispatch pass started a ready board task's run by itself where the project's policy gives `dispatch` `notify` ([dispatch](workflow-engine.md#dispatch-starting-ready-work-by-itself), PROP-0014 D2); `auto` makes no notice | `workflow`, with the start | the run id | `system explain <run>`, `system stop <run>`, `system dispatch pause --project <id>` |
 | `review.expiring` (`notification@1.1`) | the reminder of a `board.review.held` (a board task's review held for the operator), `expiryLeadMinutes` (60) before its `expiresAt`, or at once when it expires sooner; a `board.review.ended` read first cancels it | the notifier, from `board`'s events ([a review held for the operator](board.md#a-review-held-for-the-operator)) | the task id | `system ui` (Reviews: Accept or Reject), MCP `board_task` |
 
 - **The events** are part of this change, each additive: `approvals.requested` names the request,

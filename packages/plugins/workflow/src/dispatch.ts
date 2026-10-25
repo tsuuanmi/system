@@ -1,5 +1,5 @@
 /**
- * Dispatch (PROP-0014 D1, ADR-0064; docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself):
+ * Dispatch (PROP-0014 D1 and D2, ADR-0064; docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself):
  * the engine starts ready board tasks on free Workers chosen by quota, under the action class
  * `dispatch`, within recorded bounds.
  *
@@ -12,14 +12,16 @@
  *   or stale reading, or a metered pool, is never free (INV-2, D65).
  * - **The policy** for `dispatch` decides: `ask` opens one request bound to the task, its attempt, and
  *   the Worker (INV-5), recorded on a row before it is asked and adopted after a crash; an attempt the
- *   operator approved through the board's gate starts without a second button (D62); `forbid`, and in
- *   D1 `auto` and `notify`, start nothing.
+ *   operator approved through the board's gate starts without a second button (D62); `auto` starts it
+ *   with no request at all (D2), its `autonomy` decision the policy's word; `notify` does the same and
+ *   records a notice (`workflow.dispatch.notice`, which the notifier tells); `forbid` starts nothing.
  * - **An approval** starts exactly that attempt on exactly that Worker, through the engine's own start
  *   (claim as the run, run first, then work), while the task is still ready at that attempt and the
  *   Worker still free, within `approvedHoldMinutes`; otherwise it is used for nothing, recorded.
  * - **Bounds** (INV-9) count the rows of runs not finished and of asks open or approved, per project,
- *   account, repository, and in all, so approvals never exceed them; a subject a task writes is held by
- *   one task at a time (INV-15).
+ *   account, repository, and in all, so approvals never exceed them; the starts of the last rolling hour,
+ *   in all and per project (D2); a subject a task writes is held by one task at a time (INV-15).
+ * - **Pauses** are the operator's, entirely or per project (D2), each a `gate` decision on a durable row.
  * - **Every start choice is a decision** (INV-13): `dispatch.select`, `dispatch.choice`, the policy's
  *   `autonomy`, and on D62 a `gate`; the run's `workflow.task-admission` names them.
  *
@@ -52,6 +54,14 @@ const MAX_CANDIDATES = 255
 /** The tasks the last pass keeps reasons for, shown by the status (INV-9). */
 const MAX_REPORTED = 64
 const LIVE = ['asking', 'asked', 'approved', 'starting'] as const
+/** Starts the status lists as started by itself: those of the last 24 h, newest first (INV-9). */
+const MAX_STARTED = 32
+const HOUR_MS = 3_600_000
+/** A project id a pause names (`common@1` id, at most 128 characters). */
+const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/
+const projectKey = (projectId: string): string => `project:${projectId}`
+/** A pause in words: all dispatch, or one project's. */
+const pausedText = (p: { projectId?: string; since: string }): string => `the operator paused dispatch${p.projectId ? ` in project ${p.projectId}` : ''} at ${p.since}`
 
 /** A dispatch's settings in force: the configuration's, each default filled from what `maxActiveRuns` leaves room for. */
 export interface DispatchSettings {
@@ -65,13 +75,16 @@ export interface DispatchSettings {
   leaveRunsFree: number
   maxOpenAsks: number
   approvedHoldMinutes: number
+  /** Starts in any rolling hour, in all and per project (D2). */
+  maxPerHour: number
+  maxPerHourPerProject: number
   /** The engine's own `maxActiveRuns`, which `leaveRunsFree` and `maxRunning` are bounded by. */
   maxActiveRuns: number
 }
 
-const RANGES: Record<Exclude<keyof DispatchConfig, 'enabled' | 'maxRunning' | 'leaveRunsFree'>, readonly [number, number, number]> = {
+const RANGES: Record<Exclude<keyof DispatchConfig, 'enabled' | 'maxRunning' | 'leaveRunsFree' | 'maxPerHourPerProject'>, readonly [number, number, number]> = {
   sweepSeconds: [10, 3600, 60], maxPerPass: [1, 16, 2], maxRunningPerProject: [1, 16, 2], maxRunningPerAccount: [1, 16, 1],
-  maxRunningPerRepository: [1, 16, 4], maxOpenAsks: [1, 32, 4], approvedHoldMinutes: [1, 240, 30],
+  maxRunningPerRepository: [1, 16, 4], maxOpenAsks: [1, 32, 4], approvedHoldMinutes: [1, 240, 30], maxPerHour: [0, 120, 6],
 }
 
 /**
@@ -91,7 +104,9 @@ export function dispatchProblems(config: Config): string[] {
   whole('leaveRunsFree', given.leaveRunsFree, 0, active - 1)
   const leave = given.leaveRunsFree ?? Math.min(4, active - 1)
   if (Number.isInteger(leave) && leave >= 0 && leave < active) whole('maxRunning', given.maxRunning, 1, active - leave)
-  const known = new Set(['enabled', 'leaveRunsFree', 'maxRunning', ...Object.keys(RANGES)])
+  const hour = given.maxPerHour ?? RANGES.maxPerHour[2]
+  if (Number.isInteger(hour) && hour >= 0 && hour <= RANGES.maxPerHour[1]) whole('maxPerHourPerProject', given.maxPerHourPerProject, 0, hour)
+  const known = new Set(['enabled', 'leaveRunsFree', 'maxRunning', 'maxPerHourPerProject', ...Object.keys(RANGES)])
   for (const key of Object.keys(given)) if (!known.has(key)) problems.push(`dispatch.${key} is not an option (${[...known].join(', ')})`)
   return problems
 }
@@ -107,7 +122,8 @@ export function dispatchSettings(config: Config): DispatchSettings {
   return {
     enabled: given.enabled ?? true, sweepSeconds: pick('sweepSeconds'), maxPerPass: pick('maxPerPass'), maxRunning: given.maxRunning ?? Math.min(8, active - leave),
     maxRunningPerProject: pick('maxRunningPerProject'), maxRunningPerAccount: pick('maxRunningPerAccount'), maxRunningPerRepository: pick('maxRunningPerRepository'),
-    leaveRunsFree: leave, maxOpenAsks: pick('maxOpenAsks'), approvedHoldMinutes: pick('approvedHoldMinutes'), maxActiveRuns: active,
+    leaveRunsFree: leave, maxOpenAsks: pick('maxOpenAsks'), approvedHoldMinutes: pick('approvedHoldMinutes'), maxPerHour: pick('maxPerHour'),
+    maxPerHourPerProject: given.maxPerHourPerProject ?? Math.min(3, pick('maxPerHour')), maxActiveRuns: active,
   }
 }
 
@@ -133,9 +149,16 @@ interface AskRow {
   /** JSON {@link AskOutcome}, once closed. */
   outcome: string | null
   approved_at: string | null
+  /** How it may start (D2): `ask` (the operator's go on its request), `board` (D62), `auto`, or `notify` (the policy's word, no request). */
+  mode: DispatchMode
+  /** When its run started, which the hourly bound counts. */
+  started_at: string | null
   created_at: string
   updated_at: string
 }
+
+/** How a dispatched start was let start. */
+export type DispatchMode = 'ask' | 'board' | 'auto' | 'notify'
 
 /** A window of the chosen Worker's account, as Home shows it beside a proposed start. */
 export interface DispatchWindow {
@@ -175,8 +198,10 @@ interface AskOutcome {
   at: string
 }
 
-/** The operator's pause of dispatch, kept on its durable row. */
+/** The operator's pause of dispatch, entirely or of one project (D2), kept on its durable row. */
 export interface DispatchPause {
+  /** The project paused; absent on a pause of all dispatch. */
+  projectId?: string
   since: string
   reason?: string
   /** The operator's `gate` decision (rule `dispatch.pause`). */
@@ -189,11 +214,29 @@ export interface DispatchPassView {
   /** `ran`, or why it took nothing at all: `off`, `paused`, or `waiting` (a seam it needs is missing or failed). */
   state: 'ran' | 'off' | 'paused' | 'waiting'
   reason?: string
-  /** What it took: `asked` for the operator's go; on an attempt already approved through the board's gate (D62), `started`, or `approved` while its Worker is not free yet. */
+  /** What it took: `asked` for the operator's go; on an attempt already approved through the board's gate (D62), or under `auto` or `notify` (D2), `started`, or `approved` while its Worker is not free yet. */
   took: Array<{ askId: string; taskId: string; worker: string; how: 'asked' | 'started' | 'approved' }>
   tasks: Array<{ taskId: string; projectId: string; title: string; reason: string }>
   /** Ready tasks past the ones listed. */
   more: number
+}
+
+/** A start dispatch made (Home's *Started by itself*): its task, Worker, why that Worker, how it was let start, and its run's state now. */
+export interface DispatchStarted {
+  askId: string
+  taskId: string
+  title: string
+  projectId: string
+  attempt: number
+  worker: string
+  runId: string
+  /** `running`, `completed`, `failed`, or `cancelled`; `unknown` when the run is no longer kept. */
+  runStatus: string
+  mode: DispatchMode
+  why: string
+  startedAt: string
+  /** Under `notify`: the notice was recorded. */
+  notice?: true
 }
 
 /** Dispatch as `dispatch_status`, Home, and `system dispatch` show it. */
@@ -201,6 +244,8 @@ export interface DispatchStatus {
   enabled: boolean
   settings: DispatchSettings
   paused?: DispatchPause
+  /** The projects the operator paused dispatch in (D2), each with its own pause. */
+  pausedProjects: DispatchPause[]
   lastPass?: DispatchPassView
   /** Each bound and how much of it is used now, counted from the engine's rows. */
   bounds: {
@@ -211,7 +256,12 @@ export interface DispatchStatus {
     repositories: Array<{ repository: string; used: number; max: number }>
     /** Active runs now, against what dispatch may fill (`maxActiveRuns − leaveRunsFree`). */
     engine: { active: number; max: number }
+    /** Starts in the last rolling hour (D2), in all and per project. */
+    hour: { used: number; max: number }
+    hourProjects: Array<{ projectId: string; used: number; max: number }>
   }
+  /** What dispatch started in the last 24 h, newest first, at most 32 (Home's *Started by itself*). */
+  started: DispatchStarted[]
   /** The starts chosen and not yet started or closed: asking, asked (waiting for your go), approved (waiting for its Worker), starting. */
   asks: Array<{
     askId: string; taskId: string; title: string; projectId: string; attempt: number; state: AskState; worker: string; account?: string; repository?: string
@@ -274,54 +324,88 @@ export class Dispatcher {
 
   // --- the pause ---
 
-  /** The operator pauses dispatch entirely (INV-6: from the operator's channel only). Its open asks are withdrawn at the next pass. */
-  pause(reason?: string): DispatchStatus {
-    const paused = this.pausedNow()
-    if (paused) return this.status()
+  /**
+   * The operator pauses dispatch entirely, or with `projectId` only in that project (D2; INV-6: from the
+   * operator's channel only). Its open asks there are withdrawn at the next pass.
+   */
+  pause(reason?: string, projectId?: string): DispatchStatus {
+    if (projectId !== undefined && !PROJECT_ID.test(projectId)) throw new Error('workflow: a project id is 1 to 128 letters, digits, and . _ : / -')
+    if (this.pausedNow(projectId)) return this.status()
     const why = reason?.trim() ? reason.trim().slice(0, 500) : undefined
+    const where = projectId ? ` in project ${projectId}` : ''
     const decision = this.e.ctx.artifacts.recordDecision({
-      decisionType: 'gate', question: 'Does the operator pause dispatch, so System asks for and starts no ready task by itself?', inputs: [],
+      decisionType: 'gate', question: `Does the operator pause dispatch${where}, so System asks for and starts no ready task${where} by itself?`, inputs: [],
       candidates: [
-        { option: 'pause', selected: true, reasons: [`the operator paused dispatch${why ? `: ${why}` : ''}`, 'nothing is asked or started by dispatch until it is resumed; open asks are withdrawn; the lead\'s and the operator\'s own starts go on'] },
+        { option: 'pause', selected: true, reasons: [`the operator paused dispatch${where}${why ? `: ${why}` : ''}`, `nothing${where} is asked or started by dispatch until it is resumed; open asks are withdrawn; the lead's and the operator's own starts go on`] },
         { option: 'run', selected: false, reasons: ['not run: the operator paused it'] },
       ],
-      decider: PAUSE, outcome: { option: 'pause', detail: why ? { reason: why } : {} }, ...(why ? { rationale: why } : {}), deterministic: false,
+      decider: PAUSE, outcome: { option: 'pause', detail: { ...(why ? { reason: why } : {}), ...(projectId ? { projectId } : {}) } }, ...(why ? { rationale: why } : {}), deterministic: false,
     }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
-    const pause: DispatchPause = { since: now(), ...(why ? { reason: why } : {}), decision }
+    const pause: DispatchPause = { ...(projectId ? { projectId } : {}), since: now(), ...(why ? { reason: why } : {}), decision }
+    const id = projectId ? projectKey(projectId) : 'global'
     this.e.ctx.store.transaction((db) => {
-      this.control(db)
-      db.prepare("UPDATE workflow_dispatch_control SET paused = ?, updated_at = ? WHERE id = 'global'").run(JSON.stringify(pause), now())
-      this.e.ctx.eventLog.append({ type: 'workflow.dispatch.paused', decision, data: { since: pause.since } })
+      this.control(db, id)
+      db.prepare('UPDATE workflow_dispatch_control SET paused = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(pause), now(), id)
+      this.e.ctx.eventLog.append({ type: 'workflow.dispatch.paused', decision, data: { since: pause.since, ...(projectId ? { projectId } : {}) } })
     })
     return this.status()
   }
 
-  /** The operator resumes dispatch. */
-  resume(): DispatchStatus {
-    const paused = this.pausedNow()
+  /** The operator resumes dispatch, or with `projectId` dispatch in that project (D2). */
+  resume(projectId?: string): DispatchStatus {
+    const paused = this.pausedNow(projectId)
     if (!paused) return this.status()
+    const where = projectId ? ` in project ${projectId}` : ''
     const decision = this.e.ctx.artifacts.recordDecision({
-      decisionType: 'gate', question: 'Does the operator resume dispatch?', inputs: [paused.decision],
+      decisionType: 'gate', question: `Does the operator resume dispatch${where}?`, inputs: [paused.decision],
       candidates: [
-        { option: 'run', selected: true, reasons: [`the operator resumed dispatch, paused since ${paused.since}`] },
+        { option: 'run', selected: true, reasons: [`the operator resumed dispatch${where}, paused since ${paused.since}`] },
         { option: 'pause', selected: false, reasons: ['not pause: the operator resumed it'] },
       ],
-      decider: PAUSE, outcome: { option: 'run', detail: { pausedSince: paused.since } }, deterministic: false,
+      decider: PAUSE, outcome: { option: 'run', detail: { pausedSince: paused.since, ...(projectId ? { projectId } : {}) } }, deterministic: false,
     }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
     this.e.ctx.store.transaction((db) => {
-      db.prepare("UPDATE workflow_dispatch_control SET paused = NULL, updated_at = ? WHERE id = 'global'").run(now())
-      this.e.ctx.eventLog.append({ type: 'workflow.dispatch.resumed', decision, data: { pausedSince: paused.since } })
+      db.prepare('UPDATE workflow_dispatch_control SET paused = NULL, updated_at = ? WHERE id = ?').run(now(), projectId ? projectKey(projectId) : 'global')
+      this.e.ctx.eventLog.append({ type: 'workflow.dispatch.resumed', decision, data: { pausedSince: paused.since, ...(projectId ? { projectId } : {}) } })
     })
     return this.status()
   }
 
-  private pausedNow(): DispatchPause | undefined {
-    const row = this.e.ctx.store.db.prepare("SELECT paused FROM workflow_dispatch_control WHERE id = 'global'").get() as { paused: string | null } | undefined
+  /** The pause of all dispatch, or with `projectId` that project's own. */
+  private pausedNow(projectId?: string): DispatchPause | undefined {
+    const row = this.e.ctx.store.db.prepare('SELECT paused FROM workflow_dispatch_control WHERE id = ?').get(projectId ? projectKey(projectId) : 'global') as { paused: string | null } | undefined
     return row?.paused ? JSON.parse(row.paused) as DispatchPause : undefined
   }
 
-  private control(db = this.e.ctx.store.db): void {
-    db.prepare("INSERT OR IGNORE INTO workflow_dispatch_control (id, updated_at) VALUES ('global', ?)").run(now())
+  /** Every project's own pause, by project. */
+  private projectPauses(): Map<string, DispatchPause> {
+    const rows = this.e.ctx.store.db.prepare("SELECT paused FROM workflow_dispatch_control WHERE id LIKE 'project:%' AND paused IS NOT NULL ORDER BY id").all() as Array<{ paused: string }>
+    return new Map(rows.map((r) => JSON.parse(r.paused) as DispatchPause).filter((p) => p.projectId).map((p): [string, DispatchPause] => [p.projectId!, p]))
+  }
+
+  private control(db = this.e.ctx.store.db, id = 'global'): void {
+    db.prepare('INSERT OR IGNORE INTO workflow_dispatch_control (id, updated_at) VALUES (?, ?)').run(id, now())
+  }
+
+  /**
+   * The starts of the rolling hour before `at`, in all and per project, from the rows (INV-4: a restart
+   * counts the same). With `pending`, the rows approved or starting count too: they are about to start.
+   */
+  private hourly(at: Date, pending: boolean): { total: number; projects: Map<string, number> } {
+    const since = new Date(at.getTime() - HOUR_MS).toISOString()
+    const rows = this.e.ctx.store.db.prepare(`SELECT project_id FROM workflow_dispatch WHERE (state = 'started' AND started_at > ?)${pending ? " OR state IN ('approved', 'starting')" : ''}`).all(since) as Array<{ project_id: string }>
+    const projects = new Map<string, number>()
+    for (const r of rows) bump(projects, r.project_id)
+    return { total: rows.length, projects }
+  }
+
+  /** Why the hour leaves no room for one more start in `projectId`, or undefined. */
+  private hourFull(hour: { total: number; projects: Map<string, number> }, projectId: string): string | undefined {
+    const s = this.settings
+    if (hour.total >= s.maxPerHour) return `${hour.total} start(s) in the last hour already (dispatch.maxPerHour ${s.maxPerHour})`
+    const mine = hour.projects.get(projectId) ?? 0
+    if (mine >= s.maxPerHourPerProject) return `project ${projectId} had ${mine} start(s) in the last hour already (dispatch.maxPerHourPerProject ${s.maxPerHourPerProject})`
+    return undefined
   }
 
   // --- the status ---
@@ -333,9 +417,14 @@ export class Dispatcher {
     const counts = this.counts()
     const s = this.settings
     const live = db.prepare(`SELECT * FROM workflow_dispatch WHERE state IN (${LIVE.map(() => '?').join(', ')}) ORDER BY created_at, ask_id`).all(...LIVE) as unknown as AskRow[]
+    const at = new Date()
+    const hour = this.hourly(at, false)
+    const started = db.prepare(`SELECT d.*, r.status AS run_status FROM workflow_dispatch d LEFT JOIN workflow_runs r ON r.run_id = d.run_id
+      WHERE d.state = 'started' AND d.started_at > ? ORDER BY d.started_at DESC, d.ask_id LIMIT ?`).all(new Date(at.getTime() - 24 * HOUR_MS).toISOString(), MAX_STARTED) as unknown as Array<AskRow & { run_status: string | null }>
     return {
       enabled: s.enabled, settings: s,
       ...(control?.paused ? { paused: JSON.parse(control.paused) as DispatchPause } : {}),
+      pausedProjects: [...this.projectPauses().values()],
       ...(control?.last_pass ? { lastPass: JSON.parse(control.last_pass) as DispatchPassView } : {}),
       bounds: {
         running: { used: counts.running, max: s.maxRunning }, openAsks: { used: counts.open, max: s.maxOpenAsks },
@@ -343,7 +432,16 @@ export class Dispatcher {
         accounts: [...counts.accounts].sort().map(([account, used]) => ({ account, used, max: s.maxRunningPerAccount })),
         repositories: [...counts.repositories].sort().map(([repository, used]) => ({ repository, used, max: s.maxRunningPerRepository })),
         engine: { active: this.active(), max: s.maxActiveRuns - s.leaveRunsFree },
+        hour: { used: hour.total, max: s.maxPerHour },
+        hourProjects: [...hour.projects].sort().map(([projectId, used]) => ({ projectId, used, max: s.maxPerHourPerProject })),
       },
+      started: started.map((row): DispatchStarted => {
+        const choice = JSON.parse(row.choice) as AskChoice
+        return {
+          askId: row.ask_id, taskId: row.task_id, title: choice.title, projectId: row.project_id, attempt: row.attempt + 1, worker: row.worker, runId: row.run_id!,
+          runStatus: row.run_status ?? 'unknown', mode: row.mode, why: choice.why, startedAt: row.started_at!, ...(row.mode === 'notify' ? { notice: true as const } : {}),
+        }
+      }),
       asks: live.map((row) => {
         const choice = JSON.parse(row.choice) as AskChoice
         return {
@@ -402,7 +500,7 @@ export class Dispatcher {
       this.e.ctx.logger.warn(`workflow: dispatch could not settle its asks; the next pass tries again: ${errorText(error)}`)
     }
     const paused = this.pausedNow()
-    if (paused) return this.keep({ ...view, state: 'paused', reason: `the operator paused dispatch at ${paused.since}${paused.reason ? `: ${paused.reason}` : ''} (decision ${paused.decision})` })
+    if (paused) return this.keep({ ...view, state: 'paused', reason: `${pausedText(paused)}${paused.reason ? `: ${paused.reason}` : ''} (decision ${paused.decision})` })
     if (this.e.draining) return this.keep({ ...view, state: 'waiting', reason: 'the host is draining: no run is admitted' })
     const approvals = this.e.ctx.get('approvals')
     const resources = this.e.ctx.get('resources')
@@ -457,6 +555,9 @@ export class Dispatcher {
     const settings = this.e.ctx.get('resources')!.quota!()
     const verdicts = new Map<string, AutonomyVerdict | { error: string }>()
     const looks = new Map<string, Candidates | { error: string }>()
+    const projectPaused = this.projectPauses()
+    // The starts of the last hour, and those approved about to start (D2).
+    const hour = this.hourly(at, true)
     for (const [index, { task, project }] of looked.entries()) {
       const n = task.attempts.count
       const why = (reason: string): void => {
@@ -465,6 +566,11 @@ export class Dispatcher {
       const live = this.liveAsk(task.taskId, n)
       if (live) {
         why(live.state === 'approved' ? `approved, waiting for ${live.worker} to be free (ask ${live.ask_id})` : `an ask for attempt ${n + 1} is ${live.state === 'starting' ? 'starting its run' : `open (ask ${live.ask_id}${live.request_id ? `, request ${live.request_id}` : ''})`}`)
+        continue
+      }
+      const held = projectPaused.get(project.projectId)
+      if (held) {
+        why(`you paused dispatch in project ${project.projectId} at ${held.since}${held.reason ? `: ${held.reason}` : ''} (decision ${held.decision}); the lead and you still start its tasks by hand`)
         continue
       }
       const denied = this.denied(task.taskId, n)
@@ -482,6 +588,11 @@ export class Dispatcher {
       }
       if (view.took.length >= s.maxPerPass) {
         why(`this pass took its ${s.maxPerPass} (dispatch.maxPerPass); a later pass looks again`)
+        continue
+      }
+      const full = this.hourFull(hour, project.projectId)
+      if (full) {
+        why(`${full}: dispatch starts nothing more until the hour leaves room (INV-9)`)
         continue
       }
       if (counts.running >= s.maxRunning) {
@@ -538,18 +649,17 @@ export class Dispatcher {
         continue
       }
       const byBoard = await this.boardApproval(task)
-      if (!byBoard && verdict.mode !== 'ask') {
-        why(`the policy gives dispatch ${verdict.mode} in project ${project.projectId} (decision ${verdict.decision}); in D1 System starts only on your approval, and the queue asks only where the policy says ask, so nothing is asked`)
-        continue
-      }
-      if (!byBoard && counts.open >= s.maxOpenAsks) {
+      // D2: under auto or notify the policy's verdict is the go; nothing is asked (no request, no queue entry).
+      const self = byBoard ? undefined : verdict.mode === 'auto' || verdict.mode === 'notify' ? verdict.mode : undefined
+      const mode: DispatchMode = byBoard ? 'board' : self ?? 'ask'
+      if (mode === 'ask' && counts.open >= s.maxOpenAsks) {
         why(`${counts.open} ask(s) already wait for your go (dispatch.maxOpenAsks ${s.maxOpenAsks})`)
         continue
       }
       // Taken: the decisions first (INV-13), then the row, then the ask or the start.
       const chosen = scored.score.candidates.find((c) => c.worker === scored.score.chosen)!
       const others = looked.map(({ task: t }, i) => {
-        if (t.taskId === task.taskId) return { option: t.taskId, selected: true, reasons: [this.takenWhy(task, n, chosen, byBoard !== undefined)] }
+        if (t.taskId === task.taskId) return { option: t.taskId, selected: true, reasons: [this.takenWhy(task, n, chosen, mode, project.projectId)] }
         const earlier = taken.get(t.taskId)
         return {
           option: t.taskId, selected: false,
@@ -584,10 +694,11 @@ export class Dispatcher {
         decisions.push(approval)
       }
       const askId = newId('dsp')
+      const go = mode !== 'ask'
       const row: AskRow = {
-        ask_id: askId, task_id: task.taskId, attempt: n, project_id: project.projectId, state: byBoard ? 'approved' : 'asking', worker: chosen.worker,
+        ask_id: askId, task_id: task.taskId, attempt: n, project_id: project.projectId, state: go ? 'approved' : 'asking', worker: chosen.worker,
         account: scored.accountOf.get(chosen.worker) ?? null, repository: scored.repositoryOf.get(chosen.worker) ?? null, node_id: step.node.nodeId, version: choice.version,
-        request_id: null, run_id: null, outcome: null, approved_at: byBoard ? now() : null, created_at: now(), updated_at: now(),
+        request_id: null, run_id: null, outcome: null, approved_at: go ? now() : null, mode, started_at: null, created_at: now(), updated_at: now(),
         choice: JSON.stringify({
           template: task.template, title: task.title, decisions, verdict, why: chosen.line, windows: choice.windows, classification,
           summary: choice.summary, consequences: choice.consequences, ...(task.writes ? { writes: task.writes } : {}),
@@ -596,10 +707,10 @@ export class Dispatcher {
       }
       try {
         this.e.ctx.store.transaction((db) => {
-          db.prepare(`INSERT INTO workflow_dispatch (ask_id, task_id, attempt, project_id, state, worker, account, repository, node_id, version, request_id, run_id, choice, outcome, approved_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?)`)
-            .run(row.ask_id, row.task_id, row.attempt, row.project_id, row.state, row.worker, row.account, row.repository, row.node_id, row.version, row.choice, row.approved_at, row.created_at, row.updated_at)
-          this.e.ctx.eventLog.append({ type: 'workflow.dispatch.chosen', decision: choice.decision, data: { askId, taskId: task.taskId, attempt: n, worker: chosen.worker, how: byBoard ? 'board-approval' : 'ask' } })
+          db.prepare(`INSERT INTO workflow_dispatch (ask_id, task_id, attempt, project_id, state, worker, account, repository, node_id, version, request_id, run_id, choice, outcome, approved_at, mode, started_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, NULL, ?, ?)`)
+            .run(row.ask_id, row.task_id, row.attempt, row.project_id, row.state, row.worker, row.account, row.repository, row.node_id, row.version, row.choice, row.approved_at, row.mode, row.created_at, row.updated_at)
+          this.e.ctx.eventLog.append({ type: 'workflow.dispatch.chosen', decision: choice.decision, data: { askId, taskId: task.taskId, attempt: n, worker: chosen.worker, how: byBoard ? 'board-approval' : mode } })
         })
       } catch (error) {
         // Another pass (another process) holds a live ask for this attempt: it is that one's.
@@ -612,13 +723,17 @@ export class Dispatcher {
       bump(counts.accounts, row.account ?? `worker:${row.worker}`)
       bump(counts.repositories, row.repository)
       if (task.writes) counts.subjects.set(subjectKey(task.writes), task.taskId)
-      if (byBoard) {
+      if (go) {
         counts.pending += 1
+        // About to start: it counts in the hour from now (started, or approved and waiting for its Worker).
+        hour.total += 1
+        bump(hour.projects, project.projectId)
         await this.tryStart(board, this.ask(askId)!, at)
         const started = this.ask(askId)?.state === 'started'
         // Started, it is a running run now, which the engine's own count holds.
         if (started) counts.pending -= 1
-        why(`taken: attempt ${n + 1} on ${chosen.worker}, approved through the board's gate (D62)${started ? '; its run started' : '; it starts once its Worker is free'}`)
+        const how = byBoard ? 'approved through the board\'s gate (D62)' : `started by itself: the policy gives dispatch ${mode} in project ${project.projectId}, so nothing is asked${mode === 'notify' ? ', and a notice is recorded' : ''}`
+        why(`taken: attempt ${n + 1} on ${chosen.worker}, ${how}${started ? '; its run started' : '; it starts once its Worker is free'}`)
         view.took.push({ askId, taskId: task.taskId, worker: chosen.worker, how: started ? 'started' : 'approved' })
       } else {
         counts.open += 1
@@ -632,8 +747,10 @@ export class Dispatcher {
     return view
   }
 
-  private takenWhy(task: BoardTask, n: number, chosen: ScoredCandidate, byBoard: boolean): string {
-    return `the oldest ready task within every bound, its writing step's Worker ${chosen.worker} free (${chosen.line})${byBoard ? `; attempt ${n + 1} was approved through the board's gate (D62)` : ''}`
+  private takenWhy(task: BoardTask, n: number, chosen: ScoredCandidate, mode: DispatchMode, projectId: string): string {
+    const how = mode === 'board' ? `; attempt ${n + 1} was approved through the board's gate (D62)`
+      : mode === 'ask' ? '' : `; the policy gives dispatch ${mode} in project ${projectId}, so it starts with nothing asked (PROP-0014 D2)`
+    return `the oldest ready task within every bound, its writing step's Worker ${chosen.worker} free (${chosen.line})${how}`
   }
 
   /**
@@ -783,12 +900,21 @@ export class Dispatcher {
   }
 
   private move(row: AskRow, state: AskState, changes: Partial<Pick<AskRow, 'request_id' | 'run_id' | 'approved_at' | 'choice'>> & { outcome?: AskOutcome } = {}): void {
+    const at = now()
     this.e.ctx.store.transaction((db) => {
       db.prepare(`UPDATE workflow_dispatch SET state = ?, request_id = COALESCE(?, request_id), run_id = COALESCE(?, run_id), approved_at = COALESCE(?, approved_at),
-        choice = COALESCE(?, choice), outcome = COALESCE(?, outcome), updated_at = ? WHERE ask_id = ?`)
-        .run(state, changes.request_id ?? null, changes.run_id ?? null, changes.approved_at ?? null, changes.choice ?? null, changes.outcome ? JSON.stringify(changes.outcome) : null, now(), row.ask_id)
+        choice = COALESCE(?, choice), outcome = COALESCE(?, outcome), started_at = COALESCE(?, started_at), updated_at = ? WHERE ask_id = ?`)
+        .run(state, changes.request_id ?? null, changes.run_id ?? null, changes.approved_at ?? null, changes.choice ?? null, changes.outcome ? JSON.stringify(changes.outcome) : null,
+          state === 'started' ? at : null, at, row.ask_id)
       if (state === 'closed' || state === 'started') {
-        this.e.ctx.eventLog.append({ type: `workflow.dispatch.${state}`, data: { askId: row.ask_id, taskId: row.task_id, attempt: row.attempt, worker: row.worker, ...(changes.run_id ? { runId: changes.run_id } : {}), ...(changes.outcome ? { status: changes.outcome.status, reason: changes.outcome.reason } : {}) } })
+        this.e.ctx.eventLog.append({ type: `workflow.dispatch.${state}`, data: { askId: row.ask_id, taskId: row.task_id, attempt: row.attempt, worker: row.worker, mode: row.mode, ...(changes.run_id ? { runId: changes.run_id } : {}), ...(changes.outcome ? { status: changes.outcome.status, reason: changes.outcome.reason } : {}) } })
+      }
+      // Under notify (D2), the start is told: one notice, recorded with the start itself, which the notifier reads.
+      if (state === 'started' && row.mode === 'notify') {
+        this.e.ctx.eventLog.append({
+          type: 'workflow.dispatch.notice', ...(changes.run_id ? { runId: changes.run_id } : {}),
+          data: { askId: row.ask_id, taskId: row.task_id, projectId: row.project_id, attempt: row.attempt + 1, worker: row.worker, ...(changes.run_id ? { runId: changes.run_id } : {}) },
+        })
       }
     })
   }
@@ -839,10 +965,11 @@ export class Dispatcher {
   private async settle(board: Board, at: Date): Promise<void> {
     const rows = this.e.ctx.store.db.prepare(`SELECT * FROM workflow_dispatch WHERE state IN ('asking', 'asked', 'approved', 'starting') ORDER BY updated_at, ask_id LIMIT ?`).all(MAX_SETTLED) as unknown as AskRow[]
     const paused = this.pausedNow()
+    const projects = this.projectPauses()
     for (const row of rows) {
       if (this.e.stopped.signal.aborted) return
       try {
-        await this.settleOne(board, row, at, paused)
+        await this.settleOne(board, row, at, paused ?? projects.get(row.project_id))
       } catch (error) {
         this.e.ctx.logger.warn(`workflow: dispatch ask ${row.ask_id} could not be settled; the next pass tries again: ${errorText(error)}`)
       }
@@ -852,12 +979,12 @@ export class Dispatcher {
   private async settleOne(board: Board, row: AskRow, at: Date, paused: DispatchPause | undefined): Promise<void> {
     const approvals = this.e.ctx.get('approvals')
     if (row.state === 'asking') {
-      if (paused) return this.closeAsk(row, 'paused', `the operator paused dispatch at ${paused.since} before it was asked`)
+      if (paused) return this.closeAsk(row, 'paused', `${pausedText(paused)} before it was asked`)
       return this.request(row)
     }
     if (row.state === 'starting') return this.tryStart(board, row, at)
     if (row.state === 'approved') {
-      if (paused) return this.closeAsk(row, 'paused', `the operator paused dispatch at ${paused.since}; the approval is used for nothing`)
+      if (paused) return this.closeAsk(row, 'paused', `${pausedText(paused)}; the approval is used for nothing`)
       return this.tryStart(board, row, at)
     }
     // Asked: the queue's word on it.
@@ -866,7 +993,7 @@ export class Dispatcher {
     if (!request) return this.closeAsk(row, 'unknown-request', `the approval queue does not know request ${row.request_id}; nothing starts on it`)
     if (request.state === 'open' || request.state === 'batched') {
       const moved = await this.movedOn(board, row)
-      const why = paused ? `the operator paused dispatch at ${paused.since}` : moved
+      const why = paused ? `${pausedText(paused)}` : moved
       if (!why) return
       await approvals.withdraw(request.requestId).catch((error: unknown) => this.e.ctx.logger.warn(`workflow: dispatch could not withdraw request ${request.requestId}; it expires on its own: ${errorText(error)}`))
       return this.closeAsk(row, paused ? 'paused' : 'moved-on', `${why}: request ${request.requestId} withdrawn`)
@@ -875,7 +1002,7 @@ export class Dispatcher {
       if (!this.binds(request, row)) return this.closeAsk(row, 'unbound', `request ${request.requestId} was approved, but not exactly as asked (subject, requester, class, or verdict): an approval binds only the exact start it was asked on (INV-5)`)
       const choice = JSON.parse(row.choice) as AskChoice
       this.move(row, 'approved', { approved_at: request.resolution!.at, choice: JSON.stringify({ ...choice, decisions: [...choice.decisions, request.resolution!.decision] }) })
-      if (paused) return this.closeAsk(this.ask(row.ask_id)!, 'paused', `the operator paused dispatch at ${paused.since}; the approval is used for nothing`)
+      if (paused) return this.closeAsk(this.ask(row.ask_id)!, 'paused', `${pausedText(paused)}; the approval is used for nothing`)
       return this.tryStart(board, this.ask(row.ask_id)!, at)
     }
     const resolution = request.resolution
@@ -956,6 +1083,9 @@ export class Dispatcher {
     const pending = this.counts(row.ask_id).pending
     if (this.e.draining) return 'the host is draining'
     if (this.active() + pending >= s.maxActiveRuns - s.leaveRunsFree) return `the engine is full (maxActiveRuns less dispatch.leaveRunsFree)`
+    // The hour counts the starts made, never the rows still waiting, so two approved starts never hold each other back (D2).
+    const full = this.hourFull(this.hourly(at, false), row.project_id)
+    if (full) return full
     const resources = this.e.ctx.get('resources')
     if (!resources?.quota || !this.e.ctx.workers.candidates) return 'no Worker can be shown free (the ledger or the router cannot tell)'
     const choice = JSON.parse(row.choice) as AskChoice

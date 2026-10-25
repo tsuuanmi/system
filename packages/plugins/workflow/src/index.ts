@@ -36,8 +36,8 @@ export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
 export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
-export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStatus, DispatchWindow } from './dispatch.ts'
-export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
+export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -149,6 +149,8 @@ export class Workflow extends Service {
       leaveRunsFree: z.natural().max(10_000).description('Active runs dispatch leaves for the lead\'s and your own starts (at most maxActiveRuns less 1; default 4, or that when less)'),
       maxOpenAsks: z.natural().min(1).max(32).default(4).description('Dispatch requests open at once, waiting for your go'),
       approvedHoldMinutes: z.natural().min(1).max(240).default(30).description('Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again'),
+      maxPerHour: z.natural().max(120).default(6).description('Starts dispatch makes in any rolling hour, counted from its rows (PROP-0014 D2); 0 starts nothing'),
+      maxPerHourPerProject: z.natural().max(120).description('The same, per project (at most maxPerHour; default 3, or maxPerHour when less)'),
     }).description('Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself)'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
@@ -305,17 +307,18 @@ export class Workflow extends Service {
    * The operator pauses dispatch entirely (contract 1.9; INV-6: from the operator's channel only): a
    * `gate` decision (rule `dispatch.pause`) kept on a durable row across restarts. Nothing more is
    * asked or started by dispatch, and a pass, run at once, withdraws its open asks; the lead's and the
-   * operator's own starts go on. Pausing a paused dispatch changes nothing.
+   * operator's own starts go on. Pausing a paused dispatch changes nothing. With `projectId` (contract
+   * 1.10, PROP-0014 D2), only that project's: its tasks are neither asked about nor started by dispatch.
    */
-  pauseDispatch(reason?: string): DispatchStatus {
-    const status = this.engine.dispatch.pause(reason)
+  pauseDispatch(reason?: string, projectId?: string): DispatchStatus {
+    const status = this.engine.dispatch.pause(reason, projectId)
     void this.engine.dispatch.sweep()
     return status
   }
 
-  /** The operator resumes dispatch (contract 1.9): a `gate` decision; the next pass runs at once. */
-  resumeDispatch(): DispatchStatus {
-    const status = this.engine.dispatch.resume()
+  /** The operator resumes dispatch (contract 1.9), or with `projectId` one project's (1.10): a `gate` decision; the next pass runs at once. */
+  resumeDispatch(projectId?: string): DispatchStatus {
+    const status = this.engine.dispatch.resume(projectId)
     void this.engine.dispatch.sweep()
     return status
   }

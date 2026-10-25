@@ -2702,6 +2702,8 @@ one only on your **Approve**
 ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
 [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)). It is
 on by default (`dispatch.enabled`), and the studio policy asks for `dispatch` (its `default: ask`).
+Where you let it, it starts with no button at all:
+[set dispatch to auto for a project](#set-dispatch-to-auto-for-a-project).
 A Worker is free only when its account's quota is read and has room above your reserve, so it
 chooses none until:
 
@@ -2713,8 +2715,9 @@ chooses none until:
    crosses into it keeps going. A value out of its range refuses the row with its path.
 3. **The bounds suit you** (the `workflow` row's `dispatch`): at most `maxPerPass` (2) asks or
    starts a pass (every `sweepSeconds`, 60), `maxOpenAsks` (4) waiting for you, one run per account
-   (`maxRunningPerAccount`), two per project, four per repository, eight in all, and four of
-   `maxActiveRuns` kept for you and the lead (`leaveRunsFree`). `system check` names a value out of
+   (`maxRunningPerAccount`), two per project, four per repository, eight in all, four of
+   `maxActiveRuns` kept for you and the lead (`leaveRunsFree`), and at most `maxPerHour` (6) starts in
+   any rolling hour, `maxPerHourPerProject` (3) in one project. `system check` names a value out of
    its range.
 
 Then, on Home, **Starts awaiting approval** lists each start: the task, its attempt, the Worker, each
@@ -2734,18 +2737,49 @@ button.
 - **Why that Worker?** `system explain <runId>` on the run lists `dispatch.select`,
   `dispatch.choice` (every Worker with its quota keys or why it lost), and the policy's verdict
   first; the request's summary and `system dispatch` say it in one line.
-- **Not at all, or not in one project**: `dispatch.enabled: false` (a restart), or a policy rule
-  `dispatch: forbid` (the studio's, or a project's, through [a policy change](#change-the-autonomy-policy)).
-  In this version a rule `auto` or `notify` dispatches nothing: every start is asked.
+- **Not at all, or not in one project**: `dispatch.enabled: false` (a restart), a policy rule
+  `dispatch: forbid` (the studio's, or a project's, through [a policy change](#change-the-autonomy-policy)),
+  or [a pause](#pause-and-resume-dispatch), entirely or of one project.
 - **Metered pools** (an API key) are never chosen.
+
+### Set dispatch to auto for a project
+
+Under `auto`, System starts a chosen ready task's attempt **with no request**: nothing enters the
+queue, and the start is recorded (the `dispatch.select` and `dispatch.choice` decisions, every Worker
+with why, and the policy's `autonomy` decision) and listed on Home under **Started by itself**, one
+line each with its run's state as a chip. Under `notify` it does the same and also tells you (a
+`dispatch.started` notice, when [notifications](#get-notified) are on). Every bound above still
+holds, the hourly ones included, and nothing it starts lands without your `merge` approval.
+
+The effective mode is the strictest of the studio policy and the project's, so `auto` for project
+`p1` only takes two rules, each through [a policy change](#change-the-autonomy-policy):
+
+1. **Keep the other projects asking first.** For each other active project, a project policy (or its
+   existing one, its `version` raised) with the rule `{ actionClass: dispatch, mode: ask }` (or
+   `forbid`), `narrows` the studio policy's `id`. Approve each `policy-change` request.
+2. **Let the studio allow it.** The studio policy's rules gain `{ actionClass: dispatch, mode: auto }`
+   (or `notify`), its `version` raised. A project with no rule of its own for `dispatch` now takes
+   `auto`; one that says `ask` still asks.
+3. **Verify:** the **Autonomy policy** page (or MCP `approvals_policy` with `projectId`) shows
+   `dispatch` effective `auto` for `p1` and `ask` for the others. At the next pass (within
+   `sweepSeconds`), `system dispatch` lists what it started (`started by itself (auto)`) and the
+   hour's starts in its bounds line.
+4. **Start small:** `maxPerHour: 2` on the `workflow` row's `dispatch` for the first day (a restart),
+   as the proposal's live plan says. `system dispatch pause --project p1` stops it at once.
+
+To go back, a policy change returning the studio rule to `ask` (or removing it): open asks are kept,
+and nothing more starts without your button. A run already started is a run like any other:
+`system stop <runId>` ends it.
 
 ### Pause and resume dispatch
 
-`system dispatch pause [reason…]` (MCP `dispatch_pause`) stops dispatch at once: its open asks are
-withdrawn from the queue, approved ones not yet started are used for nothing, and nothing more is
-asked or started by itself; your own and the lead's starts go on. It holds across restarts.
-`system dispatch resume` (MCP `dispatch_resume`) lets the next pass run at once. Each is recorded as
-your decision (`gate`, rule `dispatch.pause`); `system dispatch` and Home say since when and why.
+`system dispatch pause [--project <id>] [reason…]` (MCP `dispatch_pause`, with `projectId`) stops
+dispatch at once, entirely or in that project only: its open asks there are withdrawn from the
+queue, approved ones not yet started are used for nothing, and nothing more is asked or started by
+itself there; your own and the lead's starts go on. It holds across restarts.
+`system dispatch resume [--project <id>]` (MCP `dispatch_resume`) lets the next pass run at once.
+Each is recorded as your decision (`gate`, rule `dispatch.pause`); `system dispatch` and Home say
+since when and why, and a paused project's ready tasks say it is paused.
 
 ## A task's next attempt starts from the previous attempt's work
 

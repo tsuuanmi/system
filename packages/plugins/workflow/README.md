@@ -458,8 +458,9 @@ second execution path (INV-1).
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
 - **Dispatch ([design](../../../docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
-  [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9).**
-  The engine starts ready board tasks by itself, on the operator's approval (`src/dispatch.ts`):
+  [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9; D2 1.10).**
+  The engine starts ready board tasks by itself, on the operator's approval or, where the project's
+  policy gives `dispatch` `auto` or `notify`, with nothing asked (`src/dispatch.ts`):
   - **A pass** every `dispatch.sweepSeconds` (default 60), and once at start after the runs are
     reconciled, one at a time (`sweepDispatch(at)`, a test seam): it settles the live asks first
     (adopts an open request on its subject, reads verdicts, starts approved ones, withdraws stale
@@ -479,7 +480,10 @@ second execution path (INV-1).
     row (`asking`) and its decisions are recorded, adopted after a crash; an attempt the operator
     approved through the board's gate (the task's `lastDecision` is the operator's approval of the
     board's own request for this attempt) starts with no request, a `gate` decision
-    (`dispatch.approval`) saying so (D62); `forbid`, and in D1 `auto` and `notify`, dispatch nothing.
+    (`dispatch.approval`) saying so (D62); `auto` starts it with no request (the row `approved`, mode
+    `auto`, its decisions the select, the choice, and the policy's `autonomy`; PROP-0014 D2);
+    `notify` the same, with a `workflow.dispatch.notice` event appended with the start, which the
+    notifier tells as `dispatch.started`; `forbid` dispatches nothing.
   - **The start**: the approval binds the task, its attempt, and the Worker (INV-5): while the task
     is still ready at that attempt and the Worker still admitted and free, within
     `approvedHoldMinutes` (30), the engine's own `tasks.start` (`clientRequestId`
@@ -492,19 +496,26 @@ second execution path (INV-1).
   - **Bounds**, counted from the rows each pass: `maxRunning` (8), `maxRunningPerProject` (2),
     `maxRunningPerAccount` (1), `maxRunningPerRepository` (4, D64), `maxOpenAsks` (4), and
     `leaveRunsFree` (4) of `maxActiveRuns`; an ask open or approved counts as its run would. A task
-    that writes a subject another holds, or has a live ask on, is not taken.
-  - **Pause**: `pauseDispatch(reason?)` and `resumeDispatch()`, each a `gate` decision
-    (`dispatch.pause`) on `workflow_dispatch_control`, kept across restarts; paused, a pass withdraws
-    the open asks and takes nothing. `dispatch.enabled: false` runs no pass.
+    that writes a subject another holds, or has a live ask on, is not taken. The rolling hour (D2):
+    `maxPerHour` (6) starts, `maxPerHourPerProject` (3), counted from the rows' `started_at` (rows
+    approved or starting counted with them when a pass takes; an approved row waits while the
+    starts made fill the hour).
+  - **Pause**: `pauseDispatch(reason?, projectId?)` and `resumeDispatch(projectId?)`, each a `gate`
+    decision (`dispatch.pause`) on `workflow_dispatch_control` (`global`, or `project:<id>` for one
+    project's, D2), kept across restarts; paused, a pass withdraws the open asks there and takes
+    nothing there. `dispatch.enabled: false` runs no pass.
+  - **Who started a run** (D2): `task.startedBy` on a board task's run (`workflow_tasks.started_by`):
+    `dispatch`, `operator` when the start says so (`startedBy: 'operator'`, Start on `/ui`), else
+    `lead`. A restart mid-start adopts the run already admitted for the row: an attempt starts once.
   - **Decisions** (INV-13): `dispatch.select` (`admission`), `dispatch.choice` (`route`, its `hash`
     the quota settings'), the policy's `autonomy`, and the D62 `gate`, only for a take; the events
-    `workflow.dispatch.chosen|started|closed|paused|resumed`.
+    `workflow.dispatch.chosen|started|closed|paused|resumed|notice`.
   - **Settings** (`dispatch`): `enabled`, `sweepSeconds` (10 to 3600), `maxPerPass` (1 to 16),
     `maxRunning` (1 to `maxActiveRuns − leaveRunsFree`, default 8 or that), `maxRunningPerProject`,
     `maxRunningPerAccount`, `maxRunningPerRepository` (each 1 to 16), `leaveRunsFree` (0 to
     `maxActiveRuns − 1`, default 4 or that), `maxOpenAsks` (1 to 32), `approvedHoldMinutes` (1 to
-    240); one out of its range refuses the row with its path (`dispatchProblems`, also in
-    `checkConfig`).
+    240), `maxPerHour` (0 to 120), `maxPerHourPerProject` (0 to `maxPerHour`); one out of its range
+    refuses the row with its path (`dispatchProblems`, also in `checkConfig`).
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
@@ -707,8 +718,9 @@ second execution path (INV-1).
     state, tiers, attempt, execution, source, Worker, quota class, tokens, and `usageUnknown`;
     its answer, result and brief ids, errors, wait, and task are `result`'s;
   - `explain` takes a run id, any artifact id (its input tree), or an execution whose liveness needs a look;
-  - `dispatch_status` (client scope) gives `dispatchStatus`; `dispatch_pause { reason? }` and
-    `dispatch_resume` are the operator's pause and resume of dispatch (ADR-0064).
+  - `dispatch_status` (client scope) gives `dispatchStatus`; `dispatch_pause { reason?, projectId? }`
+    and `dispatch_resume { projectId? }` are the operator's pause and resume of dispatch, entirely or
+    of one project (ADR-0064, PROP-0014 D2).
   - Each answers once ([replies](../mcp-server/README.md#token-budget)): the view is the
     structured content; the text is a completed run's answer, any other run's `standing` (what
     it waits for, why it failed, or how many steps are done), or an `outline` of the answer.
@@ -761,7 +773,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.9 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.10 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -812,6 +824,9 @@ second execution path (INV-1).
     by quota, adopted across passes and a restart, and on the operator's approval starts exactly
     that attempt, its step on exactly that Worker, its admission naming why; with
     `dispatch.enabled: false` it asks and starts nothing;
+  - since 1.10 (PROP-0014 D2), a board task's run says who started it (`task.startedBy`: `lead` by
+    default, `operator` when its start says so), kept across a restart; and a pause of one
+    project's dispatch asks about and starts nothing there, its tasks saying so, until resumed;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

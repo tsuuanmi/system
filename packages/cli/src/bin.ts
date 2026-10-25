@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -401,13 +401,11 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'dispatch': {
-      // Dispatch (ADR-0064): where it stands, or the operator's pause and resume.
-      const [action = 'status', ...more] = rest[0] === '--json' ? ['status', ...rest] : rest
-      const json = more.includes('--json')
-      const words = more.filter((a) => a !== '--json')
-      if (!['status', 'pause', 'resume'].includes(action) || (action !== 'pause' && words.length)) break
-      const outcome = action === 'pause' ? await callTool('dispatch_pause', words.length ? { reason: words.join(' ') } : {})
-        : await callTool(action === 'resume' ? 'dispatch_resume' : 'dispatch_status', {})
+      // Dispatch (ADR-0064): where it stands, or the operator's pause and resume, entirely or of one project (D2).
+      const parsed = parseDispatch(rest)
+      if (!parsed) break
+      const { action, json, args } = parsed
+      const outcome = await callTool(action === 'pause' ? 'dispatch_pause' : action === 'resume' ? 'dispatch_resume' : 'dispatch_status', args)
       if (outcome.isError) throw new Error(outcome.text)
       console.log(json ? JSON.stringify(outcome.structured, null, 2) : formatDispatch(outcome.structured as unknown as DispatchView).join('\n'))
       return 0

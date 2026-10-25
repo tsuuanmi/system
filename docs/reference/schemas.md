@@ -654,6 +654,12 @@ guesses.
   operator expires within the lead time ([board](../design/board.md#a-review-held-for-the-operator));
   a notice of it is `@1.1`, every other kind stays `@1.0`, and the kind is refused on `@1.0`.
   Example: [`notification.review-expiring.json`](../../schemas/examples/notification.review-expiring.json).
+- `notification@1.2` adds the kind `dispatch.started`: System started a ready board task's run by
+  itself where the project's policy gives `dispatch` `notify`
+  ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself), PROP-0014 D2);
+  its `subject` is the run id, its `event` the `workflow.dispatch.notice` entry. A notice of it is
+  `@1.2`, and the kind is refused on `@1.0` and `@1.1`; `review.expiring` is valid on `@1.1` and
+  `@1.2`. Example: [`notification.dispatch-started.json`](../../schemas/examples/notification.dispatch-started.json).
 - `title`, `text`, and `act` are made by code from ids, classes, kinds, and times the producer's
   event names; a value that is not an id or a word is left out, never quoted. It carries no
   secret, prompt, answer, request summary, consequences, or command a request would run, and no
@@ -1179,6 +1185,11 @@ guesses.
   Each list is `{value: {items, more}}` with at most 16 items, or `{unknown}` with why (the Workers
   or the board could not be read). Present on every record the roster makes; a 1.6 record, with no
   `now`, stays valid. Readers accept 1.0 to 1.7.
+- `mcp-roster@1.8` adds, per step of `work`, `startedBy`: `dispatch` when the dispatch pass started
+  the board task's run by itself ([PROP-0014](../proposals/0014-dispatch-by-quota.md) D2), `lead` for
+  a start through MCP `run` or `task` or the CLI, `operator` for Start on `/ui`; absent when the
+  engine does not tell (workflow contract below 1.10). The step's `summary` then ends with
+  `started by itself`. A 1.7 record stays valid. Readers accept 1.0 to 1.8.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;

@@ -397,21 +397,16 @@ describe('the dispatch pass (ADR-0064, REQ-WF-16)', () => {
     expect(gate.reasons[0]).toMatch(/approved attempt 1 on the board's request .*which counts as its dispatch approval \(D62\)/)
   })
 
-  it('dispatches nothing under forbid, under auto in D1 (it asks only where the policy says ask), off, or paused; a pause withdraws its asks and holds across a restart', async () => {
+  it('dispatches nothing under forbid, off, or paused; a pause withdraws its asks and holds across a restart', async () => {
     const forbid = await boot({ policy: { ...POLICY, rules: [...POLICY.rules, { actionClass: 'dispatch', mode: 'forbid' }] } })
     forbid.workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
     await forbid.read('acc-a', 0)
     const f = await ready(forbid.ctx, 'forbidden')
     await forbid.ctx.workflow.sweepDispatch()
     expect(reasonOf(forbid.ctx.workflow.dispatchStatus(), f.taskId)).toMatch(/^the policy forbids dispatch in project p1/)
-    const auto = await boot({ policy: { ...POLICY, rules: [...POLICY.rules, { actionClass: 'dispatch', mode: 'auto' }] } })
-    auto.workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
-    await auto.read('acc-a', 0)
-    const t = await ready(auto.ctx, 'auto')
-    await auto.ctx.workflow.sweepDispatch()
-    expect(reasonOf(auto.ctx.workflow.dispatchStatus(), t.taskId)).toMatch(/^the policy gives dispatch auto in project p1 .*in D1 System starts only on your approval/)
-    expect(await dispatchRequests(auto.ctx)).toHaveLength(0)
-    expect((await auto.ctx.board.task(t.taskId))!.state).toBe('ready')
+    expect(await dispatchRequests(forbid.ctx)).toHaveLength(0)
+    expect(forbid.workers.started).toHaveLength(0)
+    expect((await forbid.ctx.board.task(f.taskId))!.state).toBe('ready')
     const off = await boot({ workflow: { dispatch: { enabled: false } } })
     off.workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
     await off.read('acc-a', 0)
@@ -455,5 +450,197 @@ describe('the dispatch pass (ADR-0064, REQ-WF-16)', () => {
     expect((await ctx.board.task(one.taskId))!.attempts.count).toBe(1)
     expect(await dispatchRequests(ctx)).toHaveLength(2)
     expect(askOf(ctx.workflow.dispatchStatus(), two.taskId)).toMatchObject({ state: 'asked' })
+  })
+})
+
+/** The studio policy with `dispatch` at `mode`. */
+const withDispatch = (mode: 'auto' | 'notify' | 'ask'): AutonomyPolicy => ({ ...POLICY, rules: [...POLICY.rules, { actionClass: 'dispatch', mode }] })
+/** Every request the queue holds, in any of its states (a withdrawn or expired one is rejected), of the class `dispatch`. */
+const everyDispatchRequest = dispatchRequests
+/** The dispatch rows of a task, as the store keeps them. */
+const rowsOf = (ctx: Context, taskId: string) => ctx.store.db.prepare('SELECT ask_id, state, mode, run_id, started_at FROM workflow_dispatch WHERE task_id = ? ORDER BY created_at').all(taskId) as Array<{ ask_id: string; state: string; mode: string; run_id: string | null; started_at: string | null }>
+
+describe('dispatch starting by itself (PROP-0014 D2, ADR-0064)', () => {
+  it('under auto starts the chosen attempt with no request at all, records the choice with every candidate\'s reason, and the run says dispatch started it', async () => {
+    const { ctx, workers, read } = await boot({ policy: withDispatch('auto'), accounts: ['acc-a', 'acc-b'] })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b', { load: { running: 1, queued: 0, pending: 0, slots: 1 } })]
+    await read('acc-a', 0)
+    await read('acc-b', 0)
+    const task = await ready(ctx, 'by itself')
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took).toEqual([{ askId: expect.any(String), taskId: task.taskId, worker: 'agent:acc-a/develop', how: 'started' }])
+    expect(reasonOf(ctx.workflow.dispatchStatus(), task.taskId)).toMatch(/^taken: attempt 1 on agent:acc-a\/develop, started by itself: the policy gives dispatch auto in project p1, so nothing is asked; its run started$/)
+    // No request, no queue entry, in any state (the project's founding charter, approved before, is the only one).
+    expect(await everyDispatchRequest(ctx)).toHaveLength(0)
+    expect((await ctx.approvals.list({ projectId: 'p1', states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.action.class)).toEqual(['charter'])
+    const started = (await ctx.board.task(task.taskId))!
+    expect(started.state).toBe('running')
+    const runId = started.run!.runId
+    await vi.waitFor(() => expect(workers.started.length).toBe(1), { timeout: 30_000 })
+    expect(workers.started[0]).toMatchObject({ worker: 'agent:acc-a/develop', runId })
+    expect(ctx.workflow.get(runId)!.task?.startedBy).toBe('dispatch')
+    // The decisions: the select, the choice over every Worker with its reason, and the policy's verdict, auto.
+    const status = ctx.workflow.dispatchStatus()
+    expect(status.asks).toEqual([])
+    expect(status.started).toEqual([expect.objectContaining({ taskId: task.taskId, title: 'by itself', worker: 'agent:acc-a/develop', runId, mode: 'auto', runStatus: 'running', attempt: 1 })])
+    expect(status.started[0]!.notice).toBeUndefined()
+    expect(status.bounds.hour).toEqual({ used: 1, max: 6 })
+    const view = ctx.workflow.explain(runId)!
+    expect(view.decisions!.slice(0, 3).map((d) => d.type)).toEqual(['admission', 'route', 'autonomy'])
+    const admission = ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', runId, limit: 100 }).map((a) => a.body as Decision).find((d) => d.decider.id === 'workflow.task-admission')!
+    const kept = ctx.store.db.prepare('SELECT dispatch FROM workflow_tasks WHERE run_id = ?').get(runId) as { dispatch: string }
+    const decisions = (JSON.parse(kept.dispatch) as { decisions: string[] }).decisions
+    // Under auto there is no approval: the select, the choice, and the policy's autonomy decision only.
+    expect(decisions).toHaveLength(3)
+    expect(admission.inputs).toEqual(expect.arrayContaining(decisions))
+    const [selectId, choiceId, autonomyId] = decisions
+    expect(decisionOf(ctx, selectId)).toMatchObject({ decider: { id: 'dispatch.select' }, outcome: { option: task.taskId } })
+    expect(decisionOf(ctx, selectId).candidates[0]!.reasons[0]).toMatch(/the policy gives dispatch auto in project p1, so it starts with nothing asked/)
+    const choice = decisionOf(ctx, choiceId)
+    expect(choice).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice' }, outcome: { option: 'agent:acc-a/develop', detail: { score: 'quota-score@1' } } })
+    const reasons = Object.fromEntries(choice.candidates.map((c) => [c.option, c.reasons]))
+    expect(reasons['agent:acc-a/develop']![0]).toBe('free: every window has headroom above the 20 % reserve')
+    expect(reasons['agent:acc-b/develop']![0]).toBe('not free: load 1 of 1 (dispatch.maxRunningPerAccount 1)')
+    expect(decisionOf(ctx, autonomyId)).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'auto', detail: { actionClass: 'dispatch' } } })
+    // auto tells nothing beyond the record and Home.
+    expect(ctx.eventLog.query({ type: 'workflow.dispatch.notice', limit: 10 })).toEqual([])
+  })
+
+  it('under notify starts it the same way and records one notice of the start', async () => {
+    const { ctx, workers, read, restartWorkflow } = await boot({ policy: withDispatch('notify') })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const task = await ready(ctx, 'told')
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => t.how)).toEqual(['started'])
+    expect(await everyDispatchRequest(ctx)).toHaveLength(0)
+    const runId = (await ctx.board.task(task.taskId))!.run!.runId
+    const notices = ctx.eventLog.query({ type: 'workflow.dispatch.notice', limit: 10 })
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatchObject({ runId, data: { taskId: task.taskId, projectId: 'p1', attempt: 1, worker: 'agent:acc-a/develop', runId } })
+    expect(ctx.workflow.dispatchStatus().started).toEqual([expect.objectContaining({ taskId: task.taskId, mode: 'notify', notice: true })])
+    // Passes after it, and a restart, tell nothing again.
+    await ctx.workflow.sweepDispatch()
+    await restartWorkflow()
+    expect(ctx.eventLog.query({ type: 'workflow.dispatch.notice', limit: 10 })).toHaveLength(1)
+  })
+
+  it('under ask keeps asking as before: one request, nothing started, and the start is listed only once approved', async () => {
+    const { ctx, workers, read } = await boot({ policy: withDispatch('ask') })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const task = await ready(ctx, 'asked')
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => t.how)).toEqual(['asked'])
+    const [request] = await dispatchRequests(ctx)
+    expect(request).toMatchObject({ state: 'open', subject: { ref: `dispatch:${task.taskId}:attempt:0` } })
+    expect(workers.started).toHaveLength(0)
+    expect(ctx.workflow.dispatchStatus().started).toEqual([])
+    expect(rowsOf(ctx, task.taskId)).toEqual([expect.objectContaining({ state: 'asked', mode: 'ask' })])
+    await approve(ctx, request!.requestId)
+    await ctx.workflow.sweepDispatch()
+    const runId = (await ctx.board.task(task.taskId))!.run!.runId
+    expect(ctx.workflow.dispatchStatus().started).toEqual([expect.objectContaining({ runId, mode: 'ask' })])
+    expect(ctx.workflow.get(runId)!.task?.startedBy).toBe('dispatch')
+    expect(ctx.eventLog.query({ type: 'workflow.dispatch.notice', limit: 10 })).toEqual([])
+  })
+
+  it('keeps the hourly bounds, counted from its rows, and starts again once the hour leaves room', async () => {
+    const all = await boot({ policy: withDispatch('auto'), accounts: ['acc-a', 'acc-b'], workflow: { dispatch: { maxPerHour: 1, maxPerPass: 4, maxRunningPerProject: 4 } } })
+    all.workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
+    await all.read('acc-a', 0)
+    await all.read('acc-b', 0)
+    const [first, second] = [await ready(all.ctx, 'first'), await ready(all.ctx, 'second')]
+    await all.ctx.workflow.sweepDispatch()
+    expect((await all.ctx.board.task(first.taskId))!.state).toBe('running')
+    expect((await all.ctx.board.task(second.taskId))!.state).toBe('ready')
+    expect(reasonOf(all.ctx.workflow.dispatchStatus(), second.taskId)).toBe('1 start(s) in the last hour already (dispatch.maxPerHour 1): dispatch starts nothing more until the hour leaves room (INV-9)')
+    // A restart counts the same.
+    await all.restartWorkflow()
+    expect(reasonOf(all.ctx.workflow.dispatchStatus(), second.taskId)).toMatch(/^1 start\(s\) in the last hour already/)
+    // An hour on (the start's row aged by an hour), there is room again.
+    all.ctx.store.db.prepare('UPDATE workflow_dispatch SET started_at = ? WHERE task_id = ?').run(new Date(Date.now() - 61 * 60_000).toISOString(), first.taskId)
+    await all.ctx.workflow.sweepDispatch()
+    expect((await all.ctx.board.task(second.taskId))!.state).toBe('running')
+    // Per project, and 0 starts nothing.
+    const project = await boot({ policy: withDispatch('auto'), accounts: ['acc-a', 'acc-b'], workflow: { dispatch: { maxPerHour: 4, maxPerHourPerProject: 1, maxPerPass: 4, maxRunningPerProject: 4 } } })
+    project.workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
+    await project.read('acc-a', 0)
+    await project.read('acc-b', 0)
+    const [, q] = [await ready(project.ctx, 'p'), await ready(project.ctx, 'q')]
+    await project.ctx.workflow.sweepDispatch()
+    expect(reasonOf(project.ctx.workflow.dispatchStatus(), q.taskId)).toBe('project p1 had 1 start(s) in the last hour already (dispatch.maxPerHourPerProject 1): dispatch starts nothing more until the hour leaves room (INV-9)')
+    expect(project.ctx.workflow.dispatchStatus().bounds.hourProjects).toEqual([{ projectId: 'p1', used: 1, max: 1 }])
+    const none = await boot({ policy: withDispatch('auto'), workflow: { dispatch: { maxPerHour: 0 } } })
+    none.workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await none.read('acc-a', 0)
+    const z = await ready(none.ctx, 'zero')
+    await none.ctx.workflow.sweepDispatch()
+    expect((await none.ctx.board.task(z.taskId))!.state).toBe('ready')
+    expect(none.workers.started).toHaveLength(0)
+    // The settings: defaults, and a per-project bound above the hour's refused with its path.
+    expect(dispatchSettings({})).toMatchObject({ maxPerHour: 6, maxPerHourPerProject: 3 })
+    expect(dispatchSettings({ dispatch: { maxPerHour: 2 } })).toMatchObject({ maxPerHour: 2, maxPerHourPerProject: 2 })
+    expect(dispatchProblems({ dispatch: { maxPerHour: 2, maxPerHourPerProject: 3 } })).toEqual(['dispatch.maxPerHourPerProject must be a whole number from 0 to 2, not 3'])
+    expect(dispatchProblems({ dispatch: { maxPerHour: 121 } })).toEqual(['dispatch.maxPerHour must be a whole number from 0 to 120, not 121'])
+  })
+
+  it('pauses one project\'s dispatch: nothing there is started, it holds across a restart, and a resume starts it', async () => {
+    const { ctx, workers, read, restartWorkflow } = await boot({ policy: withDispatch('auto') })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const status = ctx.workflow.pauseDispatch('quiet in p1', 'p1')
+    expect(status.paused).toBeUndefined()
+    expect(status.pausedProjects).toEqual([expect.objectContaining({ projectId: 'p1', reason: 'quiet in p1' })])
+    expect(decisionOf(ctx, status.pausedProjects[0]!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'dispatch.pause' }, outcome: { option: 'pause', detail: { projectId: 'p1' } } })
+    const task = await ready(ctx, 'held')
+    // The pass the pause ran may still be in flight, from before the task was ready: one more after it.
+    await ctx.workflow.sweepDispatch()
+    await ctx.workflow.sweepDispatch()
+    expect(reasonOf(ctx.workflow.dispatchStatus(), task.taskId)).toMatch(/^you paused dispatch in project p1 at .*: quiet in p1 \(decision sha256:[0-9a-f]{64}\); the lead and you still start its tasks by hand$/)
+    expect((await ctx.board.task(task.taskId))!.state).toBe('ready')
+    await restartWorkflow()
+    expect(reasonOf(ctx.workflow.dispatchStatus(), task.taskId)).toMatch(/^you paused dispatch in project p1/)
+    expect(() => ctx.workflow.pauseDispatch(undefined, 'no spaces allowed')).toThrow(/a project id is/)
+    ctx.workflow.resumeDispatch('p1')
+    await ctx.workflow.sweepDispatch()
+    expect((await ctx.board.task(task.taskId))!.state).toBe('running')
+  })
+
+  it('withdraws an open ask of a project the operator pauses, and keeps the pause of all dispatch apart', async () => {
+    const { ctx, workers, read } = await boot()
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const task = await ready(ctx, 'asked, then paused')
+    await ctx.workflow.sweepDispatch()
+    const ask = askOf(ctx.workflow.dispatchStatus(), task.taskId)!
+    ctx.workflow.pauseDispatch(undefined, 'p1')
+    await ctx.workflow.sweepDispatch()
+    expect(await ctx.approvals.get(ask.requestId!)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    const closed = ctx.eventLog.query({ type: 'workflow.dispatch.closed', limit: 10 })
+    expect(closed.map((e) => [e.data?.['status'], e.data?.['reason']])).toEqual([['paused', expect.stringMatching(/^the operator paused dispatch in project p1 at /)]])
+    expect(ctx.workflow.dispatchStatus().paused).toBeUndefined()
+  })
+
+  it('starts once when a restart comes in the middle of a start: the run the engine admitted is adopted, never started again (INV-4)', async () => {
+    for (const rewound of ['starting', 'approved'] as const) {
+      const { ctx, workers, read, restartWorkflow } = await boot({ policy: withDispatch('auto') })
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+      await read('acc-a', 0)
+      const task = await ready(ctx, `crash while ${rewound}`)
+      await ctx.workflow.sweepDispatch()
+      const runId = (await ctx.board.task(task.taskId))!.run!.runId
+      await vi.waitFor(() => expect(workers.started.length).toBe(1), { timeout: 30_000 })
+      // The host died after the engine admitted the run, before the row recorded it started.
+      ctx.store.db.prepare('UPDATE workflow_dispatch SET state = ?, run_id = NULL, started_at = NULL, outcome = NULL WHERE task_id = ?').run(rewound, task.taskId)
+      await restartWorkflow()
+      await ctx.workflow.sweepDispatch()
+      expect(rowsOf(ctx, task.taskId)).toEqual([expect.objectContaining({ state: 'started', mode: 'auto', run_id: runId, started_at: expect.any(String) })])
+      const after = (await ctx.board.task(task.taskId))!
+      expect(after).toMatchObject({ state: 'running', run: { runId }, attempts: { count: 1 } })
+      expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_tasks WHERE task_id = ?').get(task.taskId)).toEqual({ n: 1 })
+      expect(workers.started).toHaveLength(1)
+      expect(await everyDispatchRequest(ctx)).toHaveLength(0)
+    }
   })
 })

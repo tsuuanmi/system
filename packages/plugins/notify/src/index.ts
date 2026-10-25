@@ -64,7 +64,7 @@ export const DEFAULTS = {
 } as const
 
 export const Config: z<Config> = z.object({
-  kinds: z.array(z.union([...KINDS])).default([...KINDS]).description('The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring'),
+  kinds: z.array(z.union([...KINDS])).default([...KINDS]).description('The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring, dispatch.started'),
   expiryLeadMinutes: z.natural().min(1).max(1440).default(DEFAULTS.expiryLeadMinutes).description('How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes'),
   dedupMinutes: z.natural().min(1).max(1440).default(DEFAULTS.dedupMinutes).description('At most one notice per subject and kind in this many minutes'),
   maxQueue: z.natural().min(1).max(1000).default(DEFAULTS.maxQueue).description('Notices waiting to be sent, at most; one more is dropped, logged, and shown in health'),

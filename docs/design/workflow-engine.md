@@ -659,8 +659,8 @@ resumed, [above](#a-board-tasks-brief)). The step waits instead, in a live run:
 A run may serve one attempt of one [board task](board.md): the start names the task, and the
 claim a lead hands over (holder and generation): MCP `run`'s `task`, or `system run --task <taskId>
 [--holder <owner> --generation <n>]` ([CLI](../reference/cli.md#work)); or the engine's own
-dispatch pass starts it, on the operator's approval
-([below](#dispatch-starting-ready-work-by-itself)). The engine is that run's owner on `ctx.board`,
+dispatch pass starts it, on the operator's approval or, where the project's policy gives `dispatch`
+`auto` or `notify`, by itself ([below](#dispatch-starting-ready-work-by-itself)). The engine is that run's owner on `ctx.board`,
 an optional seam it reaches through the abstract `Board` only; without a board, a run for a task
 is refused (`config_error`), and every other run is unaffected.
 
@@ -1116,14 +1116,17 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
 ## Dispatch: starting ready work by itself
 
 > Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
-> (accepted 2026-10-25, D61 to D66), [PROP-0014](../proposals/0014-dispatch-by-quota.md) increment
-> D1. Contract 1.9 of the `workflow` seam. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
-> (`src/dispatch.ts`). Not built (D2 and later): `notify` and `auto`, hourly bounds, a project's own
-> pause, a task's priority, `startedBy` on the roster, the score in every route.
+> (accepted 2026-10-25, D61 to D66), [PROP-0014](../proposals/0014-dispatch-by-quota.md) increments
+> D1 and D2 (D70: using idle quota must be automatic). Contract 1.10 of the `workflow` seam (1.9: D1).
+> Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (`src/dispatch.ts`). Not built
+> (D2's rest and later): a task's priority (it orders by age), withdrawing an ask whose Worker's pool
+> closed, the score in every route.
 
 A ready board task waits for the lead or the operator to start it. The engine's dispatch pass starts
-it by itself, on a free Worker chosen by quota, once the operator says so: in D1 every start is asked
-first, except an attempt the operator already approved through the board's gate (D62).
+it by itself, on a free Worker chosen by quota. Under a project policy whose `dispatch` mode is `auto`
+it starts with nothing asked; under `notify` it starts and records a notice; under `ask` (the bundle's
+default) every start is asked first, except an attempt the operator already approved through the
+board's gate (D62); under `forbid` nothing is dispatched.
 
 ```mermaid
 flowchart TD
@@ -1131,15 +1134,17 @@ flowchart TD
   S --> Z{"paused, off, draining,<br/>or a seam missing?"}
   Z -->|yes| K["take nothing; keep why"]
   Z -->|no| T["ready tasks of active projects, oldest first"]
-  T --> B{"a live or denied ask, no template,<br/>a bound reached, a subject held?"}
+  T --> B{"a live or denied ask, the project paused, no template,<br/>a bound or the hour's starts reached, a subject held?"}
   B -->|yes| N["not this pass: why kept"]
   B -->|no| C["writing step's candidates (nothing reserved),<br/>quota-score@1"]
   C -->|none free| N
   C -->|first free| A{"policy for dispatch"}
-  A -->|forbid, or auto/notify in D1| N
+  A -->|forbid| N
   A -->|ask| R["decisions, row asking, one request"]
   A -->|board-approved attempt (D62)| G["decisions, gate, row approved"]
+  A -->|auto or notify (D2)| G2["decisions, row approved:<br/>no request"]
   R -->|operator approves| G
+  G2 --> G
   G --> ST["start: claim, run first, then work;<br/>writing step on that Worker first"]
 ```
 
@@ -1147,14 +1152,15 @@ flowchart TD
 |---|---|---|
 | a pass | every `dispatch.sweepSeconds` (default 60), and once at start after the runs are reconciled; one at a time in the process; a test passes its own time (`sweepDispatch(at)`) | it never throws: a pass that fails starts nothing, logged, and the next tries again |
 | live asks settled | first, oldest first, at most 64: an `asking` row adopts the open request on its subject, or asks it; an `asked` one reads the queue; an `approved` one starts when it can; a `starting` one finds its run or starts it again under the same `clientRequestId` | a queue or board that does not answer: the row stays as it is |
-| ready tasks looked at | the `ready` tasks of `active` projects, by `createdAt`, then id, at most 128 (`MAX_LOOKED`); each skipped one gets its reason: an ask live or denied for this attempt, no template or one not served, `maxPerPass` taken, a bound reached, the subject it writes held, no free Worker, the policy | every reason is kept as the last pass (`dispatch_status`, Home) on a durable row, so a restart shows the same |
+| ready tasks looked at | the `ready` tasks of `active` projects, by `createdAt`, then id, at most 128 (`MAX_LOOKED`); each skipped one gets its reason: an ask live or denied for this attempt, its project's dispatch paused, no template or one not served, `maxPerPass` taken, the hour's starts reached, a bound reached, the subject it writes held, no free Worker, the policy | every reason is kept as the last pass (`dispatch_status`, Home) on a durable row, so a restart shows the same |
 | Worker chosen | the run's writing step (its first step that proves `develop`, else its first Worker step), its requirement as the engine would build it from the admitted spec (INV-6); `ctx.workers.candidates` (routing's checks, nothing reserved); `quotaScoreOf` (`quota-score@1`, [routing](routing.md#candidates-without-a-reservation)) over each candidate's account's pools and the ledger's `quota()`: the first free one | none free: the task's reason lists each admitted Worker with why it is not |
-| policy | `ctx.approvals.check({ class: 'dispatch', projectId })`, once per project per pass, its `autonomy` decision recorded | `forbid`: not dispatched; `auto` or `notify`: not dispatched in D1 (the queue asks only where the policy says `ask`); a queue that cannot judge: not dispatched |
+| policy | `ctx.approvals.check({ class: 'dispatch', projectId })`, once per project per pass, its `autonomy` decision recorded | `forbid`: not dispatched; a queue that cannot judge: not dispatched |
+| auto, notify (D2) | the policy's verdict is the go: the row starts `approved` (mode `auto` or `notify`) with no request and no queue entry, its decisions the select, the choice, and that `autonomy` decision, and it starts as below; under `notify` the start also appends `workflow.dispatch.notice` (task, project, attempt, Worker, run) in the row's transaction, which the notifier tells as `dispatch.started` ([notifications](notifications.md#what-each-event-tells)) | as for any approved row: it waits for its Worker within `approvedHoldMinutes`, else closes unused and a new choice is made |
 | taken | in order: an `admission` decision (rule `dispatch.select`) over the tasks looked at, each with why; a `route` decision (rule `dispatch.choice`, its `hash` the quota settings') over every Worker with its keys or routing's refusal, and the sources that did not answer; then the row (`workflow_dispatch`), and `workflow.dispatch.chosen` | another process's live ask for the attempt (the row's unique index): this pass takes nothing for it |
 | asked | under `ask`: one request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@1:<sha256 of the Worker and the score's inputs>}`, class `dispatch`, requester `workflow` with the task and project; its summary the task, attempt, Worker, and each window's use and headroom above the reserve; at most `maxOpenAsks` open | a refusal by the queue (`not-asked`: the policy changed since its verdict): closed, nothing asked; any other failure leaves the row `asking`, adopted or asked again next pass |
 | approved | the operator's verdict on exactly that subject, requester, and class (INV-5); its `approval` decision joins the row's decisions | an approval not bound so: closed (`unbound`), nothing starts; denied or expired: closed, and dispatch never asks again for that attempt; withdrawn on a policy change: closed, and the next pass puts the task to the policy in force |
 | D62 | the task's `lastDecision` is the operator's `approval` of the board's own request on `board-task:<id>:attempt:<n>` for this attempt and class: a `gate` decision (rule `dispatch.approval`, outcome `board-approval`) naming it, and the row starts `approved` with no request | anything else, or anything unreadable, is no such approval: the start is asked |
-| started | while the task is still `ready` at attempt `n`, its project active, and the chosen Worker still admitted and free, within `approvedHoldMinutes` of the approval: the engine's own start (`clientRequestId` `dispatch:<askId>`), its `workflow.task-admission` decision naming the dispatch decisions; the run's writing step routes first restricted to that Worker; `workflow.dispatch.started` | the task moved on: closed, the approval used for nothing; the Worker not free past the hold: closed (`hold-expired`), and a new choice asks again; the engine full or draining: it waits within the hold; any other refusal: closed |
+| started | while the task is still `ready` at attempt `n`, its project active, and the chosen Worker still admitted and free, within `approvedHoldMinutes` of the approval: the engine's own start (`clientRequestId` `dispatch:<askId>`), its `workflow.task-admission` decision naming the dispatch decisions; the run's writing step routes first restricted to that Worker; the row's `started_at`; `workflow.dispatch.started`; the run's `task.startedBy` is `dispatch` | the task moved on: closed, the approval used for nothing; the Worker not free past the hold: closed (`hold-expired`), and a new choice asks again; the engine full or draining: it waits within the hold; any other refusal: closed |
 
 - **Free** (INV-2): admitted by routing; `ready`, its account's load (running, queued, pending)
   below `maxRunningPerAccount`, and no step of a running run on it; every pool of its account
@@ -1170,25 +1176,41 @@ flowchart TD
   would be, so approving every ask never passes a bound. A task that writes a subject another task
   holds (claimed, running, in review) or has a live ask on is not taken (board rule 6, INV-15; the
   board already refuses a second open task on one subject).
+- **The hour** (D2, INV-9): at most `maxPerHour` (default 6, 0 to 120; 0 starts nothing) starts in any
+  rolling hour, and `maxPerHourPerProject` (default 3, at most `maxPerHour`), counted from the rows'
+  `started_at`, so a restart counts the same. A pass counts the rows approved or starting with them, so
+  it never takes more than the hour leaves; an approved row waits while the hour's starts made are at
+  the bound (only starts made count there, so two approved rows never hold each other back). An ask
+  counts when its run starts, not when it is asked.
 - **The preference** never spends an attempt: only the writing step's first execution routes
   restricted to the chosen Worker; refused (its state changed), it routes as any step, and the
   refused admission decision is kept among the step's decisions. A retry, an escalation, or a
   `continue` is never pinned back to it. A run that resumes its task's earlier session keeps that
   session's Worker; the preference is then not taken.
-- **Pause**: `pauseDispatch` and `resumeDispatch` (MCP `dispatch_pause`, `dispatch_resume`, operator
-  scope; `system dispatch pause|resume`), each a `gate` decision (rule `dispatch.pause`) on a durable
-  row, kept across restarts. Paused, a pass withdraws the open asks, closes the approved ones unused,
-  and takes nothing; the lead's and the operator's own starts go on. `dispatch.enabled: false` runs no
-  pass at all.
+- **Pause**: `pauseDispatch(reason?, projectId?)` and `resumeDispatch(projectId?)` (MCP
+  `dispatch_pause`, `dispatch_resume` with an optional `projectId`, operator scope;
+  `system dispatch pause|resume [--project <id>]`), each a `gate` decision (rule `dispatch.pause`) on a
+  durable row (`global`, or `project:<id>` for one project's, D2), kept across restarts. Paused, a pass
+  withdraws the open asks there, closes the approved ones unused, and takes nothing there (a paused
+  project's tasks say so); the lead's and the operator's own starts go on. `dispatch.enabled: false`
+  runs no pass at all.
 - **Restart** (INV-4): everything is on the engine's rows (`workflow_dispatch`, at most one live ask
-  per task attempt; `workflow_dispatch_control`; `workflow_tasks.dispatch` on a run it started) and
-  in the queue; a pass after a crash adopts the request on its subject, finds a run already admitted
-  for its ask, and counts the same.
+  per task attempt, with its `mode` and `started_at`; `workflow_dispatch_control`;
+  `workflow_tasks.dispatch` and `started_by` on a run it started) and in the queue; a pass after a
+  crash adopts the request on its subject, finds a run already admitted for its ask (a row left
+  `approved` or `starting` mid-start is moved to `started` on that run, never started again), and
+  counts the same.
+- **Who started a run** (D2): a board task's run says it (`task.startedBy`, kept as
+  `workflow_tasks.started_by`): `dispatch`, `operator` when its start says so (`startedBy` on the
+  start; Start on `/ui` does), else `lead`. The roster gives it on each step (`mcp-roster@1.8`
+  `work[].startedBy`, [roster](roster.md)), and the Workers tab shows a *started by itself* chip.
 - **Explained**: `explain` on a run dispatch started lists its dispatch decisions first, then the
-  run's own; `dispatch_status` (client scope; `system dispatch`) gives the settings, the pause, each
-  bound and its use, the live asks with their Worker and windows, and the last pass with its reason
-  for each ready task; Home lists the asks under *Starts awaiting approval*
-  ([web UI API](../reference/web-ui.md#dispatch)).
+  run's own; `dispatch_status` (client scope; `system dispatch`) gives the settings, the pauses, each
+  bound and its use (the hour's starts too), the live asks with their Worker and windows, what it
+  started in the last 24 h (`started`, at most 32, newest first, each with its mode and its run's
+  state), and the last pass with its reason for each ready task; Home lists the asks under *Starts
+  awaiting approval* and the starts under *Started by itself*, one line each with its run's state as
+  a chip ([web UI API](../reference/web-ui.md#dispatch)).
 
 ## A plain run's acceptance
 

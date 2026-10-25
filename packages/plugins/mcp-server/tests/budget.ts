@@ -37,6 +37,10 @@ export const BUDGET = {
      * `roster` saying what its `now` holds (capacity now, so a lead gives work where it is free) adds 134 B (T152).
      * Dispatch's `dispatch_status`, `dispatch_pause`, and `dispatch_resume`, with the action class
      * `dispatch` in the policy's enum, add 823 B (T153, ADR-0064).
+     * `dispatch_pause` and `dispatch_resume` taking a `projectId` (one project's pause), and
+     * `dispatch_status` saying it lists the starts dispatch made, add about 200 B (T184, PROP-0014 D2;
+     * estimated from the text and schema added, not yet measured on the shipped profile: the
+     * `measured` value below is T153's until surface.e2e is next run).
      */
     operator: { measured: 45_614, ceiling: 47_200 },
     /**

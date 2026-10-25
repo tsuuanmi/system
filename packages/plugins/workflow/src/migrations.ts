@@ -124,4 +124,18 @@ export const MIGRATIONS = [{
   CREATE INDEX workflow_dispatch_task ON workflow_dispatch (task_id, attempt);
   CREATE TABLE workflow_dispatch_control (id TEXT PRIMARY KEY, paused TEXT, last_pass TEXT, updated_at TEXT NOT NULL);
   ALTER TABLE workflow_tasks ADD COLUMN dispatch TEXT;`,
+}, {
+  // Dispatch starting by itself (PROP-0014 D2): who started a task's run (`dispatch`, `lead`, or
+  // `operator`), filled for the runs admitted before it from what they recorded; and on each dispatch
+  // row, how it was let start (`ask`, `board`, `auto`, `notify`) and when its run started, which the
+  // hourly bound counts. Rows started before it count from their outcome's time.
+  version: 21,
+  sql: `ALTER TABLE workflow_tasks ADD COLUMN started_by TEXT;
+  UPDATE workflow_tasks SET started_by = CASE WHEN dispatch IS NOT NULL THEN 'dispatch'
+    WHEN run_id IN (SELECT run_id FROM workflow_runs WHERE request_key LIKE 'web-ui:%') THEN 'operator' ELSE 'lead' END;
+  ALTER TABLE workflow_dispatch ADD COLUMN mode TEXT;
+  ALTER TABLE workflow_dispatch ADD COLUMN started_at TEXT;
+  UPDATE workflow_dispatch SET mode = CASE WHEN json_extract(choice, '$.board') IS NOT NULL THEN 'board' ELSE 'ask' END;
+  UPDATE workflow_dispatch SET started_at = json_extract(outcome, '$.at') WHERE state = 'started';
+  CREATE INDEX workflow_dispatch_started ON workflow_dispatch (started_at) WHERE started_at IS NOT NULL;`,
 }]

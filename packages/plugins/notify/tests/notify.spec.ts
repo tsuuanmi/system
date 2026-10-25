@@ -126,6 +126,20 @@ describe('each event kind is read into its notice (REQ-HOST-9)', () => {
     expect(() => schemas.assert('notification@1.1', { ...notice, schema: 'notification@1.0' })).toThrow()
   })
 
+  it('a start dispatch made by itself under notify: which task, project, attempt, Worker, and run, and how to look, stop it, or pause (PROP-0014 D2)', () => {
+    const { notice } = read({ type: 'workflow.dispatch.notice', runId: 'run_1', data: { askId: 'dsp_1', taskId: 'task-3', projectId: 'p1', attempt: 2, worker: 'agent:acc-a/develop', runId: 'run_1' } })
+    expect(notice).toMatchObject({
+      schema: 'notification@1.2', id: 'dispatch.started:run_1:7', kind: 'dispatch.started', subject: 'run_1', event: { seq: 7, type: 'workflow.dispatch.notice' },
+      title: 'Started by itself: board task task-3', act: ['system explain run_1', 'system stop run_1', 'system dispatch pause --project p1'],
+    })
+    expect(notice!.text).toBe('System started attempt 2 of board task task-3 of project p1 on agent:acc-a/develop (run run_1), as the project\'s policy gives dispatch notify. Nothing lands without your merge approval.')
+    schemas.assert('notification@1.2', notice)
+    // Its kind is refused under an earlier record; an event without its run or task means nothing.
+    expect(() => schemas.assert('notification@1.1', { ...notice, schema: 'notification@1.1' })).toThrow()
+    expect(read({ type: 'workflow.dispatch.notice', data: { taskId: 'task-3' } })).toEqual({})
+    expect(KINDS).toContain('dispatch.started')
+  })
+
   it('an approval request close to its expiry: the reminder says when it is denied', () => {
     const expiresMs = NOW + 30 * 60_000
     const notice = notify.reminderNotice({ requestId: 'apr_1', remindMs: NOW, expiresMs, seq: 7, actionClass: 'deploy', policyChange: false }, NOW, { leadMs: 3600_000 })!
@@ -500,9 +514,9 @@ describe('the plugin, end to end', () => {
     expect(configProblems({ link: 'file:///ui' })).toEqual(['link must be an http or https URL'])
     expect(configProblems({ webhook: { credential: 'https://x' } })).toEqual(['webhook.credential must be a credential reference (an UPPER_SNAKE name), not https://x'])
     expect(configProblems({ kinds: [] })).toEqual(['kinds is empty: turn the notify row off instead'])
-    // Every kind the notifier makes is one its record declares, in the same order (review.expiring since 1.1).
+    // Every kind the notifier makes is one its record declares, in the same order (review.expiring since 1.1, dispatch.started since 1.2).
     const record = JSON.parse(readFileSync(new URL('../../../../schemas/notification.v1.json', import.meta.url), 'utf8')) as { properties: { kind: { enum: string[] } } }
     expect([...KINDS]).toEqual(record.properties.kind.enum)
-    expect(KINDS).toHaveLength(8)
+    expect(KINDS).toHaveLength(9)
   })
 })

@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (2026-10-25, by the operator, D61)
 - **Date:** 2026-10-25
-- **Related:** [PROP-0014](../../proposals/0014-dispatch-by-quota.md) (increment D1; D61 to D66),
+- **Related:** [PROP-0014](../../proposals/0014-dispatch-by-quota.md) (increments D1 and D2; D61 to D66, D70),
   [ADR-0033](0033-least-busy-routing.md), [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0041](0041-policy-changes-through-the-approval-queue.md),
   [ADR-0052](0052-accounts-are-assigned-unless-pooling-is-recorded.md),
@@ -132,5 +132,18 @@ What constrains it:
 - Quota readings are trusted as recorded; the research behind PROP-0014 found window-aware dispatch
   safe but its throughput gain unproven. D1 asks for every start, so the live day it runs on is the
   first evidence.
-- Revisit for D2 (`notify` and `auto`, hourly bounds, per-project pause, priority) and D3 (the score
-  in every route, its own ADR).
+- **D2, starting by itself** (the operator's go-ahead D70, 2026-10-25: using idle quota must be
+  automatic; T184). Point 2's `auto` and `notify` are honoured per project: the pass records the same
+  `dispatch.select`, `dispatch.choice`, and `autonomy` decisions and starts the chosen attempt with no
+  request (the policy's verdict is the go; the queue is not asked, so its seam is unchanged), within
+  every bound of point 7; under `notify` the start also appends `workflow.dispatch.notice`, which the
+  notifier tells as `dispatch.started` (`notification@1.2`). `ask` and `forbid` are as in D1. Point 7
+  gains the rolling hour (`maxPerHour`, default 6, 0 to 120; `maxPerHourPerProject`, default 3),
+  counted from each row's `started_at` (approved and starting rows counted at selection, so a pass
+  never takes more than the hour leaves), and the operator's pause of one project, a `gate` decision
+  on its own durable row. A board task's run records who started it (`dispatch`, `lead`, or
+  `operator`, `TaskView.startedBy`), which the roster gives on each step (`mcp-roster@1.8`) and the
+  Workers tab and Home's *Started by itself* show. The `workflow` contract becomes 1.10. A restart in
+  the middle of a start adopts the run already admitted for its row, so an attempt starts once.
+- Still open after D2: a task's priority (the pass orders by age), withdrawing an ask whose Worker's
+  pool closed mid-wait, and D3 (the score in every route, its own ADR).

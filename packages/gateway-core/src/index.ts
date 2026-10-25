@@ -12,7 +12,7 @@ import type { ZodRawShape } from 'zod'
 
 export {
   type Availability, type AvailabilityState, formatRoster, type Known, projectRoster, readCapacity, readRoster, type Roster, type RosterAccount, type RosterAccountRecord, type RosterAgentAccount, ROSTER_BOUNDS, ROSTER_SCHEMA,
-  type RosterDescriptor, type RosterEntry, type RosterInput, type RosterPool, type RosterPoolView, type RosterRun, type RosterScope, type RosterServices, type RosterSourceRead, type RosterTask,
+  type RosterDescriptor, type RosterEntry, type RosterInput, type RosterPool, type RosterPoolView, type RosterRun, type RosterScope, type RosterServices, type RosterSourceRead, type RosterStartedBy, type RosterTask,
   type RosterWebsiteAccount, type RosterWindow, type RosterWork, type RosterLiveness, type RosterLivenessRead, type RosterLivenessRun,
 } from './roster.ts'
 export {

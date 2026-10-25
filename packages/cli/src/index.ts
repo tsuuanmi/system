@@ -716,21 +716,53 @@ export async function hostRoster(json: boolean, call: typeof callTool = callTool
 export interface DispatchView {
   enabled: boolean
   paused?: { since: string; reason?: string; decision: string }
+  /** PROP-0014 D2: each project's own pause. */
+  pausedProjects?: Array<{ projectId?: string; since: string; reason?: string; decision: string }>
   lastPass?: { at: string; state: string; reason?: string; took: Array<{ taskId: string; worker: string; how: string }>; tasks: Array<{ taskId: string; title: string; reason: string }>; more: number }
-  bounds: { running: { used: number; max: number }; openAsks: { used: number; max: number }; engine: { active: number; max: number } }
+  bounds: { running: { used: number; max: number }; openAsks: { used: number; max: number }; engine: { active: number; max: number }; hour?: { used: number; max: number } }
   asks: Array<{ taskId: string; title: string; attempt: number; state: string; worker: string; requestId?: string; why: string }>
+  /** PROP-0014 D2: what dispatch started in the last 24 h, newest first. */
+  started?: Array<{ taskId: string; title: string; attempt: number; worker: string; runId: string; runStatus: string; mode: string; startedAt: string }>
 }
 
 /**
- * `system dispatch` for a terminal: on, off, or paused (since when, why, how to resume), the bounds in
- * use, the starts waiting for the operator's go or for their Worker, and the last pass with its reason
- * for each ready task it looked at.
+ * `system dispatch [status|pause [--project <id>] [reason…]|resume [--project <id>]] [--json]`: the
+ * tool to call and its arguments, or undefined when the words are not one of these.
+ */
+export function parseDispatch(rest: readonly string[]): { action: 'status' | 'pause' | 'resume'; json: boolean; args: Record<string, string> } | undefined {
+  const [action = 'status', ...more] = rest[0] === '--json' ? ['status', ...rest] : rest
+  if (action !== 'status' && action !== 'pause' && action !== 'resume') return undefined
+  const json = more.includes('--json')
+  const words = more.filter((a) => a !== '--json')
+  const args: Record<string, string> = {}
+  const at = words.indexOf('--project')
+  if (at >= 0) {
+    const projectId = words[at + 1]
+    if (action === 'status' || !projectId || projectId.startsWith('--')) return undefined
+    args['projectId'] = projectId
+    words.splice(at, 2)
+  }
+  if (action !== 'pause' && words.length) return undefined
+  if (words.length) args['reason'] = words.join(' ')
+  return { action, json, args }
+}
+
+/**
+ * `system dispatch` for a terminal: on, off, or paused (since when, why, how to resume), each project
+ * paused, the bounds in use, the starts waiting for the operator's go or for their Worker, what it
+ * started by itself, and the last pass with its reason for each ready task it looked at.
  */
 export function formatDispatch(view: DispatchView): string[] {
   const state = !view.enabled ? 'off (dispatch.enabled is false): nothing is asked or started by itself'
     : view.paused ? `paused since ${view.paused.since}${view.paused.reason ? `: ${view.paused.reason}` : ''} (system dispatch resume; decision ${view.paused.decision})` : 'on'
   const b = view.bounds
-  const lines = [`dispatch: ${state}`, `  bounds: ${b.running.used} of ${b.running.max} dispatched runs and asks, ${b.openAsks.used} of ${b.openAsks.max} asks open, ${b.engine.active} of ${b.engine.max} active runs it may fill`]
+  const lines = [`dispatch: ${state}`, `  bounds: ${b.running.used} of ${b.running.max} dispatched runs and asks, ${b.openAsks.used} of ${b.openAsks.max} asks open, ${b.engine.active} of ${b.engine.max} active runs it may fill${b.hour ? `, ${b.hour.used} of ${b.hour.max} starts this hour` : ''}`]
+  for (const p of view.pausedProjects ?? []) {
+    lines.push(`  project ${p.projectId} paused since ${p.since}${p.reason ? `: ${p.reason}` : ''} (system dispatch resume --project ${p.projectId}; decision ${p.decision})`)
+  }
+  for (const s of view.started ?? []) {
+    lines.push(`  started by itself (${s.mode}) ${s.startedAt}: "${s.title}" (task ${s.taskId}, attempt ${s.attempt}) on ${s.worker}, run ${s.runId} ${s.runStatus}`)
+  }
   for (const ask of view.asks) {
     lines.push(ask.state === 'asked'
       ? `  waiting for your go: "${ask.title}" (task ${ask.taskId}, attempt ${ask.attempt}) on ${ask.worker}, request ${ask.requestId}: decide it in the queue (system ui, or MCP approvals_decide)`

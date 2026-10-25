@@ -484,7 +484,11 @@ export const workflowSuite = defineSuite<Boot>({
   // quota, adopted across passes and restarts, and started on the operator's approval exactly as asked;
   // `dispatch.enabled: false` starts nothing; `sweepDispatch`, `dispatchStatus`, `pauseDispatch`, and
   // `resumeDispatch` on the seam. Since 1.9 the context's approval queue gives `dispatch` its default, ask.
-  contract: '1.9',
+  // 1.10 (PROP-0014 D2): a task's run says who started it (`task.startedBy`: `dispatch`, `lead`, or
+  // `operator`, which a start may say it is); under a policy that gives dispatch `auto` or `notify` the
+  // pass starts the chosen attempt with nothing asked; dispatch is bounded per rolling hour
+  // (`maxPerHour`, `maxPerHourPerProject`) and paused per project (`pauseDispatch(reason, projectId)`).
+  contract: '1.10',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1426,6 +1430,30 @@ export const workflowSuite = defineSuite<Boot>({
       expect((await h.ctx.approvals.list()).filter((r) => r.action.class === 'dispatch')).toEqual([])
       expect(h.workers.started).toEqual([])
     }, { dispatch: { enabled: false } }, '1.9'),
+
+    scenario('task-run-says-who-started-it', 'says on a board task\'s run who started it: the lead by default, the operator when its start says so, and a pause of one project\'s dispatch starts and asks nothing there (PROP-0014 D2)', async (h) => {
+      h.workers.reply = () => 'hold'
+      await activeProject(h.ctx)
+      const lead = await readyTask(h.ctx, 'by the lead', { template: 'solo' })
+      const operator = await readyTask(h.ctx, 'by the operator', { template: 'solo' })
+      const byLead = await h.ctx.workflow.start({ template: 'solo', input: 'go', task: { taskId: lead.taskId } })
+      const byOperator = await h.ctx.workflow.start({ template: 'solo', input: 'go', task: { taskId: operator.taskId }, startedBy: 'operator' })
+      expect(byLead.task?.startedBy).toBe('lead')
+      expect(byOperator.task?.startedBy).toBe('operator')
+      await h.restart()
+      expect(h.ctx.workflow.get(byOperator.runId)?.task?.startedBy).toBe('operator')
+      // One project's pause: its ready task is neither asked about nor started by dispatch.
+      h.workers.extra = [DISPATCHABLE]
+      await poolRead(h.ctx)
+      const held = await readyTask(h.ctx, 'held by a pause', { template: 'solo' })
+      const paused = h.ctx.workflow.pauseDispatch('not now', held.projectId)
+      expect(paused.pausedProjects).toEqual([expect.objectContaining({ projectId: held.projectId, reason: 'not now' })])
+      const pass = await h.ctx.workflow.sweepDispatch()
+      expect(pass.took).toEqual([])
+      expect(pass.tasks.find((t) => t.taskId === held.taskId)?.reason).toMatch(new RegExp(`^you paused dispatch in project ${held.projectId}`))
+      expect((await h.ctx.approvals.list()).filter((r) => r.action.class === 'dispatch')).toEqual([])
+      expect(h.ctx.workflow.resumeDispatch(held.projectId).pausedProjects).toEqual([])
+    }, {}, '1.10'),
   ],
 })
 

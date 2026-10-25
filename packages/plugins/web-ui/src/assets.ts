@@ -1096,6 +1096,7 @@ export const APP_JS = `'use strict'
     const state = !dispatch.enabled ? [el('p', { class: 'muted' }, 'Automatic starts off'), fold('How to turn them on', 'Dispatch is off (dispatch.enabled: false) in the configuration: System proposes no start by itself.')]
       : dispatch.paused ? [el('p', { class: 'soon' }, 'Automatic starts paused' + (dispatch.paused.reason ? ' · ' + dispatch.paused.reason : '') + ' · since ' + when(dispatch.paused.since)),
         fold('How to resume', 'System proposes no start until you resume it: system dispatch resume.')]
+        : (dispatch.pausedProjects || []).length ? (dispatch.pausedProjects || []).map((p) => el('p', { class: 'soon' }, 'Automatic starts paused in project ' + p.projectId + (p.reason ? ' · ' + p.reason : '') + ' · since ' + when(p.since) + ' · resume: system dispatch resume --project ' + p.projectId))
         : null
     const name = (worker) => names.get(worker) || worker
     const item = (a) => {
@@ -1124,6 +1125,18 @@ export const APP_JS = `'use strict'
           : el('p', { class: 'muted' }, 'No starts awaiting approval.'),
       approved.length ? el('p', {}, qty(approved.length, 'approved start') + ' waiting for a free Worker: ' + approved.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.') : null,
       reasons)
+  }
+
+  // Home's "Started by itself" (PROP-0014 D2): what dispatch started in the last 24 h, newest first, one line
+  // each: its run's state as a chip, the task (to its run), the Worker, how it was let start, and when.
+  const STARTED_HOW = { auto: 'by policy (auto)', notify: 'by policy (notify)', ask: 'on your approval', board: 'approved on the board' }
+  const STARTED_TONE = { running: 'info', completed: 'ok', failed: 'bad', cancelled: 'idle' }
+  const startedView = (dispatch, names) => {
+    if (!dispatch || dispatch.error || !dispatch.started || !dispatch.started.length) return null
+    return el('section', { class: 'panel', 'aria-label': 'Started by itself' }, el('h3', {}, 'Started by itself'),
+      el('ul', { class: 'plain started' }, dispatch.started.map((s) => el('li', { 'aria-label': 'Started by itself: ' + s.title },
+        chip(s.runStatus, STARTED_TONE[s.runStatus] || 'idle'), ' ', runLink({ runId: s.runId }, s.title),
+        el('span', { class: 'muted' }, ' · ' + (names.get(s.worker) || s.worker) + ' · ' + (STARTED_HOW[s.mode] || s.mode) + ' · ' + relative(s.startedAt))))))
   }
 
   // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
@@ -1180,6 +1193,7 @@ export const APP_JS = `'use strict'
       el('section', { class: 'panel', 'aria-label': 'Needs your attention' }, el('h3', {}, 'Needs your attention'),
         waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'You’re all caught up.')),
       goView(dispatch, q, names, jump),
+      startedView(dispatch, names),
       since,
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
         c ? el('p', {}, c.busy + ' working · ' + c.ready + ' free · ' + c.resting + ' resting · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
@@ -1719,7 +1733,7 @@ export const APP_JS = `'use strict'
     const live = w.liveness && isKnown(w.liveness) ? w.liveness.value : []
     if (!items.length && !live.length) return null
     return el('div', { class: 'doing' },
-      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', {}, doingText(i), ' ', runOpen(i.runId)))) : null,
+      items.length ? el('ul', { 'aria-label': 'Doing now' }, items.map((i) => el('li', {}, doingText(i), ' ', i.startedBy === 'dispatch' ? [chip('started by itself', 'info'), ' '] : null, runOpen(i.runId)))) : null,
       isKnown(w.work) && w.work.value.more ? el('div', { class: 'muted' }, w.work.value.more + ' more step(s) not listed') : null,
       live.length ? el('ul', { 'aria-label': 'Runs whose liveness needs a look' }, live.map((r) => el('li', { class: r.state === 'unknown' ? 'state failed' : 'unknown' }, r.summary, r.runId ? [' ', runOpen(r.runId)] : null, whatIs(r.state === 'unknown' ? 'held' : 'stalled')))) : null)
   }

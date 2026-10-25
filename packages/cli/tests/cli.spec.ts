@@ -6,7 +6,7 @@ import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostCapacity, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatDispatch, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostCapacity, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -110,6 +110,29 @@ describe('system CLI (PR #3 kernel review)', () => {
     ])
     expect(formatDispatch({ enabled: true, bounds, asks: [], paused: { since: '2026-10-25T12:00:00.000Z', reason: 'quiet', decision: 'sha256:aa' } })[0]).toBe('dispatch: paused since 2026-10-25T12:00:00.000Z: quiet (system dispatch resume; decision sha256:aa)')
     expect(formatDispatch({ enabled: false, bounds, asks: [] })[0]).toBe('dispatch: off (dispatch.enabled is false): nothing is asked or started by itself')
+  })
+
+  it('prints what dispatch started by itself, the hour\'s starts, and each project paused; pauses and resumes one project (PROP-0014 D2)', () => {
+    const bounds = { running: { used: 1, max: 8 }, openAsks: { used: 0, max: 4 }, engine: { active: 1, max: 12 }, hour: { used: 1, max: 6 } }
+    expect(formatDispatch({
+      enabled: true, bounds, asks: [],
+      pausedProjects: [{ projectId: 'p2', since: '2026-10-25T12:00:00.000Z', reason: 'quiet', decision: 'sha256:bb' }],
+      started: [{ taskId: 'task-1', title: 'Write the notes', attempt: 1, worker: 'agent:a/develop', runId: 'run_1', runStatus: 'running', mode: 'auto', startedAt: '2026-10-25T12:05:00.000Z' }],
+    })).toEqual([
+      'dispatch: on',
+      '  bounds: 1 of 8 dispatched runs and asks, 0 of 4 asks open, 1 of 12 active runs it may fill, 1 of 6 starts this hour',
+      '  project p2 paused since 2026-10-25T12:00:00.000Z: quiet (system dispatch resume --project p2; decision sha256:bb)',
+      '  started by itself (auto) 2026-10-25T12:05:00.000Z: "Write the notes" (task task-1, attempt 1) on agent:a/develop, run run_1 running',
+    ])
+    expect(parseDispatch([])).toEqual({ action: 'status', json: false, args: {} })
+    expect(parseDispatch(['--json'])).toEqual({ action: 'status', json: true, args: {} })
+    expect(parseDispatch(['pause', 'a', 'quiet', 'day'])).toEqual({ action: 'pause', json: false, args: { reason: 'a quiet day' } })
+    expect(parseDispatch(['pause', '--project', 'p1', 'not', 'now'])).toEqual({ action: 'pause', json: false, args: { projectId: 'p1', reason: 'not now' } })
+    expect(parseDispatch(['resume', '--project', 'p1', '--json'])).toEqual({ action: 'resume', json: true, args: { projectId: 'p1' } })
+    expect(parseDispatch(['resume', 'words'])).toBeUndefined()
+    expect(parseDispatch(['pause', '--project'])).toBeUndefined()
+    expect(parseDispatch(['status', '--project', 'p1'])).toBeUndefined()
+    expect(parseDispatch(['go'])).toBeUndefined()
   })
 
   it('prints the roster from the running profile: its rendering, or with --json the record, and refuses a failed call (REQ-HOST-8)', async () => {
