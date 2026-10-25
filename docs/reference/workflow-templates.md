@@ -138,6 +138,11 @@ by a read-only local agent Worker; never a website account.
 `review:1` names no kind of work, so a Worker the operator gives kinds never takes it: keep a
 read-only Worker given none ([work kinds](../design/routing.md#work-kinds)).
 
+Bound to an exact subject, the review is told by the engine's subject block to read and judge the
+change and never run the project's tests or builds: a command it could not run is not a finding
+about the change, and an environment limit (a read-only sandbox, a denied or failing command) is
+at most an `info` finding, never a `blocking` one. A remediation cycle's re-review is told the same.
+
 ### `algorithm-development`
 
 Provided by
@@ -174,7 +179,12 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   it ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
 - `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
   and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
-  change, never the developer's answer. Blocking findings grow a fix (on `develop:1`'s
+  change, never the developer's answer. It reads and judges, and never runs the project's tests or
+  builds: `validate:1` and the run's required checks at acceptance
+  ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)) run them. A command it
+  could not run is not a finding about the change; an environment limit (its read-only sandbox, a
+  denied command) is at most an `info` finding, so it never grows a remediation cycle that no fix
+  could satisfy. Its instructions and the engine's subject block both say so. Blocking findings grow a fix (on `develop:1`'s
   capabilities) behind the approval queue and a re-review given the review's own instructions on
   the fixed subject, as for any template
   ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`

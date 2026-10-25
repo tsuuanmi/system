@@ -38,6 +38,9 @@ describe('the agent-review template\'s review in a remediation cycle', () => {
     for (const review of reviews) {
       expect(review.prompt.startsWith(`${input}\n\n## The exact subject of this review\n`)).toBe(true)
       expect(review.prompt).not.toContain('{{')
+      // The engine tells every bound review, this one too, to read and judge and run no test or build.
+      expect(review.prompt).toContain('Read and judge the change: never run the project\'s tests or builds')
+      expect(review.prompt).toContain('an environment limit (a read-only sandbox, a denied or failing command) is at most an "info" finding, never a "blocking" one.')
     }
     expect(subject(reviews[1]!.prompt)).not.toBe(subject(reviews[0]!.prompt))
   })

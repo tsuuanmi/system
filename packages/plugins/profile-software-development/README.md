@@ -22,7 +22,13 @@ holds no engine code and no rules of its own.
   - `review:1` (`review`, `local-data`) reviews that exact change on a read-only
     Worker. It reads the task, its criteria, and the change, never the
     developer's answer (its prompt points at no step's result); a remediation
-    cycle's re-review is given the same instructions, on the fixed subject;
+    cycle's re-review is given the same instructions, on the fixed subject. The
+    reviewer reads and judges the change and never runs the project's tests or
+    builds (`validate:1` and the run's required checks at acceptance run them,
+    ADR-0063): a command it could not run is not a finding about the change, and
+    an environment limit (its read-only sandbox, a denied command) is at most an
+    `info` finding. The engine's exact-subject block says the same to every bound
+    review, `agent-review`'s too;
   - `validate:1` (`validate`, `local-data`, economy at least; `validation` work) runs the tests and
     benchmarks the task's criteria name, in a one-shot conversation (no session),
     on a Worker whose commands are proven confined (`executes`). It reads the task's
