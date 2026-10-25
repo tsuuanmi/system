@@ -115,10 +115,17 @@ async function runRequiredChecks(
   if (!required.length) return undefined
   const pending = (why: string): RanChecks => ({ subject: tree.subject, checks: {}, notes: [`its ${required.join(', ')} check(s) did not run: ${why}; they stay pending`], detail: { asked: required, outcome: 'not-run', reason: why.slice(0, 300) } })
   if (typeof e.ctx.workers.check !== 'function') return pending('the workers seam runs no check (ctx.workers.check)')
-  const checked = await e.ctx.workers.check({
-    runId: run.run_id, workspace: tree.workspace, subject: { ref: tree.subject.ref, version: tree.subject.version }, checks: required,
-    classification: run.classification ?? e.ctx.egress.defaultClassification,
-  }, signal)
+  let checked: Awaited<ReturnType<NonNullable<typeof e.ctx.workers.check>>>
+  try {
+    checked = await e.ctx.workers.check({
+      runId: run.run_id, workspace: tree.workspace, subject: { ref: tree.subject.ref, version: tree.subject.version }, checks: required,
+      classification: run.classification ?? e.ctx.egress.defaultClassification,
+    }, signal)
+  } catch (error) {
+    // A stop or a lost lease ends the run's turn; anything else is a check not run, never a run failed for it.
+    if (signal.aborted) throw error
+    return pending(`the workers seam could not run them (${(error as Error).message.slice(0, 200)})`)
+  }
   if (!checked) return pending(`no Worker source holds the worktree ${tree.workspace} of the run`)
   if (checked.outcome === 'refused') return { ...pending(`source ${checked.source} refused (${checked.cause}): ${checked.reason}`), detail: { asked: required, source: checked.source, outcome: 'refused', cause: checked.cause } }
   const checks: Partial<Record<RunCheck, boolean>> = {}
