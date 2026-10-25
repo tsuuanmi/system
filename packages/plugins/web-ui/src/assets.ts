@@ -768,9 +768,10 @@ export const APP_JS = `'use strict'
   // Each check the policy requires of a review, with its state as the run recorded it (ADR-0063, T160): passed or
   // failed (with its exit code) only on a record, not run and why, or pending; never "passed" without a record. Then
   // the checks the board holds pending, next to the verdict, in warning color: those recorded as failed apart from those not run.
-  const checkLine = (c) => c.state === 'passed' ? 'passed' + (c.exitCode !== undefined ? ' (exit code ' + c.exitCode + ')' : '')
-    : c.state === 'failed' ? 'failed' + (c.exitCode !== undefined ? ', exit code ' + c.exitCode : '')
-      : c.state === 'not-run' ? 'not run: ' + c.why : 'pending: ' + c.why
+  // Its state as a chip (T172), then the exit code a record gives, or why it has none.
+  const CHECK_STATE = { passed: ['Passed', 'ok'], failed: ['Failed', 'bad'], 'not-run': ['Not run', 'warn'], pending: ['Pending', 'warn'] }
+  const checkLine = (c) => [chip(...(CHECK_STATE[c.state] || [c.state, 'idle'])),
+    c.state === 'passed' || c.state === 'failed' ? (c.exitCode !== undefined ? ' · exit code ' + c.exitCode : '') : ' — ' + c.why]
   // The warning is derived from the recorded states: a pending check the run recorded as failed is said to have failed, not
   // to be not run (T160 review).
   const pendingWarning = (r) => {
@@ -787,8 +788,7 @@ export const APP_JS = `'use strict'
     if (!r.checks) return warn || el('p', { class: 'muted' }, 'No check is pending on the board; what the checks came to is not known here.')
     const list = r.checks.value
     return el('div', { class: 'checks' },
-      list.length ? el('ul', { class: 'checks', 'aria-label': 'Required checks' }, list.map((c) => el('li', { class: c.state === 'passed' ? 'state completed' : c.state === 'failed' ? 'state failed' : 'soon' },
-        el('strong', {}, c.check + ': '), checkLine(c))))
+      list.length ? el('ul', { class: 'checks', 'aria-label': 'Required checks' }, list.map((c) => el('li', {}, el('strong', {}, c.check + ': '), checkLine(c))))
         : el('p', { class: 'muted' }, 'The policy requires no check of this kind of work.'),
       r.checks.requiredUnknown ? el('p', { class: 'unknown' }, 'Which checks the policy requires is unknown (' + r.checks.requiredUnknown + '): those listed are the ones the board holds pending.') : null,
       warn)
@@ -923,7 +923,7 @@ export const APP_JS = `'use strict'
       // A failure leads with the run page's plain-words reason (failureReason, T160); the system's own text is folded under it.
       const reason = r.status === 'failed' && r.error ? failureReason(r.failure || {}) || 'no reason in words is known for it' : null
       items.push({ at: r.at, line: el('span', { class: r.status === 'failed' ? 'state failed' : '' }, r.status === 'failed' ? 'Failed: ' + what + (reason ? ' — ' + reason : '') + ' ' : 'Finished: ' + what + ' '), link: runLink({ runId: r.runId }, 'open the run'),
-        fold: reason ? el('details', { class: 'raw' }, el('summary', {}, 'What the system said'), el('div', { class: 'muted' }, r.error)) : null })
+        fold: reason ? fold('What the system said', el('div', { class: 'muted' }, r.error)) : null })
     }
     if ('value' in activity.tasks) for (const t of activity.tasks.value) {
       const l = t.landing

@@ -296,7 +296,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.innerText()).toContain('The run\'s last step, solo, reported this, in its own words:')
     // Each required check with its state (ADR-0063, T160): the run recorded neither, so neither reads as passed.
     const required = card.getByRole('list', { name: 'Required checks' })
-    expect(await required.innerText()).toBe('tests: pending: the run recorded no result of it\nlint: pending: the run recorded no result of it')
+    expect(await required.innerText()).toBe('tests: ▲ Pending — the run recorded no result of it\nlint: ▲ Pending — the run recorded no result of it')
     expect(await card.innerText()).not.toContain('Every check the policy requires passed')
     const pending = card.locator('p.pending-checks')
     expect(await pending.innerText()).toMatch(/^Checks not run: tests, lint\. Accepting counts them as passed — run them first\./)
@@ -355,7 +355,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article', { name: 'Keep the retry budget' })
     const required = card.getByRole('list', { name: 'Required checks' })
     await expect.poll(() => required.count(), { timeout: 15_000 }).toBe(1)
-    expect(await required.innerText()).toBe('tests: failed, exit code 1\nlint: pending: the run recorded no result of it')
+    expect(await required.innerText()).toBe('tests: ■ Failed · exit code 1\nlint: ▲ Pending — the run recorded no result of it')
     const pending = card.locator('p.pending-checks')
     expect(await pending.innerText()).toMatch(/^Checks that failed: tests\. Checks not run: lint\. Accepting counts them as passed — fix the failed ones and run the others first\./)
     expect(await pending.innerText()).not.toMatch(/not run: [^.]*tests/)

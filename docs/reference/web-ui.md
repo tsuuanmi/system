@@ -240,8 +240,9 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
   pending; `not-run` with why when the run asked for it and it did not run to an exit code (no
   Worker source held the worktree, a source refused, the command errored); `pending` with why when
   nothing recorded it. When the policy cannot be read, `requiredUnknown` says why and the list holds
-  the pending checks only. The card lists them under *Required checks* (*tests: passed (exit code
-  0)*, *lint: failed, exit code 1*, *typecheck: not run: …*, *review: pending: …*), then the checks
+  the pending checks only. The card lists them under *Required checks*, each state as a status chip
+  (*tests: ● Passed · exit code 0*, *lint: ■ Failed · exit code 1*, *typecheck: ▲ Not run — …*,
+  *review: ▲ Pending — …*), then the checks
   the board holds pending in warning, from their recorded states: one recorded as failed under
   *Checks that failed: …*, the others under *Checks not run: …*, never a failed check as not run.
 
