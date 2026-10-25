@@ -100,6 +100,22 @@ node packages/cli/lib/bin.js mcp-config claude # or codex
 After changing an MCP tool, regenerate its reference from a running profile:
 `node packages/cli/lib/bin.js tools --markdown > docs/reference/mcp-tools.md`.
 
+## Branches: dev and main
+
+Work flows through two long-lived branches, `dev` and then `main`:
+
+- **`dev` integrates.** Workers' branches and the lead's batches merge into
+  `dev`. CI runs the full gate on every push to `dev`, as on `main`
+  ([CI gates](testing.md#ci-gates)).
+- **The live install follows `dev`.** The automatic live update runs with
+  `--branch dev` ([runbook](../operations/runbooks.md#update-the-live-install-automatically)),
+  and only a commit whose CI passed reaches it, as a fast-forward.
+- **`main` takes `dev` only by the operator.** `dev` reaches `main` only when the
+  operator merges a `dev` → `main` pull request: for a release, or for a point
+  that needs the operator's permission. A release tag is cut from `main` only
+  ([releasing](releasing.md#cutting-a-release)).
+- **A fix to something live goes to `dev` first**, never straight to `main`.
+
 ## Data directory
 
 Runtime state lives under `<DSH_HOME>/system/` (default `~/.dsh/system/`), with
