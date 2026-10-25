@@ -84,6 +84,14 @@ observer stay deferred.
 - An artifact-subject result lands only when one of its result artifacts names the tree (the
   algorithm-development template's validation report does); a template whose final step is a
   model's answer, with no `writes`, lands nothing.
+- Amended by [ADR-0068](0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)
+  (D82 #1, 2026-10-26): decision 4 merged a result onto whatever the base had become, and a conflict
+  was refused, so the lead merged about twelve results by hand in one night. Now, when the base moved
+  since the result forked from it, the landing first rebases the result onto it in the run's
+  worktree (a conflict resolved by the result's own author's Worker), makes the declared generated
+  files again, and runs the result's checks again on the rebased tree before the merge is asked; what
+  cannot land goes back to the board as another attempt (board contract 1.4). The merge itself, its
+  approval, and its exact binding are as decided here.
 
 ## Alternatives
 

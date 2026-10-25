@@ -1044,9 +1044,21 @@ stateDiagram-v2
   [*] --> watch: result on a working tree reported to the board
   watch --> commit: the board has the task done on this result
   watch --> none: another attempt, rejected, or cancelled
-  commit --> committed: committed on system/run/<runId> (gate decision commit)
+  commit --> committed: committed on system/run/<runId> (gate decision commit), forked from the base's head
+  commit --> rebase: committed, and the base moved since the result forked from it (ADR-0068)
   commit --> none: no source holds the tree
   commit --> refused: the tree moved, or it cannot be checked
+  rebase --> recheck: replayed on the base, generated files made again (gate decision rebase)
+  rebase --> resolving: a conflict (gate decision resolve)
+  rebase --> commit: the base moved again before it began
+  resolving --> recheck: the author's Worker resolved it, no marker left (gate decision rebase)
+  resolving --> returning: markers left, its step failed, or its Worker never admitted (why kept first)
+  rebase --> returning: a conflict, and no writing step of the run wrote the tree
+  returning --> returned: the branch put back at the head (gate decision return), then the task reopened
+  recheck --> committed: the checks its run's acceptance ran passed again on the rebased tree (gate decision recheck)
+  recheck --> returned: one of them failed there (gate decision return)
+  recheck --> refused: one did not run to an exit code (gate decision hold)
+  returned --> [*]
   committed --> asked: policy ask (a merge always asks), one merge request
   committed --> refused: policy forbid
   asked --> merging: approved
@@ -1082,6 +1094,45 @@ stateDiagram-v2
   adopted from the queue (the same run, class, and exact subject), and the source finds a commit or
   a merge already made instead of making it twice.
 - A run reported before landing existed lands nothing: merge its branch by hand.
+
+#### A target that moved: rebase, then check again
+
+> Decision: [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)
+> (D82 #1). It amends ADR-0060's decision 4 and needs board contract 1.4 (`Board.reopen`).
+
+Seen on 2026-10-25/26: nearly every result was cut from an older base, and its merge conflicted, in
+code, in docs, or in the numbers of ADRs, migrations, and schemas, so the lead merged it by hand. Now
+the commit step also reports where the result forked from the base (`fork`, their merge base). When
+that is not the base's head, the base moved since the result's work started, and the result is
+rebased onto it before the merge is asked:
+
+| Step | Records | On failure |
+|---|---|---|
+| rebase | the source replays the branch's change (from `fork` to the head) on top of the base in the run's worktree, which stays on its branch; the branch moves to the replay, committed by the system with the head's message, a line saying what moved, and `System-Rebased-From` / `System-Rebased-Onto` trailers; the head is kept under `refs/system/rebase/<runId>/<head>`. The files the repository declares generated are made again by its commands, a conflict only in them taking a side first (T166). A `gate` decision (`rebase`) names the fork, the old and the new head, how its conflicts were resolved, and the files made again | an agent run of the workflow run unfinished: it waits; a base that moved again before it began: back to `commit`; a conflict in any other file: `resolving`; a regeneration that failed or changed another file, or a head that moved: refused, the branch back at the head |
+| resolving | a writing step on the result's own author's Worker (the run's latest completed writing step, one that needs `develop`: the template's writing step or the last fix grown from it, never a later step that only ran in the worktree), in the run's worktree, on a board task's brief recorded once (the task, its project, and its attempt, so its reservations and usage are within their caps; the task's budget left), its instructions saying what moved on the base (its commits since the fork), the files in conflict, that the base's behaviour is kept, that a number both sides took (an ADR, a migration, a schema) goes to the result as the next free one, and not to commit or run git; a `gate` decision (`resolve`); started once, its key the run, the head, and the base. Once it ends, the source commits the resolution only when no file holds a conflict marker | markers left, its step failed, or its Worker not admitted within 6 hours: `returning`, with why, kept before anything is put back; then the branch put back at the head, a `gate` decision (`return`) saved, and the result goes back |
+| recheck | the command checks the run's own acceptance decision required or asked of its exact result (ADR-0063; kept on the run's row whoever accepted the result on the board, the operator included), with any the board's final acceptance names, run again (those reported in `checks`, and those its check run asked in `checkRun.asked` that stayed pending, left out of `checks` because they timed out, were stopped, or were not let run; only a check the repository has no command for, which its `check-run` evidence names no `argv` for, is left out) on the rebased tree, through `ctx.workers.check`, on its exact subject; a `gate` decision (`recheck`) with the results and the `check-run` evidence; then the merge is asked on the rebased head, its consequences saying it was rebased and checked again | one failed: a `gate` decision (`return`), and the result goes back; one that did not run to an exit code: a decision (`hold`), refused for the operator, nothing merged |
+| returned | `Board.reopen` (contract 1.4) sends the done task back as another attempt, through the gate again, its `board` decision naming the `return` decision and why; no attempt is counted for it (the one that made the result was) | a board without `reopen`, or one that refuses: refused, the task stays done, nothing merged |
+
+- **A target that only moved spends nothing**: a rebase with no conflict and checks that pass again
+  goes straight on to the merge request; the task stays done on its attempt.
+- **Bounded** (INV-9): one landing rebases at most 3 times (`MAX_REBASES`); a base that keeps moving
+  past them is refused for the operator to merge by hand.
+- **Restart** (INV-4): each step's state is on the row, and each phase is read from what git or the
+  row keeps, never from the worktree's files alone. The source finds a rebase begun (the branch at
+  the base, the head kept), replayed (`refs/system/rebase-replayed/<runId>/<head>` at the base, set
+  only once the worktree holds the whole replay), or done (its rebase commit); one begun and not
+  replayed (a crash between moving the branch and making the worktree the base's) is made the base's
+  again and replayed, never committed as the worktree holds it. A resolving step is started once by
+  its key, a check is answered from the stored outcome on its subject. A rebase given up is
+  `returning` before its branch is put back, and its `return` decision is saved before the board is
+  asked, so a restart in between puts the branch back again and sends the result back (never refuses
+  it as a moved head), on one `return` decision; a task already sent back is found so.
+- **The operator's acceptance does not skip them**: the operator's decision on `/ui` reports no
+  checks, so the checks to run again are read from the run's own acceptance decision, which recorded
+  those it required or asked of the exact result before the review was held, pending ones included:
+  a check that timed out or could not run there is run on the rebased tree all the same. Only a
+  result of which no check the repository can run was asked (none required, or a repository with no
+  checks configured) has none run again; the merge request says so.
 
 ## A run's required checks
 

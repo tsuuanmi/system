@@ -43,7 +43,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import { type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandStep, type WorkChange } from '@tsuuanmi/system-workers-core'
+import {
+  type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandRefusal, type LandStep, REBASE_FILES_MAX, REBASE_MOVED_MAX, type Regenerated, type WorkChange,
+} from '@tsuuanmi/system-workers-core'
 import type { Regeneration } from './regenerate.ts'
 
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
@@ -61,6 +63,56 @@ export const SUBJECT_TRAILER = 'System-Subject'
 export const CARRIED_TRAILER = 'System-Carried-To'
 /** The first line of the commit by which the retention keeps a worktree's uncommitted work on its branch. */
 export const keptSubject = (runId: string): string => `system: keep the uncommitted work of workflow run ${runId}`
+
+/**
+ * The trailers of a landing's rebase commit (ADR-0068): the head it was made from and the base commit
+ * it is on, so a step repeated after a restart finds it done (INV-4). The last of each is the latest.
+ */
+export const REBASED_TRAILER = 'System-Rebased-From'
+export const ONTO_TRAILER = 'System-Rebased-Onto'
+/** Rebases of one result a landing follows back to its landing commit, at most. */
+const REBASE_DEPTH = 8
+/**
+ * The ref that keeps a run's head from before its landing rebased it (ADR-0068), one per head: the
+ * branch moves, and what it held stays reachable, for the operator and for a restart mid-rebase.
+ */
+export const rebaseRef = (runId: string, head: string): string => `refs/system/rebase/${runId}/${head}`
+/**
+ * The ref that says a landing's rebase of `head` was replayed in its worktree (ADR-0068): set to the
+ * base once the worktree holds the replay (its generated conflicts already taking a side), never
+ * before. A rebase begun without it may have stopped anywhere between moving the branch and the
+ * replay, so its worktree is made the base's again and the replay run again; only with it is what the
+ * worktree holds the replay, to commit (INV-4).
+ */
+export const replayedRef = (runId: string, head: string): string => `refs/system/rebase-replayed/${runId}/${head}`
+/** The head a rebase commit's message says it was made from (its last {@link REBASED_TRAILER}), when it says one. */
+const rebasedFrom = (message: readonly string[]): string | undefined => {
+  const line = message.findLast((l) => l.startsWith(`${REBASED_TRAILER}: `))
+  const from = line?.slice(REBASED_TRAILER.length + 2).trim()
+  return from && /^[0-9a-f]{40,64}$/.test(from) ? from : undefined
+}
+/** A conflict marker line git writes (`<<<<<<< ours`, `>>>>>>> theirs`); `=======` alone is too common a line (a heading's underline) to count. */
+const MARKER = /^(?:<{7}|>{7})(?: |$)/m
+/** The largest file a resolution's marker check reads; a larger one is taken as holding markers (INV-2, INV-9). */
+const MARKER_FILE_BYTES = 8 * 1024 * 1024
+
+/** Whether the file at `path` (never followed through a link) holds a conflict marker; anything but a regular file holds none. */
+function hasMarkers(path: string): boolean {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch {
+    return false
+  }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile()) return false
+    if (stat.size > MARKER_FILE_BYTES) return true
+    return MARKER.test(readFileSync(fd, 'utf8'))
+  } finally {
+    closeSync(fd)
+  }
+}
 
 /**
  * A worktree cut from an earlier run's work (ADR-0061): that workflow run, and the commit on its
@@ -837,7 +889,7 @@ export class Worktrees {
   async land(step: LandStep): Promise<Landed | undefined> {
     const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(step.runId, step.workspace) as WorktreeRow | undefined
     if (!row) return undefined
-    return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : this.merge(row, step)))
+    return this.exclusive(row.repository, () => (step.step === 'commit' ? this.commitAccepted(row, step) : step.step === 'merge' ? this.merge(row, step) : this.rebase(row, step)))
   }
 
   /**
@@ -1263,15 +1315,42 @@ export class Worktrees {
         // Nothing moves the tree while the commit is made (no run of it is left, and one change at a time per repository): what is left over is not the accepted change.
         if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return { outcome: 'refused', cause: 'failed', reason: `${row.path} still holds changes after the commit on ${row.branch}; it is left for the operator` }
       }
-    } else if (!(await this.landedCommit(row, inside, step.subject.ref, accepted))) {
+    } else if (!(await this.landedCommit(row, inside, step.subject.ref, accepted)) && !(await this.rebasedLanding(inside, step.subject.ref, accepted))) {
       return { outcome: 'refused', cause: 'moved', reason: `the worktree ${row.path} is now ${subjectId(current.subject)}, not the accepted ${accepted}: it changed after the acceptance, so nothing is committed` }
     }
     const head = (await inside(['rev-parse', 'HEAD'])).trim()
     const base = await this.baseOf(row.repository)
     if ('problem' in base) return { outcome: 'refused', cause: 'base-moved', reason: base.problem }
     const contained = await this.contains(row.repository, base.sha, head)
-    const stat = contained ? '' : (await git(row.repository, ['diff', '--stat=100', '--no-color', '--no-ext-diff', '--no-textconv', `${base.sha}...${head}`])).trimEnd()
-    return { outcome: 'committed', repository: row.repository, branch: row.branch, head, committed, base, contained, stat: stat.length > STAT_CHARS ? `${stat.slice(0, STAT_CHARS)}\n…` : stat }
+    const stat = contained ? '' : await this.statOf(row.repository, base.sha, head)
+    // Where the result forked from the base: the base moved since its work started when that is not the base's head (ADR-0068).
+    const fork = contained ? '' : (await git(row.repository, ['merge-base', head, base.sha]).catch(() => '')).trim()
+    return { outcome: 'committed', repository: row.repository, branch: row.branch, head, committed, base, contained, stat, ...(fork ? { fork } : {}) }
+  }
+
+  /** The change of `head` against `base` (`git diff --stat`, from where they forked), bounded. */
+  private async statOf(repository: string, base: string, head: string): Promise<string> {
+    const stat = (await git(repository, ['diff', '--stat=100', '--no-color', '--no-ext-diff', '--no-textconv', `${base}...${head}`])).trimEnd()
+    return stat.length > STAT_CHARS ? `${stat.slice(0, STAT_CHARS)}\n…` : stat
+  }
+
+  /**
+   * The worktree is clean, and its HEAD is the system's rebase (ADR-0068) of its landing commit of
+   * `accepted` on top of `parent`, through at most {@link REBASE_DEPTH} rebases: committed and rebased
+   * before a restart, or before a base that moved again asked for the commit once more (INV-4).
+   */
+  private async rebasedLanding(inside: (args: string[]) => Promise<string>, parent: string, accepted: string): Promise<boolean> {
+    if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return false
+    let commit = (await inside(['rev-parse', 'HEAD'])).trim()
+    for (let depth = 0; depth <= REBASE_DEPTH; depth++) {
+      const [parents, author, ...message] = (await inside(['log', '-1', '--format=%P%n%an <%ae>%n%B', commit])).split('\n')
+      if (author !== `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` || !message.includes(`${SUBJECT_TRAILER}: ${accepted}`)) return false
+      if (depth > 0 && parents === parent) return true
+      const from = rebasedFrom(message)
+      if (!from) return false
+      commit = from
+    }
+    return false
   }
 
   /** The worktree is clean, and its HEAD is the system's landing commit of `accepted` on top of `parent`: committed before a restart. */
@@ -1510,6 +1589,214 @@ export class Worktrees {
     await inside(['checkout', '--quiet', '--force', row.branch, '--'])
   }
 
+  /**
+   * A landing's rebase (ADR-0068): the result's change, the run's branch at `step.head` against where
+   * it forked from the base, made again on top of `step.base.sha` in the run's worktree, which stays
+   * on its branch. Only while the worktree is intact and free of agent runs (INV-15).
+   * - `start`: with the worktree clean on its branch at the head, and the base where the step says,
+   *   the head is kept under {@link rebaseRef}, the branch moved to the base (only from the head), the
+   *   worktree's tracked files made the base's, and the change replayed there uncommitted (a squash
+   *   merge of the kept head); conflicts only in declared generated files take a side; then
+   *   {@link finishRebase}. Conflicts in any other file leave it so, marked, for a writing step:
+   *   `conflicted`.
+   * - `resolved`: once no file the replay changed holds a conflict marker, {@link finishRebase}.
+   * - `abandon`: the branch moved back to the head (only from the base, or from its own rebase
+   *   commit), the worktree's tracked files the head's; untracked files are left, named.
+   * Each phase finds its own work done after a restart (INV-4), from what git keeps, never from the
+   * worktree's files alone: a branch at the base with the head kept is a rebase begun; with
+   * {@link replayedRef} at the base too, one replayed (only then is the worktree the replay, to
+   * commit); a branch at the system's rebase commit of the head is one done, taken as it is only on a
+   * clean worktree, its subject that committed tree ({@link rebasedAnswer}). A rebase begun and not
+   * replayed may have stopped between moving the branch and making the worktree the base's (its files
+   * still the head's), or mid-replay: its worktree is made the base's again and the replay run again,
+   * so the head's tree is never committed on the base as if it were the replay.
+   */
+  private async rebase(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>): Promise<Landed> {
+    const refuse = (cause: LandRefusal, reason: string): Landed => ({ outcome: 'refused', cause, reason })
+    if (row.removed_at !== null || !existsSync(row.path)) return refuse('gone', `the worktree ${row.path} was removed, so the result cannot be rebased there`)
+    if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, null)) {
+      return refuse('busy', `an agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so it may still write ${row.path} (INV-15)`)
+    }
+    try {
+      await this.verify(row)
+    } catch (error) {
+      return refuse('failed', (error as Error).message)
+    }
+    const repository = row.repository
+    const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
+    const at = async (ref: string): Promise<string> => (await git(repository, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).catch(() => '')).trim()
+    const tip = await at(`refs/heads/${row.branch}`)
+    const kept = rebaseRef(row.workflow_run_id, step.head)
+    const begun = tip === step.base.sha && (await at(kept)) === step.head
+    const replayed = begun && (await at(replayedRef(row.workflow_run_id, step.head))) === step.base.sha
+    const regeneration = this.regeneration?.(repository, (row as WorktreeRow & { setup_hash?: string | null }).setup_hash ?? null)
+    await this.clearSystem(row, inside)
+    const done = tip !== step.head && !begun && await this.isRebaseOf(inside, tip, step.head, step.base.sha)
+    if (step.phase === 'abandon') {
+      if (!begun && !done && tip !== step.head) return refuse('head-moved', `${row.branch} is at ${tip || '(gone)'}: neither ${step.head}, nor ${step.base.sha} with ${step.head} kept, nor its rebase; nothing is put back`)
+      // At the head, and no rebase of it ever begun: nothing of a rebase is there to put back, and nothing else is touched.
+      if (tip === step.head && (await at(kept)) !== step.head) return { outcome: 'abandoned', repository, branch: row.branch, head: step.head, left: [] }
+      if (tip !== step.head) await git(repository, ['update-ref', `refs/heads/${row.branch}`, step.head, tip])
+      await inside(['read-tree', '-u', '--reset', 'HEAD'])
+      // Last: until the worktree is the head's again, a restart finds the abandon to finish.
+      await this.forgetReplay(row, step)
+      const left = zPaths(await inside(['ls-files', '--others', '--exclude-standard', '-z']))
+      this.ctx.logger.info(`agent Workers: the rebase of ${row.branch} onto ${step.base.sha} is abandoned; the branch is back at ${step.head}${left.length ? `, ${named(left)} left untracked` : ''}`)
+      return { outcome: 'abandoned', repository, branch: row.branch, head: step.head, left }
+    }
+    if (done) return this.rebasedAnswer(row, step, inside, true)
+    if (step.phase === 'resolved') {
+      if (!begun) return refuse('head-moved', `${row.branch} is at ${tip || '(gone)'}, not at ${step.base.sha} with ${step.head} kept, where its rebase was left to resolve`)
+      if (!replayed) return refuse('failed', `the rebase of ${row.branch} onto ${step.base.sha} was begun but never replayed in ${row.path}, so there is no resolution of it to commit`)
+      // What the replay and its resolution changed against the base, untracked included: none may hold a marker.
+      const changed = [...new Set([
+        ...zPaths(await inside(['diff', '--name-only', '-z', '--no-ext-diff', '--no-textconv', 'HEAD'])),
+        ...zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U'])),
+        ...zPaths(await inside(['ls-files', '--others', '--exclude-standard', '-z'])),
+      ])].sort()
+      const marked = changed.filter((path) => hasMarkers(join(row.path, path)))
+      if (marked.length) return refuse('conflict', `conflict markers are left in ${named(marked)}: the rebase of ${row.branch} onto ${step.base.branch} at ${step.base.sha} is not resolved; the worktree is left as it is`)
+      return this.finishRebase(row, step, inside, regeneration, [])
+    }
+    if (begun && replayed) {
+      // A restart after the replay: its conflicts are still there (the generated ones already took a side), or it was not committed yet.
+      const unmerged = zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U'])).filter((path) => !regeneration?.generated(path))
+      if (unmerged.length) return this.conflictedAnswer(row, step, unmerged)
+      return this.finishRebase(row, step, inside, regeneration, [])
+    }
+    if (begun) {
+      // A restart after the branch moved and before the replay was whole: the worktree may still hold the head's files, or part of a
+      // replay; none of it is anyone's work (the worktree was clean at the head, and no writing step has had it). Made the base's again, and replayed.
+      await inside(['read-tree', '-u', '--reset', 'HEAD'])
+      return this.replay(row, step, inside, regeneration)
+    }
+    if (tip !== step.head) return refuse('head-moved', `${row.branch} is at ${tip || '(gone)'}, not at ${step.head} as accepted, nor its rebase onto ${step.base.sha}`)
+    const pending = (await inside(['status', '--porcelain', '--untracked-files=all'])).trimEnd()
+    if (pending) return refuse('moved', `${row.path} holds uncommitted changes (${pending.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')}), so its branch is not rebased`)
+    const base = await this.baseOf(repository)
+    if ('problem' in base) return refuse('base-moved', base.problem)
+    if (base.branch !== step.base.branch || base.sha !== step.base.sha) return refuse('base-moved', `${repository} has ${base.branch} at ${base.sha} now, not ${step.base.branch} at ${step.base.sha}`)
+    // Already on top of the base: nothing to rebase.
+    if (await this.contains(repository, step.head, step.base.sha)) return this.rebasedAnswer(row, step, inside, true)
+    // A replay mark left by an earlier rebase of this head is not this one's: gone before the branch moves.
+    await this.forgetReplay(row, step)
+    await git(repository, ['update-ref', kept, step.head])
+    // Only from the head: a branch moved meanwhile is not moved again.
+    await git(repository, ['update-ref', `refs/heads/${row.branch}`, step.base.sha, step.head])
+    await inside(['read-tree', '-u', '--reset', 'HEAD'])
+    return this.replay(row, step, inside, regeneration)
+  }
+
+  /** {@link rebase}'s replay of the kept head on the base the worktree is at: committed by {@link finishRebase}, or left `conflicted`. */
+  private async replay(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>, inside: (args: string[]) => Promise<string>, regeneration: Regeneration | undefined): Promise<Landed> {
+    const ran = await inside(['merge', '--squash', '--quiet', rebaseRef(row.workflow_run_id, step.head)]).then(() => undefined, (error: unknown) => (error as Error).message)
+    const unmerged = zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U']))
+    if (ran !== undefined && !unmerged.length) return this.giveUp(row, step, inside, `git did not replay ${step.head} on ${step.base.sha}: ${ran}`)
+    const generated = unmerged.filter((path) => regeneration?.generated(path))
+    for (const path of generated) {
+      // A generated file is made again from the replayed sources once the rest is resolved: either side will do, as for a merge (T166).
+      const taken = await inside(['checkout', '--theirs', '--', path]).then(() => true, () => inside(['checkout', '--ours', '--', path]).then(() => true, () => false))
+      if (!taken) return this.giveUp(row, step, inside, `neither side of the generated file ${path} could be taken`)
+      await inside(['add', '--', path])
+    }
+    // The worktree is the replay now: marked so, before its conflicts are anyone's or it is committed (INV-4).
+    await git(row.repository, ['update-ref', replayedRef(row.workflow_run_id, step.head), step.base.sha])
+    // Conflicts in other files are the writing step's: only those are left marked, and named.
+    const other = unmerged.filter((path) => !generated.includes(path))
+    if (other.length) return this.conflictedAnswer(row, step, other)
+    return this.finishRebase(row, step, inside, regeneration, generated)
+  }
+
+  /**
+   * The replay, its conflicts resolved, committed on the branch at the base: every change staged, the
+   * declared generated files made again by the repository's commands (./regenerate.ts), which may
+   * change no other file, nor any file git ignores, nor the worktree's .git file; then one commit by the
+   * system, the head's message with the step's line and the rebase trailers. Anything else gives up,
+   * the branch back at the head.
+   */
+  private async finishRebase(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>, inside: (args: string[]) => Promise<string>, regeneration: Regeneration | undefined, generatedConflicts: string[]): Promise<Landed> {
+    await inside(['add', '--all'])
+    let regenerated: Regenerated | undefined
+    if (regeneration) {
+      const ignored = await this.ignoredFiles(row)
+      const control = controlFile(row.path)
+      const ran = await regeneration.run(row.path)
+      if (!ran.ok) return this.giveUp(row, step, inside, `the declared generated files were not made again: ${ran.reason}`)
+      if (controlFile(row.path) !== control) return this.giveUp(row, step, inside, `the generated files' commands (${regeneration.lines.join('; ')}) changed ${join(row.path, '.git')}, the worktree's git control file`)
+      const touched = await this.touched(inside)
+      const stray = touched.filter((path) => !regeneration.generated(path))
+      if (stray.length) return this.giveUp(row, step, inside, `the generated files' commands (${regeneration.lines.join('; ')}) changed ${named(stray)}, which ${stray.length === 1 ? 'is' : 'are'} not declared generated`)
+      const strayIgnored = await this.ignoredChanged(row, ignored)
+      if (strayIgnored.length) return this.giveUp(row, step, inside, `the generated files' commands (${regeneration.lines.join('; ')}) changed ${named(strayIgnored)}, which git ignores`)
+      if (touched.length) await inside(['add', '--all', '--', ...touched])
+      regenerated = { files: [...new Set([...generatedConflicts, ...touched])].sort(), commands: [...regeneration.lines], autonomy: ran.autonomy }
+    }
+    const message = (await inside(['log', '-1', '--format=%B', step.head])).trimEnd().split('\n')
+    // The head's trailers stay last, the rebase's after them; the step's line goes before them.
+    const cut = message.lastIndexOf('')
+    const body = cut < 0 ? [...message, '', step.message.trimEnd()] : [...message.slice(0, cut), '', step.message.trimEnd(), ...message.slice(cut)]
+    await inside(['commit', '--quiet', '--no-verify', '--allow-empty', '-m', [...body, `${REBASED_TRAILER}: ${step.head}`, `${ONTO_TRAILER}: ${step.base.sha}`].join('\n')])
+    if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return this.giveUp(row, step, inside, `${row.path} still holds changes after the rebase was committed`)
+    // Committed: the branch at the rebase commit says it is done from now on.
+    await this.forgetReplay(row, step)
+    return this.rebasedAnswer(row, step, inside, false, regenerated)
+  }
+
+  /** Whether `tip` is the system's rebase commit of `from` onto `onto`. */
+  private async isRebaseOf(inside: (args: string[]) => Promise<string>, tip: string, from: string, onto: string): Promise<boolean> {
+    if (!tip) return false
+    const [parents, author, ...message] = (await inside(['log', '-1', '--format=%P%n%an <%ae>%n%B', tip]).catch(() => '')).split('\n')
+    return parents === onto && author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` && rebasedFrom(message) === from
+  }
+
+  /**
+   * The rebase as it is committed: its head, and the subject its required checks run on again, which
+   * is that committed tree and nothing else. A worktree that holds anything beside the commit (an edit
+   * after a restart found the rebase done) is refused, left as it is: the checks would run on a tree
+   * other than the one that lands (INV-5).
+   */
+  private async rebasedAnswer(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>, inside: (args: string[]) => Promise<string>, already: boolean, regenerated?: Regenerated): Promise<Landed> {
+    const head = (await inside(['rev-parse', 'HEAD'])).trim()
+    const pending = (await inside(['status', '--porcelain', '--untracked-files=all'])).trimEnd()
+    if (pending) {
+      return {
+        outcome: 'refused', cause: 'moved',
+        reason: `${row.path} holds uncommitted changes (${pending.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')}) beside ${row.branch}'s rebase commit ${head}, so the rebase is not taken as it is: its checks run again only on the committed tree that lands; the worktree is left as it is`,
+      }
+    }
+    const current = captureGitSubject(row.path)
+    if (!current) return { outcome: 'refused', cause: 'failed', reason: `${row.path} is no longer a git working tree` }
+    if (current.subject.ref !== head) return { outcome: 'refused', cause: 'moved', reason: `${row.path} moved from ${head} to ${current.subject.ref} while its rebase was read, so it is not taken as it is` }
+    if (!already) this.ctx.logger.info(`agent Workers: ${row.branch} is rebased onto ${step.base.branch} at ${step.base.sha} as ${head} (from ${step.head})${regenerated ? `, its generated files made again (${named(regenerated.files)})` : ''}`)
+    return {
+      outcome: 'rebased', repository: row.repository, branch: row.branch, head, from: step.head, base: step.base,
+      subject: { ref: current.subject.ref, version: current.subject.version! }, stat: await this.statOf(row.repository, step.base.sha, head), already, ...(regenerated ? { regenerated } : {}),
+    }
+  }
+
+  private async conflictedAnswer(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>, files: string[]): Promise<Landed> {
+    const fork = (await git(row.repository, ['merge-base', step.head, step.base.sha]).catch(() => '')).trim()
+    const moved = fork ? (await git(row.repository, ['log', '--no-color', '--format=%h %s', `--max-count=${REBASE_MOVED_MAX}`, `${fork}..${step.base.sha}`]).catch(() => '')).split('\n').filter(Boolean) : []
+    return { outcome: 'conflicted', repository: row.repository, branch: row.branch, from: step.head, base: step.base, fork, files: files.slice(0, REBASE_FILES_MAX), more: Math.max(0, files.length - REBASE_FILES_MAX), moved }
+  }
+
+  /** A rebase that cannot go on: the branch put back at the head, the worktree its tracked files, and why (INV-2). */
+  private async giveUp(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>, inside: (args: string[]) => Promise<string>, why: string): Promise<Landed> {
+    const back = await (async () => {
+      const tip = (await git(row.repository, ['rev-parse', '--verify', '--quiet', `refs/heads/${row.branch}^{commit}`]).catch(() => '')).trim()
+      if (tip !== step.head) await git(row.repository, ['update-ref', `refs/heads/${row.branch}`, step.head, tip])
+      await inside(['read-tree', '-u', '--reset', 'HEAD'])
+      await this.forgetReplay(row, step)
+    })().then(() => `${row.branch} is back at ${step.head}`, (error: unknown) => `and ${row.branch} could not be put back at ${step.head} (${(error as Error).message}): look at ${row.path}`)
+    return { outcome: 'refused', cause: 'failed', reason: `${why}; ${back}` }
+  }
+
+  /** Drop the mark that a rebase of `step.head` was replayed ({@link replayedRef}), if there is one. */
+  private async forgetReplay(row: WorktreeRow, step: Extract<LandStep, { step: 'rebase' }>): Promise<void> {
+    const ref = replayedRef(row.workflow_run_id, step.head)
+    if ((await git(row.repository, ['rev-parse', '--verify', '--quiet', ref]).catch(() => '')).trim()) await git(row.repository, ['update-ref', '-d', ref])
+  }
+
   /** The repository's checked-out branch and its head: where a landing merges into. */
   private async baseOf(repository: string): Promise<{ branch: string; sha: string } | { problem: string }> {
     const ref = (await git(repository, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim()
@@ -1580,6 +1867,10 @@ export class Worktrees {
     // system's own workspace files are never part of the work: gone before the commit.
     await this.clearSystem(row, inside)
     if (halfCarried(row)) await this.putBack(row)
+    // A landing's rebase left to resolve (ADR-0068): its conflict markers are no one's work to keep.
+    if (zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U'])).length) {
+      throw new WorktreeError(`${row.path} holds a landing's rebase whose conflicts are not resolved (ADR-0068): nothing of it is committed, and it is left for its landing or the operator`)
+    }
     let commit: string | undefined
     if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) {
       await inside(['add', '--all'])

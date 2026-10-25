@@ -25,8 +25,21 @@ declare module '@deepseek-ai/cordis' {
  * bound to the request's subject and applied, exactly, once the operator approves it. 1.3 adds the
  * optional `unreleased` of a `budget-spent` {@link Board.block}: the ledger's reservations the
  * holder could not release, which still count against the task's budget, named in the request.
+ * 1.4 adds the optional {@link Board.reopen} (ADR-0068): a done task's result that could not land
+ * on its target as it is now goes back as another attempt.
  */
-export const BOARD_CONTRACT = '1.3'
+export const BOARD_CONTRACT = '1.4'
+
+/** The longest reason a {@link Board.reopen} carries (INV-9). */
+export const REOPEN_REASON_MAX = 2000
+
+/** What sends a done task's result back ({@link Board.reopen}, 1.4): the run whose result it is, its acceptance, the decision that sends it back, and why. */
+export interface Reopening {
+  runId: string
+  acceptance: ArtifactRef
+  decision: ArtifactRef
+  reason: string
+}
 
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
 export interface BudgetLine { pool: string; unit: Unit; amount: number }
@@ -295,6 +308,19 @@ export abstract class Board extends Service {
    * is made: the digest's own settling decision records it, and a digest never accepts anything.
    */
   abstract attachDigest?(taskId: string, digest: ArtifactRef, at?: Date): Promise<BoardTask>
+
+  /**
+   * Send a done task's accepted result back as another attempt (contract 1.4, ADR-0068; optional: a
+   * provider at 1.3 has none, and a result that cannot land then stays done for the operator). Only
+   * while the task is `done` on exactly `back.runId`'s result, accepted by `back.acceptance`
+   * (`invalid-transition` otherwise), and only on a stored `back.decision` with a `reason` of 1 to
+   * {@link REOPEN_REASON_MAX} characters (`invalid` otherwise); nothing changes when refused. The move
+   * is the one a rejected attempt makes: through the gate again for the next attempt when one is
+   * left (ready, waiting for approval, or cancelled when the policy now forbids the class), else a
+   * wait for input (`retries-spent`). Its `board` decision names `back.decision` among its inputs and
+   * says why. The attempt the result was made in is already counted; the reopening counts none.
+   */
+  abstract reopen?(taskId: string, back: Reopening, at?: Date): Promise<BoardTask>
 
   /**
    * Make every move that is due at `at`: tasks whose dependencies are done become ready or wait

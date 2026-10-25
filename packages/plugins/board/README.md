@@ -99,6 +99,12 @@ charters, and their tasks.
   reviewer holds the review (its acceptance binds to the whole result, digest included), and once
   another is attached. No state moves and no decision is made; a review held for the operator
   takes one, and the operator's acceptance then names it.
+- **A done result sent back** (`reopen`, contract 1.4,
+  [ADR-0068](../../../docs/decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)):
+  checked before the gate is asked (done on exactly that run's result and acceptance, a stored
+  decision, a reason), then, in one transaction checked again, the move a rejected attempt makes
+  (`nextAttemptMove`, or `retries-spent` with no attempt left), its `board` decision naming the
+  landing's; a request the gate opened for a move that does not commit is withdrawn.
 - **Where the protocol's tables leave room**, this provider settles it as
   [board](../../../docs/design/board.md#where-the-tables-leave-room) says.
 - **Reads beyond the seam:** `projectPage` and `taskPage` (20 items by default, never more than
@@ -176,7 +182,7 @@ charters, and their tasks.
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
   on its `approvals` inject and is not mounted.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
-  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.3
+  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.4
   over `FakeApprovals`, with no expected failures; the approval queue's own tests run it over the
   store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place

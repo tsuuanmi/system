@@ -2782,6 +2782,26 @@ engine did), the system lands it in the repository the Workers work in
    system/run/<runId>`). Only while the worktree is still the tree you accepted: a file changed
    after the acceptance refuses it ("changed after the acceptance, so nothing is committed"), and
    the worktree is left as it is.
+   - **When the base moved since the result's work started** (other tasks landed meanwhile; ADR-0068),
+     it is first **rebased onto the base as it is now**, in the run's worktree: the card says
+     **Accepted — main moved on: rebasing onto it**. With no conflict it takes seconds; the declared
+     generated files are made again, and the checks the run asked of its result (`tests`, `lint`, …)
+     run again on the rebased tree, also when you accepted the result yourself on `/ui`, and also
+     those that timed out or could not run on the result (**Accepted and rebased onto main; its required checks run
+     again**). A restart mid-rebase picks it up where git says it is: a rebase begun and not yet
+     replayed is replayed again from the base (`refs/system/rebase-replayed/<runId>/<head>` marks one
+     replayed), and one being sent back is sent back. A conflict goes to the Worker that wrote the result (**its Worker is resolving it**),
+     told what moved on main and to keep main's behaviour; you do nothing. The branch's earlier head
+     is kept as `refs/system/rebase/<runId>/<head>`. `system explain <runId>` shows each step as a
+     `workflow.landing` decision (`rebase`, `resolve`, `recheck`).
+   - **When it cannot land on the base as it is now** (a conflict its Worker left unresolved, its
+     resolving step failed, or a check failed on the rebased tree), the task goes back to the board
+     as another attempt, with why (the card says **sent back as another attempt** and the reason;
+     the board's decision names the landing's `return` decision). Its next attempt starts from the
+     new base. A base that only moved never spends an attempt.
+   - A check that could not run on the rebased tree, or a base that moved more than 3 times during
+     one landing, stops the landing (**not merged**, and why): run the checks on `system/run/<runId>`
+     and merge by hand, or send the task back yourself.
 2. **It asks you to merge it**: one `merge` request in the queue on Home, "Merge the accepted result
    of task "…" into main", with the branch, both SHAs, and the `git diff --stat`. The Board shows the
    task under **Waiting for you** as **Accepted — waiting to merge into main: approve**, linked to
@@ -2797,9 +2817,11 @@ When it does not merge (the card says **Accepted — not merged:** and why; `sys
 has the `workflow.landing` decisions under the run's last step):
 
 - **The repository moved** (a commit on its branch since the request was asked) or **has
-  uncommitted changes** to tracked files: nothing is merged, and the merge is asked again on the
-  branch as it is now. Commit or stash your changes, then approve the new request.
-- **A conflict:** the merge is aborted and the repository is as it was. Merge by hand:
+  uncommitted changes** to tracked files: nothing is merged; the result is rebased onto the branch
+  as it is now (as in step 1), and the merge is asked again on the rebased head. Commit or stash your
+  changes, then approve the new request.
+- **A conflict** at the merge itself (the base moved during the merge; a rebase before the request
+  removes the others): the merge is aborted and the repository is as it was. Merge by hand:
   `git -C <repository> merge system/run/<runId>`, resolve, commit. Or reject the work and run the
   task again on the new base. A conflict only in files the repository declares generated is
   regenerated and merged instead ([regenerate generated files on a landing](#regenerate-generated-files-on-a-landing));
@@ -2813,7 +2835,9 @@ has the `workflow.landing` decisions under the run's last step):
 - A task reported before this landing existed lands nothing: merge its branch by hand, as before.
 
 The repository's checkout is written only here, by a merge you approved at the exact SHAs shown.
-Never a force, a reset, a branch deletion, or a push.
+Never a force, a reset, a branch deletion, or a push. The one branch the system moves other than by a
+commit on top is the run's own `system/run/<runId>`, when a rebase replays it onto the base; its
+earlier head stays under `refs/system/rebase/<runId>/`.
 
 ## Let System start ready work
 

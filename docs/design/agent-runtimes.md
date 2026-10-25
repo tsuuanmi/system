@@ -437,10 +437,38 @@ at a time per repository, as every worktree change:
   system's merge commit of the two) and nothing outside the declared paths is uncommitted there but
   files the merge took whole from the head; anything else refuses, the worktree left as it is. The
   base not yet moved, the merge is made again.
+- **`commit`'s `fork`** ([ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)):
+  the answer also names where the head forked from the base (`git merge-base`); the engine rebases
+  when that is not the base's head. A clean worktree whose HEAD is the system's rebase commit of the
+  landing commit (followed back through its `System-Rebased-From` trailers, at most 8) is found
+  committed too.
+- **`rebase`** (ADR-0068), only while no agent run of the workflow run is unfinished or not known to
+  be gone, and the worktree is intact and on its branch; the worktree stays on its branch throughout,
+  so a writing step can work in it. `start`, from a clean worktree at the head with the base where
+  the step says: the head kept as `refs/system/rebase/<runId>/<head>`; the branch moved to the base
+  (`git update-ref`, only from the head); its tracked files made the base's (`git read-tree -u
+  --reset HEAD`); the change replayed (`git merge --squash` of the kept head, so the change from the
+  fork to the head, in one); a conflict only in declared generated files takes a side. Then every
+  change staged, the declared generated files made again by the repository's commands, as for a
+  merge above (which may change no other file, no ignored file, nor the `.git` file), and one commit
+  by the system: the head's message, the engine's line before its trailers, and `System-Rebased-From:
+  <head>` and `System-Rebased-Onto: <base>` after them. A conflict in another file is left in the
+  worktree, uncommitted, its files marked: `conflicted`, with the files and the base's commits since
+  the fork (`git log --format='%h %s' <fork>..<base>`, at most 20). `resolved` commits it the same
+  way only when no file the replay or its resolution changed (tracked, unmerged, or untracked) holds a
+  `<<<<<<<` or `>>>>>>>` line. `abandon` moves the branch back to the head (from the base, or from its
+  own rebase commit) and makes the tracked files the head's; untracked files stay, named. Asked
+  again, each finds its own work: a branch at the base with the head kept is a rebase begun (its
+  conflicts named again, or its replay finished), one at the system's rebase commit of the head is
+  one done, answered only from a clean worktree (anything else in it, an edit after a restart say, is
+  refused as `moved` and left as it is), so the subject `rebased` names, which the landing checks
+  again, is the committed tree that lands. A regeneration that fails puts the branch back at the head and refuses. The retention
+  never commits a worktree with unmerged paths (a rebase left to resolve): it stays.
 
 So the repository's main working tree is written only by a merge the operator approved, or the
 policy allowed, at the exact SHAs it was asked on. The worktree itself stays until the retention
-removes it; it is clean then, and its branch always stays.
+removes it; it is clean then, and its branch always stays. The run's own branch is the one ref the
+source moves other than by a commit on top: a rebase replays it onto the base, its earlier head kept.
 
 ### A run's change, for the operator's review
 

@@ -14,7 +14,7 @@ import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type ProjectState, renderTasks, type RunOutcome, type Subject,
+  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject,
   type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
@@ -900,6 +900,42 @@ export class StoreBoard extends Board {
       }
       return this.commit(current, { changes: { result: { ...task.result, digest } } }, at)
     })
+  }
+
+  /**
+   * Send a done task's accepted result back as another attempt (contract 1.4, ADR-0068): the landing
+   * of run `back.runId`'s result found it cannot land on its target as that is now (a conflict its
+   * Worker could not resolve, a required check that failed on the rebased tree). The move a rejected
+   * attempt makes, through the gate again, its `board` decision naming `back.decision`; no attempt is
+   * counted for it (the run that made the result was).
+   */
+  async reopen(taskId: string, back: Reopening, at: Date = new Date()) {
+    const before = this.taskOf(taskId).task
+    this.reopenable(before, back)
+    const next = attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
+      const { task } = current
+      this.reopenable(task, back)
+      const { project } = this.projectOf(task.projectId)
+      const why = `run ${back.runId}'s accepted result could not land (decision ${back.decision}): ${back.reason}`
+      const detail = { runId: back.runId, acceptance: back.acceptance, reopened: back.decision }
+      if (next) return this.nextAttemptMove(project, task, next, { decision: back.decision, why, detail }, at)
+      const decision = this.decision(project, task, {
+        from: 'done', to: 'waiting-for-input', why: `${why}; all ${task.attempts.max} attempt(s) are spent: it waits for input (retries-spent), which expires`,
+        whyNot: 'a result that cannot land on its target as it is now is not kept done', inputs: [back.decision], detail: { ...detail, reason: 'retries-spent' },
+      }, at)
+      return { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
+    }))
+  }
+
+  /** Refused unless the task is done on exactly `back`'s run and acceptance, and `back` names a stored decision and a reason (1.4). */
+  private reopenable(task: BoardTask, back: Reopening): void {
+    this.expectState(task, 'done')
+    if (task.run?.runId !== back.runId || task.result?.acceptance !== back.acceptance) {
+      throw new BoardError('invalid-transition', `${task.taskId} is done on run ${task.run?.runId ?? '(none)'}'s result accepted by ${task.result?.acceptance ?? '(none)'}, not on run ${back.runId}'s accepted by ${back.acceptance}`)
+    }
+    if (typeof back.reason !== 'string' || !back.reason.trim() || back.reason.length > REOPEN_REASON_MAX) throw new BoardError('invalid', `a reopening says why, in 1 to ${REOPEN_REASON_MAX} characters`)
+    if (this.ctx.artifacts.get(back.decision)?.kind !== 'decision') throw new BoardError('invalid', `${back.decision} is not a stored decision`)
   }
 
   async sweep(at: Date) {

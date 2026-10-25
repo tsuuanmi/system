@@ -737,7 +737,12 @@ export const APP_JS = `'use strict'
         : l.state === 'rejected' ? el('div', {}, 'Accepted — the merge was not approved; ' + (l.branch || 'its branch') + ' keeps the commit')
           : l.state === 'committed' ? el('div', {}, 'Accepted and committed on ' + (l.branch || 'its run\\'s branch') + (l.head ? ' as ' : ''), l.head ? el('code', {}, l.head.slice(0, 12)) : null, '; its merge request comes next')
             : l.state === 'merging' ? el('div', {}, 'Accepted — merging into ' + (l.base || 'its base') + ' now')
-              : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
+              // ADR-0068: the base moved since the result's work started, so it is made again on top of it and checked again first.
+              : l.state === 'rebase' ? el('div', {}, 'Accepted — ' + (l.base || 'its base') + ' moved on: rebasing onto it before the merge is asked')
+                : l.state === 'resolving' ? el('div', {}, 'Accepted — its rebase onto ' + (l.base || 'its base') + ' conflicts; its Worker is resolving it')
+                  : l.state === 'recheck' ? el('div', {}, 'Accepted and rebased onto ' + (l.base || 'its base') + '; its required checks run again')
+                    : l.state === 'returning' || l.state === 'returned' ?el('div', {}, 'Accepted, but it cannot land on ' + (l.base || 'its base') + ' as it is now: sent back as another attempt' + (l.reason ? ' — ' + l.reason : ''))
+                      : el('div', {}, 'Accepted — being committed on ' + (l.branch || 'its run\\'s branch') + ' to be merged')
 
   // Where a task's run started its work (ADR-0061), in words: from the change its previous attempt left, or over from the code.
   const carryLine = (c) => {

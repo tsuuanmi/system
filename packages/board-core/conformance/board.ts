@@ -13,7 +13,7 @@ import { POLICIES } from '../../approvals-core/conformance/approvals.ts'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type RunOutcome,
-  type ProjectState, type Subject, type TaskInput, type TaskState, TERMINAL, UNRELEASED_MAX, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
+  type ProjectState, REOPEN_REASON_MAX, type Reopening, type Subject, type TaskInput, type TaskState, TERMINAL, UNRELEASED_MAX, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '../src/index.ts'
 
 export type Boot = () => Promise<{
@@ -116,7 +116,7 @@ const digestOf = (ctx: Context, sources: ArtifactRef[], summary = 'the result in
   body: { schema: 'digest@1.0', sources, status: 'passed', summary, claims: [{ id: 'C1', kind: 'finding', text: 'it ran', citation: { artifact: sources[0]!, quote: 'attempt' } }] },
 }).id as ArtifactRef
 
-const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' | '1.2' | '1.3' = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' | '1.2' | '1.3' | '1.4' = '1.0'): Scenario<Boot> => ({
   id: `board.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose, changePolicies } = await boot()
@@ -130,7 +130,7 @@ const scenario = (id: string, title: string, run: (ctx: Context, booted: { chang
 
 export const boardSuite = defineSuite<Boot>({
   seam: 'board',
-  contract: '1.3',
+  contract: '1.4',
   scenarios: [
     scenario('charter-approved-activates', 'starts work only under a charter the operator approved, bound to that charter version, with every milestone planned (INV-5, INV-6)', async (ctx) => {
       expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER, milestones: [{ id: 'm1', title: 'First', state: 'funded', funding: `sha256:${'1'.repeat(64)}` }] }, T0))).toBe('invalid')
@@ -749,6 +749,45 @@ export const boardSuite = defineSuite<Boot>({
       expect(asked.action.summary).toContain('+1 runs of max.programmatic')
       expect(asked.action.consequences).toContain(unreleasedText(stuck.slice(0, 1)))
     }, '1.3'),
+    scenario('reopen-sends-back', 'sends a done task\'s result that could not land back as another attempt, through the gate again, naming the decision that sent it, and counting no attempt; with none left it waits for input; one on another run or acceptance, with no reason or no stored decision, or of a task not done is refused and changes nothing (ADR-0068, INV-2, INV-13)', async (ctx) => {
+      expect(ctx.board.reopen, 'a provider at contract 1.4 reopens a done task').toBeTypeOf('function')
+      const reopen = (taskId: string, back: Reopening, when: Date): Promise<BoardTask> => ctx.board.reopen!(taskId, back, when)
+      await active(ctx)
+      const done = async (title: string, maxAttempts: number): Promise<{ taskId: string; runId: string; accepted: ArtifactRef }> => {
+        const t = await ready(ctx, task('p1', title, { maxAttempts }))
+        const runId = `run-${title}`
+        const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+        await ctx.board.start(t.taskId, generation, { runId }, at(3))
+        const r = result(ctx, title)
+        await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
+        const accepted = acceptance(ctx, 'accept', t.taskId, r)
+        expect(validTask(await ctx.board.accept(t.taskId, accepted, at(5)))).toMatchObject({ state: 'done' })
+        return { taskId: t.taskId, runId, accepted }
+      }
+      const cause = acceptance(ctx, 'reject', 'landing', result(ctx, 'why it goes back'))
+      const t = await done('t', 2)
+      const before = (await ctx.board.task(t.taskId))!
+      const back: Reopening = { runId: t.runId, acceptance: t.accepted, decision: cause, reason: 'a conflict with the target the Worker could not resolve' }
+      expect(await failureOf(reopen(t.taskId, { ...back, runId: 'run-other' }, at(6)))).toBe('invalid-transition')
+      expect(await failureOf(reopen(t.taskId, { ...back, acceptance: cause }, at(6)))).toBe('invalid-transition')
+      expect(await failureOf(reopen(t.taskId, { ...back, reason: '' }, at(6)))).toBe('invalid')
+      expect(await failureOf(reopen(t.taskId, { ...back, reason: 'x'.repeat(REOPEN_REASON_MAX + 1) }, at(6)))).toBe('invalid')
+      expect(await failureOf(reopen(t.taskId, { ...back, decision: `sha256:${'9'.repeat(64)}` }, at(6)))).toBe('invalid')
+      expect(await ctx.board.task(t.taskId)).toEqual(before)
+      const again = validTask(await reopen(t.taskId, back, at(6)))
+      expect(again).toMatchObject({ state: 'ready', attempts: { count: 1, max: 2 } })
+      expect(again.holder).toBeUndefined()
+      expect(again.run).toBeUndefined()
+      expect(decisionOf(ctx, again.lastDecision)).toMatchObject({ decisionType: 'board', outcome: { option: 'ready' } })
+      expect(ctx.artifacts.get(again.lastDecision!)!.body).toMatchObject({ inputs: expect.arrayContaining([cause]) })
+      // Not done any more: reopened once, never twice.
+      expect(await failureOf(reopen(t.taskId, back, at(7)))).toBe('invalid-transition')
+
+      const last = await done('last', 1)
+      const spent = validTask(await reopen(last.taskId, { runId: last.runId, acceptance: last.accepted, decision: cause, reason: 'its required tests failed on the rebased tree' }, at(8)))
+      expect(spent).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+      expect(ctx.artifacts.get(spent.lastDecision!)!.body).toMatchObject({ inputs: expect.arrayContaining([cause]) })
+    }, '1.4'),
     scenario('cancel-cascades', 'cancels a task not running, withdraws the approval it waited on, and cancels the tasks that depended on it', async (ctx) => {
       await active(ctx, 'p2')
       const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
@@ -1287,6 +1326,17 @@ export class FakeBoard extends Board {
       throw new BoardError('invalid', `${digest} is not a digest@1.0 report of exactly the result's artifacts`)
     }
     return this.save(task, at, { result: { ...task.result, digest } })
+  }
+
+  async reopen(taskId: string, back: Reopening, at: Date = new Date()) {
+    const task = this.taskOf(taskId)
+    this.expect(task, 'done')
+    if (task.run?.runId !== back.runId || task.result?.acceptance !== back.acceptance) throw new BoardError('invalid-transition', `${taskId} is not done on run ${back.runId}'s result accepted by ${back.acceptance}`)
+    if (typeof back.reason !== 'string' || !back.reason.trim() || back.reason.length > REOPEN_REASON_MAX) throw new BoardError('invalid', `a reopening says why, in 1 to ${REOPEN_REASON_MAX} characters`)
+    if (this.ctx.artifacts.get(back.decision)?.kind !== 'decision') throw new BoardError('invalid', `${back.decision} is not a stored decision`)
+    const why = `run ${back.runId}'s accepted result could not land (decision ${back.decision}): ${back.reason}`
+    if (task.attempts.count < task.attempts.max) return this.again(task, at, why, back.decision)
+    return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: this.decide(taskId, 'done', 'waiting-for-input', at, `${why}; no attempt is left`, { inputs: [back.decision] }) })
   }
 
   async sweep(at: Date) {

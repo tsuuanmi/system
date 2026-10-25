@@ -7,7 +7,7 @@ Work state machine **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block` (its optional `funding`, 1.2, and `unreleased`, 1.3), `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1); `Project`, `Charter`, `Milestone`, `BoardTask`, `Funding`, `UnreleasedHold`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `fundingVersion`, `UNRELEASED_MAX`, `unreleasedProblem`, `unreleasedText`, `BOARD_CONTRACT` (1.3) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
+| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block` (its optional `funding`, 1.2, and `unreleased`, 1.3), `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1) and `reopen(taskId, back, at?)` (1.4); `Project`, `Charter`, `Milestone`, `BoardTask`, `Funding`, `UnreleasedHold`, `Reopening`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `fundingVersion`, `UNRELEASED_MAX`, `REOPEN_REASON_MAX`, `unreleasedProblem`, `unreleasedText`, `BOARD_CONTRACT` (1.4) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
 - The types mirror `project@1.0` and `board-task@1.1`; the schemas in `schemas/` are canonical.
 - `block` takes, from 1.2, an optional `funding` on a `budget-spent` wait: the lines the holder
@@ -26,7 +26,7 @@ Work state machine **seam definition**
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-approvals-core`: the board asks
   for approvals through `ctx.approvals` and never decides one itself.
 - The conformance suite is [`conformance/board.ts`](conformance/board.ts), run through the
-  [conformance runner](../libs/conformance/runner.ts) at contract 1.3 over any `ctx.approvals`
+  [conformance runner](../libs/conformance/runner.ts) at contract 1.4 over any `ctx.approvals`
   provider:
   - a charter approved by the operator before anything starts; rejection or expiry abandons the
     project and cancels its open tasks; amendments held until approved;
@@ -57,7 +57,11 @@ Work state machine **seam definition**
     rejected, nothing raised; an ask past any bound a provider may set opening no request;
   - since 1.3, a spent budget's request naming the reservations its holder could not release,
     each run, step, and expiry, with or without a funding ask, its subject and the wait as without
-    them; a malformed list, or one on another wait, refused.
+    them; a malformed list, or one on another wait, refused;
+  - since 1.4, a done task's result that could not land sent back as another attempt
+    (`reopen`), through the gate again, its decision naming the landing's, no attempt counted; with
+    none left, a wait for input; one on another run or acceptance, with no reason or no stored
+    decision, or of a task not done, refused, nothing changed.
 
   It also exports `FakeBoard`, which passes it (its bound per task: `fundingMaxPercent`, default
   100). Contract 1.0 is unreleased and amended in place
@@ -67,4 +71,6 @@ Work state machine **seam definition**
   the optional `funding` of a `budget-spent` block, a minor
   ([ADR-0044](../../docs/decisions/adr/0044-funding-raises-a-spent-task-budget.md)); 1.3 its
   optional `unreleased`, a minor
-  ([ADR-0054](../../docs/decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)).
+  ([ADR-0054](../../docs/decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md));
+  1.4 the optional `reopen`, a minor
+  ([ADR-0068](../../docs/decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)).

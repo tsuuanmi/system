@@ -84,7 +84,8 @@ holds no engine code and no rules of its own.
   `validation`; and a configured kind routing `validate:1` to the writer given
   `tests`. [`tests/profile.spec.ts`](tests/profile.spec.ts) checks the shipped
   and configured kinds, and refuses a bad `kinds`.
-  [`tests/landing.spec.ts`](tests/landing.spec.ts) lands an accepted result (ADR-0060), and
+  [`tests/landing.spec.ts`](tests/landing.spec.ts) lands an accepted result (ADR-0060), rebased
+  onto a base that moved, a conflict resolved by its author's Worker (ADR-0068), and
   [`tests/carry.spec.ts`](tests/carry.spec.ts) starts a task's next attempt from the work its
   previous attempt left (ADR-0061, accepted 2026-10-25, D59): T110a's attempt, whose review's session broke after
   `develop:1`, carried and landed; a review that asked for changes, a result the board rejected, a

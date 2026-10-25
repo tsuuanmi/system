@@ -239,13 +239,23 @@ export interface TaskCarry {
 
 /**
  * Where the landing of a task's accepted result stands (ADR-0060): `watch` until the board has the
- * task done on it; `commit` while its worktree is committed on its branch; `committed`, then `asked`
- * while the `merge` request waits for the operator; `merging` on the approval; then `merged`, or
- * `refused` (a step changed nothing, `cause` and `reason` say why), `rejected` (the request was not
- * approved), or `none` (nothing to land: the task moved on, or no source holds the tree).
+ * task done on it; `commit` while its worktree is committed on its branch; then, when the base moved
+ * since the result's work started (ADR-0068), `rebase` while it is made again on top of the base,
+ * `resolving` while a writing step resolves the rebase's conflict, `returning` while a rebase that
+ * cannot go on is abandoned and the result sent back (persisted before either, so a restart finishes
+ * both, INV-4), and `recheck` while its required checks run again on the rebased tree; `committed`,
+ * then `asked` while the `merge` request waits for
+ * the operator; `merging` on the approval; then `merged`, or `returned` (it could not land on its
+ * target as that is now, and went back to the board as another attempt), `refused` (a step changed
+ * nothing, `cause` and `reason` say why), `rejected` (the request was not approved), or `none`
+ * (nothing to land: the task moved on, or no source holds the tree).
  */
 export interface TaskLanding {
-  state: 'watch' | 'commit' | 'committed' | 'asked' | 'merging' | 'merged' | 'refused' | 'rejected' | 'none'
+  state: 'watch' | 'commit' | 'rebase' | 'resolving' | 'returning' | 'recheck' | 'committed' | 'asked' | 'merging' | 'merged' | 'returned' | 'refused' | 'rejected' | 'none'
+  /** Where the result forked from the base, as its commit found it (ADR-0068). */
+  fork?: string
+  /** The landing's rebase onto its target, once the base moved since the result's work started (ADR-0068). */
+  rebase?: TaskRebase
   /** The working tree the result is on, and its exact subject there. */
   workspace?: string
   subject?: { ref: string; version: string }
@@ -272,6 +282,48 @@ export interface TaskLanding {
   decisions?: ArtifactRef[]
   /** When it last changed or was looked at. */
   at: string
+}
+
+/**
+ * A landing's rebase of its result onto the base as it is now (ADR-0068): from the branch's head
+ * (the accepted commit, or an earlier rebase of it) onto the base, forked from it at `fork`.
+ */
+export interface TaskRebase {
+  from: string
+  base: { branch: string; sha: string }
+  fork: string
+  /** Rebases this landing made before this one: a target that keeps moving is followed a bounded number of times. */
+  count: number
+  /** Once rebased: the branch's new head, the worktree's exact subject at it, and the change against the base. */
+  head?: string
+  subject?: { ref: string; version: string }
+  stat?: string
+  /** A conflict: the files it left marked (and how many more), and the base's commits since the fork. */
+  files?: string[]
+  more?: number
+  moved?: string[]
+  /**
+   * The writing step that resolves a conflict: the result's own author (the run's writing step that
+   * wrote the tree, its Worker and source), what it is told, the brief it is started on (a board task's
+   * brief, naming the task and its project, recorded once) and how long that renders, its execution once
+   * started, and since when it waits to be.
+   */
+  nodeId?: string
+  worker?: string
+  source?: string
+  prompt?: string
+  brief?: ArtifactRef
+  chars?: number
+  executionId?: string
+  since?: string
+  /** The required checks run again on the rebased tree. */
+  checks?: string[]
+  /**
+   * A rebase that cannot go on (`returning`): why the result goes back and the decisions that say so,
+   * kept before the branch is put back; then the `return` decision, once recorded, so a restart
+   * neither records it twice nor loses it.
+   */
+  returning?: { why: string; inputs: ArtifactRef[]; decision?: ArtifactRef }
 }
 
 /**

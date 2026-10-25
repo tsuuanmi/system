@@ -5,7 +5,7 @@ import type { BoardTask } from '@tsuuanmi/system-board-core'
 import { captureGitSubject, SchemaRegistry, subjectId } from '@tsuuanmi/system-libs'
 import type { TaskLanding } from '@tsuuanmi/system-workflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attempt, bootPilot, charter, decide, FIXED, operatorAccepts, type Pilot, reported, until } from './pilot.ts'
+import { attempt, bootPilot, charter, decide, FIXED, operatorAccepts, type Pilot, reported, type Script, until } from './pilot.ts'
 
 // Landing an accepted result (ADR-0060): the pilot in miniature, over a scratch repository, with
 // the real engine, board, approval queue, and agents source with a worktree per run.
@@ -15,8 +15,8 @@ const pilots: Pilot[] = []
 afterEach(async () => {
   while (pilots.length) await pilots.pop()!.dispose()
 })
-const boot = async (): Promise<Pilot> => {
-  const pilot = await bootPilot()
+const boot = async (script: Script = {}): Promise<Pilot> => {
+  const pilot = await bootPilot(script)
   pilots.push(pilot)
   return pilot
 }
@@ -147,26 +147,66 @@ describe('landing an accepted result (ADR-0060)', () => {
     expect(pilot.git(pilot.repo, 'rev-parse', 'HEAD')).toBe(pilot.head)
   })
 
-  it('refuses a merge that conflicts with the base and leaves the repository as it was; the branch keeps its commit (REQ-WF-13, INV-2)', async () => {
+  it('rebases a result whose base gained a conflicting change before the merge is asked: the conflict goes to a writing step on the result\'s author\'s Worker, told what moved, and the merge is asked on its resolution (ADR-0068, REQ-WF-13, INV-5)', async () => {
     const pilot = await boot()
     const { ctx } = pilot
-    const { task, runId } = await heldResult(pilot)
+    const { task, runId, worktree } = await heldResult(pilot)
     // The operator changed the same line on main before accepting.
     const base = commitOn(pilot, pilot.repo, 'calc.py', 'def add(a, b):\n    return b + a\n', 'operator: add the other way')
     await operatorAccepts(ctx, task.taskId)
     const asked = await landed(pilot, runId, 'asked')
     expect(asked.base).toEqual({ branch: 'main', sha: base })
-    await decide(ctx, asked.requestId!)
-    const refused = await landed(pilot, runId, 'refused')
-    expect(refused).toMatchObject({ cause: 'conflict', reason: expect.stringMatching(/conflicts with main at [0-9a-f]+ in calc\.py: the merge was aborted, and the repository is as it was/) })
-    expect(decisionsOf(pilot, refused).at(-1)).toMatchObject({ outcome: { option: 'refuse', detail: { step: 'merge', cause: 'conflict' } } })
+    expect(asked.rebase).toMatchObject({ fork: pilot.head, base: { branch: 'main', sha: base }, files: ['calc.py'], head: asked.head })
+    expect(decisionsOf(pilot, asked).map((d) => d.outcome.option)).toEqual(['commit', 'resolve', 'rebase'])
+    // The resolving step ran in the run's worktree, told what moved and to keep main's behaviour.
+    const resolving = pilot.agent.runs.at(-1)!
+    expect(resolving.workspace).toBe(worktree)
+    expect(resolving.prompt).toMatch(/What moved: main went from [0-9a-f]+ to [0-9a-f]+, with these commits \(newest first\):\n- [0-9a-f]+ operator: add the other way/)
+    expect(resolving.prompt).toContain('These files have conflicts, marked with <<<<<<< and >>>>>>> lines: calc.py.')
+    expect(resolving.prompt).toContain('main\'s behaviour must be kept')
+    // The branch now holds the resolution on top of the base, and nothing was merged yet.
+    const branch = `system/run/${runId}`
+    expect(pilot.git(pilot.repo, 'rev-parse', branch)).toBe(asked.head)
+    expect(pilot.git(pilot.repo, 'log', '-1', '--format=%P', branch)).toBe(base)
+    expect(pilot.git(pilot.repo, 'show', `${branch}:calc.py`)).toBe(FIXED.trim())
+    expect(pilot.git(worktree, 'status', '--porcelain')).toBe('')
     expect(pilot.git(pilot.repo, 'rev-parse', 'HEAD')).toBe(base)
+    const [request] = (await mergeRequests(pilot)).filter((r) => r.state === 'open')
+    expect(request!.subject.version).toBe(`landing:merge:${base}:${asked.head}`)
+    // The operator's acceptance spent the one attempt; the rebase spent none.
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    await decide(ctx, asked.requestId!)
+    const merged = await landed(pilot, runId, 'merged')
+    expect(pilot.git(pilot.repo, 'rev-parse', 'HEAD')).toBe(merged.commit)
+    expect(readFileSync(join(pilot.repo, 'calc.py'), 'utf8')).toBe(FIXED)
     expect(pilot.git(pilot.repo, 'status', '--porcelain')).toBe('')
-    expect(readFileSync(join(pilot.repo, 'calc.py'), 'utf8')).toBe('def add(a, b):\n    return b + a\n')
-    expect(pilot.git(pilot.repo, 'rev-parse', `system/run/${runId}`)).toBe(asked.head)
   })
 
-  it('asks again on the base as it is when the base moved after the approval was asked, and merges on the new approval; a denial merges nothing (REQ-WF-13, INV-5)', async () => {
+  it('gives the conflict to the developer that wrote the result, not to the Worker that validated it, on its task\'s brief: the resolving run reserves and draws within the task\'s and the project\'s caps (ADR-0068, ADR-0057, INV-6)', async () => {
+    const pilot = await boot({ writers: { developer: ['code', 'docs', 'tests'], tester: ['validation'] } })
+    const { ctx } = pilot
+    const { task, runId, worktree } = await heldResult(pilot)
+    const nodes = ctx.workflow.get(runId)!.nodes
+    // Both wrote in the run's worktree on a writing sandbox; only develop:1 wrote the result.
+    expect(nodes.find((n) => n.nodeId === 'develop:1')!.worker).toBe('agent:developer')
+    expect(nodes.find((n) => n.nodeId === 'validate:1')!.worker).toBe('agent:tester')
+    commitOn(pilot, pilot.repo, 'calc.py', 'def add(a, b):\n    return b + a\n', 'operator: add the other way')
+    await operatorAccepts(ctx, task.taskId)
+    const asked = await landed(pilot, runId, 'asked')
+    expect(decisionsOf(pilot, asked).map((d) => d.outcome.option)).toEqual(['commit', 'resolve', 'rebase'])
+    expect(decisionsOf(pilot, asked)[1]!.outcome.detail).toMatchObject({ step: 'resolve', nodeId: 'develop:1', worker: 'agent:developer' })
+    const executionId = asked.rebase!.executionId!
+    const run = ctx.store.db.prepare('SELECT worker, workflow_run_id, task_id, project_id FROM agent_runs WHERE run_id = ?').get(executionId)
+    expect(run).toEqual({ worker: 'agent:developer', workflow_run_id: runId, task_id: task.taskId, project_id: 'p1' })
+    expect(pilot.agent.runs.at(-1)).toMatchObject({ role: 'develop', workspace: worktree })
+    // Its reservation names the task and the project, so their caps hold it, as for any step of the task's run.
+    const reservations = ctx.store.db.prepare('SELECT task_id, project_id FROM resource_reservations WHERE run_id = ?').all(executionId)
+    expect(reservations.length).toBeGreaterThan(0)
+    expect(reservations).toEqual(reservations.map(() => ({ task_id: task.taskId, project_id: 'p1' })))
+    expect(pilot.git(pilot.repo, 'show', `system/run/${runId}:calc.py`)).toBe(FIXED.trim())
+  })
+
+  it('asks again on the base as it is when the base moved after the approval was asked, the result rebased onto it first; a denial merges nothing (ADR-0068, REQ-WF-13, INV-5)', async () => {
     const pilot = await boot()
     const { ctx } = pilot
     const { task, runId } = await heldResult(pilot)
@@ -180,16 +220,25 @@ describe('landing an accepted result (ADR-0060)', () => {
       return l?.state === 'asked' && l.requestId !== first.requestId ? l : undefined
     }, 'the merge asked again on the moved base')
     expect(again.base).toEqual({ branch: 'main', sha: moved })
-    expect(decisionsOf(pilot, again).map((d) => [d.outcome.option, d.outcome.detail['cause']])).toEqual([['commit', undefined], ['refuse', 'base-moved'], ['commit', undefined]])
+    // It moved with no conflict: rebased by the source alone, no writing step, no attempt spent.
+    expect(decisionsOf(pilot, again).map((d) => [d.outcome.option, d.outcome.detail['cause']])).toEqual([['commit', undefined], ['refuse', 'base-moved'], ['commit', undefined], ['rebase', undefined]])
+    expect(again.rebase).toMatchObject({ from: first.head, fork: pilot.head, base: { branch: 'main', sha: moved }, count: 0 })
+    expect(again.head).not.toBe(first.head)
+    const branch = `system/run/${runId}`
+    expect(pilot.git(pilot.repo, 'log', '-1', '--format=%P', again.head!)).toBe(moved)
+    expect(pilot.git(pilot.repo, 'show', `${again.head}:calc.py`)).toBe(FIXED.trim())
+    expect(pilot.git(pilot.repo, 'show', `${again.head}:README.md`)).toBe('calc')
     expect(pilot.git(pilot.repo, 'rev-parse', 'HEAD')).toBe(moved)
     const requests = await mergeRequests(pilot)
-    expect(requests.map((r) => [r.state, r.subject.version])).toEqual(expect.arrayContaining([['approved', `landing:merge:${pilot.head}:${first.head}`], ['open', `landing:merge:${moved}:${first.head}`]]))
+    expect(requests.map((r) => [r.state, r.subject.version])).toEqual(expect.arrayContaining([['approved', `landing:merge:${pilot.head}:${first.head}`], ['open', `landing:merge:${moved}:${again.head}`]]))
+    expect(requests.find((r) => r.state === 'open')!.action.consequences).toContain(`main moved since the result's work started (from ${pilot.head}): the result was rebased onto it from ${first.head}; no check ran on the rebased tree, as no command check ran on the result at its acceptance.`)
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
 
-    // Denied: nothing is merged, and the branch keeps its commit for the operator.
+    // Denied: nothing is merged, and the branch keeps its rebased commit for the operator.
     await decide(ctx, again.requestId!, 'rejected')
     const rejected = await landed(pilot, runId, 'rejected')
     expect(rejected.reason).toMatch(/was not approved \(the operator denied it\): nothing is merged/)
     expect(pilot.git(pilot.repo, 'rev-parse', 'HEAD')).toBe(moved)
-    expect(pilot.git(pilot.repo, 'rev-parse', `system/run/${runId}`)).toBe(first.head)
+    expect(pilot.git(pilot.repo, 'rev-parse', branch)).toBe(again.head)
   })
 })

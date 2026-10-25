@@ -444,9 +444,32 @@ The **`agents` Worker source**: agent runtimes as Workers
     accepted subject, `git add --all` and one commit by the system with the engine's message and a
     `System-Subject: git:<head>:<version>` trailer (`committed`); a clean worktree whose HEAD is
     that commit on top of the accepted HEAD is `committed` with `committed: false`; anything else
-    is `moved`. It answers the base (the repository's checked-out branch and head; a detached HEAD
-    or a `system/run/` branch is refused `base-moved`), whether the base holds the head, and the
-    `git diff --stat` against it (1,500 characters at most);
+    is `moved`; so is one whose HEAD is the system's rebase of that commit (ADR-0068, followed back
+    through its `System-Rebased-From` trailers). It answers the base (the repository's checked-out
+    branch and head; a detached HEAD or a `system/run/` branch is refused `base-moved`), whether the
+    base holds the head, where the head forked from it (`fork`), and the `git diff --stat` against
+    it (1,500 characters at most);
+  - `rebase` ([ADR-0068](../../../docs/decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)):
+    `busy`, `gone`, or `failed` as `commit`; the worktree stays on its branch. `start`, from a clean
+    worktree at the head and the base where the step says (`head-moved`, `moved`, `base-moved`
+    otherwise): the head kept as `refs/system/rebase/<runId>/<head>`, the branch moved to the base
+    (`git update-ref`, only from the head), its tracked files made the base's, the head squash-merged
+    on top; a conflict only in declared generated files takes a side; then everything staged, the
+    generated files made again (`worktreeSetup[].generated`, ./regenerate.ts, nothing else changed),
+    and one system commit with the head's message and `System-Rebased-From` / `System-Rebased-Onto`
+    trailers (`rebased`, with the committed tree's subject and the stat). A conflict elsewhere is left
+    marked, uncommitted (`conflicted`: up to 50 files, and the base's commits since the fork, up to
+    20). `resolved` commits it the same way when no changed file holds a `<<<<<<<` or `>>>>>>>` line
+    (`conflict` otherwise, the worktree left as it is); `abandon` moves the branch back to the head
+    and its tracked files with it (`abandoned`, naming untracked files left). Each phase finds a
+    rebase begun, replayed, or done after a restart from git's refs, never from the worktree's files
+    alone: `refs/system/rebase-replayed/<runId>/<head>` is set to the base only once the worktree
+    holds the whole replay, so a rebase begun without it (a crash between moving the branch and
+    making the worktree the base's) has its worktree made the base's again and is replayed again,
+    and a `resolved` for it is refused (`failed`). A rebase found done is answered only from a clean
+    worktree, its subject the committed tree that lands (`moved` while anything else is in the
+    worktree, left as it is). A regeneration that fails puts the branch back (`failed`).
+    The retention refuses to commit a worktree with unmerged paths;
   - `merge`: `head-moved` unless the branch is at the approved head; `base-moved` unless the
     repository has the approved branch checked out at the approved head (a base that holds the head
     already is `merged`, `already: true`); `dirty` while its tracked files hold changes; then

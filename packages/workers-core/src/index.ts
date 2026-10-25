@@ -307,10 +307,23 @@ export interface LivenessQuery {
  * - `merge`: merge the branch, only while it is still at `head`, into the repository's checked-out
  *   branch `base.branch`, only while that is still at `base.sha` and its working tree is clean, as one
  *   merge commit with `message`. Never a force, a reset, or a push.
+ * - `rebase` (ADR-0068): the result's change, the branch at `head` against where it forked from the
+ *   base, made again on top of `base.sha` in the worktree, the branch moved there; `phase` `start`
+ *   replays it (the declared generated files made again, the new commit on the branch with `message`
+ *   when nothing else conflicts; else the worktree left on its branch at `base.sha`, the replay
+ *   uncommitted, the conflicted files marked, for a writing step to resolve); `resolved` commits a
+ *   resolution once no conflict marker is left; `abandon` puts the branch and the worktree back at
+ *   `head`. Only while the worktree is intact and no agent run of the workflow run can still write it
+ *   (INV-15). The pre-rebase head is kept under a ref of the repository's own; never a push.
  */
 export type LandStep =
   | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
+  | { step: 'rebase'; runId: string; workspace: string; phase: RebasePhase; head: string; base: { branch: string; sha: string }; message: string }
+
+/** Where a {@link LandStep} `rebase` is (ADR-0068). */
+export type RebasePhase = 'start' | 'resolved' | 'abandon'
+export const REBASE_PHASES: readonly RebasePhase[] = ['start', 'resolved', 'abandon']
 
 /**
  * A merge's generated files made again (T166): the files (repository-relative) the merge conflicted in
@@ -336,11 +349,31 @@ export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved
  *   before this step, such as after a restart); `regenerated` when the merge conflicted only in files
  *   the repository declares generated, and they were made again by its commands (T166);
  * - `refused`: nothing changed, and why.
+ *
+ * `committed` names, optionally, `fork`: where `head` forked from the base branch (their merge base);
+ * one that is not `base.sha` means the base moved since the result's work started (ADR-0068). A
+ * `rebase` step (ADR-0068) answers:
+ * - `rebased`: the branch's `head` is the change made again on top of `base.sha` (from `from`), the
+ *   worktree clean there at `subject`; `stat` the change against the base; `regenerated` when the
+ *   declared generated files were made again; `already` when it was before this step (a restart);
+ * - `conflicted`: the worktree is on its branch at `base.sha`, the replay uncommitted, and `files`
+ *   (repository-relative, at most {@link REBASE_FILES_MAX}, `more` past them) hold conflict markers;
+ *   `moved`, the base's commits since the fork, one line each (at most {@link REBASE_MOVED_MAX});
+ * - `abandoned`: the branch and the worktree are back at `head`; `left`, untracked files the
+ *   resolution made, kept where they are.
  */
 export type Landed =
-  | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string }
+  | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string; fork?: string }
   | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean; regenerated?: Regenerated }
+  | { outcome: 'rebased'; repository: string; branch: string; head: string; from: string; base: { branch: string; sha: string }; subject: { ref: string; version: string }; stat: string; already: boolean; regenerated?: Regenerated }
+  | { outcome: 'conflicted'; repository: string; branch: string; from: string; base: { branch: string; sha: string }; fork: string; files: string[]; more: number; moved: string[] }
+  | { outcome: 'abandoned'; repository: string; branch: string; head: string; left: string[] }
   | { outcome: 'refused'; cause: LandRefusal; reason: string }
+
+/** Conflicted files a `conflicted` rebase names at most (INV-9). */
+export const REBASE_FILES_MAX = 50
+/** The base's commits since the fork a `conflicted` rebase names at most (INV-9). */
+export const REBASE_MOVED_MAX = 20
 
 /** One file of a run's change (`WorkChange`): its path, how it changed, its lines added and removed, and its diff. */
 export interface ChangedFile {

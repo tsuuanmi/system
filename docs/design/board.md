@@ -31,7 +31,7 @@ the operator itself: every move that needs a person goes through the
 
 ## Seam
 
-`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.3:
+`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.4:
 
 | Method | Does |
 |---|---|
@@ -47,6 +47,7 @@ the operator itself: every move that needs a person goes through the
 | `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost |
 | `cancel` | cancel a task that is not running or in review |
 | `attachDigest(taskId, digest)` | set the result's `digest`, once (1.1, optional: a provider at 1.0 has none) |
+| `reopen(taskId, { runId, acceptance, decision, reason })` | send a `done` task's accepted result back as another attempt, when its landing found it cannot land on its target as that is now (1.4, optional: [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)): only while it is done on exactly that run's result and acceptance; the move a rejected attempt makes (through the gate again, or `retries-spent` with none left), its `board` decision naming `decision`; it counts no attempt |
 | `sweep(at)` | make every move due at `at`: dependencies met, approvals resolved, leases lost, waits expired |
 
 Time-driven moves happen only in `sweep(at)`, so a restart is a sweep, not a replay
@@ -449,9 +450,9 @@ few may miss; the count never changes once the task is proposed.
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 28
-scenarios at contract 1.3 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
-1.2, `board.budget-spent-names-unreleased` since 1.3), run against the fake provider and the store-backed provider, both over
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 29
+scenarios at contract 1.4 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
+1.2, `board.budget-spent-names-unreleased` since 1.3, `board.reopen-sends-back` since 1.4), run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.
 Contract 1.0 is unreleased and amended in place
 ([ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)); the last amendment
@@ -460,4 +461,5 @@ adds `board.policy-change-asks-again`, for which each harness changes the queue'
 store). 1.1 adds `attachDigest`, 1.2 the optional `funding` of a `budget-spent` block
 ([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)), and 1.3 its optional
 `unreleased` ([ADR-0054](../decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)),
+and 1.4 the optional `reopen` ([ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)),
 all minors.

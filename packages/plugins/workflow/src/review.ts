@@ -32,7 +32,8 @@ export interface Wording {
   grownOf: ResolvedNode
 }
 
-const writes = (spec: ResolvedNode | undefined): boolean => !!spec?.capabilities.includes('develop')
+/** Whether a step writes the change (it needs `develop`): a template's writing step, and a fix grown from it. */
+export const writes = (spec: ResolvedNode | undefined): boolean => !!spec?.capabilities.includes('develop')
 
 /**
  * A node's wording: its own prompt over its dependencies' results. A re-review is worded as the

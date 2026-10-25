@@ -457,6 +457,25 @@ second execution path (INV-1).
     each change of state a `workflow.task.landing` event; the view's `task.landing` and
     `ctx.workflow.landing(runId)` tell where it stands. At most 32 looked at each
     `approvalPollSeconds`. No source holding the tree: nothing lands (`none`).
+  - **A target that moved** ([design](../../../docs/design/workflow-engine.md#a-target-that-moved-rebase-then-check-again),
+    [ADR-0068](../../../docs/decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)):
+    when the commit's `fork` is not the base's head, the landing goes `rebase` (the source replays
+    the result on the base, its generated files made again), `resolving` on a conflict (one writing
+    step on the Worker of the run's writing step that wrote the result (one that needs `develop`, the
+    last fix included; never a validation that only ran in the worktree), routed to it only, started
+    once by its key on a board task's brief naming the task and its project (so its reservations and
+    usage are within their caps), recorded once, its instructions
+    saying what moved and to keep the base's behaviour; the source commits its resolution when no
+    marker is left), then `recheck` (the checks the run's own acceptance required or asked of its
+    result, pending ones included (`checkRun.asked`, but for a check the repository has no command
+    for), the operator's acceptance
+    included, run again on the rebased tree through `ctx.workers.check`) before the merge is asked on the rebased head. A conflict left
+    unresolved, a failed resolving step, a Worker not admitted within 6 hours, or a check that fails
+    on the rebased tree: the branch put back (for a conflict: `returning`, kept before it is put back,
+    the `return` decision saved before the board is asked, so a restart finishes both) and the task
+    sent back as another attempt by the board's `reopen` (contract 1.4), `returned`. A check that did not run: refused.
+    Each move a `gate` decision (`rebase`, `resolve`, `recheck`, `return`, `hold`); at most 3
+    rebases per landing; the view's `task.landing.rebase` tells where it stands.
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
 - **Dispatch ([design](../../../docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself),

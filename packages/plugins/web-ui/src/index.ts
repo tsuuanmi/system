@@ -260,7 +260,7 @@ function landingCard(landing: TaskLanding | undefined): Record<string, unknown> 
     landing: {
       state: landing.state, ...(landing.branch ? { branch: landing.branch } : {}), ...(landing.base ? { base: landing.base.branch } : {}),
       ...(landing.head ? { head: landing.head } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}),
-      ...(landing.reason && (landing.state === 'refused' || landing.state === 'rejected') ? { reason: landing.reason } : {}),
+      ...(landing.reason && (landing.state === 'refused' || landing.state === 'rejected' || landing.state === 'returned') ? { reason: landing.reason } : {}),
     },
   }
 }
