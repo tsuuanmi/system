@@ -531,13 +531,21 @@ second execution path (INV-1).
     failed with `error.siteError` (its source read the site's own error in
     place of an answer) runs once more, in a new conversation of its session
     (`ctx.workers.reset`), the same member on the same Worker, as its next
-    attempt after the back-off. Only when it proves no `develop`, grows no plan,
-    has a session, has an attempt left, and no `resend` of the node is on record
-    (never twice). The `recovery` decision `resend` (`decision@1.9`, rule
-    version 2) names the failed execution and the new attempt's key, recorded in
-    the transaction that resets the session and readies the node; the event is
-    `workflow.node.resent`. Otherwise the node fails as above, its `fail`
-    decision carrying a `resend` candidate saying why not.
+    attempt after the back-off. Only when the error's disposition is retryable
+    (`IMMEDIATE`, `BACKOFF`, or `RECREATE_SESSION`), and the step proves no
+    `develop`, grows no plan, has a session, has an attempt left, and no
+    `resend` decision of the node is on record (never twice; asked for directly,
+    `ctx.artifacts.list` with `outcome: 'resend'`, limit 1). The `recovery`
+    decision `resend` (`decision@1.9`, rule version 2) names the failed
+    execution and the new attempt's key, recorded in the transaction that
+    resets the session and readies the node. That transaction fences the run's
+    lease before the reset, so an engine that lost the run changes nothing, and
+    the reset's one effect outside the store (a website session's kept tab
+    closing) runs only after it commits. The event is `workflow.node.resent`.
+    Like any retry, the new attempt starts on the run's next pass, once the
+    steps running beside it have settled. Otherwise the node fails as above,
+    its `fail` decision carrying a `resend` candidate saying why not, under rule
+    version 2 as well.
   - **Failover (ADR-0034).** An unsent `quota_exhausted`, `challenge`,
     `reauth_required`, or `overloaded` instead routes the node again with the
     failed Worker left out (`excluded` on the node row, the router's `excluded`
@@ -567,7 +575,7 @@ second execution path (INV-1).
   - A scheduler exception fails the run as `internal` (`CODE_FIX`) and never
     loops.
 - **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
-  `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
+  `workflow.node.started|retry|waiting|resent|completed|failed|blocked|escalated|superseded`,
   `workflow.graph.grown|retired`, `workflow.gate.requested|opened|closed`,
   `workflow.team.tallied|decided`, and `workflow.task.lost|reported`. A completed node's
   event carries the Worker, tier, and quota class that served it.

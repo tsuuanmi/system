@@ -357,7 +357,7 @@ const valid = (record: NodeRecord): NodeRecord => {
 
 type Decision = {
   decisionType: string; inputs: string[]; outcome: { option: string; detail?: Record<string, unknown> }
-  decider: { type: string; id: string }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>
+  decider: { type: string; id: string; version?: string }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>
 }
 const decisionOf = (ctx: Context, ref: string | undefined): Decision => {
   expect(ref, 'a decision is named').toBeDefined()
@@ -1308,6 +1308,7 @@ export const workflowSuite = defineSuite<Boot>({
       const [decision] = decisionsOf(ctx, run.runId, 'recovery', 'team:m1:propose').filter((d) => d.outcome.option === 'resend')
       expect(decision).toBeDefined()
       expect(decision!.outcome.detail).toMatchObject({ failed: { execution: failed!.id }, next: { key: resent!.key, conversation: 'new' }, sessionId: failed!.sessionId })
+      expect(decision!.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
       schemas.assertRecord(decision as Decision & { schema: string })
       // The site errs again: never twice.
       workers.release(resent!.id, SITE_ERROR)
@@ -1315,6 +1316,8 @@ export const workflowSuite = defineSuite<Boot>({
       expect(nodeOf(ctx, run.runId, 'team:m1:propose')!.error).toMatchObject({ kind: 'overloaded', disposition: 'USER_ACTION' })
       const last = decisionsOf(ctx, run.runId, 'recovery', 'team:m1:propose').find((d) => d.outcome.option === 'fail')
       expect(last?.candidates.find((c) => c.option === 'resend')?.reasons.join(' ')).toMatch(/never twice/)
+      // A failure that weighed a resend is decided under the resend's rule version (INV-13).
+      expect(last?.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
       await pause(200)
       expect(proposals(workers, 'm1')).toHaveLength(2)
       expect(workers.resets).toHaveLength(1)
@@ -1331,9 +1334,31 @@ export const workflowSuite = defineSuite<Boot>({
         const [decision] = decisionsOf(ctx, done.runId, 'recovery', node.nodeId)
         expect(decision!.outcome.option).toBe('fail')
         expect(decision!.candidates.find((c) => c.option === 'resend')?.reasons.join(' ')).toMatch(/not a team member's step/)
+        expect(decision!.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
       }
+      // A sent failure the site did not mark is decided as before, under rule version 1.
+      workers.reply = () => ({ fail: 'overloaded', disposition: 'BACKOFF', sent: true })
+      const plain = await settled(ctx, start(ctx, 'solo', 'q').runId)
+      const [before] = decisionsOf(ctx, plain.runId, 'recovery', plain.nodes[0]!.nodeId)
+      expect(before!.candidates.map((c) => c.option)).not.toContain('resend')
+      expect(before!.decider).toMatchObject({ id: 'workflow.recovery', version: '1' })
       expect(workers.resets).toEqual([])
     }, { templates: { writer: [step('write', { capabilities: ['reason', 'develop'] })] } }, '1.8'),
+
+    scenario('site-error-not-retryable', 'never resends, after a site\'s own error, a team member\'s first step whose failure is not retryable: it fails as before, its recovery decision saying why not (D60, ADR-0062, INV-4)', async ({ ctx, workers }) => {
+      workers.extra = [MEMBER('w:a', 'family-a'), MEMBER('w:b', 'family-b')]
+      workers.reply = (request) => (request.key.includes(':team:m1:propose:') ? { fail: 'challenge', disposition: 'USER_ACTION', sent: true, siteError: true } : 'hold')
+      const run = start(ctx, 'team', 'q')
+      await until(() => nodeOf(ctx, run.runId, 'team:m1:propose')?.state === 'FAILED', 'm1 failed')
+      expect(nodeOf(ctx, run.runId, 'team:m1:propose')!.error).toMatchObject({ kind: 'challenge', disposition: 'USER_ACTION' })
+      const [decision] = decisionsOf(ctx, run.runId, 'recovery', 'team:m1:propose')
+      expect(decision!.outcome.option).toBe('fail')
+      expect(decision!.candidates.find((c) => c.option === 'resend')?.reasons.join(' ')).toMatch(/challenge is USER_ACTION, not retryable/)
+      expect(decision!.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
+      await pause(200)
+      expect(proposals(workers, 'm1')).toHaveLength(1)
+      expect(workers.resets).toEqual([])
+    }, {}, '1.8'),
 
     scenario('site-error-resend-restart', 'resends once after a restart a team member\'s first step whose site error arrived while the engine was down, and fails it, never resent again, when the site errs once more across another restart (D60, ADR-0062, INV-4)', async (h) => {
       h.workers.extra = [MEMBER('w:a', 'family-a'), MEMBER('w:b', 'family-b')]

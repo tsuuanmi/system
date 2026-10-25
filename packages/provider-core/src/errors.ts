@@ -41,15 +41,17 @@ export class ProviderError extends Error {
    * The site answered the sent prompt with its own error in place of an answer, read on the turn's
    * own page (Gemini's "Sorry, something went wrong"): sent, and nothing answered. Only a caller's
    * own rule may start such work again, once, in a new conversation (ADR-0062); never this runtime.
+   * Optional and additive (ADR-0036): set only when true, absent otherwise (declared, so no field
+   * holding `undefined` is defined on every error).
    */
-  readonly siteError: boolean
+  declare readonly siteError?: true
 
   constructor(readonly kind: ProviderErrorKind, message: string, options?: ErrorOptions & { feature?: string; siteError?: boolean }) {
     super(message, options)
     this.name = 'ProviderError'
     this.disposition = dispositionOf(kind)
     this.feature = options?.feature
-    this.siteError = options?.siteError === true
+    if (options?.siteError === true) this.siteError = true
   }
 }
 

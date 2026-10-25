@@ -201,25 +201,31 @@ export function executionKey(runId: string, node: NodeRow, attempt: number): str
   return `workflow:${runId}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`
 }
 
-/** The rule and version of a resend after a site's own error (ADR-0062). */
+/**
+ * The rule and version of every recovery decision that weighs a resend after a site's own error
+ * (ADR-0062): a resend, and a failure whose site error is not resent (its `resend` candidate says
+ * why not). Version 1 never weighed a resend, so the same inputs never decide differently under one
+ * version (INV-13).
+ */
 const RESEND = { type: 'rule', id: 'workflow.recovery', version: '2' } as const
 
 /**
  * Why a step the site answered with its own error after the send is not resent (ADR-0062), or
- * undefined when it is: only a read-only team member's first step (`propose`, whose prompt is the
- * whole request and material, so a new conversation loses nothing), on a session of its own, with
- * an attempt left, never twice. A ballot or debate relies on its conversation (teams.md), and any
- * other step may have done more than answer.
+ * undefined when it is: only an error whose disposition is retryable, of a read-only team member's
+ * first step (`propose`, whose prompt is the whole request and material, so a new conversation loses
+ * nothing), on a session of its own, with an attempt left, never twice. A ballot or debate relies on
+ * its conversation (teams.md), and any other step may have done more than answer.
  */
-function noResend(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode): string | undefined {
+function noResend(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, error: WorkflowError): string | undefined {
+  if (!RETRYABLE.has(error.disposition)) return `${error.kind} is ${error.disposition}, not retryable: only a site's own error that may be tried again is resent`
   const team = spec.team
   if (!team?.member) return 'it is not a team member\'s step: only a read-only team member\'s first step is resent'
   if (team.role !== 'propose') return `it is member m${team.member}'s ${team.role}, which relies on its conversation: only a member's first step (propose) is resent`
   if (spec.capabilities.includes('develop') || spec.grows) return 'the step may write: only a step that writes nothing is resent'
   if (!spec.session.sessionId) return 'the step has no session of its own to start a new conversation in'
-  const earlier = e.ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: run.run_id, nodeId: node.node_id, limit: 1000 })
-    .some((a) => (a.body as { outcome?: { option?: string } }).outcome?.option === 'resend')
-  if (earlier) return `node ${node.node_id} was resent once already: never twice`
+  // The node's own `resend` decisions, asked for directly: one is enough to refuse.
+  const earlier = e.ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: run.run_id, nodeId: node.node_id, outcome: 'resend', limit: 1 })
+  if (earlier.length) return `node ${node.node_id} was resent once already (decision ${earlier[0]!.id}): never twice`
   const max = e.config.maxAttempts ?? 3
   if (node.attempt >= max) return `attempt ${node.attempt} of ${max} failed`
   return undefined
@@ -233,11 +239,14 @@ function noResend(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode): st
  * opens a new conversation. The `recovery` decision `resend` names why, the failed execution (the
  * failed turn), and the key the new attempt's execution starts under (the new turn), recorded in the
  * transaction that resets the conversation and readies the node, so a restart finds both or neither
- * (INV-4). Returns why it is not resent, or undefined once it is.
+ * (INV-4). The run's lease is fenced first in that transaction, before the reset: an engine that
+ * lost the run changes nothing, and what the reset does outside the store (a website session's kept
+ * tab closing) runs only once the transaction commits (the source's own after-commit effect), so a
+ * resend that rolls back leaves nothing behind. Returns why it is not resent, or undefined once it is.
  */
 function resend(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, execution: WorkerExecution, kept: ArtifactRef[], lease: () => Lease): string | undefined {
   const spec = JSON.parse(node.spec) as ResolvedNode
-  const why = noResend(e, run, node, spec)
+  const why = noResend(e, run, node, spec, error)
   if (why) return why
   const sessionId = spec.session.sessionId!
   const max = e.config.maxAttempts ?? 3
@@ -246,6 +255,8 @@ function resend(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, exe
   const said = errorLine(error.message)
   const delay = (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
   return e.ctx.store.transaction(() => {
+    // Fenced before the reset: an engine that lost the run's lease resets nothing (LeaseLost, StaleGeneration).
+    e.ctx.leases.fence(lease())
     // No source owns the session: no new conversation can be shown to start, so it is not resent (INV-2).
     if (!e.ctx.workers.reset(sessionId)) return `no Worker source owns session ${sessionId}, so no new conversation can be started for it`
     const decision = e.ctx.artifacts.recordDecision({
@@ -350,7 +361,8 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
       // A site's own error after the send that is not resent says why (ADR-0062).
       ...(notResent !== undefined ? [{ option: 'resend', selected: false, reasons: [`not resend: ${notResent}`] }] : []),
     ],
-    decider: { type: 'rule', id: 'workflow.recovery', version: '1' },
+    // A failure that weighed a resend is decided under the resend's rule version (ADR-0062, INV-13).
+    decider: notResent !== undefined ? { ...RESEND } : { type: 'rule', id: 'workflow.recovery', version: '1' },
     outcome: {
       option: failover ? 'failover' : retry ? 'retry' : 'fail',
       detail: { kind: error.kind, disposition: error.disposition, attempt: node.attempt, ...(failover ? { from: node.worker!, sent: false } : {}), ...(retry && assigned ? { assignment: assigned } : {}) },

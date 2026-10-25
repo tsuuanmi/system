@@ -331,9 +331,12 @@ export class Turns extends Service {
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
       // The account stays (session affinity); without a binding the next turn opens a new conversation.
       reset: (sessionId) => {
-        // A lost conversation's kept tab shows nothing to continue.
-        this.discardTab(sessionId)
-        return Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0
+        const reset = Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0
+        // A lost conversation's kept tab shows nothing to continue. It closes once the caller's
+        // transaction commits, never before: a reset that rolls back leaves the tab, which a turn
+        // of the session may be using, as it was (ADR-0062).
+        if (reset) this.discardTab(sessionId)
+        return reset
       },
       // The caller is done with these sessions: their recorded conversations are deleted on their sites.
       release: (sessionIds, reason) => this.release(sessionIds, reason),
@@ -498,10 +501,13 @@ export class Turns extends Service {
     return released
   }
 
-  /** Close a session's kept tab, if its account keeps one. */
+  /**
+   * Close a session's kept tab, if its account keeps one, once the store transaction it is asked in
+   * commits (at once outside any): a rolled-back caller closes nothing.
+   */
   private discardTab(sessionId: string): void {
     const account = this.session(sessionId)?.account
-    if (account) void this.ctx.browser.discardTab(account, sessionId).catch(() => undefined)
+    if (account) this.ctx.store.afterCommit(() => void this.ctx.browser.discardTab(account, sessionId).catch(() => undefined))
   }
 
   /** The conversation ledger, oldest first (operator). */
