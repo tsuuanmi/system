@@ -90,6 +90,14 @@
     {
       "key": "maxHistoryChars",
       "sensitive": false
+    },
+    {
+      "key": "unprocessedRetries",
+      "sensitive": false
+    },
+    {
+      "key": "unprocessedMaxDelayMs",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED",

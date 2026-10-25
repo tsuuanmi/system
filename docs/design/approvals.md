@@ -355,7 +355,11 @@ characters, a field no denial carries) is counted apart, never by reason.
   engine starts it by itself once the request is approved, once per approval. A board task's step
   waits on the request in its live run meanwhile, a `command` call at most
   `deferredCommandMinutes` (default 10; 0 waits until the request expires), after which the engine
-  withdraws the request and treats that call alone as denied. A denied call (rejected, expired,
+  withdraws the request and treats that call alone as denied. The bound is derived from the request
+  (its class and creation): when the queue cannot be read as the step starts to wait,
+  `gateTimeoutHours` bounds it, and the first read that finds the request applies the bound after
+  all, a second `wait` decision with `boundMinutes` and the bounded deadline on the node's row, in
+  one transaction, so a restart keeps it and it is applied once (T209). A denied call (rejected, expired,
   withdrawn, unanswered past that bound or the request's expiry, whether or not the queue's sweep
   recorded the expiry yet, or approved only after that deadline) does not end the attempt: the
   session continues once, its brief saying the call was denied and why, and the gate denies that
@@ -402,6 +406,18 @@ characters, a field no denial carries) is counted apart, never by reason.
   4,000 characters: the commands list is cut first, its rest counted. Nothing it names as
   unasked is a call the policy asks about now; the gate still judges every call. With no queue,
   or a policy that cannot be read, the prompt goes without it.
+  For `Bash` the section follows the policy's rule that a command on the commands list is judged
+  as `workspace-write`, unless `command` is forbidden, and any other command as `command` (T209):
+  - `command` `auto` or `notify`: every other command runs unasked; when `workspace-write` does
+    not, the listed commands are named as the exception (at most 50 lines);
+  - `command` `ask`: the listed commands' exact lines (at most 50) when `workspace-write` runs
+    unasked; any other command waits for the operator;
+  - `command` `forbid`: no list; any other command is denied.
+
+  With a list (and `command` not forbidden) it says that a listed command is judged as a workspace
+  write, and what that does now: runs unasked, waits for the operator (so with `workspace-write`
+  `ask` it still asks, even where other commands run unasked), or is denied; and under `command`
+  `auto` or `notify` it never says that other commands wait.
 
 ### Where a Worker's gate leaves room
 

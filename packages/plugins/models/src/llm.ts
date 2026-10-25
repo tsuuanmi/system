@@ -6,7 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage, type LlmFailure, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { type ModelCompletion, type ModelEntry, ModelError, type ModelFailure, type ModelRequest, Models, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
+import { type ModelCompletion, type ModelEntry, ModelError, type ModelFailure, type ModelRequest, Models, type ModelStatus, type ModelTurn, type Unprocessed } from '@tsuuanmi/system-models-core'
 
 export interface CatalogEntry extends ModelEntry {
   /** The `llm` provider route that reaches the model. */
@@ -40,7 +40,22 @@ const FAILURES: Record<string, ModelFailure> = {
   ABORTED: 'aborted',
 }
 
-type Attempt = { ok: true; completion: Omit<ModelCompletion, 'model' | 'maxTokens' | 'attempts'> } | { ok: false; failure: LlmFailure }
+/** A failed attempt says whether any output of any kind came before the failure. */
+type Attempt = { ok: true; completion: Omit<ModelCompletion, 'model' | 'maxTokens' | 'attempts'> } | { ok: false; failure: LlmFailure; output?: boolean }
+
+/**
+ * The provider's own word that it did not process the request (T209): an HTTP status with the
+ * status name it gives for it, as a Gemini API (and any Google-style API) reports an overload or a
+ * spent rate. Both must be said: a bare 503 or 429 is not taken as a promise that nothing ran.
+ */
+const UNPROCESSED: ReadonlyArray<{ status: number; name: string }> = [{ status: 503, name: 'UNAVAILABLE' }, { status: 429, name: 'RESOURCE_EXHAUSTED' }]
+
+/** Whether a failure before any output is the provider saying it did not process the request. */
+export function unprocessedOf(failure: LlmFailure): Unprocessed | undefined {
+  const said = UNPROCESSED.find(({ status, name }) => (failure.status === status || new RegExp(`\\b${status}\\b`).test(failure.message)) && new RegExp(`\\b${name}\\b`).test(failure.message))
+  if (!said) return undefined
+  return { status: `${said.status} ${said.name}`, ...(failure.providerRetryAfterMs !== undefined ? { retryAfterMs: failure.providerRetryAfterMs } : {}) }
+}
 
 /** Failures no re-attempt can fix, whatever a route's retry policy says: trying again only bills again. */
 const NEVER_RETRIED = new Set(['ABORTED', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'AUTH', 'QUOTA', 'ACCOUNT_QUOTA', 'INVALID_REQUEST', 'NO_ADAPTER', 'UNKNOWN_MODEL'])
@@ -84,6 +99,12 @@ export class LlmModels extends Models {
       const outcome = await this.attempt(entry, request.prompt, request.history ?? [], maxTokens, signal)
       if (outcome.ok) return { model: entry.id, ...outcome.completion, maxTokens, attempts: attempt + 1 }
       const { failure } = outcome
+      // The provider said it did not process the request: not the route's quick re-attempt, but
+      // the caller's own bounded back-off, which records each retry (T209).
+      const unprocessed = outcome.output || signal?.aborted ? undefined : unprocessedOf(failure)
+      if (unprocessed) throw modelError(entry.id, failure, signal, unprocessed, attempt + 1)
+      // Output came before the failure: the prompt was processed, so it is never resent, whatever the route retries (T209).
+      if (outcome.output) throw modelError(entry.id, failure, signal)
       const transient = !NEVER_RETRIED.has(failure.code) && (policy.mode === 'always' || policy.retryableCodes.includes(failure.code))
       if (!transient || attempt >= limit || signal?.aborted) throw modelError(entry.id, failure, signal)
       const backoff = Math.min(policy.maxDelayMs, failure.providerRetryAfterMs ?? policy.initialDelayMs * 2 ** attempt)
@@ -104,6 +125,9 @@ export class LlmModels extends Models {
     const timer = setTimeout(() => stall.abort(), idleMs)
     let events = 0
     let chars = 0
+    // Any output the model produced, of any kind (a block, text, reasoning, a tool call, or output
+    // tokens reported): after it, a failure is never taken as the provider not processing the request.
+    let output = false
     const stalled = (): Attempt => ({ ok: false, failure: { code: 'TIMEOUT', message: `no progress for ${idleMs} ms (idleTimeoutMs) after ${events} stream event(s) and ${chars} characters of answer; the stream was stopped` } })
     const stopped = (): boolean => stall.signal.aborted && !signal?.aborted
     try {
@@ -122,12 +146,19 @@ export class LlmModels extends Models {
         if (stopped()) return stalled()
         timer.refresh()
         events++
-        if (chunk.type === 'text-delta') chars += chunk.text.length
-        else if (chunk.type === 'block-end' && chunk.block.type === 'text') texts.push(chunk.block.text)
-        else if (chunk.type === 'usage') usage = { inputTokens: chunk.usage.inputTokens, outputTokens: chunk.usage.outputTokens }
-        else if (chunk.type === 'finish') {
+        if (chunk.type === 'block-start' || chunk.type === 'reasoning-delta' || chunk.type === 'tool-call-delta') output = true
+        else if (chunk.type === 'text-delta') {
+          chars += chunk.text.length
+          output = true
+        } else if (chunk.type === 'block-end') {
+          output = true
+          if (chunk.block.type === 'text') texts.push(chunk.block.text)
+        } else if (chunk.type === 'usage') {
+          usage = { inputTokens: chunk.usage.inputTokens, outputTokens: chunk.usage.outputTokens }
+          if (chunk.usage.outputTokens > 0) output = true
+        } else if (chunk.type === 'finish') {
           const reason = chunk.reason
-          if (reason.kind === 'error' || reason.kind === 'aborted') return stopped() ? stalled() : { ok: false, failure: reason.failure }
+          if (reason.kind === 'error' || reason.kind === 'aborted') return stopped() ? stalled() : { ok: false, failure: reason.failure, output }
           return { ok: true, completion: { text: texts.join(''), usage, finish: reason.kind === 'max-tokens' ? 'max-tokens' : 'stop' } }
         }
       }
@@ -142,11 +173,12 @@ export class LlmModels extends Models {
   }
 }
 
-function modelError(model: string, failure: LlmFailure, signal: AbortSignal | undefined): ModelError {
-  const kind: ModelFailure = signal?.aborted ? 'aborted' : FAILURES[failure.code] ?? 'invalid-request'
+function modelError(model: string, failure: LlmFailure, signal: AbortSignal | undefined, unprocessed?: Unprocessed, attempts?: number): ModelError {
+  // A request the provider did not process is worth trying again later, whatever its code says.
+  const kind: ModelFailure = signal?.aborted ? 'aborted' : unprocessed ? (unprocessed.status.startsWith('429') ? 'rate-limit' : 'transient') : FAILURES[failure.code] ?? 'invalid-request'
   // A provider can echo part of a refused key: a credential failure says only what failed.
   if (kind === 'credential') return new ModelError(kind, `${model}: ${failure.code}: the provider refused the credential, or none is stored (system model key)`)
-  return new ModelError(kind, `${model}: ${failure.code}: ${failure.message.slice(0, 500)}`)
+  return new ModelError(kind, `${model}: ${failure.code}: ${failure.message.slice(0, 500)}`, { ...(unprocessed ? { unprocessed } : {}), ...(attempts ? { attempts } : {}) })
 }
 
 function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {

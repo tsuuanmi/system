@@ -2925,10 +2925,15 @@
     }
   },
   "model-answer.v1.json": {
-    "version": "1.0",
+    "version": "1.1",
     "nodes": {
-      "": {"h":"9e56eac0593875bb","r":["attempts","callId","finish","locality","maxTokens","model","promptHash","quotaClass","schema","sends","text","usage","worker"],"p":["attempts","callId","finish","locality","maxTokens","model","promptHash","quotaClass","schema","sends","text","usage","worker"]},
-      "/properties/attempts": {"h":"06a7e5a488015066"},
+      "": {"h":"9d41001ad7cbf998","r":["attempts","callId","finish","locality","maxTokens","model","promptHash","quotaClass","schema","sends","text","usage","worker"],"p":["attempts","callId","finish","locality","maxTokens","model","promptHash","quotaClass","schema","sends","text","usage","worker"]},
+      "/allOf/0": {"h":"44136fa355b3678a"},
+      "/allOf/0/if": {"h":"44136fa355b3678a","r":["attempts"],"p":["attempts"]},
+      "/allOf/0/if/properties/attempts": {"h":"783b7287c500c388"},
+      "/allOf/0/then": {"h":"44136fa355b3678a","p":["schema"]},
+      "/allOf/0/then/properties/schema": {"h":"4b4f7c091c560766"},
+      "/properties/attempts": {"h":"6f5d89f5fa109270"},
       "/properties/callId": {"h":"d9b15405da102f55"},
       "/properties/finish": {"h":"e414dd210c08cd42"},
       "/properties/locality": {"h":"83756d461554ed14"},
@@ -2936,7 +2941,7 @@
       "/properties/model": {"h":"d7e0d00a570ef485"},
       "/properties/promptHash": {"h":"68c50ea1f5e18af2"},
       "/properties/quotaClass": {"h":"2222fcde99f81b6c"},
-      "/properties/schema": {"h":"b4e3eeab7c5f18a2"},
+      "/properties/schema": {"h":"c07cbce4da180ca2"},
       "/properties/sends": {"h":"70b74757dee33b3a"},
       "/properties/text": {"h":"cc9d277adc8a2ee7"},
       "/properties/usage": {"h":"cd1a463c46d62641","r":["inputTokens","outputTokens"],"p":["inputTokens","outputTokens"]},

@@ -246,13 +246,9 @@ export async function awaitCall(e: Engine, run: RunRow, node: NodeRow, execution
   try {
     const request = await queueOf(e)?.get(requestId)
     if (request) {
-      until = request.expiresAt
-      const minutes = e.config.deferredCommandMinutes ?? DEFAULT_COMMAND_MINUTES
-      const by = Date.parse(request.createdAt) + minutes * 60_000
-      if (request.action.class === 'command' && minutes > 0 && by < Date.parse(request.expiresAt)) {
-        until = new Date(by).toISOString()
-        bound = minutes
-      }
+      const command = commandBound(e, request)
+      until = command?.until ?? request.expiresAt
+      bound = command?.minutes
     } else unread = queueOf(e) ? 'the approval queue does not know it yet' : 'no approval queue is loaded'
   } catch (error) {
     if (isLeaseError(error)) throw error
@@ -303,7 +299,8 @@ export async function awaitCall(e: Engine, run: RunRow, node: NodeRow, execution
 export async function settleCalls(e: Engine, run: RunRow, nodes: readonly NodeRow[], lease: () => Lease): Promise<boolean> {
   const approvals = queueOf(e)
   let changed = false
-  for (const node of nodes) {
+  for (const waiting of nodes) {
+    let node = waiting
     const requestId = node.approval_request!
     let request: ApprovalRequest | undefined
     let unread: string | undefined
@@ -313,6 +310,12 @@ export async function settleCalls(e: Engine, run: RunRow, nodes: readonly NodeRo
     } catch (error) {
       if (isLeaseError(error)) throw error
       unread = `the approval queue could not be read: ${(error as Error).message.slice(0, 200)}`
+    }
+    // Read now, after a wait that started unread: a command call's bound, if its row has none yet
+    // and it ends sooner than the deadline on the row, is reconciled and kept (INV-4, INV-9).
+    if (request && boundOf(e, node) === undefined) {
+      const command = commandBound(e, request)
+      if (command && Date.parse(command.until) < (Date.parse(node.not_before ?? '') || Infinity)) node = reconcileBound(e, run, node, request, command, lease)
     }
     const call = { execution: node.execution_id ?? '', sessionId: specOf(node).session.sessionId ?? '' }
     const due = !(Date.parse(node.not_before ?? '') > Date.now())
@@ -375,6 +378,45 @@ export async function settleCalls(e: Engine, run: RunRow, nodes: readonly NodeRo
 
 /** How long a command call waits by default (`deferredCommandMinutes`). */
 const DEFAULT_COMMAND_MINUTES = 10
+
+/**
+ * A command call's bound, from its request: `deferredCommandMinutes` from the request's creation,
+ * when that is inside the request's own expiry (0: no bound, the request's expiry). Derived from the
+ * request alone, so it is the same whenever the request is first read (INV-4).
+ */
+function commandBound(e: Engine, request: ApprovalRequest): { until: string; minutes: number } | undefined {
+  const minutes = e.config.deferredCommandMinutes ?? DEFAULT_COMMAND_MINUTES
+  const by = Date.parse(request.createdAt) + minutes * 60_000
+  return request.action.class === 'command' && minutes > 0 && by < Date.parse(request.expiresAt) ? { until: new Date(by).toISOString(), minutes } : undefined
+}
+
+/**
+ * A waiting step whose request could not be read when it started to wait (its deadline then
+ * `gateTimeoutHours`, its wait decision without the bound): once the request is read, a command
+ * call's bound applies after all. A second `wait` decision records it, and the node's deadline
+ * becomes the bound, in one transaction under the run's lease, so a restart reads it from the row
+ * ({@link boundOf}) and it is reconciled once. Returns the node as it is now.
+ */
+function reconcileBound(e: Engine, run: RunRow, node: NodeRow, request: ApprovalRequest, command: { until: string; minutes: number }, lease: () => Lease): NodeRow {
+  e.ctx.store.transaction(() => {
+    const decision = e.ctx.artifacts.recordDecision({
+      schema: 'decision@1.8',
+      decisionType: 'recovery',
+      question: `How long does node ${node.node_id} of run ${run.run_id} wait on the command call its Worker stopped at, now that its request can be read?`,
+      inputs: [request.policy.decision],
+      candidates: [
+        { option: 'wait', selected: true, reasons: [`approval request ${request.requestId} could not be read when the step started to wait, so gateTimeoutHours bounded it (until ${node.not_before}); read now, it is a command call, which waits at most deferredCommandMinutes ${command.minutes} from the request's creation: until ${command.until}; unanswered then, the call is denied and its request withdrawn`] },
+        { option: 'fail', selected: false, reasons: ['not fail: the step waits on a person, not on a fault'] },
+      ],
+      decider: WAIT_RULE,
+      outcome: { option: 'wait', detail: { approvalRequest: request.requestId, execution: node.execution_id ?? '', sessionId: specOf(node).session.sessionId ?? '', until: command.until, attempt: node.attempt, boundMinutes: command.minutes } },
+      deterministic: true,
+    }, { producer: PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    e.writeNode(node, { state: 'BLOCKED', not_before: command.until }, (r) => ({ ...r, lastDecision: decision }), lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, decision, data: { approvalRequest: request.requestId, executionId: node.execution_id, until: command.until, reconciled: true } })
+  })
+  return e.nodeRow(run.run_id, node.node_id) ?? node
+}
 
 /** Why a call is denied, and on what: the cause recorded on the `deny` decision and the inputs it cites. */
 interface Denial { cause: 'rejected' | 'expired' | 'withdrawn' | 'bound' | 'late'; how: string; inputs: ArtifactRef[]; bound?: number }

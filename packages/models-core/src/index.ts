@@ -93,10 +93,27 @@ export interface ModelCompletion {
  */
 export type ModelFailure = 'unknown-model' | 'unavailable' | 'credential' | 'quota' | 'rate-limit' | 'transient' | 'timeout' | 'invalid-request' | 'aborted'
 
+/**
+ * A provider's own word that it did not process a request, before any output (T209): `503
+ * UNAVAILABLE` (overloaded) or `429 RESOURCE_EXHAUSTED`. Retrying it cannot duplicate an answer.
+ */
+export interface Unprocessed {
+  /** What the provider said, in a few words (`503 UNAVAILABLE`). */
+  status: string
+  /** How long the provider asked to wait, when it said. */
+  retryAfterMs?: number
+}
+
 export class ModelError extends Error {
-  constructor(readonly failure: ModelFailure, message: string, options?: ErrorOptions) {
+  /** Set when the provider said it did not process the request, before any output. */
+  readonly unprocessed?: Unprocessed
+  /** Provider requests the failed call made, when the provider counted them; each may be billed. */
+  readonly attempts?: number
+  constructor(readonly failure: ModelFailure, message: string, options?: ErrorOptions & { unprocessed?: Unprocessed; attempts?: number }) {
     super(message, options)
     this.name = 'ModelError'
+    if (options?.unprocessed) this.unprocessed = options.unprocessed
+    if (options?.attempts !== undefined) this.attempts = options.attempts
   }
 }
 

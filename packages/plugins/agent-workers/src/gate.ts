@@ -471,21 +471,34 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     }
   }
   if (unasked('workspace-write') && !readOnly) lines.push(`- Writing tools (Write, Edit) on files inside ${ws}, outside its .git.`)
+  // The policy's rule (approvals policy.ts `judge`, T209): a command on the commands list is judged
+  // as a workspace write, not as a command, unless the command class is forbidden. So a listed
+  // command follows the workspace-write mode, any other command the command mode. The gate runs a
+  // listed command unasked whatever the sandbox (a read-only one makes a writing command fail).
+  const command = mode('command')
+  const writes = unasked('workspace-write')
+  const listed = command === 'forbid' ? [] : (policy.policies[0]?.commands ?? []).filter((line) => line.length <= NOTE_LINE_CHARS)
   const listing: string[] = []
-  if (unasked('command')) lines.push(readOnly ? '- Any other Bash command, under your read-only sandbox (it changes no file).' : '- Any other Bash command.')
-  // The gate runs a listed command unasked whatever the sandbox (a read-only one makes a writing command fail), so it is named here too.
-  else if (mode('command') !== 'forbid' && unasked('workspace-write')) {
-    const studio = policy.policies[0]
-    listing.push(...(studio?.commands ?? []).filter((line) => line.length <= NOTE_LINE_CHARS))
-  }
+  let exception = false
+  if (unasked('command')) {
+    // Every other command runs; a listed one is the exception unless writes run too.
+    if (listed.length && !writes) {
+      exception = true
+      listing.push(...listed)
+    } else lines.push(readOnly ? '- Any other Bash command, under your read-only sandbox (it changes no file).' : '- Any other Bash command.')
+  } else if (listed.length && writes) listing.push(...listed)
   const bashReads = options.shellReads === true
     ? ''
     : ` Under this runtime no Bash command is a read (cat, ls, rg, and the like are commands, judged as one): read with the ${workspaceReads ? 'workspace server\'s tools, never with a shell' : 'reading tools'}.`
   // Whether an approval resumes the step is said whatever the command mode: a read or a write the
   // policy asks about defers (and resumes) or is denied at once just as a command does.
-  const commandsForbidden = mode('command') === 'forbid'
-  const asking = commandsForbidden ? 'A call the policy asks the operator about' : 'Any other command'
-  const otherwise = (commandsForbidden ? 'Any other command is denied. ' : '') + (!resumes
+  const commandsForbidden = command === 'forbid'
+  const asking = commandsForbidden || unasked('command') ? 'A call the policy asks the operator about' : 'Any other command'
+  const rule = !listed.length ? ''
+    : `A command on the autonomy policy's commands list is judged as a workspace write, not as a command: ${writes ? 'workspace writes run unasked, so it runs unasked too'
+      : mode('workspace-write') === 'forbid' ? 'workspace writes are denied, so it is denied too, even where other commands run unasked'
+      : 'workspace writes wait for the operator, so it waits too, even where other commands run unasked'}. `
+  const otherwise = rule + (commandsForbidden ? 'Any other command is denied. ' : '') + (!resumes
     ? `${asking} is denied at once: this run has no session an approval could resume.`
     : `${asking} waits for the operator; unanswered in time, or rejected, it is denied and you go on without it, so prefer the calls above. An approval resumes this step: the run stops at that call, and once it is approved a later run of this session makes exactly that call.`)
   const head = [
@@ -504,7 +517,9 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
   ]
   if (listing.length) {
     // The commands list fills what the rest leaves of the bound, line by line, its rest counted.
-    const intro = '- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):'
+    const intro = exception
+      ? `- Any other Bash command${readOnly ? ', under your read-only sandbox (it changes no file),' : ','} except one on the autonomy policy's commands list:`
+      : '- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):'
     let budget = TOOLS_NOTE_MAX - [...head, ...lines, intro, ...tail].join('\n').length - 40
     const shown: string[] = []
     for (const line of listing.slice(0, NOTE_LINES)) {

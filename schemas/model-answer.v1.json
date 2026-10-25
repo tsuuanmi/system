@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:model-answer:v1",
   "title": "Model answer",
-  "description": "Body of a `report` artifact holding one API or local model Worker's answer (design/models.md). The prompt is referenced by hash only; the model is named by its catalog id.",
+  "description": "Body of a `report` artifact holding one API or local model Worker's answer (design/models.md). The prompt is referenced by hash only; the model is named by its catalog id. 1.1 (T209) allows `attempts` up to 66: each send's route re-attempts and the retries of requests the provider said it did not process (unprocessedRetries), at most (10 + 1) x (5 + 1); a record with more than 10 names model-answer@1.1.",
   "type": "object",
   "required": ["schema", "worker", "model", "callId", "promptHash", "quotaClass", "locality", "finish", "maxTokens", "sends", "attempts", "usage", "text"],
   "properties": {
-    "schema": { "const": "model-answer@1.0" },
+    "schema": { "enum": ["model-answer@1.0", "model-answer@1.1"] },
     "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "model": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
     "callId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -16,7 +16,7 @@
     "finish": { "enum": ["stop", "max-tokens"] },
     "maxTokens": { "type": "integer", "minimum": 1, "maximum": 200000 },
     "sends": { "description": "How many times the call was sent: 1, or 2 when a restart sent it once more.", "type": "integer", "minimum": 1, "maximum": 2 },
-    "attempts": { "description": "Provider requests the last send took, its transient re-attempts included. Each may be billed; usage counts only the one that answered.", "type": "integer", "minimum": 1, "maximum": 10 },
+    "attempts": { "description": "Provider requests the last send took, its transient re-attempts and the retries of requests the provider said it did not process included. Each may be billed; usage counts only the one that answered. At most 10 in @1.0; @1.1 allows 66, the combined bounds' worst case per send: (unprocessedRetries + 1) × (maxRetries + 1) = 11 × 6.", "type": "integer", "minimum": 1, "maximum": 66 },
     "usage": {
       "type": "object",
       "required": ["inputTokens", "outputTokens"],
@@ -28,5 +28,11 @@
     },
     "text": { "type": "string", "maxLength": 4000000 }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "attempts": { "type": "integer", "minimum": 11 } }, "required": ["attempts"] },
+      "then": { "description": "More than 10 attempts are refused before @1.1.", "properties": { "schema": { "const": "model-answer@1.1" } } }
+    }
+  ]
 }

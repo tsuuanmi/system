@@ -325,6 +325,8 @@
 | `retainDays` | number (1…) | `30` | Days a finished call and its prompt are kept |
 | `maxSessionTurns` | number (1…10000) | `100` | A session's turns, at most, unless an entry sets its own (ADR-0031; default: the session layer's turn budget) |
 | `maxHistoryChars` | number (1…2000000) | `320000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer's compaction point) |
+| `unprocessedRetries` | number (0…10) | `4` | Retries of a request the provider said it did not process, before any output (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED), each after a back-off and recorded as a recovery decision; any other failure after the send is not resent |
+| `unprocessedMaxDelayMs` | number (100…600000) | `60000` | The longest back-off before one of those retries: it doubles from 1 s up to this, or waits what the provider asked, within callTimeoutMs |
 
 ## `notify`
 

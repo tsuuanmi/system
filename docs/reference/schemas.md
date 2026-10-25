@@ -442,8 +442,15 @@ guesses.
   usage report shows it per step; it is not priced.
 - `sends` is how many times the call was sent (2 when a restart sent it once
   more, a recorded `reconciliation` decision), and `attempts` how many provider
-  requests the last send took. Each request may be billed: at worst
-  `sends × attempts`, six with the defaults.
+  requests the last send took, its route re-attempts and the retries of
+  requests the provider said it did not process included. Each request may be
+  billed: at worst `sends × attempts`, six with the defaults when no request is
+  refused as not processed.
+- `model-answer@1.1` raises `attempts`' maximum from 10 to 66, the combined
+  bounds' worst case per send: `(unprocessedRetries + 1) × (maxRetries + 1)`,
+  11 × 6 at their largest valid values. An answer with more than 10 attempts is
+  written as `@1.1`, and one below `@1.1` with more than 10 is refused; an
+  answer with 10 or fewer stays `@1.0`.
 
 ### `account`
 

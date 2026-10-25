@@ -13,7 +13,8 @@ export interface FakeRequest {
   body: { model: string; messages: Array<{ role: string; content: unknown }>; max_tokens?: number; max_completion_tokens?: number; stream?: boolean }
 }
 
-export type FakeStep = { status: number } | { holdMs: number } | { text: string; finish?: 'stop' | 'length' } | { drip: string[]; everyMs: number }
+/** A failure with a status; `message` is the provider's error text (default `scripted <status>`). */
+export type FakeStep = { status: number; message?: string } | { holdMs: number } | { text: string; finish?: 'stop' | 'length' } | { drip: string[]; everyMs: number }
 
 export interface FakeOpenAi {
   baseURL: string
@@ -43,7 +44,7 @@ export async function fakeOpenAi(): Promise<FakeOpenAi> {
       requests.push({ path: req.url, authorization: req.headers.authorization, body })
       const step = script.shift()
       if (step && 'status' in step) {
-        res.writeHead(step.status, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: `scripted ${step.status}`, type: 'server_error' } }))
+        res.writeHead(step.status, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: step.message ?? `scripted ${step.status}`, type: 'server_error' } }))
         return
       }
       const last = [...body.messages].reverse().find((m) => m.role === 'user')
