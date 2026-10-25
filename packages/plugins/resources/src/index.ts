@@ -15,9 +15,9 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { outline, reply } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { QUOTA_DEFAULTS, QUOTA_RANGES, quotaSettingsProblems, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type Reservation, type ReservationRequest, Resources, ResourcesError,
+  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type QuotaSettings, type Reservation, type ReservationRequest, Resources, ResourcesError,
   templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
 } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
@@ -52,6 +52,12 @@ export interface Config {
   maxRecords?: number
   /** How long a reservation nobody releases keeps counting against its caps, in seconds (default 4 hours, INV-9). */
   holdSeconds?: number
+  /**
+   * The operator's quota settings (contract 1.2, ADR-0063): the reserve of every window that work
+   * System starts by itself never starts into (default 20 %, D63), and how the quota score reads
+   * windows. Each a whole number in its range (`QUOTA_RANGES` in libs), refused at load otherwise.
+   */
+  quota?: Partial<QuotaSettings>
 }
 
 /** A usage page: the records after a cursor, the totals over every match, and the next cursor. */
@@ -110,6 +116,18 @@ export function validateTemplates(templates: readonly PoolTemplate[]): PoolTempl
     const [p] = validatePools([{ pool: t.template, account: t.group, kind: t.kind, windows: t.windows, ...(t.unknown !== undefined ? { unknown: t.unknown } : {}) }])
     return { template: p!.pool, group: p!.account, kind: p!.kind, windows: p!.windows, unknown: p!.unknown ?? 'unavailable' }
   })
+}
+
+/**
+ * The quota settings in force (ADR-0063): the defaults, under what the operator configured, each a
+ * whole number in its range. Throws naming every setting out of its range, with its path, so the row
+ * is refused and no reserve is kept on a value nobody chose (INV-2).
+ */
+export function validateQuota(quota: Partial<QuotaSettings> | undefined): Readonly<QuotaSettings> {
+  const settings = { ...QUOTA_DEFAULTS, ...quota }
+  const problems = quotaSettingsProblems(settings)
+  if (problems.length) throw new Error(`resources: ${problems.join('; ')}`)
+  return Object.freeze(settings)
 }
 
 const invalid = (message: string): ResourcesError => new ResourcesError('invalid', message)
@@ -182,6 +200,13 @@ export class StoreResources extends Resources {
     pageSize: z.natural().min(1).max(100).default(20).description('Records per resources_usage page when the caller names no limit'),
     maxRecords: z.natural().min(1).max(1_000_000).default(10_000).description('Records usage() returns at most; more matching is refused (narrow the filter or page)'),
     holdSeconds: z.natural().min(60).max(604_800).default(14_400).description('How long a reservation nobody releases (a crashed run) keeps counting against its caps'),
+    quota: z.object({
+      reservePercent: z.natural().max(QUOTA_RANGES.reservePercent[1]).default(QUOTA_DEFAULTS.reservePercent).description('Share of every window, in percent, kept for your own use: work System starts by itself never starts into it (D63); a run already going keeps going'),
+      useSoonMinutes: z.natural().max(QUOTA_RANGES.useSoonMinutes[1]).default(QUOTA_DEFAULTS.useSoonMinutes).description('A window that resets within this many minutes is used first, before its unused share is lost (0: never)'),
+      minHeadroomPercent: z.natural().min(QUOTA_RANGES.minHeadroomPercent[0]).max(QUOTA_RANGES.minHeadroomPercent[1]).default(QUOTA_DEFAULTS.minHeadroomPercent).description('The least headroom above the reserve a window about to reset needs to be used first'),
+      headroomBucketPercent: z.natural().min(QUOTA_RANGES.headroomBucketPercent[0]).max(QUOTA_RANGES.headroomBucketPercent[1]).default(QUOTA_DEFAULTS.headroomBucketPercent).description('Headroom is compared in buckets this many points wide, so readings a few points apart do not reorder Workers'),
+      staleReadingSeconds: z.natural().min(QUOTA_RANGES.staleReadingSeconds[0]).max(QUOTA_RANGES.staleReadingSeconds[1]).default(QUOTA_DEFAULTS.staleReadingSeconds).description('A reading older than this is stale: its window is not known, so it is never read as capacity (keep it above the agent providers\' limitReadSeconds)'),
+    }).description('Quota settings the quota score reads (ADR-0063): the reserve kept free of dispatched work, and how windows are read'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
@@ -192,6 +217,7 @@ export class StoreResources extends Resources {
   private readonly pageSize: number
   private readonly maxRecords: number
   private readonly holdSeconds: number
+  private readonly settings: Readonly<QuotaSettings>
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx)
@@ -201,6 +227,7 @@ export class StoreResources extends Resources {
     this.pageSize = config.pageSize ?? 20
     this.maxRecords = config.maxRecords ?? 10_000
     this.holdSeconds = config.holdSeconds ?? 14_400
+    this.settings = validateQuota(config.quota)
     ctx.store.migrate('resources', [{
       version: 1,
       sql: `CREATE TABLE resource_usage (
@@ -277,6 +304,10 @@ export class StoreResources extends Resources {
 
   async pools(filter: { account?: string } = {}, at: Date = new Date()): Promise<PoolState[]> {
     return this.poolStates(filter, at)
+  }
+
+  quota(): QuotaSettings {
+    return { ...this.settings }
   }
 
   async declare(source: string, accounts: readonly DeclaredAccount[]): Promise<string[]> {

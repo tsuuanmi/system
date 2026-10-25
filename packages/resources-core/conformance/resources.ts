@@ -6,11 +6,11 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { QUOTA_DEFAULTS, quotaSettingsProblems, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
-  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type Reservation, type ReservationRequest, Resources, ResourcesError,
+  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type QuotaSettings, type Reservation, type ReservationRequest, Resources, ResourcesError,
   templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
 } from '../src/index.ts'
 
@@ -70,8 +70,19 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const resourcesSuite = defineSuite<Boot>({
   seam: 'resources',
-  contract: '1.1',
+  // 1.1: pool templates and the optional `declare` (ADR-0052). 1.2: the optional `quota`, the
+  // operator's quota settings, each in its range (ADR-0063).
+  contract: '1.2',
   scenarios: [
+    scenario('quota-settings', 'gives the operator\'s quota settings when it has them: each a whole number in its range, the defaults when none is configured (a 20 % reserve of every window, D63), and a copy no caller can change (ADR-0063)', async (ctx) => {
+      // Optional: a provider without it leaves a caller unable to keep the operator's reserve.
+      if (!ctx.resources.quota) return
+      const settings = ctx.resources.quota()
+      expect(quotaSettingsProblems(settings)).toEqual([])
+      expect(settings).toEqual(QUOTA_DEFAULTS)
+      settings.reservePercent = 0
+      expect(ctx.resources.quota().reservePercent).toBe(20)
+    }, '1.2'),
     scenario('pools-from-configuration', 'lists every configured pool with its windows; a window with no reading is unknown, so the pool fails closed unless configured available (INV-2)', async (ctx) => {
       const pools = await ctx.resources.pools({}, T0)
       expect(pools.map((p) => [p.pool, p.account, p.kind, p.windows.map((w) => w.id), p.readings, p.available])).toEqual([
@@ -260,8 +271,18 @@ export class FakeResources extends Resources {
   /** The pools of each source's declared accounts (contract 1.1). */
   private readonly declared = new Map<string, PoolConfig[]>()
 
-  constructor(ctx: Context, private readonly config: { pools?: readonly PoolConfig[]; templates?: readonly PoolTemplate[] } = {}) {
+  /** The quota settings in force (contract 1.2): the defaults under the configured ones. */
+  private readonly settings: QuotaSettings
+
+  constructor(ctx: Context, private readonly config: { pools?: readonly PoolConfig[]; templates?: readonly PoolTemplate[]; quota?: Partial<QuotaSettings> } = {}) {
     super(ctx)
+    this.settings = { ...QUOTA_DEFAULTS, ...config.quota }
+    const problems = quotaSettingsProblems(this.settings)
+    if (problems.length) throw new Error(`resources: ${problems.join('; ')}`)
+  }
+
+  quota(): QuotaSettings {
+    return { ...this.settings }
   }
 
   private get configured(): readonly PoolConfig[] {
