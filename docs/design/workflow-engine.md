@@ -1106,7 +1106,8 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
   what it came to (one a crash interrupted is an `error`, pending;
   [a run's checks](agent-runtimes.md#a-runs-checks)). A board task's run whose acceptance was
   stored before the stop finishes on it, its checks not asked again. A stop of the run (the
-  operator's, a lost lease) stops the commands in flight, and nothing is recorded.
+  operator's, a lost lease) stops the commands in flight; the source stores each as it ended, one
+  the stop killed as an `error`.
 - **Bounded** (INV-9): at most the three checks, each within the source's deadline.
 - **Configuration**: the commands are the operator's, per repository
   ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,
