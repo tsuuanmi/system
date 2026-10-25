@@ -1,7 +1,7 @@
 # Routing
 
 > Target state. Boundary: [routing](../architecture/components.md#routing).
-> Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..10.
+> Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..10, REQ-WRK-12.
 >
 > Implemented in [`workers`](../../packages/plugins/workers/README.md) (admission, order,
 > decisions, acceptance) and [`workflow`](../../packages/plugins/workflow/README.md) (tier
@@ -240,6 +240,42 @@ A Worker with no `account` is routed as before.
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified
 failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provider.
+
+### Candidates without a reservation
+
+> Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
+> (accepted 2026-10-25, D61). Requirement: REQ-WRK-12.
+
+The optional `candidates(requirement, options)` tells a caller what admission says of every Worker
+before it starts anything: the checks `route` runs, in the same order and under the same lock, the
+`assignment` hold included, each Worker with the checks it fails (empty when admitted), the sources
+that did not answer, the stored requirement, and the router's own order after tier (its quota
+classes for the requirement, its priority list). It reserves nothing (no `load.pending` moves) and
+records no decision: the caller that acts on it records its own, listing every Worker with these
+checks (INV-13). The workflow engine's dispatch pass is its one caller
+([dispatch](workflow-engine.md#dispatch-starting-ready-work-by-itself)).
+
+**The quota score** (`quotaScoreOf`, `quota-score@1`, pure, in [`libs`](../../packages/libs/README.md))
+orders the Workers `candidates` admits for a dispatched task's writing step; routing's own order is
+unchanged until PROP-0014's D3. For each Worker it reads its account's pools on the ledger
+(`pools()`) and the operator's quota settings (`quota()`, [resources](resources.md#quota-settings)):
+
+| A window is | When |
+|---|---|
+| known | its latest reading is at most `staleReadingSeconds` old, reads `ok`, and gives a used share |
+| its headroom | `100 − used − reservePercent` |
+| its reset | the later of `resetsAt` and `cooldownUntil` |
+
+The keys, each compared only when every key before it is equal: tier (lowest first); quota class
+(the router's order, metered last); known before configured-available (`unknown: available`) before
+unknown or stale; a window resetting within `useSoonMinutes` with at least `minHeadroomPercent`
+headroom in the binding window (the one with the least headroom) first, the earlier reset first;
+headroom in `headroomBucketPercent`-point buckets, most first; then load, the priority list, and id.
+The chosen Worker is the first **free** one: every pool available, every window known with headroom
+above the reserve, not metered, and what the caller adds (idle enough, within its bounds). Every
+candidate carries its reasons: why it won, why it lost to the chosen one (the first key that
+differs), why it is not free, or why routing refused it. Among assigned accounts this chooses by
+headroom for new work only; `assignment` still holds a limited account's work (D24, D66).
 
 ## Provider diversity
 

@@ -236,6 +236,20 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     const steps = runs.reduce((n, r) => n + r.nodes.length, 0)
     return reply({ runs }, `${runs.length} recent run${runs.length === 1 ? '' : 's'}, ${steps} step${steps === 1 ? '' : 's'}`)
   })
+  // Dispatch (ADR-0064): the lead reads where it stands to plan; only the operator pauses or resumes it.
+  c.mcp.tool('dispatch_status', {
+    scope: 'client',
+    description: 'Dispatch: whether System asks to start ready board tasks on free Workers by itself, its pause, the last pass with its reason for each ready task, each bound and its use, and the starts waiting for the operator\'s go.',
+    inputSchema: {},
+  }, async () => json(w.dispatchStatus()))
+  c.mcp.tool('dispatch_pause', {
+    description: 'Pause dispatch: System asks for and starts no ready task by itself until resumed; its open asks are withdrawn (an operator decision, kept across restarts).',
+    inputSchema: { reason: zod.string().max(500).optional() },
+  }, async (args) => json(w.pauseDispatch(args.reason ? String(args.reason) : undefined)))
+  c.mcp.tool('dispatch_resume', {
+    description: 'Resume dispatch after a pause (an operator decision).',
+    inputSchema: {},
+  }, async () => json(w.resumeDispatch()))
   c.mcp.tool('explain', {
     scope: 'client',
     description: 'The decision chain behind a run (its own decisions, such as a board task\'s admission, result subject, acceptance, and report; then egress, tier, route, and acceptance per step) and its executions whose liveness needs a look (verdict, why, what to do); or any artifact id\'s inputs; or such an execution by its id.',

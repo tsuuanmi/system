@@ -70,8 +70,8 @@
     },
     "shortText": { "type": "string", "minLength": 1, "maxLength": 500 },
     "actionClass": {
-      "description": "What an action does, as the autonomy policy classifies it (design/approvals.md).",
-      "enum": ["read", "workspace-write", "merge", "command", "external-send", "deploy", "delete-data", "spend", "charter", "funding", "remediation", "policy-change", "promotion"]
+      "description": "What an action does, as the autonomy policy classifies it (design/approvals.md). `dispatch` (ADR-0064): System starting a ready board task's next attempt with no person or lead asking for it.",
+      "enum": ["read", "workspace-write", "merge", "command", "external-send", "deploy", "delete-data", "spend", "charter", "funding", "remediation", "policy-change", "promotion", "dispatch"]
     },
     "budgetLine": {
       "description": "An amount of one resource pool (design/resources.md). Pools are operator configuration, never a hardcoded plan.",

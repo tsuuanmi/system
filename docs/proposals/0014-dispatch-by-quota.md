@@ -1,13 +1,13 @@
 ---
 id: PROP-0014
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-25
 summary: System starts ready board tasks on free Workers by itself instead of waiting for the lead. A dispatch sweep in the workflow engine (restart is a sweep, INV-4) takes the ready tasks of active projects by priority, then age. Each start is gated by a new autonomy action class `dispatch` (ask, notify, auto, forbid). The shipped studio policy asks, so the operator approves each start with a button, and a project's policy may say auto. The Worker for a task's writing step is chosen among the Workers routing admits by a pure, versioned quota score over each pool's current windows. The score weighs headroom above a reserve kept for the operator, time to reset (a window about to reset is used first), known readings before unknown or stale ones, and metered pools last and only inside a ledger cap. Every pass and every choice is a recorded decision with a reason on every candidate. Parallel work is bounded per account, per project, and in total; one task at a time writes a subject. Starts are capped per hour, dispatch can be paused per project or entirely, and a window or budget that closes mid-run stops the run at its next step boundary through the rules that exist today.
 owners: [operator]
 evidence: [operator observation 2026-10-25 (16 ready tasks, 18 free Workers, both Codex accounts at 0 %)]
 related: [PROP-0008, PROP-0010, PROP-0012, PROP-0013, ADR-0033, ADR-0036, ADR-0041, ADR-0047, ADR-0052, ADR-0055, ADR-0057, ADR-0058, ADR-0059, ADR-0060, REQ-WRK-8, REQ-WRK-11, REQ-HOST-8]
-implementation: []
+implementation: [ADR-0064]
 ---
 
 # Proposal: Dispatch by quota — System starts ready work on free Workers, chosen by quota
@@ -579,8 +579,51 @@ A policy that names no `dispatch` rule takes its `default`. No migration.
 
 ## Decision
 
-Proposed. Not yet reviewed.
+Accepted by the operator on 2026-10-25, each answer as the proposal recommends:
+
+- **D61:** PROP-0014 is accepted, and increment D1 is built: ask to start, chosen by quota
+  ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md),
+  accepted with it). D2 to D4 each start on the operator's go-ahead.
+- **D62** (open question 1): an attempt the operator already approved through the board's gate
+  counts as its `dispatch` approval, recorded as such (a `gate` decision naming that approval).
+- **D63** (open question 2): the reserve is 20 % of every window, a validated setting of the
+  `resources` row (`quota.reservePercent`); it gates starts only, and a dispatched run that crosses
+  into it keeps going.
+- **D64** (open question 3): tasks with no write subject on one repository run in parallel, at most
+  4 at a time per repository (`dispatch.maxRunningPerRepository`, configuration).
+- **D65** (open question 4): dispatch never starts work on a metered pool by itself. D4 and
+  `quota.metered.allow` are not built.
+- **D66** (open questions 5 and 6): among assigned accounts, dispatch chooses by quota headroom for
+  new work, which keeps D24 (routing's `assignment` hold still applies); a task's priority (five
+  levels) may be set by the lead or the operator, in D2. D1 orders by age.
+
+The proposal's new REQ-WF-14 is REQ-WF-16: REQ-WF-14 was taken since by ADR-0061, and REQ-WF-15 by ADR-0063.
 
 ## Implementation
 
-None yet.
+D1, as [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
+decides it (T153). Where it differs from the text above, the ADR and the canonical documents
+([workflow engine](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
+[routing](../design/routing.md#candidates-without-a-reservation),
+[resources](../design/resources.md#quota-settings), [approvals](../design/approvals.md#the-autonomy-policy))
+hold:
+
+- `candidates` records no `admission` decision of its own: a look changes nothing, and the
+  `dispatch.choice` decision lists every Worker with routing's checks itself.
+- A pass that takes no task records no decision; its reason for each task is kept as the last pass
+  (`dispatch_status`, Home).
+- Under `auto` or `notify`, D1 dispatches nothing (the queue opens a request only where the policy
+  says `ask`, so they cannot be read as `ask`); D62 still starts an attempt the operator approved
+  through the board's gate.
+- The request's version is `<score version>:<sha256 of the Worker and the score's inputs>`, since a
+  Worker id (up to 200 characters) does not fit a subject version (128).
+- A denied or unanswered request is not asked again for that attempt; the lead or the operator
+  still starts it by hand.
+- The bundle's studio policy names no `dispatch` rule: its `default: ask` gives `ask`, and leaving
+  the policy unchanged keeps an applied policy change in force across the upgrade.
+- `dispatch_status`, `dispatch_pause`, and `dispatch_resume` carry no output schema, as the other
+  workflow tools; the pause is a `gate` decision on a durable row of the engine, with no record
+  schema of its own.
+- Follow-up: dispatch's quota score (`quotaScoreOf` in `libs`) and the roster's capacity now
+  (`packages/gateway-core/src/capacity.ts`, T152) each compute a window's headroom and the order free
+  Workers are taken in; the two must become one function.

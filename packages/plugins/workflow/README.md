@@ -453,6 +453,54 @@ second execution path (INV-1).
     `approvalPollSeconds`. No source holding the tree: nothing lands (`none`).
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
+- **Dispatch ([design](../../../docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
+  [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9).**
+  The engine starts ready board tasks by itself, on the operator's approval (`src/dispatch.ts`):
+  - **A pass** every `dispatch.sweepSeconds` (default 60), and once at start after the runs are
+    reconciled, one at a time (`sweepDispatch(at)`, a test seam): it settles the live asks first
+    (adopts an open request on its subject, reads verdicts, starts approved ones, withdraws stale
+    ones), then looks at the `ready` tasks of `active` projects that name a template it serves,
+    oldest first (`createdAt`, then id), at most 128, and takes at most `maxPerPass` (2). It never
+    throws: a pass that fails starts nothing and is logged. A pass keeps its reason for every task
+    it looked at as the last pass (`workflow_dispatch_control`).
+  - **The Worker** of the run's writing step (its first step that proves `develop`, else its first
+    Worker step) is the first free one in `quotaScoreOf`'s order (`quota-score@1`, libs) among those
+    `ctx.workers.candidates` admits, over the ledger's `pools()` and `quota()`. Free: `ready`, its
+    account's load below `maxRunningPerAccount`, no running step on it, every pool available, every
+    window known (fresh, `ok`, a used share) with headroom above `quota.reservePercent`, not metered
+    (D65), and its account and repository (its workspace) within their bounds. No account, no
+    reading, a stale one, or a ledger without `quota()`: never free (INV-2).
+  - **The policy** (`ctx.approvals.check` on `dispatch`, once per project per pass): `ask` opens one
+    request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@1:<sha256>}` after the ask's
+    row (`asking`) and its decisions are recorded, adopted after a crash; an attempt the operator
+    approved through the board's gate (the task's `lastDecision` is the operator's approval of the
+    board's own request for this attempt) starts with no request, a `gate` decision
+    (`dispatch.approval`) saying so (D62); `forbid`, and in D1 `auto` and `notify`, dispatch nothing.
+  - **The start**: the approval binds the task, its attempt, and the Worker (INV-5): while the task
+    is still ready at that attempt and the Worker still admitted and free, within
+    `approvedHoldMinutes` (30), the engine's own `tasks.start` (`clientRequestId`
+    `dispatch:<askId>`), its `workflow.task-admission` naming the dispatch decisions, and the
+    run's `workflow_tasks.dispatch` naming the ask and the Worker its writing step routes to first
+    (`preferred`: the writing step's first execution only; refused, it routes as any step, the
+    refused admission kept on the step). Past the hold, or once the task moved on, the approval is
+    used for nothing; a denied or expired request is never asked again for that attempt; one
+    withdrawn on a policy change is put to the policy in force.
+  - **Bounds**, counted from the rows each pass: `maxRunning` (8), `maxRunningPerProject` (2),
+    `maxRunningPerAccount` (1), `maxRunningPerRepository` (4, D64), `maxOpenAsks` (4), and
+    `leaveRunsFree` (4) of `maxActiveRuns`; an ask open or approved counts as its run would. A task
+    that writes a subject another holds, or has a live ask on, is not taken.
+  - **Pause**: `pauseDispatch(reason?)` and `resumeDispatch()`, each a `gate` decision
+    (`dispatch.pause`) on `workflow_dispatch_control`, kept across restarts; paused, a pass withdraws
+    the open asks and takes nothing. `dispatch.enabled: false` runs no pass.
+  - **Decisions** (INV-13): `dispatch.select` (`admission`), `dispatch.choice` (`route`, its `hash`
+    the quota settings'), the policy's `autonomy`, and the D62 `gate`, only for a take; the events
+    `workflow.dispatch.chosen|started|closed|paused|resumed`.
+  - **Settings** (`dispatch`): `enabled`, `sweepSeconds` (10 to 3600), `maxPerPass` (1 to 16),
+    `maxRunning` (1 to `maxActiveRuns − leaveRunsFree`, default 8 or that), `maxRunningPerProject`,
+    `maxRunningPerAccount`, `maxRunningPerRepository` (each 1 to 16), `leaveRunsFree` (0 to
+    `maxActiveRuns − 1`, default 4 or that), `maxOpenAsks` (1 to 32), `approvedHoldMinutes` (1 to
+    240); one out of its range refuses the row with its path (`dispatchProblems`, also in
+    `checkConfig`).
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
@@ -594,7 +642,8 @@ second execution path (INV-1).
 - **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
   `workflow.node.started|retry|waiting|resent|completed|failed|blocked|escalated|superseded`,
   `workflow.graph.grown|retired`, `workflow.gate.requested|opened|closed`,
-  `workflow.team.tallied|decided`, and `workflow.task.lost|reported`. A completed node's
+  `workflow.team.tallied|decided`, `workflow.task.lost|reported`, and
+  `workflow.dispatch.chosen|started|closed|paused|resumed`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -610,8 +659,11 @@ second execution path (INV-1).
     run for hours is never past the limit for being old; `changedSince`, only runs whose state
     changed after that time, the latest changed first (a time that is not one is refused). The
     web UI's live view and activity read by them (T127).
-  - `explain` gives the run's own decisions that no step holds (`decisions`: a board
-    task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
+  - `dispatchStatus` gives dispatch as it stands: the settings, the pause, the last pass with
+    its reason for each ready task, each bound with its use, and the live asks with their Worker
+    and windows (the engine's rows only).
+  - `explain` gives the run's own decisions that no step holds (`decisions`: for a run dispatch
+    started, its dispatch decisions first; a board task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
     holder, the result's subject and acceptance, the report, a funding gate, and the
     digest, in the order they were made; a Worker's own decisions filed under the run
     are not among them), then each step's egress, tier, route (or admission), and
@@ -650,7 +702,9 @@ second execution path (INV-1).
     as `usageView` shows it: the run's id, template, status, session, and times, and per step its
     state, tiers, attempt, execution, source, Worker, quota class, tokens, and `usageUnknown`;
     its answer, result and brief ids, errors, wait, and task are `result`'s;
-  - `explain` takes a run id, any artifact id (its input tree), or an execution whose liveness needs a look.
+  - `explain` takes a run id, any artifact id (its input tree), or an execution whose liveness needs a look;
+  - `dispatch_status` (client scope) gives `dispatchStatus`; `dispatch_pause { reason? }` and
+    `dispatch_resume` are the operator's pause and resume of dispatch (ADR-0064).
   - Each answers once ([replies](../mcp-server/README.md#token-budget)): the view is the
     structured content; the text is a completed run's answer, any other run's `standing` (what
     it waits for, why it failed, or how many steps are done), or an `outline` of the answer.
@@ -703,7 +757,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.8 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.9 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -749,6 +803,11 @@ second execution path (INV-1).
     `resend` decision naming the failed execution and the new one's key, also when the error
     arrived while the engine was down; a second such error fails it, never resent twice; a plain
     or a writing step after such an error fails, its decision saying why not;
+  - since 1.9 ([ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)),
+    the dispatch pass asks once to start a ready task of an active project on a free Worker chosen
+    by quota, adopted across passes and a restart, and on the operator's approval starts exactly
+    that attempt, its step on exactly that Worker, its admission naming why; with
+    `dispatch.enabled: false` it asks and starts nothing;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;
@@ -765,7 +824,9 @@ second execution path (INV-1).
   funding a spent one asks for; a task with a budget is refused without it), asks `digests` (the
   abstract `Digests` of `digest-core`) when present, for a task's results, and reads `approvals`
   (the abstract `Approvals` of `approvals-core`) when present: remediation gates, deferred calls'
-  continuations, a run's required checks, a plain run's acceptance.
+  continuations, a run's required checks, a plain run's acceptance, and the dispatch pass's verdicts and
+  requests (missing `approvals`, a ledger with `quota()`, or a router with `candidates`, dispatch starts
+  nothing).
 - **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
   the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
@@ -814,6 +875,16 @@ second execution path (INV-1).
   a class that requires none, and a plain run's acceptance reporting them; on the real stack with
   confined commands in
   [`profile-software-development`'s checks tests](../profile-software-development/tests/checks.spec.ts).
+  [`tests/dispatch.spec.ts`](tests/dispatch.spec.ts) runs the dispatch pass over the store-backed
+  board, queue, and ledger: the settings and their ranges (a row refused on one), the operator's
+  case (oldest first, `maxPerPass`, each start on a free Worker chosen by quota, a reason on every
+  task and Worker), an ask interrupted between the request and its record adopted, an approval
+  starting exactly its attempt and Worker, an approval past its hold used for nothing and asked
+  again, a lead's start winning the race (the ask withdrawn), a denied attempt never asked again,
+  every bound, the repository bound (D64), unknown, stale, and reserved windows never free, the
+  board's gate counting as approval (D62), `forbid`, `auto` in D1, off, and a pause across a
+  restart, and the counts across a restart. The crash suite kills it after its request and after
+  its run's record ([`dispatch.crash.ts`](../../system-bundle/tests/crash/dispatch.crash.ts)).
 
 ## Source layout
 
@@ -844,5 +915,6 @@ in `engine.ts`:
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
 | `carries.ts` | whether a task's run starts from the work its previous attempt left: decided at admission within its bounds, carried through the workers seam's `carry` before the run's first step, recorded, and pointed at by every brief of the run |
 | `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done, its `merge` put to the policy and asked on the queue, merged on the approval, through the workers seam's `land` |
+| `dispatch.ts` | the dispatch pass: its settings, the ready tasks it looks at and why each is not taken, the writing step's Worker chosen by the quota score among the router's candidates, the policy, the decisions, the ask and its request, its verdict, the start on that Worker, the bounds from its rows, the pause, and the status |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

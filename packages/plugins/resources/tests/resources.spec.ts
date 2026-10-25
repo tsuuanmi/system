@@ -14,7 +14,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type LimitState, type PoolConfig, type PoolTemplate, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools, validateTemplates } from '../src/index.ts'
+import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools, validateQuota, validateTemplates } from '../src/index.ts'
 
 /** A `ctx.mcp` that keeps contributed tools, so a test calls a handler as a scope would. */
 class RecordingMcp extends McpTools {
@@ -170,6 +170,29 @@ describe('configuration', () => {
       expect(ctx.get('resources')).toBeUndefined()
       await fiber.dispose()
     }
+  })
+
+  it('keeps the operator\'s quota settings over the defaults, and refuses one out of its range at load, naming its path (ADR-0064, D63)', async () => {
+    expect(validateQuota(undefined)).toEqual({ reservePercent: 20, useSoonMinutes: 90, minHeadroomPercent: 10, headroomBucketPercent: 5, staleReadingSeconds: 1800 })
+    expect(validateQuota({ reservePercent: 0, useSoonMinutes: 0 })).toMatchObject({ reservePercent: 0, useSoonMinutes: 0, staleReadingSeconds: 1800 })
+    expect(() => validateQuota({ reservePercent: 91 })).toThrow('resources: quota.reservePercent must be a whole number from 0 to 90, not 91')
+    expect(() => validateQuota({ staleReadingSeconds: 30, headroomBucketPercent: 26 })).toThrow(/quota\.headroomBucketPercent .*quota\.staleReadingSeconds/)
+    const ctx = await boot(tempDir(), { pools: POOLS, quota: { reservePercent: 35 } })
+    expect(ctx.resources.quota?.()).toMatchObject({ reservePercent: 35, useSoonMinutes: 90 })
+    // The plugin refuses to start on a setting out of its range: no `ctx.resources` is provided.
+    const refused = new Context()
+    const store = refused.plugin(Store, { path: join(tempDir(), 'system.db') })
+    await store
+    onTestFinished(() => store.dispose())
+    await refused.plugin(Artifacts, {})
+    const fiber = refused.plugin(StoreResources, { pools: POOLS, quota: { reservePercent: 95 } })
+    try {
+      await fiber
+    } catch {
+      // refused at load: the assertion below is what matters
+    }
+    expect(refused.get('resources')).toBeUndefined()
+    await fiber.dispose()
   })
 
   it('refuses a pool template whose id or group is not a name, a duplicate, or one with bad windows; a declaration past the pools the tool lists changes nothing; declared pools keep their readings across a restart once declared again (ADR-0052)', async () => {

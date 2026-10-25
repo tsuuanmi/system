@@ -35,10 +35,15 @@ export const BUDGET = {
      * stays. `status` and `report` saying they show the reviews held for the operator add 61 B (T107).
      * `status` listing only the checks that are not ok, with its `checks` argument, adds 75 B (T115).
      * `roster` saying what its `now` holds (capacity now, so a lead gives work where it is free) adds 134 B (T152).
+     * Dispatch's `dispatch_status`, `dispatch_pause`, and `dispatch_resume`, with the action class
+     * `dispatch` in the policy's enum, add 823 B (T153, ADR-0064).
      */
-    operator: { measured: 44_791, ceiling: 47_200 },
-    /** Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107); 75 B for `checks` (T115); 134 B for `roster`'s `now` (T152). */
-    client: { measured: 26_622, ceiling: 29_000 },
+    operator: { measured: 45_614, ceiling: 47_200 },
+    /**
+     * Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107); 75 B for `checks` (T115);
+     * 134 B for `roster`'s `now` (T152); 318 B for `dispatch_status` and the class `dispatch` (T153).
+     */
+    client: { measured: 26_940, ceiling: 29_000 },
   },
   /** One tool's entry in `tools/list` (name, description, schemas, `_meta`): the largest tool's ceiling (`board_charter`). */
   tool: { measured: 4_085, ceiling: 4_500 },

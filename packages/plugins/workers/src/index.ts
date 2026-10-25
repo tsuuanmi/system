@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Candidates, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
   type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -291,26 +291,58 @@ export class WorkerRouter extends Workers {
   }
 
   async route(requirement: WorkRequirement, options: RouteOptions = {}): Promise<AdmittedWorker> {
-    const turn = this.routing.then(() => this.routeNow(requirement, options))
+    return this.inTurn(() => this.routeNow(requirement, options))
+  }
+
+  /**
+   * Every Worker with the checks it fails for this requirement, judged as `route` judges it, under the
+   * same lock (PROP-0014): nothing is reserved, and no decision is recorded (the caller that acts on it
+   * records its own).
+   */
+  async candidates(requirement: WorkRequirement, options: RouteOptions = {}): Promise<Candidates> {
+    return this.inTurn(async () => {
+      const { described, requirementRef, failures, silent } = await this.judge(requirement, options)
+      return {
+        requirement: requirementRef,
+        workers: described.map((d) => ({ worker: d.worker, source: d.source, failed: failures.get(d.worker.worker)! })),
+        unheard: silent.map((source) => ({ source, reason: SILENT })),
+        order: { quota: this.quotaOrder(requirement), priority: [...(this.config.priority ?? [])] },
+      }
+    })
+  }
+
+  /** One turn of the routing lock: what runs in it reads the Workers' load alone (ADR-0033). */
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const turn = this.routing.then(work)
     this.routing = turn.catch(() => undefined)
     return turn
   }
 
-  private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
+  /**
+   * Admission for one requirement: every Worker described now, the stored requirement, and each
+   * Worker's failed checks, in the design's order, the assigned-account hold applied (ADR-0052).
+   */
+  private async judge(requirement: WorkRequirement, options: RouteOptions): Promise<{ described: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[]; requirementRef: ArtifactRef; failures: Map<string, Failed>; limited: Limited[] }> {
     this.schemas.assertRecord(requirement)
     const { all: described, silent } = await this.described()
     const workers = described.map((d) => d.worker)
-    // A source that did not answer in time is named in the decision, as a candidate it could not offer.
-    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [SILENT] }))
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
       kind: 'objective', bodySchema: requirement.schema, body: requirement, classification: requirement.data.classification, producer,
     })
-    const requirementRef = stored.id as ArtifactRef
     const failures = new Map(workers.map((w) => [w.worker, this.admit(w, requirement, options)]))
     // Under assigned accounts, a limit keeps the work off the group's other accounts (ADR-0052).
     const limited = limitedOnly(workers, failures, requirement)
     assign(workers, failures, limited)
+    return { described, silent, requirementRef: stored.id as ArtifactRef, failures, limited }
+  }
+
+  private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
+    const { described, silent, requirementRef, failures, limited } = await this.judge(requirement, options)
+    const workers = described.map((d) => d.worker)
+    // A source that did not answer in time is named in the decision, as a candidate it could not offer.
+    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [SILENT] }))
+    const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const admitted = workers.filter((w) => failures.get(w.worker)!.length === 0).sort(this.order(requirement))
     const chosen = admitted[0]
     if (!chosen) {

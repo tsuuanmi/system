@@ -451,6 +451,48 @@ export interface Config {
   tasksFile?: { maxTasks?: number; maxChars?: number }
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
+  /** Dispatch (ADR-0064): System starts ready board tasks on free Workers chosen by quota, within these bounds (./dispatch.ts). */
+  dispatch?: DispatchConfig
+}
+
+/**
+ * The dispatch pass's settings (ADR-0064, PROP-0014 D1), each validated when the row loads; a value
+ * out of its range refuses the row with its path. `maxRunning` and `leaveRunsFree` default to what
+ * `maxActiveRuns` leaves room for (8 and 4 of the default 16).
+ */
+export interface DispatchConfig {
+  /** Whether the pass runs at all (default true; off: nothing is asked or started). */
+  enabled?: boolean
+  /** Seconds between passes (10 to 3600, default 60); one runs at start too, after the runs are reconciled. */
+  sweepSeconds?: number
+  /** Starts or asks one pass makes at most (1 to 16, default 2). */
+  maxPerPass?: number
+  /** Dispatched runs not finished, with the asks open or approved (1 to maxActiveRuns − leaveRunsFree, default 8). */
+  maxRunning?: number
+  /** The same, per project (1 to 16, default 2). */
+  maxRunningPerProject?: number
+  /** The same, per account of the chosen Worker; also the most an account's load may be for it to be free (1 to 16, default 1). */
+  maxRunningPerAccount?: number
+  /** The same, per repository: the chosen writing Worker's workspace (1 to 16, default 4; D64). */
+  maxRunningPerRepository?: number
+  /** Active runs kept for the lead's and the operator's own starts (0 to maxActiveRuns − 1, default 4). */
+  leaveRunsFree?: number
+  /** Dispatch requests open at once, waiting for the operator's go (1 to 32, default 4). */
+  maxOpenAsks?: number
+  /** Minutes an approved start waits for its Worker to be free, then is used for nothing (1 to 240, default 30). */
+  approvedHoldMinutes?: number
+}
+
+/**
+ * What a run started by dispatch keeps on its `workflow_tasks` row (`dispatch`): the ask it served,
+ * the decisions that chose it (named by its `workflow.task-admission` decision), and the Worker its
+ * writing step routes to first.
+ */
+export interface TaskDispatch {
+  askId: string
+  /** The `dispatch.select`, `dispatch.choice`, and `autonomy` decisions, then the `approval` or the board approval's `gate` decision. */
+  decisions: ArtifactRef[]
+  prefer: { node: string; worker: string; decision: ArtifactRef }
 }
 
 export interface RunRow {
@@ -536,6 +578,8 @@ export interface TaskRow {
   landing?: string | null
   /** JSON {@link TaskCarry}: whether the run starts from the work its task's previous attempt left. */
   carry?: string | null
+  /** JSON {@link TaskDispatch}: set when dispatch started the run (ADR-0064). */
+  dispatch?: string | null
   created_at: string
   updated_at: string
 }

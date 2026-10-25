@@ -57,6 +57,10 @@ guarantee seam: it fails closed (INV-2).
     nothing: a source that is not a name, more than 64 accounts, an account that is not an id or
     a group that is not a name, a pool configured or another source's, or more than 64 pools in
     all ([pool templates](../../../docs/design/resources.md#pool-templates)).
+  - `quota()` (contract 1.2, ADR-0064): the operator's quota settings, the defaults under the
+    configured `quota`, as a copy ([quota settings](../../../docs/design/resources.md#quota-settings)).
+    The ledger itself reserves, counts, and closes nothing by them; the dispatch pass's quota score
+    reads them.
 - **Records:** `resource_usage` (counted records, one per `(source, requestId)`, indexed by
   run, project, task, account, pool, and time), `resource_readings` (the latest reading per
   pool and window, with its artifact), `resource_reservations` and `resource_holds`. Every
@@ -69,7 +73,10 @@ guarantee seam: it fails closed (INV-2).
   `unknown`, default `unavailable`), `templates` (each `template` and `group`, names of letters,
   digits, `.`, `_`, `-`, at most 64; `kind`, `windows`, `unknown` as a pool's; at most 64, unique
   ids), `pageSize` (default 20), `maxRecords` (default 10000),
-  `holdSeconds` (default 14400). A stored reading of a window whose kind or account changed in
+  `holdSeconds` (default 14400), `quota` (`reservePercent` 20 of 0 to 90, `useSoonMinutes` 90 of
+  0 to 1440, `minHeadroomPercent` 10 of 1 to 100, `headroomBucketPercent` 5 of 1 to 25,
+  `staleReadingSeconds` 1800 of 60 to 86400; one out of its range refuses the plugin, naming its
+  path). A stored reading of a window whose kind or account changed in
   configuration since counts as no reading.
   Pools come from configuration only, never a plan named in code
   ([INV-11](../../../docs/architecture/invariants.md#inv-11-no-tool-lock-in)). At load, a
@@ -85,6 +92,6 @@ guarantee seam: it fails closed (INV-2).
   rows and artifacts) until a retention rule exists for them.
 - Tests: [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`resources-core/conformance/resources.ts`](../../resources-core/conformance/resources.ts),
-  at contract 1.1 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)
-  covers restart, configuration (templates and the declaration bound included), paging, the MCP outputs, and a reservation race across
-  processes.
+  at contract 1.2 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)
+  covers restart, configuration (templates, the declaration bound, and the quota settings
+  included), paging, the MCP outputs, and a reservation race across processes.

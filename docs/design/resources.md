@@ -30,7 +30,7 @@ Claude Code Worker run through the Agent SDK may draw on a different pool than i
 
 ## Seam
 
-`ctx.resources` (`Resources` in `@tsuuanmi/system-resources-core`), contract 1.1:
+`ctx.resources` (`Resources` in `@tsuuanmi/system-resources-core`), contract 1.2:
 
 | Method | Does |
 |---|---|
@@ -41,6 +41,7 @@ Claude Code Worker run through the Agent SDK may draw on a different pool than i
 | `record(usage)` | record one unit's `usage-record`, deduplicated |
 | `usage(filter?)` | the counted records and their totals per pool |
 | `declare?(source, accounts)` | optional, contract 1.1 ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): a Worker source's accounts, replacing what it declared before; one pool per [template](#pool-templates) and account; returns their ids |
+| `quota?()` | optional, contract 1.2 ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)): the operator's [quota settings](#quota-settings), as validated when the provider loaded |
 
 ## A run's budget
 
@@ -145,6 +146,29 @@ its own use, with no plan written into configuration:
   `observedAt` (`mcp-roster@1.1`), which the Workers tab renders as "5 h: used 42 % — resets 14:20
   (read 14:05)" ([roster](roster.md#surfaces)).
 
+### Quota settings
+
+> Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
+> (accepted 2026-10-25, D61, D63). Contract 1.2.
+
+The `resources` row's `quota` holds what the quota score (`quota-score@1`,
+[routing](routing.md#candidates-without-a-reservation)) reads besides the pools, each a whole number
+validated when the row loads; one out of its range refuses the row with its path. The ledger itself
+counts, reserves, and closes nothing by them: they are read through `quota()`.
+
+| Key | Default | Range | Meaning |
+|---|---|---|---|
+| `reservePercent` | 20 (D63) | 0 to 90 | share of every window kept for the operator's own use: work System starts by itself never starts into it. It gates starts only: a run that crosses into it keeps going, and a run the lead or the operator starts is routed as before |
+| `useSoonMinutes` | 90 | 0 to 1440 | a window that resets this soon, with headroom, is used first; 0 never |
+| `minHeadroomPercent` | 10 | 1 to 100 | the headroom a window about to reset needs to be used first |
+| `headroomBucketPercent` | 5 | 1 to 25 | headroom is compared in buckets this wide |
+| `staleReadingSeconds` | 1800 | 60 to 86400 | a reading older than this leaves its window unknown, never capacity; keep it above the agent providers' `limitReadSeconds` (default 600), so the account's own report keeps windows fresh |
+
+- A ledger without `quota()` keeps no reserve: the dispatch pass then finds no Worker free (INV-2).
+- A window with no reading, a stale, `unknown`, or `limited` one, or one with no used share is not
+  known, and a pool configured `unknown: available` is never read as having headroom.
+- A per-template reserve and dispatch onto metered pools are not built (PROP-0014; D65: never).
+
 ## Counting
 
 - One record per `(source, requestId)`; a duplicate is stored as an artifact but not counted.
@@ -223,6 +247,7 @@ exists: before then, nothing could reconcile such a run, and its scope would sta
 ## Conformance
 
 [`resources-core/conformance/resources.ts`](../../packages/resources-core/conformance/resources.ts),
-14 scenarios at contract 1.1 (1.1 adds `templates-per-account`: one pool per template and declared
-account, a limit on one never closing another's), run against the fake provider and the store-backed one. The
+15 scenarios at contract 1.2 (1.1 adds `templates-per-account`: one pool per template and declared
+account, a limit on one never closing another's; 1.2 adds `quota-settings`: the settings in their
+ranges, the defaults when none is configured), run against the fake provider and the store-backed one. The
 metering oracle against `ccusage --json` comes with the first Worker that reports usage (B2).

@@ -24,7 +24,8 @@ import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type 
 import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
-import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type WorkflowError, WorkflowFailure } from './types.ts'
+import { Dispatcher } from './dispatch.ts'
+import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type TaskDispatch, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
 /** Preflight a template and each of its variants, and check that every result schema it names is known. Throws why. */
@@ -41,7 +42,7 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
 export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
 
 /** The board task a run is admitted for, as the board granted it. */
-export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined; carry?: TaskCarry | undefined }
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined; carry?: TaskCarry | undefined; dispatch?: TaskDispatch | undefined }
 
 export class Engine {
   readonly schemas = new SchemaRegistry()
@@ -49,6 +50,8 @@ export class Engine {
   board: Board | undefined
   /** Runs that serve a board task: taking the task, renewing its lease, reporting the outcome. */
   readonly tasks: TaskRuns = new TaskRuns(this)
+  /** Dispatch (ADR-0064): ready tasks started on free Workers chosen by quota, its settings validated here. */
+  readonly dispatch: Dispatcher
   readonly templates: Record<string, NodeTemplate[]>
   /** Configured templates refused at load, with why (health reports them). */
   readonly refused = new Map<string, string>()
@@ -70,6 +73,8 @@ export class Engine {
   readonly wakeChecks = new Set<Promise<void>>()
 
   constructor(readonly ctx: Context, readonly config: Config) {
+    // A dispatch setting out of its range refuses the row, with its path (INV-2).
+    this.dispatch = new Dispatcher(this)
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
     // Checked at load, not at the first call. A configured template that fails preflight is refused
     // alone, with why (INV-2): the engine and every other template keep working, and health names it.
@@ -89,6 +94,7 @@ export class Engine {
   async close(): Promise<void> {
     this.stopped.abort()
     for (const timer of this.retries) clearTimeout(timer)
+    await this.dispatch.close()
     await Promise.allSettled(this.wakeChecks)
     await Promise.allSettled(this.running.values())
     await this.tasks.close()
@@ -205,9 +211,9 @@ export class Engine {
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
       if (bound) {
-        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, carry, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, carry, dispatch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?)`)
           .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null,
-            bound.budget ? JSON.stringify(bound.budget) : null, bound.carry ? JSON.stringify(bound.carry) : null, now(), now())
+            bound.budget ? JSON.stringify(bound.budget) : null, bound.carry ? JSON.stringify(bound.carry) : null, bound.dispatch ? JSON.stringify(bound.dispatch) : null, now(), now())
         return view(this, run)
       }
       this.open(run.run_id)
@@ -657,9 +663,21 @@ export class Engine {
         if (!failed.length || !(error instanceof AdmissionFailure)) throw error
         return this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...pinned })
       })
+      // The Worker dispatch chose for a run's writing step is tried first, on its first execution only
+      // (ADR-0064); refused (its state changed since), the step routes as any other, both decisions kept.
+      const prefer = this.tasks.preferred(run.run_id, node)
+      let preferRefused: ArtifactRef | undefined
       try {
         try {
-          admitted = await route({ ...restricted, ...(exclude ? { exclude } : {}) })
+          let preferred: AdmittedWorker | undefined
+          if (prefer && (!restricted.restrict || restricted.restrict.workers.includes(prefer.worker))) {
+            preferred = await route({ ...restricted, ...(exclude ? { exclude } : {}), restrict: { workers: [prefer.worker], reason: `dispatch chose ${prefer.worker} for this step (decision ${prefer.decision})` } }).catch((error: unknown) => {
+              if (!(error instanceof AdmissionFailure)) throw error
+              preferRefused = error.decision
+              return undefined
+            })
+          }
+          admitted = preferred ?? await route({ ...restricted, ...(exclude ? { exclude } : {}) })
         } catch (error) {
           if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
           // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
@@ -714,8 +732,8 @@ export class Engine {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
         // The account it runs on, so a failure of it is recovered by its group's mode (ADR-0052).
         account: admitted.worker.account ? JSON.stringify(admitted.worker.account) : null,
-        // The same-family decision first: the last two stay the tier and route decisions.
-        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), admitted.decisions.tier, admitted.decisions.route]),
+        // The same-family decision and a refused preference first: the last two stay the tier and route decisions.
+        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), ...(preferRefused ? [preferRefused] : []), admitted.decisions.tier, admitted.decisions.route]),
       }
       try {
         this.ctx.store.transaction(() => {

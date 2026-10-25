@@ -168,7 +168,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
-    const waiting = page.getByRole('region', { name: 'Waiting for you' })
+    const waiting = page.getByRole('region', { name: 'Waiting for you', exact: true })
     await expect.poll(() => waiting.innerText()).toMatch(/1 task waits for your review; the first held for you expires in \d+ (h|min|days)/)
     expect(await page.getByRole('region', { name: 'Reviews' }).innerText()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
   }, 60_000)
