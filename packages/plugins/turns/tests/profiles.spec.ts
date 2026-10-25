@@ -49,6 +49,32 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
     expect((await ctx.turns.wait((await ask(ctx, { prompt: 'now' })).turnId, 60_000)).answer).toBe('From the profile.')
   }, 180_000)
 
+  it('tells its caller a site\'s own error after the send, never resends it, and a reset session\'s next turn opens a new conversation on the same account (ADR-0062)', async () => {
+    let first = true
+    const { ctx, fake } = await bootBound({ fake: { answer: (prompt) => {
+      if (!first) return `Answer to ${prompt}`
+      first = false
+      return 'Sorry, something went wrong. Please try your request again.'
+    } } })
+    const sessionId = `ses_${randomBytes(8).toString('hex')}`
+    const failed = await ctx.turns.wait((await ask(ctx, { prompt: 'first', sessionId })).turnId, 90_000)
+    expect(failed).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'overloaded', disposition: 'BACKOFF', siteError: true } })
+    expect(ctx.workers.source('website')!.get(failed.turnId)!.error).toMatchObject({ kind: 'overloaded', siteError: true })
+    expect(fake.sent).toHaveLength(1)
+    const erred = failed.binding!
+    expect(erred).toBeTruthy()
+    // The caller's rule decides; the runtime only starts the session's next work in a new conversation.
+    expect(ctx.workers.reset(sessionId)).toBe(true)
+    expect(ctx.workers.affinity(sessionId)).toContain('worker:gemini-main/standard')
+    const again = await ctx.turns.wait((await ask(ctx, { prompt: 'first', sessionId })).turnId, 90_000)
+    expect(again).toMatchObject({ status: 'completed', account: 'gemini-main', answer: 'Answer to first' })
+    expect(again.binding).toBeTruthy()
+    expect(again.binding).not.toBe(erred)
+    expect(fake.sent.map((s) => s.conversationId)).toEqual([undefined, undefined])
+    // Both are the session's: the abandoned one is deleted with it once its run releases it.
+    expect(ctx.turns.conversations({ sessionId }).map((c) => c.binding).sort()).toEqual([erred, again.binding].sort())
+  }, 180_000)
+
   describe('background checks spread over their interval (PROP-0007)', () => {
     it('gives each account a stable offset of its own within the interval', () => {
       const hour = 60 * 60_000

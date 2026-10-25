@@ -173,6 +173,24 @@ started shows the prompt with no research after it, so it is never resent.
 This applies [INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)
 to provider turns.
 
+### A site's own error after the send
+
+A site may answer a sent prompt with its own error in place of an answer (Gemini's
+`answer.site-error`: "I seem to be encountering an error", "Sorry, something went wrong. Please
+try your request again."; read only in a short answer, so an answer about errors is never taken
+for one). The driver reads it on the turn's own page, after the boundary, and fails the turn
+`overloaded` with `siteError` set (`ProviderError.siteError`). The turn runtime never resends it:
+the prompt was sent, and a later look at the conversation can show an empty chat (live
+2026-10-24), which the table above reads as not observed. It records `siteError` on the turn's
+error only when its receipt was written, and its Worker execution carries it
+(`WorkerExecution.error.siteError`). Whether the work runs again is the caller's: the workflow
+engine resends a team member's first step once, in a new conversation of its session, and nothing
+else ([ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md),
+[workflow engine](workflow-engine.md#a-team-members-first-step-after-a-sites-own-error)). The
+session's `reset` clears its binding and keeps its account, so its next turn opens a new
+conversation there; the old one stays in the ledger, owned by the session, until its run releases
+it.
+
 ## Submission
 
 1. Prepare the page from the account's portable auth state in a fresh browser

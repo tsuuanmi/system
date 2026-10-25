@@ -119,6 +119,10 @@ scenario of the suite, on the same provider, does not stay.
     leaves that worktree marked, no agent run in it; past the retention it is put back to its base
     and removed with nothing committed on its branch, and the run's agent later works on the base's
     files ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
+    An engine killed between a team member's `resend` decision and its new attempt (the
+    decision, the session's reset, and the ready node one transaction) resends that step exactly
+    once after a restart, in the new conversation, and the team completes
+    ([ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)).
 - **Architecture rules**
   ([`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
   Capability-routed code names no tools (INV-11). Native protocol objects stay

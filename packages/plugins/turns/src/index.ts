@@ -60,7 +60,8 @@ export interface TurnView {
   routeDecision?: ContentId
   tierDecision?: ContentId
   egressDecision?: ContentId
-  error?: { kind: string; disposition: Disposition; message: string }
+  /** `siteError`: the site answered the sent prompt with its own error in place of an answer (ADR-0062). */
+  error?: { kind: string; disposition: Disposition; message: string; siteError?: true }
   createdAt: string
   updatedAt: string
 }
@@ -1262,9 +1263,14 @@ export class Turns extends Service {
     // A finished turn stays as it finished: a later failure (closing its browser turn) never rewrites it.
     if (TERMINAL.has(this.row(turnId)?.status ?? 'queued')) return
     const typed = toProviderError(error)
-    const account = this.row(turnId)?.account
+    const row = this.row(turnId)
+    const account = row?.account
     if (typed.kind === 'quota_exhausted' && account) this.cool(account, typed)
-    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
+    // The site's own error in place of an answer, read on the turn's page after its receipt was
+    // written (ADR-0062): told to the caller, whose rule alone may start the work again. Without a
+    // receipt nothing was sent, so it is not that.
+    const siteError = typed.siteError && row?.submitted_at ? { siteError: true } : {}
+    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message, ...siteError }) }, lease)
   }
 
   /** Write turn fields; with a lease, only while that lease still holds the turn (fenced). */

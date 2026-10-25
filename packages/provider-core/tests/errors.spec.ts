@@ -19,7 +19,12 @@ describe('failure taxonomy (docs/design/workflow-engine.md#recovery)', () => {
 
   it('carries kind and disposition on the error', () => {
     const error = new ProviderError('challenge', 'Cloudflare challenge during turn')
-    expect(error).toMatchObject({ name: 'ProviderError', kind: 'challenge', disposition: 'USER_ACTION' })
+    expect(error).toMatchObject({ name: 'ProviderError', kind: 'challenge', disposition: 'USER_ACTION', siteError: false })
+  })
+
+  it('marks a site\'s own error after the send only when its driver says so (ADR-0062)', () => {
+    expect(new ProviderError('overloaded', 'the site answered with its own error', { siteError: true })).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF', siteError: true })
+    expect(new ProviderError('overloaded', 'busy').siteError).toBe(false)
   })
 })
 

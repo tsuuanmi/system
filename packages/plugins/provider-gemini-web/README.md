@@ -164,8 +164,9 @@ driver, its operations are data: a UI map,
     again) is the same `challenge`.
 - **The site's own error as an answer** (`answer.site-error`, live 2026-10-17: "I seem to be
   encountering an error. Can I try something else for you?"), read only in a short answer, fails
-  the turn as `overloaded` before any acceptance judges it. The prompt was sent, so it is not
-  resent ([INV-4](../../../docs/architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
+  the turn as `overloaded` before any acceptance judges it, marked `siteError`. The prompt was
+  sent, so the driver and the turn runtime never resend it
+  ([INV-4](../../../docs/architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
   That is the honest outcome as far as the site shows, and nothing in it is recovered:
   - Live on 2026-10-24 the site answered "Sorry, something went wrong. Please try your request
     again." 6 s after the conversation got its id, and reopened 30 minutes later the conversation's
@@ -174,8 +175,11 @@ driver, its operations are data: a UI map,
   - The site's own retry (Redo on that turn, or trying again as it asks) runs the prompt again on
     the site. That is a resend, which reconciliation allows only on positive evidence that the
     prompt left no trace (RESUBMIT); a page that shows nothing of it is not that evidence
-    (AMBIGUOUS). One bounded resend after a site's error is a separate decision
-    ([roadmap](../../../docs/proposals/roadmap.md#follow-ups-from-the-reliability-review)).
+    (AMBIGUOUS). The driver never clicks it.
+  - The mark lets the workflow engine resend a team member's first step once, in a new
+    conversation of its session (D60,
+    [ADR-0062](../../../docs/decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md));
+    nothing else is resent.
   - What the operator does is in the
     [runbook](../../../docs/operations/runbooks.md#a-review-member-fails-on-a-website).
 - **No self-heal.** A drifted element fails closed until the map is updated. A

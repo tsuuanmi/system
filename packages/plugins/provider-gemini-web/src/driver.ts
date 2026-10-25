@@ -316,13 +316,15 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   /**
    * The site's own error shown as the answer (`answer.site-error`, in a short answer only) is no
    * answer: the turn fails before any acceptance judges it. The prompt was sent, so it is
-   * `overloaded` and never resent from here (INV-4).
+   * `overloaded` and never resent from here (INV-4); marked `siteError`, so the workflow engine's
+   * own rule may start a read-only team member's first step once more, in a new conversation
+   * (ADR-0062).
    */
   private async refuseSiteError(engine: UiEngine, text: string): Promise<void> {
     if (text.length > SITE_ERROR_MAX_CHARS) return
     const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
     if (!(await engine.findIn('answer.site-error', answer))) return
-    throw new ProviderError('overloaded', `gemini-web: the site answered with its own error instead of an answer ("${text.slice(0, 120)}"); the prompt was sent, so it is not resent`)
+    throw new ProviderError('overloaded', `gemini-web: the site answered with its own error instead of an answer ("${text.slice(0, 120)}"); the prompt was sent, so it is not resent`, { siteError: true })
   }
 
   /**
