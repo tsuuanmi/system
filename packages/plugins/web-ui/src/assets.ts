@@ -857,6 +857,8 @@ export const APP_JS = `'use strict'
     if (dispatch.error) return panel(el('p', { class: 'state failed' }, 'The starts System proposes could not be read: ' + dispatch.error.message + '.'))
     const requests = new Map(q && !q.error ? q.requests.map((r) => [r.requestId, r]) : [])
     const asked = dispatch.asks.filter((a) => a.state === 'asked' && a.requestId && requests.has(a.requestId))
+    // Without the queue no verdict can be given here: the starts it waits on are named, never shown as none.
+    const unread = !q || q.error ? dispatch.asks.filter((a) => a.state === 'asked') : []
     const approved = dispatch.asks.filter((a) => a.state === 'approved' || a.state === 'starting')
     const state = !dispatch.enabled ? el('p', { class: 'muted' }, 'Dispatch is off (dispatch.enabled: false): System proposes no start by itself.')
       : dispatch.paused ? el('p', { class: 'soon' }, 'Dispatch is paused since ' + when(dispatch.paused.since) + (dispatch.paused.reason ? ': ' + dispatch.paused.reason : '') + '. System proposes no start until you resume it (system dispatch resume).')
@@ -882,8 +884,9 @@ export const APP_JS = `'use strict'
       el('ul', {}, last.tasks.map((t) => el('li', {}, '"' + t.title + '": ' + t.reason))), last.more ? el('p', { class: 'muted' }, last.more + ' more ready task(s) not listed.') : null)
       : last && last.reason ? el('p', { class: 'muted' }, 'At the last look (' + relative(last.at) + '): ' + last.reason + '.') : null
     return panel(state,
-      asked.length ? el('ul', { class: 'goes' }, asked.map(item))
-        : el('p', { class: 'muted' }, 'No start waits for your go. When System finds a ready task and a free Worker with quota to spare, it asks here before it starts it.'),
+      unread.length ? el('p', { class: 'state failed' }, 'The approval queue could not be read, so these starts cannot be decided here now: ' + unread.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.')
+        : asked.length ? el('ul', { class: 'goes' }, asked.map(item))
+          : el('p', { class: 'muted' }, 'No start waits for your go. When System finds a ready task and a free Worker with quota to spare, it asks here before it starts it.'),
       approved.length ? el('p', {}, approved.length + ' approved start(s) wait for their Worker to be free: ' + approved.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.') : null,
       reasons)
   }

@@ -517,7 +517,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    const waiting = page.getByRole('region', { name: 'Waiting for you' })
+    const waiting = page.getByRole('region', { name: 'Waiting for you', exact: true })
     await expect.poll(() => waiting.innerText()).toContain('3 requests wait for your verdict')
     expect(await waiting.innerText()).toContain('1 run needs a look')
     // Each one by name under its count, linked to where it is decided (T141).
