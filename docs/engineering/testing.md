@@ -283,7 +283,10 @@ a root [`package.json`](../../package.json) script:
      line. A line of exactly seven `<`, `|` (diff3's base), or `>`, alone or followed by a
      space and a label, is always a marker. A line of exactly seven `=` is one only when a
      `<` marker comes before it in the same file; alone it is a Markdown setext heading
-     underline. A file holding a NUL byte is binary and skipped;
+     underline. A file holding a NUL byte is binary and skipped. Two ADRs
+     (`docs/decisions/adr/NNNN-*.md`) or two proposals (`docs/proposals/NNNN-*.md`) with one
+     number fail, the later file named: parallel changes that each took the next number collide
+     ([what parallel changes collide on](#what-parallel-changes-collide-on));
    - `check:secrets` ([`scripts/check-secrets.ts`](../../scripts/check-secrets.ts)):
      no tracked text file holds a credential, by the scan `egress` applies to
      outgoing payloads (secretlint's recommended rules plus the shapes they miss,
@@ -291,7 +294,15 @@ a root [`package.json`](../../package.json) script:
      at run time instead of committing them; there is no opt-out;
    - `check:schemas` ([`scripts/check-schemas.ts`](../../scripts/check-schemas.ts)):
      every file in `schemas/` compiles under Ajv draft 2020-12 with
-     `strict: true`, and every file in `schemas/examples/` validates;
+     `strict: true`, every file in `schemas/examples/` validates, and no schema changes its
+     contract in place: against the committed snapshot
+     [`scripts/schema-snapshot.json`](../../scripts/schema-snapshot.json), a change that requires
+     a property, stops requiring one, removes one, or narrows or relaxes an existing subschema
+     fails unless the schema carries a newer version note
+     ([schema contracts](#schema-contracts-against-a-committed-snapshot));
+   - `check:migrations` ([`scripts/check-migrations.ts`](../../scripts/check-migrations.ts)): within
+     each owner's store migrations, across all its `migrate` calls, no version appears twice, and
+     each list's versions strictly increase in list order ([store migrations](#store-migration-versions));
    - `check:reference`, `check:packages`, and `check:traceability`: the generated
      [configuration catalog](../reference/configuration.md),
      [package graph](../architecture/packages.md), and
@@ -337,6 +348,67 @@ comment; a test in [`scripts/checks.spec.ts`](../../scripts/checks.spec.ts) chec
 
 CI cannot prove account-bound flows. The
 [release checklist](../validation/release-checklist.md) covers them.
+
+### What parallel changes collide on
+
+Parallel runs each take "the next" number from the same tree, and each passes alone. Landing
+them side by side on `dev` on 2026-10-26: two runs wrote ADR-0065, two added agent-workers store
+migration 18, and one made a field of `mcp-roster@1.7` optional in place instead of adding a
+version. Three checks in `pnpm check` refuse these, each with a test of a fixture that fails and of
+the real tree that passes ([`scripts/collisions.spec.ts`](../../scripts/collisions.spec.ts)). A
+writer takes the next free number, version, and schema version
+([CONTRIBUTING](../../CONTRIBUTING.md)); after a collision, the change that lands second renumbers.
+
+#### Numbered documents
+
+`check:docs` groups `docs/decisions/adr/` and `docs/proposals/` by their `NNNN-` prefix; a number
+held by two files fails, naming the later file and the one it collides with.
+
+#### Store migration versions
+
+The store records each `(owner, version)` it applied, once
+([store](../../packages/plugins/store/src/index.ts)), so a second migration with a version an
+install already ran never runs there. `check:migrations` reads every
+`<x>.store.migrate(<owner>, <list>)` call (and any other `migrate` call with a string-literal owner
+or an array-literal list) under a package's `src/` with
+the TypeScript parser, without running the code: the owner is a string literal or a constant
+holding one, the list an array literal or a constant holding one, and each element an object
+literal with exactly one `version: <number literal>` and no object spread or computed key (either
+could set the version at runtime), or a constant holding one (`GATE_MIGRATION`), in the same
+file or imported from a relative module. A version twice, or a version not above the one before
+it in list order, fails, and so does one owner's version declared again by another `migrate`
+call (the store records it once, whichever call ran it). An owner, list, or element it cannot
+read that way (a computed owner, a call, a spread, a computed or repeated version) fails too, so
+no list hides from it. Tests and conformance suites, outside `src/`, are
+not read: they migrate out of order on purpose.
+
+#### Schema contracts, against a committed snapshot
+
+[`scripts/schema-snapshot.json`](../../scripts/schema-snapshot.json) holds each schema's contract:
+its newest version, and for every subschema by JSON pointer a digest of its own constraints
+(descriptions, titles, examples, and defaults left out; nested subschemas are their own entries),
+its `required` list, and its property names. `check:schemas` compares each schema with its entry;
+a change fails when it requires a property, stops requiring one, removes a property or a
+subschema, changes an existing subschema's constraints (narrows or relaxes it), or adds a
+constraint subschema to an existing one (a `not`, `items`, `if`, or `dependentSchemas` entry that
+was not there), unless the
+schema's version moved past the snapshot's. A schema's version is the highest `<major>.<minor>` of
+its file's major among the version notes in its descriptions (`1.9 adds …`, `1.4: …`, `(1.1)`,
+`<name>@1.9 …`; `other@1.3` names another schema and does not count). Only descriptions count: a
+`<name>@<major>.<minor>` tag elsewhere, such as an advanced `properties.schema.const`, is not a
+note, so a contract change needs its note in a description.
+Adding an optional property or a `$defs` entry is not a change in place.
+
+`pnpm gen:reference` rewrites the snapshot: every schema's current contract, except a schema
+changed in place, whose old entry it keeps, so regenerating never hides the change. The check also
+fails while the snapshot is out of date, so every versioned change commits its new entry.
+
+A snapshot, not a diff against the merge base with `main`: work lands on `dev` and `main` takes it
+only at the operator's merge ([branches](development.md#branches-dev-and-main)), so the merge base
+is a different, older tree on each branch, and a shallow checkout may not hold it. The snapshot is
+in the tree, so the check answers the same everywhere, offline. Two changes that both version one
+schema both rewrite its entry, and meet as a merge conflict in the snapshot. Its limit: a version
+note anywhere in a schema admits a change anywhere in it, so the note must say what changed.
 
 ## Running the suite inside a run's check
 

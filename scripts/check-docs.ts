@@ -1,14 +1,41 @@
-// Documentation structure and link checks, and conflict markers in any tracked text file
-// (docs/engineering/testing.md#ci-gates).
+// Documentation structure and link checks, numbered documents' numbers, and conflict markers in
+// any tracked text file (docs/engineering/testing.md#ci-gates).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, normalize, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkConflicts } from './check-conflicts.ts'
 
 export interface DocProblem {
-  kind: 'missing-readme' | 'duplicate-entry' | 'broken-link' | 'broken-anchor'
+  kind: 'missing-readme' | 'duplicate-entry' | 'broken-link' | 'broken-anchor' | 'duplicate-number'
   file: string
   detail: string
+}
+
+/**
+ * The numbered document series: two parallel changes that each took the next number collide
+ * (ADR-0065, written twice on 2026-10-26), and both land unless a check refuses it.
+ */
+export const NUMBERED_SERIES = ['docs/decisions/adr', 'docs/proposals'] as const
+
+/** Two files of one numbered series (`NNNN-*.md`) with the same number, one problem per extra file. */
+export function duplicateNumbers(root: string, series: readonly string[] = NUMBERED_SERIES): DocProblem[] {
+  const problems: DocProblem[] = []
+  for (const dir of series) {
+    const path = join(root, dir)
+    if (!existsSync(path)) continue
+    const byNumber = new Map<string, string[]>()
+    for (const file of readdirSync(path).sort()) {
+      const number = /^(\d{4})-.*\.md$/.exec(file)?.[1]
+      if (number) byNumber.set(number, [...(byNumber.get(number) ?? []), file])
+    }
+    for (const [number, files] of byNumber) {
+      if (files.length < 2) continue
+      for (const file of files.slice(1)) {
+        problems.push({ kind: 'duplicate-number', file: `${dir}/${file}`, detail: `number ${number} is also ${dir}/${files[0]}: take the next free number` })
+      }
+    }
+  }
+  return problems
 }
 
 // `.claude` is an agent harness's own directory (settings, loop files), never documentation.
@@ -76,6 +103,7 @@ export function checkDocs(root: string): DocProblem[] {
       }
     }
   })
+  problems.push(...duplicateNumbers(root))
   return problems
 }
 

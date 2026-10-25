@@ -59,8 +59,8 @@ The root [`package.json`](../../package.json) `scripts` are canonical:
 ```sh
 pnpm install
 pnpm build              # tsc → lib/ for every package
-pnpm check              # docs, secrets, schemas; reference, packages, manifests, and traceability freshness; oxlint; typecheck
-pnpm gen:reference      # regenerate docs/reference/configuration.md after changing a plugin Config
+pnpm check              # docs, secrets, schemas, migrations; reference, packages, manifests, and traceability freshness; oxlint; typecheck
+pnpm gen:reference      # regenerate docs/reference/configuration.md after changing a plugin Config, and the schema contract snapshot after a schema change
 pnpm gen:packages       # regenerate docs/architecture/packages.md after changing a package or its seams
 pnpm gen:manifests      # regenerate every plugin-manifest.json after changing a plugin's seams, Config, egress check, or package.json
 pnpm gen:traceability   # regenerate docs/validation/traceability.md from test titles
@@ -137,6 +137,10 @@ serves per attempt. The [board](../design/board.md), the
    it binds only that step, so one step's orders never become another's. `validate:1` reads the
    criteria from its brief, never the input, so a command not named in a criterion is not run
    ([which inputs reach which step](../reference/workflow-templates.md#which-inputs-reach-which-step)).
+   Point the develop step at [CONTRIBUTING](../../CONTRIBUTING.md): a writer takes the next free
+   ADR number, store migration version, and schema version, since runs written beside it take
+   "the next" from the same tree
+   ([what parallel changes collide on](testing.md#what-parallel-changes-collide-on)).
 3. **What a step may run.** Every tool call passes the run's gate
    ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)). Edits inside the
    worktree are `workspace-write`. A command runs unasked only when its exact argv is in the
