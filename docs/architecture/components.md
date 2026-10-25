@@ -277,7 +277,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   of a task's writing step chosen by the quota score among those `candidates` admits, one request
   per start bound to the task, its attempt, and the Worker, bounded per account, project,
   repository, and in total, the operator's pause kept across restarts
-  ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself)).
+  ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself)). Once one is
+  configured (none by default), a dispatch advisor is asked about each choice after it is made,
+  its advice recorded beside the choice and never changing it
+  ([the dispatch advisor in shadow](../design/workflow-engine.md#the-dispatch-advisor-in-shadow)).
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).

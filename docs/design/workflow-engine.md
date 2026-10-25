@@ -1227,6 +1227,50 @@ flowchart TD
   awaiting approval* and the starts under *Started by itself*, one line each with its run's state as
   a chip ([web UI API](../reference/web-ui.md#dispatch)).
 
+### The dispatch advisor in shadow
+
+> Proposal: [PROP-0015](../proposals/0015-right-worker-right-job.md) J1, adapted: no Jev adapter (the
+> T194 research found Jev not verifiably usable yet), so the seam is provider-neutral, with a local
+> adapter and a configured model Worker. D73 (features only) and D74 (100 dispatched attempts with
+> outcomes in shadow) apply. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (`src/advisor.ts`). Contract 1.11 of the `workflow` seam; the advisor seam's own contract 1.0, its
+> suite `conformance/advisor.ts` ([seam catalog](../architecture/plugin-model.md#seam-catalog)). Not
+> built: J2 (the advice beside each ask on Home), J3 (any effect on a choice).
+
+Once `dispatch.advisor.provider` names an advisor (it is `none` by default: off), every dispatch
+choice asks it, once, **after** `quota-score@2` has chosen the Worker. The advice is recorded and
+never read to choose: the chosen Worker, the request, and its subject's version are the same as with
+no advisor.
+
+| Part | What it does |
+|---|---|
+| the seam ([catalog](../architecture/plugin-model.md#seam-catalog)) | `Advisor.advise(features, signal)` returns `dispatch-advice@1`: for each candidate alias, `accepted`, `limit` (a window closes mid-task), and `needsOperator`, each a probability, with the provider's id and a pinned model version; or `unavailable` with why. `ctx.workflow.setDispatchAdvisor(advisor)` swaps in another provider, which must pass the seam's conformance suite (`packages/plugins/workflow/conformance/advisor.ts`). It is stopped through an `AdvisorSignal`, not an `AbortSignal` (an `EventTarget` rethrows a listener's error as an uncaught exception, past any try/catch): each stop listener runs inside a guard, so one that throws is recorded with the timeout and ignored, and the process lives on |
+| the features (D73) | `dispatch-features@1`: the step's kind, the template, the step, the reserve, and each admitted candidate under an alias (`A` the chosen one, then the score's order, at most 8): tier, quota class, metered, free, load, each window's length, used share, headroom, and minutes to reset, and its recorded counts for the kind (attempts, accepted, limited, needs the operator). Never a task's title or goal, a Worker id, or an account; the snapshot given is frozen |
+| `none` (default) | no advisor is asked; the features are still recorded (outcome `unavailable`, `no advisor`), so the local adapter can learn from them once it is turned on |
+| `local` (off by default) | an L2-regularized logistic regression per question (Newton's method, deterministic), fitted in this process on the latest 2,000 labelled dispatched attempts; `insufficient data` until `dispatch.advisor.minLabelled` (30; at most 2,000, the examples it keeps) exist. Nothing leaves the host. Its version names the fit (`logistic-l2@1:n<count>:<hash>`) |
+| `model` (off by default) | one call to the configured model Worker (`dispatch.advisor.model.worker`, for example the metered Gemini API entry) through `ctx.workers`: routed with only that Worker allowed, its prompt the instructions, a JSON schema for the answer, and the features; the Worker's own egress check, bounds, and usage record apply. Its answer is parsed and checked like any other |
+
+- **Recorded** (INV-13): a `route` decision, `advisor.dispatch`, inputs the `dispatch.select` decision
+  and the requirement. With advice: decider `model` (its version the model version),
+  `deterministic: false`, `modelAnswers` with one yes/no answer per question and alias
+  (`accepted:A`, `limit:A`, `needs-operator:A`, …), and in its detail the features and which Worker
+  each alias stands for. Without: decider rule `advisor.dispatch`, outcome `unavailable` with why.
+  The `dispatch.choice` decision names it as an input; the row keeps it; `workflow.dispatch.advised`
+  announces it.
+- **Fail closed** (INV-2): a throw, a timeout (`dispatch.advisor.timeoutMs`, default 2,000 ms), an
+  answer that does not cover exactly the aliases asked, a probability outside [0, 1], an unpinned
+  version, or the hourly bound (`maxPerHour`, default 120) is recorded as `unavailable` with why, and
+  the choice proceeds as it was made.
+- **Outcomes**: when a dispatched run reports its task as `accepted`, `rejected`, `review`, or
+  `blocked`, the same transaction records `workflow.dispatch.outcome` with its labels: `accepted` (its
+  own acceptance accepted it), `limit` (a step waited for a limit, or failed or retried on
+  `quota_exhausted`), `needs-operator` (held for the operator, blocked, or a step's questions), and the
+  advice decision of its choice. Other reports (not started, moved on, refused, reconciled) are not
+  labelled. The counts in the features and the local adapter's examples are read from these.
+- **Calibration**: the [report](reports.md) scores each question's probability for the chosen
+  candidate against these outcomes (a Brier score per question, beside always answering the observed
+  rate), and counts choices advised and not, toward the 100 attempts of D74.
+
 ## A plain run's acceptance
 
 A run that serves no board task applies nothing: its result is not accepted onto a task, merged,

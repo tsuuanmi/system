@@ -390,4 +390,41 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
     expect(none.attention).not.toHaveProperty('reviewsHeld')
     expect(renderReport(none)).not.toContain('Reviews held for you')
   })
+
+  it('scores the dispatch advisor in shadow: a Brier score per question over the advised outcomes, beside the observed rate (PROP-0015 J1)', () => {
+    const advised = (taskId: string, status: 'advice' | 'unavailable', when: string) => event('workflow.dispatch.advised', when, { taskId, attempt: 0, status, provider: 'local-logistic' })
+    const outcome = (taskId: string, when: string, advice: string | undefined, labels: Record<string, 0 | 1>) => event('workflow.dispatch.outcome', when, { taskId, attempt: 0, askId: `dsp-${taskId}`, runId: `run-${taskId}`, worker: 'agent:a', countsKey: 'acc-a', status: 'accepted', ...(advice ? { advice, alias: 'A' } : {}), labels }, { runId: `run-${taskId}` })
+    const sources: Sources = {
+      ...week(),
+      events: [
+        ...week().events,
+        advised('t1', 'advice', at(1)), advised('t2', 'advice', at(1)), advised('t3', 'unavailable', at(2)),
+        outcome('t1', at(2), ref(901), { accepted: 1, limit: 0, 'needs-operator': 0 }),
+        outcome('t2', at(3), ref(902), { accepted: 0, limit: 1, 'needs-operator': 1 }),
+        // Its choice had no advice: counted, never scored.
+        outcome('t3', at(3), undefined, { accepted: 1, limit: 0, 'needs-operator': 0 }),
+      ],
+      advice: new Map([
+        [ref(901), { 'accepted:A': 0.8, 'limit:A': 0.1, 'needs-operator:A': 0.2, 'accepted:B': 0.1 }],
+        [ref(902), { 'accepted:A': 0.4, 'limit:A': 0.5, 'needs-operator:A': 0.5 }],
+      ]),
+    }
+    const report = buildReport(PERIOD, sources, 'p1')
+    expect(() => schemas.assertDef('mcp-report@1.5', 'report-output', report)).not.toThrow()
+    expect(report.advice).toEqual({
+      advised: 2, unavailable: 1, outcomes: 3, scored: 2, shadowAttempts: 100,
+      questions: [
+        { question: 'accepted', scored: 2, brier: 0.1, rate: 0.5, baseline: 0.25 },
+        { question: 'limit', scored: 2, brier: 0.13, rate: 0.5, baseline: 0.25 },
+        { question: 'needs-operator', scored: 2, brier: 0.145, rate: 0.5, baseline: 0.25 },
+      ],
+    })
+    const text = renderReport(report)
+    expect(text).toContain('## Dispatch advice (shadow)')
+    expect(text).toContain('- Choices advised: 2; no advice: 1. Outcomes recorded: 3, 2 of them advised (the shadow period runs for 100).')
+    expect(text).toContain('- accepted: Brier 0.1 over 2 attempts (always answering the rate 0.5: 0.25; lower is better).')
+    // No advice and no outcome in the period: no such field, no such section.
+    expect(buildReport(PERIOD, week(), 'p1')).not.toHaveProperty('advice')
+    expect(renderReport(buildReport(PERIOD, week(), 'p1'))).not.toContain('Dispatch advice')
+  })
 })

@@ -36,6 +36,10 @@ import type { Board, BoardTask, Project, Subject } from '@tsuuanmi/system-board-
 import { contentId, QUOTA_SCORE, type QuotaCandidate, type QuotaPool, quotaScoreOf, type QuotaSettings, type ScoredCandidate, windowName } from '@tsuuanmi/system-libs'
 import type { PoolState } from '@tsuuanmi/system-resources-core'
 import { type ArtifactRef, type Candidates, TIERS } from '@tsuuanmi/system-workers-core'
+import {
+  ADVISED_EVENT, type AdviceDetail, type Advisor, adviseInShadow, advisorProblems, advisorSettings, type AdvisorSettings, type CandidateFacts, featuresOf, LocalAdvisor, ModelAdvisor,
+  modelAnswersOf, OutcomeHistory, QUESTION_SET, type ShadowAdvice,
+} from './advisor.ts'
 import type { Engine } from './engine.ts'
 import { type ResolvedNode, resolve } from './spec.ts'
 import { type Config, type DispatchConfig, newId, now, type TaskDispatch, WorkflowFailure } from './types.ts'
@@ -45,6 +49,8 @@ const SELECT = { type: 'rule', id: 'dispatch.select', version: '1' } as const
 const CHOICE = { type: 'rule', id: 'dispatch.choice', version: '1' } as const
 const APPROVAL = { type: 'rule', id: 'dispatch.approval', version: '1' } as const
 const PAUSE = { type: 'operator', id: 'dispatch.pause', version: '1' } as const
+/** The advisor's decision when it gave no advice (PROP-0015 J1); with advice, the decider is the model. */
+const ADVISOR = { type: 'rule', id: 'advisor.dispatch', version: '1' } as const
 const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
 /** Ready tasks one pass looks at, oldest first (INV-9; a decision lists at most 255 candidates). */
 export const MAX_LOOKED = 128
@@ -83,9 +89,11 @@ export interface DispatchSettings {
   maxPerHourPerProject: number
   /** The engine's own `maxActiveRuns`, which `leaveRunsFree` and `maxRunning` are bounded by. */
   maxActiveRuns: number
+  /** The advisor asked in shadow at every choice (PROP-0015 J1; ./advisor.ts). */
+  advisor: AdvisorSettings
 }
 
-const RANGES: Record<Exclude<keyof DispatchConfig, 'enabled' | 'maxRunning' | 'leaveRunsFree' | 'maxPerHourPerProject'>, readonly [number, number, number]> = {
+const RANGES: Record<Exclude<keyof DispatchConfig, 'enabled' | 'maxRunning' | 'leaveRunsFree' | 'maxPerHourPerProject' | 'advisor'>, readonly [number, number, number]> = {
   sweepSeconds: [10, 3600, 60], maxPerPass: [1, 16, 2], maxRunningPerProject: [1, 16, 2], maxRunningPerAccount: [1, 16, 1],
   maxRunningPerRepository: [1, 16, 4], maxOpenAsks: [1, 32, 4], approvedHoldMinutes: [1, 240, 30], maxPerHour: [0, 120, 6],
 }
@@ -109,7 +117,8 @@ export function dispatchProblems(config: Config): string[] {
   if (Number.isInteger(leave) && leave >= 0 && leave < active) whole('maxRunning', given.maxRunning, 1, active - leave)
   const hour = given.maxPerHour ?? RANGES.maxPerHour[2]
   if (Number.isInteger(hour) && hour >= 0 && hour <= RANGES.maxPerHour[1]) whole('maxPerHourPerProject', given.maxPerHourPerProject, 0, hour)
-  const known = new Set(['enabled', 'leaveRunsFree', 'maxRunning', 'maxPerHourPerProject', ...Object.keys(RANGES)])
+  problems.push(...advisorProblems(given.advisor))
+  const known = new Set(['enabled', 'leaveRunsFree', 'maxRunning', 'maxPerHourPerProject', 'advisor', ...Object.keys(RANGES)])
   for (const key of Object.keys(given)) if (!known.has(key)) problems.push(`dispatch.${key} is not an option (${[...known].join(', ')})`)
   return problems
 }
@@ -126,7 +135,7 @@ export function dispatchSettings(config: Config): DispatchSettings {
     enabled: given.enabled ?? true, sweepSeconds: pick('sweepSeconds'), maxPerPass: pick('maxPerPass'), maxRunning: given.maxRunning ?? Math.min(8, active - leave),
     maxRunningPerProject: pick('maxRunningPerProject'), maxRunningPerAccount: pick('maxRunningPerAccount'), maxRunningPerRepository: pick('maxRunningPerRepository'),
     leaveRunsFree: leave, maxOpenAsks: pick('maxOpenAsks'), approvedHoldMinutes: pick('approvedHoldMinutes'), maxPerHour: pick('maxPerHour'),
-    maxPerHourPerProject: given.maxPerHourPerProject ?? Math.min(3, pick('maxPerHour')), maxActiveRuns: active,
+    maxPerHourPerProject: given.maxPerHourPerProject ?? Math.min(3, pick('maxPerHour')), maxActiveRuns: active, advisor: advisorSettings(given.advisor),
   }
 }
 
@@ -192,6 +201,10 @@ interface AskChoice {
   consequences: string
   /** D62: the board's own approved request for this attempt. */
   board?: { requestId: string; approval: ArtifactRef }
+  /** The advisor's shadow decision on this choice (PROP-0015 J1), an input of the choice; never read to choose. */
+  advice?: ArtifactRef
+  /** The writing step's kind (ADR-0057), which its outcome is counted under. */
+  kind?: string
 }
 
 /** Why an ask closed with no run, or that its run started. */
@@ -306,9 +319,29 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
 export class Dispatcher {
   readonly settings: DispatchSettings
   private passing: Promise<DispatchPass> | undefined
+  /** The recorded outcomes the advisor's counts and the local adapter read. */
+  readonly history: OutcomeHistory
+  /** The advisor `dispatch.advisor.provider` names; undefined for `none`. */
+  private readonly configured: Advisor | undefined
+  /** Another provider set through the seam ({@link setAdvisor}), in place of the configured one. */
+  private swapped: Advisor | undefined
+  /** When the advisor was asked in the last hour (INV-9: `dispatch.advisor.maxPerHour`). */
+  private calls: number[] = []
 
   constructor(private readonly e: Engine) {
     this.settings = dispatchSettings(e.config)
+    this.history = new OutcomeHistory(e)
+    const a = this.settings.advisor
+    this.configured = a.provider === 'local' ? new LocalAdvisor(() => this.history.training(), a.minLabelled, a.l2)
+      : a.provider === 'model' && a.model ? new ModelAdvisor(e, a.model.worker, a.model.maxTokens) : undefined
+  }
+
+  /**
+   * The advisor seam (PROP-0015 J1): another provider answers in place of the configured one, until
+   * set back with undefined. Its advice is recorded in shadow like any other, and changes no choice.
+   */
+  setAdvisor(advisor: Advisor | undefined): void {
+    this.swapped = advisor
   }
 
   /** Wait for a pass in flight, for a stop. */
@@ -688,7 +721,9 @@ export class Dispatcher {
         outcome: { option: task.taskId, detail: { taskId: task.taskId, projectId: project.projectId, attempt: n, order: 'age' } },
         deterministic: true,
       }, PRODUCER).id as ArtifactRef
-      const choice = this.choiceDecision(task, n, step.node.nodeId, scored, select, verdict, look, settings)
+      // The advisor, in shadow (PROP-0015 J1): asked after the choice is made, recorded as its input, never read to choose.
+      const advice = await this.advise(task, n, task.template, step.node, scored, settings, select, look)
+      const choice = this.choiceDecision(task, n, step.node.nodeId, scored, select, verdict, look, settings, advice)
       const decisions = [select, choice.decision, verdict.decision]
       let approval: ArtifactRef | undefined
       if (byBoard) {
@@ -715,6 +750,7 @@ export class Dispatcher {
         choice: JSON.stringify({
           template: task.template, title: task.title, decisions, verdict, why: chosen.line, windows: choice.windows, classification,
           summary: choice.summary, consequences: choice.consequences, ...(task.writes ? { writes: task.writes } : {}),
+          ...(advice ? { advice } : {}), ...(step.node.kind !== undefined ? { kind: step.node.kind } : {}),
           ...(byBoard ? { board: { requestId: byBoard.requestId, approval: byBoard.approval ?? byBoard.decision } } : {}),
         } satisfies AskChoice & { writes?: Subject }),
       }
@@ -840,8 +876,72 @@ export class Dispatcher {
     return out
   }
 
+  /**
+   * Ask the advisor in shadow (PROP-0015 J1) about a choice already made, and record what it said as
+   * a `route` decision (`advisor.dispatch`): every candidate's three probabilities (`modelAnswers`),
+   * or why there are none (`unavailable`). The snapshot holds features only (D73). Never throws:
+   * whatever fails leaves the choice as it was, with no advice recorded at worst.
+   */
+  private async advise(task: BoardTask, n: number, template: string, node: ResolvedNode, scored: ReturnType<Dispatcher['score']>, settings: QuotaSettings, select: ArtifactRef, look: Candidates): Promise<ArtifactRef | undefined> {
+    try {
+      const s = this.settings.advisor
+      this.history.refresh()
+      const byWorker = new Map(scored.inputs.map((i) => [i.worker, i]))
+      const facts = scored.score.candidates.flatMap((c): CandidateFacts[] => {
+        const i = byWorker.get(c.worker)
+        if (!i) return []
+        return [{ scored: c, tier: i.tier, tierRank: i.tierRank, quotaClass: i.quotaClass, metered: i.metered, ...(i.load ? { load: { running: i.load.running, slots: i.load.slots } } : {}), countsKey: scored.accountOf.get(c.worker) ?? `worker:${c.worker}` }]
+      })
+      const chosen = scored.score.chosen!
+      const { features, aliases } = featuresOf({
+        ...(node.kind !== undefined ? { kind: node.kind } : {}), template, step: node.nodeId, reservePercent: settings.reservePercent, chosen, candidates: facts,
+        counts: (key, kind) => this.history.countsOf(key, kind),
+      })
+      const advisor = this.swapped ?? this.configured
+      const hourAgo = Date.now() - 3_600_000
+      this.calls = this.calls.filter((t) => t > hourAgo)
+      let shadow: ShadowAdvice
+      if (!advisor) shadow = { advice: { status: 'unavailable', provider: 'none', reason: 'no advisor: dispatch.advisor.provider is none' }, elapsedMs: 0 }
+      else if (this.calls.length >= s.maxPerHour) shadow = { advice: { status: 'unavailable', provider: advisor.id.slice(0, 64), reason: `the advisor was asked ${this.calls.length} times in the last hour (dispatch.advisor.maxPerHour ${s.maxPerHour})` }, elapsedMs: 0 }
+      else {
+        this.calls.push(Date.now())
+        shadow = await adviseInShadow(advisor, features, s.timeoutMs)
+      }
+      const { advice } = shadow
+      const detail: AdviceDetail = {
+        shadow: true, status: advice.status, provider: advice.provider, ...(advice.modelVersion ? { modelVersion: advice.modelVersion } : {}),
+        ...(advice.status === 'unavailable' ? { reason: advice.reason.slice(0, 500) } : {}), elapsedMs: shadow.elapsedMs, aliases, chosen: 'A', features,
+      }
+      const pct = (p: number): string => `${Math.round(p * 100)} %`
+      const question = `What does the advisor say, in shadow, of the candidates for step ${node.nodeId} of board task ${task.taskId}, attempt ${n + 1} (${QUESTION_SET}; recorded only, the choice is dispatch.choice's)?`
+      const decision = advice.status === 'advice'
+        ? this.e.ctx.artifacts.recordDecision({
+          decisionType: 'route', question, inputs: [select, look.requirement],
+          candidates: [
+            { option: 'advice', selected: true, reasons: bounded([`shadow: ${advice.provider} ${advice.modelVersion} answered in ${shadow.elapsedMs} ms; it changes no choice`, ...advice.candidates.map((c) => `${c.alias}${c.alias === 'A' ? ' (chosen)' : ''}: accepted ${pct(c.accepted)}, limit mid-task ${pct(c.limit)}, needs the operator ${pct(c.needsOperator)}`)]) },
+            { option: 'unavailable', selected: false, reasons: ['not unavailable: the advisor answered every candidate'] },
+          ],
+          decider: { type: 'model', id: 'advisor.dispatch', version: advice.modelVersion }, modelAnswers: modelAnswersOf(advice),
+          outcome: { option: 'advice', detail: detail as unknown as Record<string, unknown> }, deterministic: false,
+        }, PRODUCER).id as ArtifactRef
+        : this.e.ctx.artifacts.recordDecision({
+          decisionType: 'route', question, inputs: [select, look.requirement],
+          candidates: [
+            { option: 'unavailable', selected: true, reasons: [`advice unavailable (${advice.provider}): ${advice.reason}`.slice(0, 300), 'the choice stands as dispatch.choice made it'] },
+            { option: 'advice', selected: false, reasons: ['not advice: the advisor gave none'] },
+          ],
+          decider: ADVISOR, outcome: { option: 'unavailable', detail: detail as unknown as Record<string, unknown> }, deterministic: true,
+        }, PRODUCER).id as ArtifactRef
+      this.e.ctx.eventLog.append({ type: ADVISED_EVENT, decision, data: { taskId: task.taskId, attempt: n, status: advice.status, provider: advice.provider, ...(advice.modelVersion ? { modelVersion: advice.modelVersion } : {}), elapsedMs: shadow.elapsedMs } })
+      return decision
+    } catch (error) {
+      this.e.ctx.logger.warn(`workflow: the dispatch advice could not be recorded; the choice stands: ${errorText(error)}`)
+      return undefined
+    }
+  }
+
   /** The `dispatch.choice` decision, the request's version, and what Home shows of the chosen Worker's windows. */
-  private choiceDecision(task: BoardTask, n: number, nodeId: string, scored: ReturnType<Dispatcher['score']>, select: ArtifactRef, verdict: AutonomyVerdict, look: Candidates, settings: QuotaSettings) {
+  private choiceDecision(task: BoardTask, n: number, nodeId: string, scored: ReturnType<Dispatcher['score']>, select: ArtifactRef, verdict: AutonomyVerdict, look: Candidates, settings: QuotaSettings, advice: ArtifactRef | undefined) {
     const { score, inputs } = scored
     const worker = score.chosen!
     const chosen = score.candidates.find((c) => c.worker === worker)!
@@ -862,7 +962,7 @@ export class Dispatcher {
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'route',
       question: `Which Worker takes step ${nodeId} of board task ${task.taskId}, attempt ${n + 1}, if System starts it (${QUOTA_SCORE})?`,
-      inputs: [select, look.requirement, verdict.decision],
+      inputs: [select, look.requirement, verdict.decision, ...(advice ? [advice] : [])],
       candidates,
       decider: { ...CHOICE, hash: contentId(settings) },
       outcome: { option: worker, detail: { taskId: task.taskId, attempt: n, nodeId, score: QUOTA_SCORE, settings, version, ...(scored.accountOf.get(worker) ? { account: scored.accountOf.get(worker) } : {}), ...(scored.repositoryOf.get(worker) ? { repository: scored.repositoryOf.get(worker) } : {}), windows } },

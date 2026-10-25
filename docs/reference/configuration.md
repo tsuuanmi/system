@@ -603,6 +603,13 @@ No options.
 | `dispatch.approvedHoldMinutes` | number (1…240) | `30` | Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again |
 | `dispatch.maxPerHour` | number (0…120) | `6` | Starts dispatch makes in any rolling hour, counted from its rows (PROP-0014 D2); 0 starts nothing |
 | `dispatch.maxPerHourPerProject` | number (0…120) |  | The same, per project (at most maxPerHour; default 3, or maxPerHour when less) |
+| `dispatch.advisor` | object | `{}` | The dispatch advisor in shadow (PROP-0015 J1; docs/design/workflow-engine.md#the-dispatch-advisor-in-shadow) |
+| `dispatch.advisor.provider` | "none" \| "local" \| "model" | `"none"` | Who advises each dispatch choice, in shadow (PROP-0015 J1): none (the default), no advisor; local, a logistic regression fitted on this host's own recorded outcomes (no data leaves the host); model, the model Worker named by model.worker (metered; off unless set). The advice is recorded as an input of the choice and never changes it |
+| `dispatch.advisor.timeoutMs` | number (100…120000) | `2000` | Milliseconds one advice may take; past it, it is recorded unavailable and the choice stands |
+| `dispatch.advisor.maxPerHour` | number (1…10000) | `120` | Advisor calls in any hour at most (INV-9); past it, unavailable |
+| `dispatch.advisor.minLabelled` | number (10…2000) | `30` | Labelled dispatched attempts the local adapter needs before it answers (at most the examples it keeps); until then, insufficient data |
+| `dispatch.advisor.l2` | number (0.001…1000) | `1` | The local adapter's L2 penalty |
+| `dispatch.advisor.model` | any |  | The model adapter {worker, maxTokens}: worker, the model Worker asked (model:<id> of the models row); maxTokens, its output bound (64 to 8192, default 1024). Features only (no task text) are sent, through the Worker's own egress check; checked when the row loads |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |

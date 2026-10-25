@@ -557,4 +557,15 @@ starts on the operator's go-ahead; none is built yet.
 
 ## Implementation
 
-None yet.
+- **J1, adapted** (T196, 2026-10-26): the T194 research found Jev not verifiably usable yet, so J1
+  ships without `decisions-jev` and without J0. The seam is provider-neutral (`Advisor` in
+  `packages/plugins/workflow/src/advisor.ts`) and is asked only at a dispatch choice, in shadow.
+  It is off unless configured (`dispatch.advisor.provider` `none` by default). `local` takes the
+  place of `decisions-rules`: a regularized logistic regression fitted on System's own recorded
+  outcomes, which says `insufficient data` until enough labelled attempts exist. `model` calls a configured model Worker (for example the metered Gemini
+  API entry) with a JSON schema, and is off unless configured. The question set is narrower than
+  above: per candidate, accepted, a limit mid-task, and needs the operator, so no per-tier,
+  most-usable-quota, or cost question yet. D73 (features only) holds. Each dispatched attempt's
+  labels are recorded, and the report gives a Brier score per question toward D74's 100 attempts.
+  Log loss and a separate rules baseline are not built: the report compares each score with always
+  answering the observed rate. Design: [the dispatch advisor in shadow](../design/workflow-engine.md#the-dispatch-advisor-in-shadow).

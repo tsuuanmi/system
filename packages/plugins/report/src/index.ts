@@ -14,7 +14,7 @@ import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type { ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { countedWhole, QUOTA_DRAW_EVENT, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
+import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, countedWhole, QUOTA_DRAW_EVENT, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
 import { renderReport } from './render.ts'
@@ -30,7 +30,7 @@ export const inject = ['artifacts', 'eventLog']
 export const MAX_EVENTS = 100_000
 const PAGE = 1000
 /** The entries a report counts in its period, beside the task reports and digests it reads whole. */
-const PERIOD_EVENTS = ['workflow.graph.grown', 'workflow.gate.opened', 'workflow.gate.closed', 'approvals.batched', ...LIVENESS_EVENTS] as const
+const PERIOD_EVENTS = ['workflow.graph.grown', 'workflow.gate.opened', 'workflow.gate.closed', 'approvals.batched', ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ...LIVENESS_EVENTS] as const
 const STATES: ApprovalRequest['state'][] = ['open', 'batched', 'approved', 'rejected']
 
 const schemas = new SchemaRegistry()
@@ -206,11 +206,21 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
   } else if (attached.length) {
     notes.push('no digest provider is loaded: the claims of the digests attached are not counted')
   }
+  // The dispatch advisor's probabilities each recorded outcome is scored against (PROP-0015 J1): its
+  // choice's advice decision, by question id. A decision not stored here scores nothing.
+  const advice = new Map<string, Record<string, number>>()
+  for (const e of events) {
+    const ref = e.type === ADVICE_OUTCOME_EVENT ? e.data?.['advice'] : undefined
+    if (typeof ref !== 'string' || advice.has(ref)) continue
+    const body = ctx.artifacts.get(ref)?.body as { outcome?: { option?: string }; modelAnswers?: Array<{ questionId?: unknown; probability?: unknown }> } | undefined
+    if (body?.outcome?.option !== 'advice') continue
+    advice.set(ref, Object.fromEntries((body.modelAnswers ?? []).filter((m) => typeof m.questionId === 'string' && typeof m.probability === 'number').map((m) => [m.questionId as string, m.probability as number])))
+  }
   // An event log trimmed by retention holds nothing before its first entry.
   const [first] = ctx.eventLog.query({ limit: 1 })
   if (first && first.seq > 1 && Date.parse(first.at) > since) notes.push(`the event log keeps entries from ${first.at} on (retention): attempts, remediation, batches, and digests before then are not counted`)
 
-  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, draws, notes }, projectId)
+  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, draws, advice, notes }, projectId)
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
@@ -220,15 +230,15 @@ const INPUT: ToolSpec['inputSchema'] = {
   until: zod.string().max(64).optional().describe('The period\'s end, ISO 8601 (exclusive); default now'),
   days: zod.number().int().min(1).max(MAX_DAYS).optional().describe('The period as the days before until (default 7, the weekly investor report)'),
 }
-const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.'
+const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost; and, once dispatch choices were advised, the advisor\'s calibration in shadow (a Brier score per question). Answers with the report and its one-screen rendering.'
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** The `report` tool: input and output checked against `mcp-report@1.4`; the text is the rendering. */
+/** The `report` tool: input and output checked against `mcp-report@1.5`; the text is the rendering. */
 export function registerTool(ctx: Context): void {
   ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
     try {
-      schemas.assertDef('mcp-report@1.4', 'report-input', args)
+      schemas.assertDef('mcp-report@1.5', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
@@ -239,7 +249,7 @@ export function registerTool(ctx: Context): void {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-report@1.4', 'report-output', made)
+      schemas.assertDef('mcp-report@1.5', 'report-output', made)
     } catch (error) {
       return refused(`report: the report made an output its schema refuses (a defect): ${(error as Error).message}`)
     }

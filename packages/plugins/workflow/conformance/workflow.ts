@@ -488,7 +488,11 @@ export const workflowSuite = defineSuite<Boot>({
   // `operator`, which a start may say it is); under a policy that gives dispatch `auto` or `notify` the
   // pass starts the chosen attempt with nothing asked; dispatch is bounded per rolling hour
   // (`maxPerHour`, `maxPerHourPerProject`) and paused per project (`pauseDispatch(reason, projectId)`).
-  contract: '1.10',
+  // 1.11 (PROP-0015 J1): every dispatch choice records an advice decision (`advisor.dispatch`) as its
+  // input, unavailable while no advisor is configured (the default); `setDispatchAdvisor(advisor)`
+  // swaps one in, whose advice is recorded in shadow and never changes the choice. The advisor seam
+  // has its own suite (conformance/advisor.ts).
+  contract: '1.11',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1454,8 +1458,44 @@ export const workflowSuite = defineSuite<Boot>({
       expect((await h.ctx.approvals.list()).filter((r) => r.action.class === 'dispatch')).toEqual([])
       expect(h.ctx.workflow.resumeDispatch(held.projectId).pausedProjects).toEqual([])
     }, {}, '1.10'),
+
+    scenario('dispatch-advice-off', 'records, beside each dispatch choice and as its input, the advisor\'s decision: unavailable while no advisor is configured, the default (PROP-0015 J1, INV-13)', async (h) => {
+      const choice = await dispatchChoice(h, 'no advisor')
+      expect(choice).toMatchObject({ outcome: { option: 'w:max' } })
+      expect(adviceOf(h.ctx, choice)).toMatchObject({ decisionType: 'route', decider: { type: 'rule', id: 'advisor.dispatch' }, outcome: { option: 'unavailable', detail: { reason: 'no advisor: dispatch.advisor.provider is none' } } })
+    }, {}, '1.11'),
+
+    scenario('dispatch-advice-swapped', 'records the advice of an advisor swapped in through setDispatchAdvisor beside the dispatch choice, as its input, in shadow: the choice is the one dispatch makes without it (PROP-0015 J1, INV-13)', async (h) => {
+      h.ctx.workflow.setDispatchAdvisor({
+        id: 'conformance',
+        // Advice against the chosen Worker: if shadow could change the choice, it would.
+        advise: async (features) => ({ status: 'advice', provider: 'conformance', modelVersion: 'conformance@1', candidates: features.candidates.map((c) => ({ alias: c.alias, accepted: 0, limit: 1, needsOperator: 1 })) }),
+      })
+      const choice = await dispatchChoice(h, 'advised')
+      expect(choice).toMatchObject({ outcome: { option: 'w:max' } })
+      expect(adviceOf(h.ctx, choice)).toMatchObject({ decisionType: 'route', decider: { type: 'model', id: 'advisor.dispatch', version: 'conformance@1' }, outcome: { option: 'advice' } })
+    }, {}, '1.11'),
   ],
 })
+
+/** Since 1.11: one dispatch choice of a ready task on {@link DISPATCHABLE}: its `dispatch.choice` decision. */
+async function dispatchChoice(h: Harness, title: string): Promise<Decision> {
+  await activeProject(h.ctx)
+  h.workers.extra = [DISPATCHABLE]
+  await poolRead(h.ctx)
+  const task = await readyTask(h.ctx, title, { template: 'solo' })
+  await h.ctx.workflow.sweepDispatch()
+  const ask = h.ctx.workflow.dispatchStatus().asks.find((a) => a.taskId === task.taskId)
+  expect(ask, 'dispatch asked about the task').toBeDefined()
+  return decisionOf(h.ctx, ask!.decisions[1])
+}
+
+/** Since 1.11: the one advice decision (`advisor.dispatch`) a dispatch choice names as its input. */
+function adviceOf(ctx: Context, choice: Decision): Decision {
+  const ids = choice.inputs.filter((id) => (ctx.artifacts.get(id as ArtifactRef)?.body as Decision | undefined)?.decider?.id === 'advisor.dispatch')
+  expect(ids, 'the choice names exactly one advice decision').toHaveLength(1)
+  return decisionOf(ctx, ids[0])
+}
 
 /** Since 1.9: a Worker on the account of the ledger's pool {@link POOLS} names, idle, which dispatch may choose once its window reads ok. */
 const DISPATCHABLE: CapabilityDescriptor = worker('w:max', {

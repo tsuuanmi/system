@@ -28,6 +28,7 @@ import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { Check } from '@tsuuanmi/system-approvals-core'
+import { recordOutcome } from './advisor.ts'
 import type { TaskFrame } from './briefs.ts'
 import { TaskCarries } from './carries.ts'
 import { type RanChecks, ranOn } from './checks.ts'
@@ -1462,6 +1463,8 @@ export class TaskRuns {
     const due = this.e.ctx.store.transaction((db) => {
       db.prepare("UPDATE workflow_tasks SET phase = 'reported', outcome = ?, updated_at = ? WHERE run_id = ?").run(JSON.stringify(outcome), now(), row.run_id)
       this.e.ctx.eventLog.append({ type: 'workflow.task.reported', runId: row.run_id, ...(outcome.decision ? { decision: outcome.decision } : {}), data: { taskId: row.task_id, ...outcome } })
+      // A dispatched attempt's labels, which the advisor's calibration and the local adapter read (PROP-0015 J1).
+      recordOutcome(this.e, row, outcome.status)
       // A result on a working tree is watched for its acceptance, then landed (ADR-0060).
       this.landings.due(row, outcome.status)
       return this.digests.due(row, outcome.status)

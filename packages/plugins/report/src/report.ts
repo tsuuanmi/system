@@ -6,7 +6,7 @@
  */
 import type { ActionClass, ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask, Project, TaskState } from '@tsuuanmi/system-board-core'
-import { type DrawFigure, drawFigures, type QuotaDraw, type UsageUnknown } from '@tsuuanmi/system-libs'
+import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ADVICE_QUESTIONS, ADVICE_SHADOW_ATTEMPTS, type AdviceQuestion, brierScores, type DrawFigure, drawFigures, type QuestionScore, type QuotaDraw, type UsageUnknown } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 
 export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
@@ -74,7 +74,7 @@ export interface Sources {
   tasks: BoardTask[]
   requests: ApprovalRequest[]
   usage: UsageRecord[]
-  /** `workflow.task.reported`, `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened`, `workflow.gate.closed`, `approvals.batched`, and {@link LIVENESS_EVENTS}. */
+  /** `workflow.task.reported`, `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened`, `workflow.gate.closed`, `approvals.batched`, `workflow.dispatch.advised`, `workflow.dispatch.outcome`, and {@link LIVENESS_EVENTS}. */
   events: Recorded[]
   decisions: ReadonlyMap<string, DecisionRead>
   /** By request id; absent when no digest provider is loaded. */
@@ -83,6 +83,8 @@ export interface Sources {
   unknowns?: UnknownRead[]
   /** What the agent runs that ended in the period drew (`quota.draw`); none when absent. */
   draws?: DrawRead[]
+  /** The dispatch advisor's probabilities by its decision's id, then by question id (`accepted:A`), for the outcomes of the period (PROP-0015 J1). */
+  advice?: ReadonlyMap<string, Readonly<Record<string, number>>>
   /** What could not be counted, found while reading. */
   notes: string[]
 }
@@ -172,7 +174,24 @@ export interface Report {
   usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number }; unknown?: UnknownUsage; draws?: QuotaDraws }
   digests: { attached: number; bypassed: number; claimsKept?: number; claimsDropped?: number; escalated?: number }
   baseline: { acceptedResults: number; interruptions: number; attempts: number; perAcceptedResult?: { tokens: number; costUsd: number; turns: number; interruptions: number; attempts: number } }
+  /** `advice` (1.5): the dispatch advisor in shadow and its calibration (PROP-0015 J1); only when a choice was advised or an outcome recorded in the period. */
+  advice?: AdviceCalibration
   notes: string[]
+}
+
+/** The dispatch advisor in the period (`mcp-report@1.5`): choices advised, outcomes, and each question's Brier score. */
+export interface AdviceCalibration {
+  /** Dispatch choices the advisor answered. */
+  advised: number
+  /** Dispatch choices it gave no advice on (off, insufficient data, an error, a timeout), recorded as such. */
+  unavailable: number
+  /** Dispatched attempts whose outcome was recorded. */
+  outcomes: number
+  /** Of those, the ones whose choice was advised: what the scores are over. */
+  scored: number
+  /** D74: outcomes the shadow period needs before the advice may be shown. */
+  shadowAttempts: number
+  questions: QuestionScore[]
 }
 
 const round = (value: number, places: number): number => {
@@ -417,11 +436,42 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
     } : {}),
   }
 
+  // The dispatch advisor in shadow (PROP-0015 J1): each recorded outcome scores the probabilities its
+  // choice's advice gave the chosen candidate (alias A), one Brier score per question.
+  const advised = ofType(ADVICE_EVENT)
+  const outcomes = ofType(ADVICE_OUTCOME_EVENT)
+  let advice: AdviceCalibration | undefined
+  if (advised.length || outcomes.length) {
+    const pairs: Array<{ question: AdviceQuestion; p: number; y: 0 | 1 }> = []
+    let scored = 0
+    for (const e of outcomes) {
+      const ref = e.data?.['advice']
+      const alias = typeof e.data?.['alias'] === 'string' ? e.data['alias'] : 'A'
+      const labels = e.data?.['labels'] as Record<string, unknown> | undefined
+      const probabilities = typeof ref === 'string' ? sources.advice?.get(ref) : undefined
+      if (!probabilities || !labels) continue
+      let any = false
+      for (const question of ADVICE_QUESTIONS) {
+        const p = probabilities[`${question}:${alias}`]
+        const y = labels[question]
+        if (typeof p === 'number' && (y === 0 || y === 1)) {
+          pairs.push({ question, p, y })
+          any = true
+        }
+      }
+      if (any) scored += 1
+    }
+    advice = {
+      advised: advised.filter((e) => e.data?.['status'] === 'advice').length, unavailable: advised.filter((e) => e.data?.['status'] === 'unavailable').length,
+      outcomes: outcomes.length, scored, shadowAttempts: ADVICE_SHADOW_ATTEMPTS, questions: brierScores(pairs),
+    }
+  }
+
   return {
     period, ...(projectId !== undefined ? { projectId } : {}), asOf: sources.asOf,
     projects: listed, ...(projects.length > MAX_PROJECTS ? { projectsOmitted: projects.length - MAX_PROJECTS } : {}),
     tasks, attempts, remediation, approvals, attention,
     usage: { total, pools: [...pools.values()].sort(byKey((p) => p.pool)), byOutcome, ...(unknown ? { unknown } : {}), ...(draws ? { draws } : {}) },
-    digests, baseline, notes: notes.slice(0, 16),
+    digests, baseline, ...(advice ? { advice } : {}), notes: notes.slice(0, 16),
   }
 }

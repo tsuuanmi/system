@@ -27,6 +27,12 @@ decides nothing, and no model takes part.
   first, each with its title, its pending checks, and `expiresAt` (at most 64, the rest counted in
   `reviewsHeldOmitted`), only when there is any; the rendering says how long each has left as of
   `asOf`, since an unanswered review expires and its task waits for input that nothing revives.
+- **The dispatch advisor in shadow** (PROP-0015 J1, `mcp-report` 1.5, `advice`): choices advised
+  and not (`workflow.dispatch.advised`), dispatched attempts whose outcome was recorded
+  (`workflow.dispatch.outcome`) and how many were advised, D74's 100 attempts, and per question
+  (`accepted`, `limit`, `needs-operator`) the Brier score of the chosen candidate's probability (read
+  from its advice decision's `modelAnswers`) against the recorded label, beside the observed rate and
+  the score of always answering it (`brierScores`, libs); only when there is any.
 - **What a cap counts as 0** (D25, `mcp-report` 1.1,
   [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)): per pool and in all,
   the records without token counts, a cost, or turns, and the runs recorded in the period whose

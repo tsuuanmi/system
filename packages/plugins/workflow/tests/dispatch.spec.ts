@@ -20,7 +20,11 @@ import type { CapabilityDescriptor, WorkerSandbox } from '@tsuuanmi/system-worke
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
-import Workflow, { type Config, dispatchProblems, dispatchSettings, type DispatchStatus } from '../src/index.ts'
+import { runSuite } from '../../../libs/conformance/runner.ts'
+import { advisorSuite, type DispatchHarness, FEATURES } from '../conformance/advisor.ts'
+import { type Labelled, ModelAdvisor } from '../src/advisor.ts'
+import type { Engine } from '../src/engine.ts'
+import Workflow, { type Advice, type Advisor, type AdvisorFeatures, type AdvisorSignal, type Config, type DispatchConfig, dispatchProblems, dispatchSettings, type DispatchStatus, LocalAdvisor, OUTCOME_EVENT } from '../src/index.ts'
 
 // The dispatch pass end to end (ADR-0064, PROP-0014 D1) over the store-backed board, approval queue,
 // and resource ledger, on one durable store; only Worker execution is scripted. A loaded host needs time.
@@ -820,5 +824,194 @@ describe('every dispatched start stays explained (review T202 of PR #37)', () =>
     expect(opened).toHaveLength(2)
     expect((await dispatchRequests(ctx)).filter((r) => r.state === 'open').map((r) => r.requestId).sort()).toEqual([...opened].sort())
     expect([askOf(ctx.workflow.dispatchStatus(), first.taskId)!.state, askOf(ctx.workflow.dispatchStatus(), second.taskId)!.state]).toEqual(['asked', 'asked'])
+  })
+})
+
+/** An advisor that records what it was given and answers with `answer`. */
+class FakeAdvisor implements Advisor {
+  readonly id = 'fake'
+  readonly seen: AdvisorFeatures[] = []
+  constructor(private readonly answer: (features: AdvisorFeatures, signal: AdvisorSignal) => Promise<Advice>) {}
+  advise(features: AdvisorFeatures, signal: AdvisorSignal): Promise<Advice> {
+    this.seen.push(features)
+    return this.answer(features, signal)
+  }
+}
+/** Advice that prefers every candidate but the chosen one (A): if shadow could change the choice, it would. */
+const contrary = new FakeAdvisor(async (f) => ({
+  status: 'advice', provider: 'fake', modelVersion: 'fake@1',
+  candidates: f.candidates.map((c) => ({ alias: c.alias, accepted: c.alias === 'A' ? 0.01 : 0.99, limit: c.alias === 'A' ? 0.99 : 0.01, needsOperator: 0.5 })),
+}))
+type Answered = Decision & { modelAnswers?: Array<{ provider: string; modelVersion: string; questionSetVersion?: string; questionId: string; type: string; probability?: number }>; deterministic: boolean }
+/** The advice decision a choice names as its input (rule or model `advisor.dispatch`). */
+const adviceOf = (ctx: Context, choice: Decision): Answered => {
+  const ids = choice.inputs.filter((id) => (ctx.artifacts.get(id as `sha256:${string}`)?.body as Decision | undefined)?.decider?.id === 'advisor.dispatch')
+  expect(ids, 'the choice names exactly one advice decision as its input (INV-13)').toHaveLength(1)
+  return decisionOf(ctx, ids[0]) as Answered
+}
+
+/** The dispatch the advisor seam's suite runs in: two free Workers on two accounts, acc-a's chosen (more headroom, the sooner reset). */
+const advisorHarness = async (): Promise<DispatchHarness> => {
+  const { ctx, workers, read } = await boot({ accounts: ['acc-a', 'acc-b'] })
+  workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
+  await read('acc-a', 10, 40)
+  await read('acc-b', 30, 200)
+  return { ctx, chosen: 'agent:acc-a/develop', hidden: ['acc-a', 'acc-b', 'agent:', 'p1'], ready: (title, goal) => ready(ctx, title, { goal }) }
+}
+/** `n` labelled attempts for the local adapter: accepted with headroom, limited without. */
+const labelled = (n: number): Labelled[] => Array.from({ length: n }, (_, i) => {
+  const high = i % 2 === 0
+  const candidate = { ...FEATURES.candidates[0]!, free: high, windows: [{ known: true, seconds: 18_000, used: high ? 10 : 75, headroom: high ? 70 : 5, resetsInMinutes: 120 }] }
+  return { candidate, reservePercent: 20, labels: { accepted: high ? 1 : 0, limit: high ? 0 : 1, 'needs-operator': 0 } }
+})
+/** The model adapter over a scripted model Worker, which answers every alias its prompt's features name, under its model's version. */
+const scriptedModel = (): Advisor => {
+  let text = ''
+  const source = {
+    start: (request: { prompt: string }) => {
+      const features = JSON.parse(request.prompt.split('\n').at(-1)!) as AdvisorFeatures
+      text = JSON.stringify({ candidates: features.candidates.map((c, i) => ({ alias: c.alias, accepted: 0.8 - 0.1 * i, limit: 0.1, needsOperator: 0.05 })) })
+      return { id: 'exec-1', status: 'running' }
+    },
+    wait: async (id: string) => ({ id, status: 'completed', result: 'artifact-1' }),
+    cancel: () => undefined,
+  }
+  const workers = { route: async () => ({ source: 'models', worker: { worker: 'model:advice' }, decisions: [], release: () => undefined }), source: () => source }
+  const engine = { ctx: { workers, egress: { defaultClassification: 'internal' }, artifacts: { get: () => ({ body: { model: 'scripted-model-001', text } }) } } } as unknown as Engine
+  return new ModelAdvisor(engine, 'model:advice', 256)
+}
+
+// The seam's conformance suite, run by every advisor System has, and by a fake (plugin rule 7).
+for (const [name, advisor] of [
+  ['a fake whose advice is contrary to the choice', () => contrary],
+  ['local, fitted on 40 labelled attempts', () => new LocalAdvisor(() => labelled(40), 30, 1)],
+  ['local, with too few labelled attempts', () => new LocalAdvisor(() => labelled(5), 30, 1)],
+  ['model, over a scripted model Worker', scriptedModel],
+] as Array<[string, () => Advisor]>) runSuite(advisorSuite, { name, contract: '1.0', boot: { advisor, dispatch: advisorHarness } })
+
+describe('the dispatch advisor in shadow (PROP-0015 J1)', () => {
+  it('records the full distribution of an advice as the choice\'s input, and, with no advisor, the features as unavailable (INV-13)', async () => {
+    const run = async (advisor: Advisor | undefined) => {
+      const { ctx, workers, read } = await boot({ accounts: ['acc-a', 'acc-b'] })
+      ctx.workflow.setDispatchAdvisor(advisor)
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
+      await read('acc-a', 0, 40)
+      await read('acc-b', 0, 200)
+      const task = await ready(ctx, 'same either way')
+      await ctx.workflow.sweepDispatch()
+      const ask = askOf(ctx.workflow.dispatchStatus(), task.taskId)!
+      return { ctx, choice: decisionOf(ctx, ask.decisions[1]) }
+    }
+    const without = await run(undefined)
+    const advised = await run(contrary)
+    // Without an advisor the features are still recorded, as unavailable (the local adapter learns from them).
+    expect(adviceOf(without.ctx, without.choice)).toMatchObject({ decisionType: 'route', decider: { type: 'rule', id: 'advisor.dispatch' }, outcome: { option: 'unavailable', detail: { status: 'unavailable', reason: 'no advisor: dispatch.advisor.provider is none' } }, deterministic: true })
+    const advice = adviceOf(advised.ctx, advised.choice)
+    expect(advice).toMatchObject({ decisionType: 'route', decider: { type: 'model', id: 'advisor.dispatch', version: 'fake@1' }, outcome: { option: 'advice', detail: { shadow: true, chosen: 'A', aliases: { A: 'agent:acc-a/develop' } } }, deterministic: false })
+    // Every other admitted candidate, in the score's order, under the next alias (never sent: kept on the decision).
+    expect(Object.values(advice.outcome.detail!['aliases'] as Record<string, string>)).toContain('agent:acc-b/develop')
+    const n = (advice.outcome.detail!['features'] as AdvisorFeatures).candidates.length
+    expect(advice.modelAnswers).toHaveLength(3 * n)
+    expect(advice.modelAnswers!.find((m) => m.questionId === 'accepted:B')).toEqual({ provider: 'fake', modelVersion: 'fake@1', questionSetVersion: 'dispatch-advice@1', questionId: 'accepted:B', type: 'yes-no', probability: 0.99 })
+    expect(advised.ctx.eventLog.query({ type: 'workflow.dispatch.advised', limit: 10 }).map((e) => e.data?.['status'])).toEqual(['advice'])
+  })
+
+  it('records an advisor\'s failure, timeout, malformed answer, or faulty stop listener as unavailable, with why, and asks on the Worker it would have anyway; nothing escapes as an uncaught exception', async () => {
+    const uncaught: unknown[] = []
+    const record = (error: unknown): void => void uncaught.push(error)
+    process.on('uncaughtException', record)
+    process.on('unhandledRejection', record)
+    onTestFinished(() => {
+      process.off('uncaughtException', record)
+      process.off('unhandledRejection', record)
+    })
+    const cases: Array<[string, Advisor, RegExp]> = [
+      ['throws', new FakeAdvisor(async () => {
+        throw new Error('the provider is down')
+      }), /^error: the provider is down/],
+      ['hangs', new FakeAdvisor((_f, signal) => new Promise((_resolve, reject) => signal.onAbort(() => reject(new Error('aborted'))))), /^timeout: no answer within 100 ms \(dispatch\.advisor\.timeoutMs\)$/],
+      ['hangs, its stop listener throwing', new FakeAdvisor((_f, signal) => new Promise(() => signal.onAbort(() => {
+        throw new Error('a stop listener that throws')
+      }))), /^timeout: no answer within 100 ms \(dispatch\.advisor\.timeoutMs\); its stop listener failed, ignored: a stop listener that throws$/],
+      ['hangs, its stop listener rejecting', new FakeAdvisor((_f, signal) => new Promise(() => signal.onAbort(async () => {
+        throw new Error('a stop listener that rejects')
+      }))), /^timeout: no answer within 100 ms/],
+      ['skips a candidate', new FakeAdvisor(async () => ({ status: 'advice', provider: 'fake', modelVersion: 'fake@1', candidates: [] })), /^malformed answer: it answers no candidate, not exactly A/],
+      ['answers out of range', new FakeAdvisor(async (f) => ({ status: 'advice', provider: 'fake', modelVersion: 'fake@1', candidates: f.candidates.map((c) => ({ alias: c.alias, accepted: 2, limit: 0, needsOperator: 0 })) })), /^malformed answer: candidate A/],
+      ['is unpinned', new FakeAdvisor(async (f) => ({ status: 'advice', provider: 'fake', modelVersion: '', candidates: f.candidates.map((c) => ({ alias: c.alias, accepted: 0.5, limit: 0.5, needsOperator: 0.5 })) })), /^malformed answer: no model version/],
+      ['names a numeric provider', new FakeAdvisor(async (f) => ({ status: 'advice', provider: 123 as never, modelVersion: 'fake@1', candidates: f.candidates.map((c) => ({ alias: c.alias, accepted: 0.5, limit: 0.5, needsOperator: 0.5 })) })), /^malformed answer: the provider must be a non-empty string, not number/],
+      ['names an object provider when unavailable', new FakeAdvisor(async () => ({ status: 'unavailable', provider: {} as never, reason: 'x' })), /^malformed answer: the provider must be a non-empty string, not object/],
+      ['answers a getter that throws', new FakeAdvisor(async () => Object.defineProperty({}, 'status', { get: () => { throw new Error('a hostile answer') } }) as never), /^malformed answer: a hostile answer/],
+      ['mutates the features', new FakeAdvisor(async (f) => {
+        f.candidates.length = 0
+        return { status: 'unavailable', provider: 'fake', reason: 'never reached' }
+      }), /^error: /],
+    ]
+    for (const [name, advisor, why] of cases) {
+      const { ctx, workers, read } = await boot({ workflow: { dispatch: { advisor: { timeoutMs: 100 } } } })
+      ctx.workflow.setDispatchAdvisor(advisor)
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+      await read('acc-a', 0)
+      const task = await ready(ctx, `advisor ${name}`)
+      const pass = await ctx.workflow.sweepDispatch()
+      expect(pass.took.map((t) => [t.taskId, t.worker, t.how]), name).toEqual([[task.taskId, 'agent:acc-a/develop', 'asked']])
+      const ask = askOf(ctx.workflow.dispatchStatus(), task.taskId)!
+      expect(ask.state, name).toBe('asked')
+      const advice = adviceOf(ctx, decisionOf(ctx, ask.decisions[1]))
+      expect(advice.outcome.option, name).toBe('unavailable')
+      expect(String(advice.outcome.detail!['reason']), name).toMatch(why)
+      expect(advice.candidates.find((c) => c.selected)!.reasons[1]).toBe('the choice stands as dispatch.choice made it')
+    }
+    // Later turns of the event loop, where an EventTarget would have rethrown a listener's error.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(uncaught).toEqual([])
+  })
+
+  it('is off unless configured: by default, or with a model named but provider not model, the model adapter is never called, and each choice records that no advisor was asked', async () => {
+    const advise = vi.spyOn(ModelAdvisor.prototype, 'advise').mockImplementation(async () => ({ status: 'unavailable', provider: 'model-worker', reason: 'the spy answered' }))
+    onTestFinished(() => advise.mockRestore())
+    const choose = async (dispatch: DispatchConfig): Promise<Answered> => {
+      const { ctx, workers, read } = await boot({ workflow: { dispatch } })
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+      await read('acc-a', 0)
+      const task = await ready(ctx, 'advisor off')
+      await ctx.workflow.sweepDispatch()
+      return adviceOf(ctx, decisionOf(ctx, askOf(ctx.workflow.dispatchStatus(), task.taskId)!.decisions[1]))
+    }
+    expect(dispatchSettings({}).advisor.provider).toBe('none')
+    for (const dispatch of [{}, { advisor: { model: { worker: 'model:advice' } } }]) {
+      expect((await choose(dispatch)).outcome.detail).toMatchObject({ status: 'unavailable', provider: 'none', reason: 'no advisor: dispatch.advisor.provider is none' })
+    }
+    expect((await choose({ advisor: { provider: 'local', model: { worker: 'model:advice' } } })).outcome.detail).toMatchObject({ status: 'unavailable', provider: 'local-logistic' })
+    expect(advise).not.toHaveBeenCalled()
+    // Configured, it is called, once per choice: the spy would have seen any call above.
+    expect((await choose({ advisor: { provider: 'model', model: { worker: 'model:advice' } } })).outcome.detail).toMatchObject({ status: 'unavailable', provider: 'model-worker', reason: 'the spy answered' })
+    expect(advise).toHaveBeenCalledTimes(1)
+  })
+
+  it('configured local, says insufficient data until enough labelled attempts exist; and records each dispatched attempt\'s outcome', async () => {
+    const { ctx, workers, read } = await boot({ workflow: { dispatch: { advisor: { provider: 'local' } } } })
+    workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+    await read('acc-a', 0)
+    const proposed = await ctx.board.propose({ projectId: 'p1', title: 'outcome', goal: 'do it', acceptance: [{ id: 'a1', statement: 'it answers' }], actionClass: 'command', template: 'dev' })
+    await ctx.board.sweep(new Date())
+    await approve(ctx, (await ctx.board.task(proposed.taskId))!.waiting!.approvalRequest!)
+    await ctx.board.sweep(new Date())
+    workers.reply = () => ({ text: 'done' })
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => t.how)).toEqual(['started'])
+    const ask = ctx.eventLog.query({ type: 'workflow.dispatch.chosen', limit: 10 })[0]!
+    const choice = decisionOf(ctx, ask.decision)
+    const advice = adviceOf(ctx, choice)
+    expect(advice.outcome).toMatchObject({ option: 'unavailable', detail: { provider: 'local-logistic' } })
+    expect(String(advice.outcome.detail!['reason'])).toBe('insufficient data: 0 of the 30 labelled dispatched attempts it needs (dispatch.advisor.minLabelled)')
+    // The run reports its task: the attempt's labels are recorded once, naming the advice of its choice.
+    await vi.waitFor(() => expect(ctx.eventLog.query({ type: OUTCOME_EVENT, limit: 10 })).toHaveLength(1), { timeout: 60_000 })
+    const [outcome] = ctx.eventLog.query({ type: OUTCOME_EVENT, limit: 10 })
+    // The advice decision its choice names among its inputs (a decision's inputs are kept in no particular order).
+    const named = choice.inputs.filter((id) => (ctx.artifacts.get(id as `sha256:${string}`)?.body as Decision | undefined)?.decider?.id === 'advisor.dispatch')
+    expect(outcome!.data).toMatchObject({ taskId: proposed.taskId, attempt: 0, worker: 'agent:acc-a/develop', countsKey: 'acc-a', advice: named[0], alias: 'A', labels: { limit: 0 } })
+    const labels = outcome!.data!['labels'] as Record<string, number>
+    for (const q of ['accepted', 'limit', 'needs-operator']) expect([0, 1]).toContain(labels[q])
   })
 })

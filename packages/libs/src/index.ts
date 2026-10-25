@@ -19,6 +19,7 @@ export {
   type AccountQuota, accountQuotaOf, compareHeadroom, HEADROOM_KEYS, type HeadroomKeys, headroomKeysOf, headroomLine, headroomOrderOf, headroomReason, QUOTA_DEFAULTS, QUOTA_RANGES, QUOTA_SCORE, type QuotaCandidate, type QuotaKeys, type QuotaPool, type QuotaReading, type QuotaScore, quotaScoreOf, type QuotaSettings,
   quotaSettingsProblems, type QuotaWindow, type ScoredCandidate, type WindowQuota, windowName,
 } from './quota.ts'
+export { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ADVICE_QUESTION_SET, ADVICE_QUESTIONS, ADVICE_SHADOW_ATTEMPTS, type AdviceQuestion, brierScores, type QuestionScore } from './calibration.ts'
 export {
   countedWhole, countUnknownUsage, MAX_UNKNOWN_ENTRIES, MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, reconciledBy, type ScopeUnknownSources, type UnknownEntries, type UnknownRun, type UnknownUsageCount, type UnknownUsageSources,
   unknownUsageOf, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf,

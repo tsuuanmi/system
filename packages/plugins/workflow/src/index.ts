@@ -18,6 +18,7 @@ import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-store'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { type Advisor, MAX_TRAINING } from './advisor.ts'
 import { sweepDeferrals } from './continuations.ts'
 import { dispatchProblems, type DispatchPass, type DispatchStatus } from './dispatch.ts'
 import { checkTemplate, Engine } from './engine.ts'
@@ -36,6 +37,8 @@ export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
 export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
+export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores, featuresOf, fitLogistic, LocalAdvisor, modelPrompt, OUTCOME_EVENT, QUESTION_SET, QUESTIONS, SHADOW_ATTEMPTS, vectorOf } from './advisor.ts'
+export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
 export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
@@ -152,6 +155,15 @@ export class Workflow extends Service {
       approvedHoldMinutes: z.natural().min(1).max(240).default(30).description('Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again'),
       maxPerHour: z.natural().max(120).default(6).description('Starts dispatch makes in any rolling hour, counted from its rows (PROP-0014 D2); 0 starts nothing'),
       maxPerHourPerProject: z.natural().max(120).description('The same, per project (at most maxPerHour; default 3, or maxPerHour when less)'),
+      advisor: z.object({
+        provider: z.union(['none', 'local', 'model']).default('none').description('Who advises each dispatch choice, in shadow (PROP-0015 J1): none (the default), no advisor; local, a logistic regression fitted on this host\'s own recorded outcomes (no data leaves the host); model, the model Worker named by model.worker (metered; off unless set). The advice is recorded as an input of the choice and never changes it'),
+        timeoutMs: z.natural().min(100).max(120_000).default(2000).description('Milliseconds one advice may take; past it, it is recorded unavailable and the choice stands'),
+        maxPerHour: z.natural().min(1).max(10_000).default(120).description('Advisor calls in any hour at most (INV-9); past it, unavailable'),
+        minLabelled: z.natural().min(10).max(MAX_TRAINING).default(30).description('Labelled dispatched attempts the local adapter needs before it answers (at most the examples it keeps); until then, insufficient data'),
+        l2: z.number().min(0.001).max(1000).default(1).description('The local adapter\'s L2 penalty'),
+        // Not z.object: an omitted object would come back as {} and read as a model with no Worker.
+        model: z.any().description('The model adapter {worker, maxTokens}: worker, the model Worker asked (model:<id> of the models row); maxTokens, its output bound (64 to 8192, default 1024). Features only (no task text) are sent, through the Worker\'s own egress check; checked when the row loads'),
+      }).description('The dispatch advisor in shadow (PROP-0015 J1; docs/design/workflow-engine.md#the-dispatch-advisor-in-shadow)'),
     }).description('Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself)'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
@@ -331,6 +343,15 @@ export class Workflow extends Service {
    */
   sweepDispatch(at?: Date): Promise<DispatchPass> {
     return this.engine.dispatch.sweep(at)
+  }
+
+  /**
+   * The dispatch advisor seam (PROP-0015 J1): `advisor` answers every dispatch choice in place of the
+   * one `dispatch.advisor.provider` names, until set back with undefined. Its advice is recorded in
+   * shadow, as an input of the choice, and never changes it; its failures are recorded and ignored.
+   */
+  setDispatchAdvisor(advisor: Advisor | undefined): void {
+    this.engine.dispatch.setAdvisor(advisor)
   }
 
   /**

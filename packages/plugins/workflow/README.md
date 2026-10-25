@@ -458,7 +458,7 @@ second execution path (INV-1).
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
 - **Dispatch ([design](../../../docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
-  [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9; D2 1.10).**
+  [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9; D2 1.10; the advisor 1.11).**
   The engine starts ready board tasks by itself, on the operator's approval or, where the project's
   policy gives `dispatch` `auto` or `notify`, with nothing asked (`src/dispatch.ts`):
   - **A pass** every `dispatch.sweepSeconds` (default 60), and once at start after the runs are
@@ -521,6 +521,26 @@ second execution path (INV-1).
     `maxActiveRuns − 1`, default 4 or that), `maxOpenAsks` (1 to 32), `approvedHoldMinutes` (1 to
     240), `maxPerHour` (0 to 120), `maxPerHourPerProject` (0 to `maxPerHour`); one out of its range
     refuses the row with its path (`dispatchProblems`, also in `checkConfig`).
+  - **The advisor in shadow** ([design](../../../docs/design/workflow-engine.md#the-dispatch-advisor-in-shadow),
+    PROP-0015 J1, `src/advisor.ts`): after the choice is made, one `Advisor` is asked once with
+    features only (`dispatch-features@1`: kind, template, step, the reserve, each admitted candidate
+    by alias with its quota line and recorded counts; never task text, a Worker id, or an account)
+    for three probabilities per candidate (`dispatch-advice@1`: accepted, a limit mid-task, needs
+    the operator) and a pinned model version. A `route` decision `advisor.dispatch` records them
+    (`modelAnswers`) or `unavailable` with why (a throw, a timeout, a malformed answer, the hourly
+    bound, insufficient data), and `dispatch.choice` names it as an input; it never changes the
+    choice. `dispatch.advisor`: `provider` `none` (default: no advisor is asked, the features are
+    still recorded), `local` (an L2-regularized logistic regression fitted here on the recorded
+    outcomes, `insufficient data` until `minLabelled`, 30), or `model` (the model Worker
+    `model.worker`, through `ctx.workers` with a JSON schema; metered, off unless set);
+    `timeoutMs` (2000), `maxPerHour` (120), `l2` (1). `setDispatchAdvisor(advisor)` swaps in
+    another provider (workflow contract 1.11), which passes the seam's suite
+    (`conformance/advisor.ts`, contract 1.0; run in `tests/dispatch.spec.ts` by a fake, `local`,
+    and `model`). An advisor is stopped through an `AdvisorSignal`, not an `AbortSignal`: its
+    listeners run inside a guard (`advisorStop`), so one that throws is recorded with the timeout
+    and can never become an uncaught exception. A dispatched run's report records
+    `workflow.dispatch.outcome` (its labels, and the advice of its choice), which the counts, the
+    local adapter, and the report's Brier scores read.
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
@@ -674,7 +694,7 @@ second execution path (INV-1).
   `workflow.node.started|retry|waiting|resent|completed|failed|blocked|escalated|superseded`,
   `workflow.graph.grown|retired`, `workflow.gate.requested|opened|closed`,
   `workflow.team.tallied|decided`, `workflow.task.lost|reported`, and
-  `workflow.dispatch.chosen|started|closed|paused|resumed`. A completed node's
+  `workflow.dispatch.chosen|started|closed|paused|resumed|advised|outcome`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -795,7 +815,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.10 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.11 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -849,6 +869,10 @@ second execution path (INV-1).
   - since 1.10 (PROP-0014 D2), a board task's run says who started it (`task.startedBy`: `lead` by
     default, `operator` when its start says so), kept across a restart; and a pause of one
     project's dispatch asks about and starts nothing there, its tasks saying so, until resumed;
+  - since 1.11 (PROP-0015 J1), every dispatch choice names an advice decision (`advisor.dispatch`)
+    as its input, unavailable while no advisor is configured, and an advisor swapped in through
+    `setDispatchAdvisor` has its advice recorded there without changing the choice; the advisor
+    seam's own suite is [`conformance/advisor.ts`](conformance/advisor.ts);
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

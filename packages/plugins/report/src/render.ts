@@ -1,6 +1,7 @@
 /**
  * The report rendered for the operator: one screen of Markdown, read in layers (PROP-0008's
- * investor report): progress, results, attention, resources, the baseline, digests. Deterministic,
+ * investor report): progress, results, attention, resources, the baseline, digests, and the dispatch
+ * advisor's calibration once there is any. Deterministic,
  * from the report alone; numbers are written without a locale.
  */
 import { drawFigureText } from '@tsuuanmi/system-libs'
@@ -126,6 +127,15 @@ export function renderReport(report: Report): string {
 
   const d = report.digests
   lines.push('', '## Digests', '', `- ${whole(d.attached)} attached, ${whole(d.bypassed)} bypassed${d.claimsKept !== undefined ? `; claims kept ${whole(d.claimsKept)}, dropped ${whole(d.claimsDropped!)}; ${plural(d.escalated!, 'escalation')}` : ''}.`)
+
+  if (report.advice) {
+    // The advisor in shadow (PROP-0015 J1): it changed no choice; this says how well calibrated it was.
+    const v = report.advice
+    lines.push('', '## Dispatch advice (shadow)', '',
+      `- Choices advised: ${whole(v.advised)}; no advice: ${whole(v.unavailable)}. Outcomes recorded: ${whole(v.outcomes)}, ${whole(v.scored)} of them advised (the shadow period runs for ${whole(v.shadowAttempts)}).`)
+    for (const q of v.questions) lines.push(`- ${q.question}: Brier ${q.brier} over ${plural(q.scored, 'attempt')} (always answering the rate ${q.rate}: ${q.baseline}; lower is better).`)
+    if (!v.questions.length) lines.push('- No advised attempt has an outcome yet: nothing to score.')
+  }
 
   if (report.notes.length) lines.push('', '## Not counted', '', ...report.notes.map((n) => `- ${n}`))
   return `${lines.join('\n')}\n`

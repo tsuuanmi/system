@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto'
 import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
 import type { ContentId, DrawFigure } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Classification, RunLiveness, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
+import type { AdvisorConfig } from './advisor.ts'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
 
 export type RunStatus = 'running' | 'completed' | 'failed'
@@ -520,6 +521,12 @@ export interface DispatchConfig {
   maxPerHour?: number
   /** The same, per project (0 to maxPerHour, default 3 or maxPerHour when lower). */
   maxPerHourPerProject?: number
+  /**
+   * The advisor asked in shadow at every dispatch choice (PROP-0015 J1, ./advisor.ts): `none` by
+   * default (no advisor), `local` (a logistic regression on this host), or `model` (a configured
+   * model Worker, metered; off unless set). Its advice is recorded and changes no choice.
+   */
+  advisor?: AdvisorConfig
 }
 
 /**

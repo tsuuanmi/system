@@ -122,6 +122,7 @@ describe('architecture rules', () => {
       if (defines) expect(readdirSync(join(packages, core, 'conformance')).filter((f) => f.endsWith('.ts')).length, core).toBeGreaterThan(0)
     }
     expect(existsSync(join(plugins, 'workflow', 'conformance', 'profiles.ts'))).toBe(true)
+    expect(existsSync(join(plugins, 'workflow', 'conformance', 'advisor.ts'))).toBe(true)
   })
 
   it('holds every guarantee seam to a conformance suite at a pinned contract, so a worse provider cannot pass unnoticed (ADR-0036, ADR-0037)', () => {
