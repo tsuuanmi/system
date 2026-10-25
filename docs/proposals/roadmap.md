@@ -88,19 +88,20 @@ operator's go-ahead.
 
 ## Right worker, right job (PROP-0015)
 
-Proposed on 2026-10-25, from the operator's request of that day; not accepted. What each increment
-delivers is in [PROP-0015](0015-right-worker-right-job.md#increments); each would start on the
-operator's go-ahead.
+Accepted by the operator on 2026-10-25 (D71 to D78), every open question answered as proposed, from
+the operator's request of that day. What each increment delivers is in
+[PROP-0015](0015-right-worker-right-job.md#increments); each starts on the operator's go-ahead, in
+the order of D75: E1, then E2 and E5, then E4 and E3, then E6, with J0 in parallel.
 
 | Increment | State | Delivers | Depends on |
 |---|---|---|---|
-| **E1** One quota rule | proposed | capacity reads `accountQuotaOf` with the reserve; `free` in the quota score's order; `inReserve`; `mcp-roster@1.8` | — |
-| **E2** Quota drawn per attempt | proposed | `quota-draw@1.0` from the readings before and after each agent run; draws by kind in the report | — |
-| **E3** Fit before start | proposed | the fit key and light band, shadow first | E1, E2 |
-| **E4** Measured strengths | proposed | acceptance by Worker and kind, with counts | — |
-| **E5** Needs you | proposed | one list on Home, board questions included; `board.question` notifications | — |
-| **E6** Handoffs | proposed | `handoff@1.0`, child tasks, the `handoff` wait, fresh-context briefs | E5 |
-| **J0** to **J3** Jev advisor | proposed | feasibility, shadow, visible, bounded advice behind `ctx.decisions` | J0: the operator's answer on data; J1: E2, E4; J3: PROP-0011 F4 |
+| **E1** One quota rule | accepted, not started (first, D75) | capacity reads `accountQuotaOf` with the reserve; `free` in the quota score's order; `inReserve`; `mcp-roster@1.8` | — |
+| **E2** Quota drawn per attempt | accepted, not started | `quota-draw@1.0` from the readings before and after each agent run; draws by kind in the report | — |
+| **E3** Fit before start | accepted, not started (the 20 % reserve the hard line and a 65 % to 80 % band for measured light work, D71; the reserve also keeps a dispatched run's later steps out of the operator's share once PROP-0014 D3 is built, not starts made by hand, D72; shadow for 100 dispatched attempts with outcomes, D74) | the fit key and light band, shadow first | E1, E2 |
+| **E4** Measured strengths | accepted, not started (the declared split confirmed, D77) | acceptance by Worker and kind, with counts | — |
+| **E5** Needs you | accepted, not started | one list on Home, board questions included; `board.question` notifications | — |
+| **E6** Handoffs | accepted, not started (a step proposes child tasks under the board's gate, depth 1, at most 3 per attempt, D76; fresh-context review on tasks the lead marks, measured, D78) | `handoff@1.0`, child tasks, the `handoff` wait, fresh-context briefs | E5 |
+| **J0** to **J3** Jev advisor | accepted, not started (features only, never a task's title or goal, D73; J1 in shadow for 100 dispatched attempts with outcomes, D74) | feasibility, shadow, visible, bounded advice behind `ctx.decisions` | J0: —; J1: J0, E2, E4; J3: PROP-0011 F4 |
 
 ## Done and open milestones
 

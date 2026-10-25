@@ -117,8 +117,16 @@ accepted/implemented -> superseded
   account, per project, and in total, with one task per write subject. Starts are capped per
   hour, and dispatch can be paused per project.
 
-- [PROP-0015: Right worker, right job](0015-right-worker-right-job.md), **proposed** (2026-10-25,
-  from the operator's request of that day and research runs T177 to T182). One quota rule: the
+- [PROP-0015: Right worker, right job](0015-right-worker-right-job.md), **accepted** (D71 to D78,
+  2026-10-25, every open question answered as proposed: the 20 % reserve stays the hard line for
+  starts with a light band of 65 % to 80 % for measured light work; the reserve also keeps a
+  dispatched run's later steps out of the operator's share, not starts made by hand; Jev sees
+  features only; shadow for 100 dispatched attempts with outcomes; E1, then E2 and E5, then E4 and
+  E3, then E6, J0 in parallel; a step may propose child tasks under the board's gate, depth 1, at
+  most 3 per attempt; Claude Code writes code, docs, and tests, Codex validates and reviews,
+  website Workers research, the Antigravity CLI validates only once it proves `validate`;
+  fresh-context review on tasks the lead marks, measured; nothing built yet). From the operator's
+  request of 2026-10-25 and research runs T177 to T182. One quota rule: the
   roster's capacity summary reads `accountQuotaOf` with the reserve, so "free" means what it means
   to dispatch (E1, buildable now, no new vendor). Then the quota each attempt drew, recorded from
   the account's readings; a start refused when its kind's observed draw would not fit, with a
