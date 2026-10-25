@@ -92,17 +92,21 @@ describe.runIf(canRunBrowser)('ctx.workflow: review teams, a member\'s bounds, a
     expect(done.answer).toContain('[m1 blocking confirmed: The lease is never released; m2 blocking confirmed: The lease is never released]')
   }, 240_000)
 
-  it('fails a member whose site answered with its own error, before any acceptance judges it and without escalating (live 2026-10-17)', async () => {
+  it('fails a member whose site answered with its own error, before any acceptance judges it and without escalating, once its one resend erred too (live 2026-10-17, D60, ADR-0062)', async () => {
     const { ctx, gemini } = await boot({ fake: { answer: member }, gemini: { answer: 'I seem to be encountering an error. Can I try something else for you?' } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'Which store?' }).runId, 120_000)
     expect(done.status).toBe('failed')
     const m2 = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'brainstorm:m2:propose')!
     expect(m2.state).toBe('FAILED')
-    // No acceptance and no escalation: the error is the site's, and the prompt was sent once.
+    // No acceptance and no escalation: the error is the site's.
     expect(m2.decisions.map((d) => d.type)).not.toContain('acceptance')
     expect(m2.decisions.map((d) => d.type)).not.toContain('escalation')
-    expect(m2.decisions.find((d) => d.type === 'recovery')).toMatchObject({ outcome: 'fail', reasons: expect.arrayContaining([expect.stringMatching(/^overloaded came after the prompt was sent/)]) })
-    expect(gemini!.sent).toHaveLength(1)
+    // Resent once, in a new conversation (D60); the second error fails it, as sent, never resent twice.
+    const recoveries = m2.decisions.filter((d) => d.type === 'recovery')
+    expect(recoveries.map((d) => (d as { outcome?: string }).outcome)).toEqual(['resend', 'fail'])
+    expect(recoveries[1]).toMatchObject({ outcome: 'fail', reasons: expect.arrayContaining([expect.stringMatching(/^overloaded came after the prompt was sent/)]) })
+    expect(gemini!.sent).toHaveLength(2)
+    expect(gemini!.conversations.size).toBe(2)
   }, 240_000)
 
   it('never sends a Worker more than it takes: an ask goes to one without the bound, and a review member fails unsent, naming the bound that sized it (ADR-0032)', async () => {
