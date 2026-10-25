@@ -298,9 +298,10 @@ export class Artifacts extends Service {
 
   /**
    * The artifacts that match `filter`, in the order they were stored (oldest first; `newest`: newest
-   * first, contract 1.1), at most `limit` (100 by default, 1 to 1000).
+   * first, contract 1.1), at most `limit` (100 by default, 1 to 1000). `outcome` (contract 1.2) keeps
+   * only decisions whose outcome is that option.
    */
-  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; limit?: number; newest?: boolean } = {}): Envelope[] {
+  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; outcome?: string; limit?: number; newest?: boolean } = {}): Envelope[] {
     const clauses: string[] = []
     const params: string[] = []
     for (const [column, value] of [['a.kind', filter.kind], ['a.decision_type', filter.decisionType], ['r.run_id', filter.runId], ['r.node_id', filter.nodeId]] as const) {
@@ -308,6 +309,10 @@ export class Artifacts extends Service {
         clauses.push(`${column} = ?`)
         params.push(value)
       }
+    }
+    if (filter.outcome !== undefined) {
+      clauses.push("a.kind = 'decision' AND json_extract(a.envelope, '$.body.outcome.option') = ?")
+      params.push(filter.outcome)
     }
     const join = filter.runId !== undefined || filter.nodeId !== undefined ? 'JOIN artifact_runs r ON r.id = a.id' : ''
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''

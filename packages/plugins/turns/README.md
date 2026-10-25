@@ -85,7 +85,9 @@ It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
     next turn finds it. A commit that fails takes it back.
   - The page follows the turn's abort only until the answer is in.
   - A failed turn discards its page.
-  - Releasing or resetting a session closes its tab.
+  - Releasing or resetting a session closes its tab, once the caller's store
+    transaction commits (at once outside one): a rolled-back reset or release
+    closes nothing.
 - **Write-back:** before completing, the turn captures the browser state for the
   driver's origins and stores it with `accounts.refreshState`. A session-bound
   account has no copy to refresh. This happens only

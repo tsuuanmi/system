@@ -784,6 +784,7 @@ export const APP_JS = `'use strict'
   // A running run as it moves (T124): its steps, their Workers and for how long, its last event, and a stall its source told.
   const EVENT_WORDS = {
     'workflow.node.started': 'a step started', 'workflow.node.completed': 'a step finished', 'workflow.node.retry': 'a step is tried again', 'workflow.node.waiting': 'a step waits',
+    'workflow.node.resent': 'a step is sent again in a new conversation',
     'workflow.node.blocked': 'a step waits for you', 'agent-workers.tool.notified': 'a tool call ran', 'agent-workers.tool.checks-pending': 'a tool call ran, its checks pending',
     'agent-workers.tool.denied': 'a tool call was denied', 'agent-workers.tool.deferred': 'a tool call waits for your verdict', 'agent-workers.run.stalled': 'its agent stalled',
   }

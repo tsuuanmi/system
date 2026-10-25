@@ -22,7 +22,7 @@ records ([design](../../../docs/design/artifacts.md),
   `collectGraceHours` (default 24), `collectBatch` (default 1000: artifacts
   deleted per write transaction; the scan itself runs outside any).
 - The conformance suite is [`conformance/artifacts.ts`](conformance/artifacts.ts)
-  (contract 1.1: `list` takes an optional `newest`), run against this plugin over a real store:
+  (contract 1.1: `list` takes an optional `newest`; 1.2: an optional `outcome`), run against this plugin over a real store:
   - the id is computed from the canonical content alone (a blob by its ref and
     media type), never from the producer's id or time;
   - identical content is stored once and listed under every run that produced
@@ -41,7 +41,8 @@ records ([design](../../../docs/design/artifacts.md),
   - a decision's prose is clamped to its bounds on whole characters;
   - immutability: nothing changes a stored artifact; a correction supersedes it;
   - `list` filters by kind, decision type, run, and node, within a limit; in
-    stored order, or newest first with `newest` (1.1);
+    stored order, or newest first with `newest` (1.1); `outcome` keeps only the
+    decisions whose outcome is that option (1.2);
   - `read`: the header, a bounded window of text or JSON in whole characters,
     and only content ids;
   - `explain` walks inputs once each, within `explainDepth` and `explainBudget`;

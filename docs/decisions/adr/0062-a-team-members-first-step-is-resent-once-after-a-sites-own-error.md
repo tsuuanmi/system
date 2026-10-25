@@ -69,16 +69,22 @@ Which steps:
 
 Options 3 and 5.
 
-1. **The source says what it saw.** `ProviderError` gains the optional `siteError`; the Gemini
-   driver sets it on `answer.site-error` (the error read on the turn's own page after the send).
+1. **The source says what it saw.** `ProviderError` gains the optional `siteError`
+   (`readonly siteError?: true`, set only when true and absent otherwise, so a structural stand-in
+   for a `ProviderError` need not name it); the Gemini driver sets it on `answer.site-error` (the
+   error read on the turn's own page after the send).
    The turn runtime keeps it on the turn's error only when the turn's receipt was written, and its
    Worker execution carries it: `WorkerExecution.error.siteError` (optional, additive). The
    runtime never resends.
 2. **The engine decides, by rule, once.** On a failed execution that was `submitted` and marked
    `siteError`, the node is resent only when all of these hold, and fails as before otherwise:
+   - the error's disposition is retryable (`IMMEDIATE`, `BACKOFF`, or `RECREATE_SESSION`, as for a
+     retry): a source that marks a kind the operator must act on gets no resend;
    - it is a team member's `propose` step; it proves no `develop` and grows no plan;
    - it runs in a session of its own (the member's);
-   - no `resend` decision of that node is on record (never twice);
+   - no `resend` decision of that node is on record (never twice): the engine asks the artifacts
+     for the node's recovery decisions with outcome `resend` (`list` with `outcome`, contract 1.2),
+     at most one, rather than reading its decisions and filtering them;
    - an attempt is left (`maxAttempts`): the resend is that attempt;
    - `ctx.workers.reset(session)` succeeds: a source owns the session and starts its next work in a
      new native conversation (INV-2 otherwise).
@@ -87,13 +93,23 @@ Options 3 and 5.
    execution, the session, and the new attempt and the key its execution starts under; the
    session's reset; and the node made `READY` after the `overloaded` back-off: all in one store
    transaction. A restart finds all three or none, and the new attempt then runs once, as any
-   retry does. A site's error that is not resent records the `fail` decision with a `resend`
-   candidate saying why not.
+   retry does (on the run's next pass, once the steps running beside it have settled). That
+   transaction fences the run's lease first, before the reset: an engine that lost the run (a host
+   suspend, a takeover) records, resets, and readies nothing, and the engine that takes the run
+   back decides instead. What a reset does outside the store runs only once the transaction
+   commits (the source's after-commit effect: the turn runtime closes the session's kept tab
+   then), so a rolled-back resend never closes a tab another engine's resent turn uses. A site's
+   error that is not resent records the `fail` decision with a `resend` candidate saying why not.
+   Every recovery decision that weighs a resend, the `resend` and such a `fail` alike, is decided
+   under rule version 2; a failure with no site error stays under version 1, so the same inputs
+   never decide differently under one version (INV-13).
 4. **Seams.** `workers`: the optional `WorkerExecution.error.siteError` (additive, ADR-0036; the
-   existing `reset` is used as it is). `workflow`: contract 1.8, whose conformance suite adds the
-   scenarios `site-error-resend`, `site-error-not-resent`, and `site-error-resend-restart`; a
-   source that never marks `siteError` sees every behaviour of 1.7. `providers`: the optional
-   `ProviderError.siteError`. Schemas: `decision@1.9` adds the recovery outcome `resend`, a minor.
+   existing `reset` is used as it is, its effects outside the store after the caller's commit).
+   `workflow`: contract 1.8, whose conformance suite adds the scenarios `site-error-resend`,
+   `site-error-not-resent`, `site-error-not-retryable`, and `site-error-resend-restart`; a source
+   that never marks `siteError` sees every behaviour of 1.7. `providers`: the optional
+   `ProviderError.siteError`. `artifacts`: contract 1.2, `list` takes an optional `outcome`
+   (additive). Schemas: `decision@1.9` adds the recovery outcome `resend`, a minor.
 
 ## Consequences
 

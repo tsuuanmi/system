@@ -10,7 +10,7 @@ import Artifacts from '../src/index.ts'
 // The provider over a real store, held to the suite any replacement must pass (ADR-0037).
 runSuite(artifactsSuite, {
   name: '@tsuuanmi/system-artifacts',
-  contract: '1.1',
+  contract: '1.2',
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-conformance-'))
     const ctx = new Context()

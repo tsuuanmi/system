@@ -534,8 +534,14 @@ show an empty chat, so neither reconciliation nor `continue` can help a team mem
   Workers write nothing; a review member's agent Worker is read-only; a step that proves `develop`
   or grows a plan never qualifies). A ballot or debate relies on its conversation, and any other
   step may have done more than answer: they fail for the operator as before (`USER_ACTION`).
+- **Which error.** Only one whose disposition is retryable (`IMMEDIATE`, `BACKOFF`, or
+  `RECREATE_SESSION`, as for a retry): a site error a source marks on a kind the operator must act
+  on (`USER_ACTION`, `NONE`, a fix) fails as before.
 - **Once.** At most one resend per node, ever: a node with a `resend` decision on record fails on
-  a second site error. It also needs an attempt left (`maxAttempts`); the resend is that attempt.
+  a second site error. The engine asks for that decision directly (`ctx.artifacts.list` with
+  `outcome: 'resend'`, the node's recovery decisions, at most one), not by reading the node's
+  decisions and filtering them. It also needs an attempt left (`maxAttempts`); the resend is that
+  attempt.
 - **A new conversation, the same member.** The engine resets the member's session
   (`ctx.workers.reset`: its native conversation is cleared, its account and Worker kept, so session
   affinity routes it back to the same Worker), and the node runs again as its next attempt, under
@@ -548,8 +554,17 @@ show an empty chat, so neither reconciliation nor `continue` can help a team mem
   (the failed turn), the session, and the new attempt and the key its execution starts under (the
   new turn, in a new conversation). It is recorded in the transaction that resets the session and
   readies the node, so a restart finds all three or none (INV-4); the event log has
-  `workflow.node.resent`. A site's own error that is not resent fails as before, its `recovery`
-  decision carrying a `resend` candidate that says why not.
+  `workflow.node.resent`. Like any retry, the new attempt starts on the run's next pass, once the
+  steps running beside it have settled. A site's own error that is not resent fails as before, its
+  `recovery` decision carrying a `resend` candidate that says why not, under rule version 2 as
+  well: every decision that weighs a resend is version 2, and one with no site error stays version
+  1, so the same inputs never decide differently under one version.
+- **Under the run's lease.** The resend's transaction fences the run's lease before it resets the
+  session, as every node write is fenced: an engine that lost the run (a host suspend, a takeover)
+  records, resets, and readies nothing; its pass ends and the run is taken back under a new lease,
+  whose holder decides. What a reset does outside the store runs only after that transaction
+  commits: the turn runtime closes the session's kept tab in its after-commit effect, so a resend
+  that rolls back never closes a tab that another engine's resent turn may be using.
 
 ### Waiting for an account's limit
 

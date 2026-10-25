@@ -439,7 +439,12 @@ export interface WorkerSource {
   siblings?(worker: string): string[] | undefined
   /** The session's native conversation handle (conversation URL, SDK session or thread id), once known. */
   handle?(sessionId: string): string | undefined
-  /** Start the session's next work in a fresh native conversation, on the same Worker (a compaction, REQ-SES-6). */
+  /**
+   * Start the session's next work in a fresh native conversation, on the same Worker (a compaction,
+   * REQ-SES-6; a resend, ADR-0062). Called inside a caller's store transaction, anything it does
+   * outside the store (closing a kept browser tab) runs after that transaction commits (the store's
+   * `afterCommit`), never on a rollback.
+   */
   reset?(sessionId: string): boolean
   /**
    * Why the session takes no input now, when this source owns it and it does not (PROP-0013,

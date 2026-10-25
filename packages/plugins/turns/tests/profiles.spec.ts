@@ -64,8 +64,27 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
     expect(fake.sent).toHaveLength(1)
     const erred = failed.binding!
     expect(erred).toBeTruthy()
+    const discarded: string[] = []
+    const discardTab = ctx.browser.discardTab.bind(ctx.browser)
+    ctx.browser.discardTab = (account, keep) => {
+      discarded.push(keep)
+      return discardTab(account, keep)
+    }
+    // A reset in a transaction that rolls back changes nothing: the binding stays, and no tab closes.
+    expect(() => ctx.store.transaction(() => {
+      expect(ctx.workers.reset(sessionId)).toBe(true)
+      throw new Error('rolled back')
+    })).toThrow('rolled back')
+    expect(ctx.workers.handle(sessionId)).toBe(erred)
+    expect(discarded).toEqual([])
     // The caller's rule decides; the runtime only starts the session's next work in a new conversation.
-    expect(ctx.workers.reset(sessionId)).toBe(true)
+    // Its kept tab closes once the caller's transaction commits, not before.
+    ctx.store.transaction(() => {
+      expect(ctx.workers.reset(sessionId)).toBe(true)
+      expect(discarded).toEqual([])
+    })
+    expect(discarded).toEqual([sessionId])
+    expect(ctx.workers.handle(sessionId)).toBeUndefined()
     expect(ctx.workers.affinity(sessionId)).toContain('worker:gemini-main/standard')
     const again = await ctx.turns.wait((await ask(ctx, { prompt: 'first', sessionId })).turnId, 90_000)
     expect(again).toMatchObject({ status: 'completed', account: 'gemini-main', answer: 'Answer to first' })
