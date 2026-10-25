@@ -39,6 +39,7 @@ import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
 import { heldWhy } from './sessions.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
+import { admittedRestriction } from './teams.ts'
 import {
   newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskDispatch, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
@@ -217,6 +218,11 @@ export class TaskRuns {
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
+    // A dispatched start runs its writing step on the Worker dispatch chose or on none (ADR-0064):
+    // when the step's own restriction leaves that Worker out (the session the run resumes stays on
+    // another, say), it is refused here, before the task is taken, so no attempt is spent on a step
+    // that could only fail; dispatch chooses again (INV-6).
+    if (options.dispatch) await this.dispatchable(task, claim, runId, options.dispatch, admittedAs, classification, session?.decision)
     // A start dispatch chose names its decisions in the run's admission (ADR-0064).
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId, options.dispatch?.decisions ?? [])
     // Whether its worktree starts from the work the previous attempt left, carried at its first turn
@@ -253,6 +259,24 @@ export class TaskRuns {
     }
     this.activate(runId, { expiresAt, schedule: true })
     return e.get(runId)!
+  }
+
+  /**
+   * Refuse a dispatched start, before its task is taken, when the restriction routing will apply to
+   * its writing step leaves out the Worker dispatch chose, or the step could not be routed at all
+   * (ADR-0064, INV-6): the step would fail at once with nothing sent, spending the attempt. The
+   * refusal is the run's `workflow.task-admission` decision, its inputs dispatch's decisions.
+   */
+  private async dispatchable(task: BoardTask, claim: TaskStartInput['task'], runId: string, dispatch: TaskDispatch, admittedAs: Prepared, classification: Classification | undefined, session: ArtifactRef | undefined): Promise<void> {
+    const { prefer } = dispatch
+    const node = admittedAs.spec.nodes.find((n) => n.nodeId === prefer.node)
+    if (!node) return
+    const bound = await admittedRestriction(this.e, runId, node, classification)
+    const why = 'problem' in bound ? bound.problem
+      : bound.restrict && !bound.restrict.workers.includes(prefer.worker) ? `${bound.restrict.reason}: ${prefer.worker}, which dispatch chose for step ${prefer.node} (decision ${prefer.decision}), may not take it` : undefined
+    if (!why) return
+    const refused = this.admission(task, undefined, 'refuse', claim, `${why}; the start is refused before it takes the task, so no attempt is spent`, [...dispatch.decisions, ...(session ? [session] : [])])
+    throw new WorkflowFailure('invalid_input', `${why}; nothing was started, and no attempt was spent (decision ${refused})`)
   }
 
   /**
@@ -451,33 +475,9 @@ export class TaskRuns {
    * before it with a session, or the caller named a session itself.
    */
   private async session(task: BoardTask, prepared: Prepared, template: string, runId: string): Promise<{ sessionId?: string; decision: ArtifactRef } | undefined> {
-    const previous = this.previousSession(task.taskId, 'attempt') ?? (task.attempts.count === 0 && task.dependsOn.length === 1 ? this.previousSession(task.dependsOn[0]!, 'dependency') : undefined)
-    if (!previous) return undefined
-    const workers = this.e.ctx.workers
-    const max = this.e.config.maxSessionRuns ?? 5
-    const what = previous.via === 'attempt' ? `attempt ${task.attempts.count}'s run ${previous.runId}` : `run ${previous.runId} of task ${previous.taskId}, which it depends on`
-    let fresh: string | undefined
-    let handle: string | undefined
-    if (!prepared.spec.nodes.some((n) => n.session.persist)) fresh = `template ${template} keeps no conversation across its steps, so there is no session to resume`
-    else {
-      handle = workers.handle(previous.sessionId)
-      const bound = workers.affinity(previous.sessionId) ?? []
-      const listed = (await workers.list()).filter((w) => bound.includes(w.worker))
-      // An offer scoped to another kind of work (a review member's conversation, ADR-0049) never resumes a task's session.
-      const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
-      // The steps that would continue it must be work its Worker takes (ADR-0057), or they could never route there.
-      const continuing = prepared.spec.nodes.filter((n) => n.session.persist)
-      const untaken = ready ? continuing.filter((n) => !takesKind(ready, n)) : []
-      const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
-      // A session blocked on an approval, or whose latest run is not finished or known to be gone,
-      // takes no input but that request's resolution (PROP-0013, ADR-0056): never resumed by an attempt.
-      const held = handle ? await heldWhy(this.e, previous.sessionId) : undefined
-      if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
-      else if (held) fresh = `session ${previous.sessionId} of ${what} takes no input now: ${held}`
-      else if (!ready) fresh = `the Worker of session ${previous.sessionId} cannot resume it now (${listed.length ? listed.map((w) => `${w.worker} is ${w.state}`).join(', ') : `${bound.join(', ') || 'no Worker'} is not listed`})`
-      else if (untaken.length) fresh = `the Worker of session ${previous.sessionId}, ${ready.worker}, takes ${ready.kinds!.join(', ')} work only, and ${untaken.map((n) => `${n.nodeId} is ${n.kind === undefined ? 'work that names no kind' : `${n.kind} work`}`).join(', ')}`
-      else if (served >= max) fresh = `session ${previous.sessionId} has served ${served} runs (limit ${max}, workflow.maxSessionRuns; INV-9)`
-    }
+    const checked = await this.resumable(task, prepared.spec.nodes, template)
+    if (!checked) return undefined
+    const { previous, what, fresh, handle } = checked
     const resume = !fresh
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'admission',
@@ -492,6 +492,52 @@ export class TaskRuns {
       deterministic: true,
     }, { ...PRODUCER, runId }).id as ArtifactRef
     return { ...(resume ? { sessionId: previous.sessionId } : {}), decision }
+  }
+
+  /**
+   * The session a run started now for the task's next attempt would resume (see {@link session}),
+   * or undefined when it would start fresh: what dispatch reads to choose the writing step's Worker
+   * within the restriction routing will apply (ADR-0064, INV-6). Records nothing.
+   */
+  async resumes(task: BoardTask, template: string, nodes: readonly ResolvedNode[]): Promise<string | undefined> {
+    const checked = await this.resumable(task, nodes, template)
+    return checked && !checked.fresh ? checked.previous.sessionId : undefined
+  }
+
+  /**
+   * Whether the task's next run can resume the session of the work before it, with why not
+   * (`fresh`); undefined when there was no work before it with a session. Records nothing: the
+   * start records it as its `workflow.task-session` decision, and dispatch reads the same answer.
+   */
+  private async resumable(task: BoardTask, nodes: readonly ResolvedNode[], template: string): Promise<{ previous: { sessionId: string; runId: string; taskId: string; via: 'attempt' | 'dependency' }; what: string; fresh?: string; handle?: string } | undefined> {
+    const previous = this.previousSession(task.taskId, 'attempt') ?? (task.attempts.count === 0 && task.dependsOn.length === 1 ? this.previousSession(task.dependsOn[0]!, 'dependency') : undefined)
+    if (!previous) return undefined
+    const workers = this.e.ctx.workers
+    const max = this.e.config.maxSessionRuns ?? 5
+    const what = previous.via === 'attempt' ? `attempt ${task.attempts.count}'s run ${previous.runId}` : `run ${previous.runId} of task ${previous.taskId}, which it depends on`
+    let fresh: string | undefined
+    let handle: string | undefined
+    if (!nodes.some((n) => n.session.persist)) fresh = `template ${template} keeps no conversation across its steps, so there is no session to resume`
+    else {
+      handle = workers.handle(previous.sessionId)
+      const bound = workers.affinity(previous.sessionId) ?? []
+      const listed = (await workers.list()).filter((w) => bound.includes(w.worker))
+      // An offer scoped to another kind of work (a review member's conversation, ADR-0049) never resumes a task's session.
+      const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
+      // The steps that would continue it must be work its Worker takes (ADR-0057), or they could never route there.
+      const continuing = nodes.filter((n) => n.session.persist)
+      const untaken = ready ? continuing.filter((n) => !takesKind(ready, n)) : []
+      const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
+      // A session blocked on an approval, or whose latest run is not finished or known to be gone,
+      // takes no input but that request's resolution (PROP-0013, ADR-0056): never resumed by an attempt.
+      const held = handle ? await heldWhy(this.e, previous.sessionId) : undefined
+      if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
+      else if (held) fresh = `session ${previous.sessionId} of ${what} takes no input now: ${held}`
+      else if (!ready) fresh = `the Worker of session ${previous.sessionId} cannot resume it now (${listed.length ? listed.map((w) => `${w.worker} is ${w.state}`).join(', ') : `${bound.join(', ') || 'no Worker'} is not listed`})`
+      else if (untaken.length) fresh = `the Worker of session ${previous.sessionId}, ${ready.worker}, takes ${ready.kinds!.join(', ')} work only, and ${untaken.map((n) => `${n.nodeId} is ${n.kind === undefined ? 'work that names no kind' : `${n.kind} work`}`).join(', ')}`
+      else if (served >= max) fresh = `session ${previous.sessionId} has served ${served} runs (limit ${max}, workflow.maxSessionRuns; INV-9)`
+    }
+    return { previous, what, ...(fresh ? { fresh } : {}), ...(handle ? { handle } : {}) }
   }
 
   /** The session of the latest run that served a task, and that run. */

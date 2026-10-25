@@ -49,7 +49,7 @@ const DEV = {
 
 const FIVE_H = 5 * 3600
 /** An agent Worker of an account (opaque ids and group), idle, one slot. */
-const agent = (id: string, account: string, extra: Partial<CapabilityDescriptor> = {}): CapabilityDescriptor => worker(id, {
+const agent = (id: string, account: string, extra: Partial<CapabilityDescriptor> & { proves?: string[] } = {}): CapabilityDescriptor => worker(id, {
   schema: 'capability-descriptor@1.5', quotaClass: 'agent-plan', proves: ['reason', 'develop'], account: { id: account, group: 'g1', mode: 'assigned' },
   load: { running: 0, queued: 0, pending: 0, slots: 1 }, ...extra,
 })
@@ -824,6 +824,104 @@ describe('every dispatched start stays explained (review T202 of PR #37)', () =>
     expect(opened).toHaveLength(2)
     expect((await dispatchRequests(ctx)).filter((r) => r.state === 'open').map((r) => r.requestId).sort()).toEqual([...opened].sort())
     expect([askOf(ctx.workflow.dispatchStatus(), first.taskId)!.state, askOf(ctx.workflow.dispatchStatus(), second.taskId)!.state]).toEqual(['asked', 'asked'])
+  })
+})
+
+/** A template whose writing step keeps its conversation, so a task's next attempt resumes it. */
+const KEPT_DEV = {
+  'kept-dev': [
+    { nodeId: 'develop:1', objective: 'Write it', prompt: '{{input}}', capabilities: ['develop'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer' },
+  ],
+}
+/** An agent Worker that keeps conversations it can resume. */
+const keeper = (id: string, account: string, extra: Partial<CapabilityDescriptor> = {}): CapabilityDescriptor => agent(id, account, { proves: ['reason', 'develop', 'persistent-conversation'], ...extra })
+const BUSY = { load: { running: 1, queued: 0, pending: 0, slots: 1 } }
+
+describe('a dispatched attempt that continues a session (T215, regression of T205)', () => {
+  /** Attempt 1 of a kept-dev task, dispatched on agent:acc-a/develop and failed after its send, then ready again for attempt 2. */
+  const firstAttempt = async () => {
+    const booted = await boot({ policy: withDispatch('auto'), workflow: { templates: KEPT_DEV, dispatch: { maxRunningPerProject: 4 } } })
+    const { ctx, workers, read } = booted
+    workers.extra = [keeper('agent:acc-a/develop', 'acc-a'), keeper('agent:acc-b/develop', 'acc-b', BUSY)]
+    await read('acc-a', 0)
+    await read('acc-b', 0)
+    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: true })
+    const task = await readyTask(ctx, 'continues its session', { template: 'kept-dev', maxAttempts: 3 })
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => [t.worker, t.how])).toEqual([['agent:acc-a/develop', 'started']])
+    const first = (await ctx.board.task(task.taskId))!.run!.runId
+    await vi.waitFor(() => expect(ctx.workflow.get(first)!.status).toBe('failed'), { timeout: 30_000 })
+    await vi.waitFor(async () => {
+      await ctx.board.sweep(new Date())
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    }, { timeout: 30_000 })
+    const session = ctx.workflow.get(first)!.sessionId!
+    expect(ctx.workers.affinity(session)).toEqual(['agent:acc-a/develop'])
+    workers.reply = () => 'hold'
+    return { ...booted, task, first, session }
+  }
+
+  it('chooses the session\'s own Worker for attempt 2, though another account\'s Worker has more quota, and the step runs there (INV-6, ADR-0064)', async () => {
+    const { ctx, workers, read, task, session } = await firstAttempt()
+    // Worker B is free now and has far more headroom than A.
+    workers.extra = [keeper('agent:acc-a/develop', 'acc-a'), keeper('agent:acc-b/develop', 'acc-b')]
+    await read('acc-a', 70)
+    await read('acc-b', 0)
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took.map((t) => [t.worker, t.how])).toEqual([['agent:acc-a/develop', 'started']])
+    const second = (await ctx.board.task(task.taskId))!.run!.runId
+    expect(ctx.workflow.get(second)!.sessionId).toBe(session)
+    await vi.waitFor(() => expect(workers.started).toHaveLength(2), { timeout: 30_000 })
+    expect(workers.started[1]).toMatchObject({ worker: 'agent:acc-a/develop', runId: second, sessionId: session })
+    await vi.waitFor(() => expect(nodeRowOf(ctx, second, 'develop:1')).toMatchObject({ state: 'RUNNING', worker: 'agent:acc-a/develop' }), { timeout: 30_000 })
+    expect(ctx.workflow.get(second)!.status).toBe('running')
+    // The choice says why B was not taken: the restriction routing applies to the step.
+    const choice = decisionOf(ctx, (JSON.parse((ctx.store.db.prepare('SELECT dispatch FROM workflow_tasks WHERE run_id = ?').get(second) as { dispatch: string }).dispatch) as { decisions: string[] }).decisions[1])
+    expect(choice.outcome.option).toBe('agent:acc-a/develop')
+    expect(choice.candidates.find((c) => c.option === 'agent:acc-b/develop')!.reasons.join(' ')).toContain(`session ${session} stays on its Worker`)
+  })
+
+  it('starts nothing while the session\'s Worker is not free, says it waits for it, and never spends the attempt; once it is free, it starts there', async () => {
+    const { ctx, workers, read, task, session } = await firstAttempt()
+    // A is busy now; B is free with full headroom.
+    workers.extra = [keeper('agent:acc-a/develop', 'acc-a', BUSY), keeper('agent:acc-b/develop', 'acc-b')]
+    await read('acc-a', 0)
+    await read('acc-b', 0)
+    const pass = await ctx.workflow.sweepDispatch()
+    expect(pass.took).toEqual([])
+    expect(reasonOf(ctx.workflow.dispatchStatus(), task.taskId)).toMatch(/waits for its session's Worker/)
+    expect(reasonOf(ctx.workflow.dispatchStatus(), task.taskId)).toContain('agent:acc-a/develop')
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    expect(workers.started).toHaveLength(1)
+    // A is free again: attempt 2 starts on it, in its session.
+    workers.extra = [keeper('agent:acc-a/develop', 'acc-a'), keeper('agent:acc-b/develop', 'acc-b')]
+    await ctx.workflow.sweepDispatch()
+    const second = (await ctx.board.task(task.taskId))!.run!.runId
+    await vi.waitFor(() => expect(workers.started).toHaveLength(2), { timeout: 30_000 })
+    expect(workers.started[1]).toMatchObject({ worker: 'agent:acc-a/develop', runId: second, sessionId: session })
+  })
+
+  it('refuses a start whose chosen Worker the step\'s own restriction leaves out before it takes the task, so no attempt is spent, and chooses again', async () => {
+    const { ctx, workers, read, task, session } = await firstAttempt()
+    // An approved row chose B for attempt 2 (as a dispatch that ignored the session would have).
+    workers.extra = [keeper('agent:acc-a/develop', 'acc-a'), keeper('agent:acc-b/develop', 'acc-b')]
+    await read('acc-a', 0)
+    await read('acc-b', 0)
+    const ask = ctx.store.db.prepare("SELECT * FROM workflow_dispatch WHERE task_id = ? AND state = 'started'").get(task.taskId) as Record<string, unknown>
+    ctx.store.db.prepare(`INSERT INTO workflow_dispatch (ask_id, task_id, attempt, project_id, state, worker, account, repository, node_id, version, request_id, run_id, choice, outcome, approved_at, mode, started_at, created_at, updated_at)
+      VALUES ('dsp_stale', ?, 1, ?, 'approved', 'agent:acc-b/develop', 'acc-b', NULL, 'develop:1', ?, NULL, NULL, ?, NULL, ?, 'auto', NULL, ?, ?)`)
+      .run(task.taskId, ask['project_id'] as string, ask['version'] as string, ask['choice'] as string, new Date().toISOString(), new Date().toISOString(), new Date().toISOString())
+    await ctx.workflow.sweepDispatch()
+    const stale = ctx.store.db.prepare("SELECT state, outcome FROM workflow_dispatch WHERE ask_id = 'dsp_stale'").get() as { state: string; outcome: string }
+    expect(stale.state).toBe('closed')
+    expect(JSON.parse(stale.outcome).reason).toContain(`session ${session} stays on its Worker`)
+    // No run was started on B, and the attempt was not spent on it.
+    expect(closedOf(ctx)).toContain('refused')
+    // The same pass chose again, after settling: on A, in the session, as attempt 2.
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'running', attempts: { count: 2 } })
+    await vi.waitFor(() => expect(workers.started).toHaveLength(2), { timeout: 30_000 })
+    expect(workers.started[1]).toMatchObject({ worker: 'agent:acc-a/develop', sessionId: session })
+    expect(workers.started.filter((s) => s.worker === 'agent:acc-b/develop')).toEqual([])
   })
 })
 
