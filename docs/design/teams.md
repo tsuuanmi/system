@@ -149,6 +149,10 @@ the operator's teams.excludeWorkers`.
   and debate turns, and an escalation to another tier of its account. A team that formed before
   the option changed finishes on its Workers; start it again to form it under the option.
 - **Only team members.** Every other step, a single `ask` or a research step, routes as before.
+- **Shown where the operator looks.** The engine's read-only `teamExclusion()` gives the entries
+  and every Worker they leave out now, with its account's Workers; the
+  [roster](roster.md#one-workers-entry) carries it per Worker (`teams`, `mcp-roster@1.6`), and the
+  Workers page says *Kept out of teams by you* on each such Worker's card (T141).
 
 ## Procedure
 
