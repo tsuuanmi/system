@@ -659,6 +659,35 @@ export const APP_JS = `'use strict'
       el('h4', {}, 'What the reviewers said'), verdictsView(review.assessments),
       review.report && report ? [el('h4', {}, 'What the checks measured'), reportView(review.report)] : null)
 
+  // Each check the policy requires of a review, with its state as the run recorded it (ADR-0063, T160): passed or
+  // failed (with its exit code) only on a record, not run and why, or pending; never "passed" without a record. Then
+  // the checks the board holds pending, next to the verdict, in warning color: those recorded as failed apart from those not run.
+  const checkLine = (c) => c.state === 'passed' ? 'passed' + (c.exitCode !== undefined ? ' (exit code ' + c.exitCode + ')' : '')
+    : c.state === 'failed' ? 'failed' + (c.exitCode !== undefined ? ', exit code ' + c.exitCode : '')
+      : c.state === 'not-run' ? 'not run: ' + c.why : 'pending: ' + c.why
+  // The warning is derived from the recorded states: a pending check the run recorded as failed is said to have failed, not
+  // to be not run (T160 review).
+  const pendingWarning = (r) => {
+    if (!r.pendingChecks.length) return null
+    const failed = r.pendingChecks.filter((c) => (r.checks ? r.checks.value : []).some((s) => s.check === c && s.state === 'failed'))
+    const notRun = r.pendingChecks.filter((c) => !failed.includes(c))
+    return el('p', { class: 'pending-checks', role: 'note' },
+      failed.length ? el('strong', {}, 'Checks that failed: ' + failed.join(', ') + '. ') : null,
+      notRun.length ? el('strong', {}, 'Checks not run: ' + notRun.join(', ') + '. ') : null,
+      'Accepting counts them as passed — ' + (failed.length ? (notRun.length ? 'fix the failed ones and run the others first.' : 'fix them first.') : 'run them first.'), whatIs('checks'))
+  }
+  const checksView = (r) => {
+    const warn = pendingWarning(r)
+    if (!r.checks) return warn || el('p', { class: 'muted' }, 'No check is pending on the board; what the checks came to is not known here.')
+    const list = r.checks.value
+    return el('div', { class: 'checks' },
+      list.length ? el('ul', { class: 'checks', 'aria-label': 'Required checks' }, list.map((c) => el('li', { class: c.state === 'passed' ? 'state completed' : c.state === 'failed' ? 'state failed' : 'soon' },
+        el('strong', {}, c.check + ': '), checkLine(c))))
+        : el('p', { class: 'muted' }, 'The policy requires no check of this kind of work.'),
+      r.checks.requiredUnknown ? el('p', { class: 'unknown' }, 'Which checks the policy requires is unknown (' + r.checks.requiredUnknown + '): those listed are the ones the board holds pending.') : null,
+      warn)
+  }
+
   async function reviews() {
     let listed, accepted
     try { ({ reviews: listed, accepted } = await api('reviews')) } catch (error) {
@@ -695,9 +724,7 @@ export const APP_JS = `'use strict'
           el('dt', {}, 'Result'), el('dd', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, 'open the run that made it') : 'no run is named',
             el('details', {}, el('summary', {}, 'Exact result (' + r.artifacts.length + ' artifact(s))'), el('div', {}, el('code', {}, subjectText(r.subject))), r.artifacts.map((a) => el('div', {}, el('code', {}, a)))))),
         evidence ? evidenceView(evidence) : null,
-        // The checks the policy requires that nothing ran: next to the verdict, in warning color.
-        r.pendingChecks.length ? el('p', { class: 'pending-checks', role: 'note' }, el('strong', {}, 'Checks not run: ' + r.pendingChecks.join(', ') + '. '), 'Accepting counts them as passed — run them first.', whatIs('checks'))
-          : el('p', { class: 'muted' }, 'Every check the policy requires passed.'),
+        checksView(r),
         el('div', { class: 'actions' }, el('label', { for: 'note-' + key }, 'Note with your verdict (optional)', input), yes, no))
     }
     // A review held for the operator expires unseen, and its task then waits for input that nothing revives: say when the first does.
@@ -737,7 +764,15 @@ export const APP_JS = `'use strict'
     challenge: 'the site asked for a human check', config_error: 'something is set up wrong', no_worker: 'no Worker could take it', stopped: 'you stopped it',
     plan_rejected: 'its plan was rejected', budget_spent: 'its budget is spent', holder_lost: 'it lost its hold on the task', internal: 'the system failed inside',
   }
-  const failureText = (error) => (KIND_WORDS[error.kind] ? KIND_WORDS[error.kind] + ' — ' : '') + error.message + (DISPOSITION[error.disposition] ? ' (' + DISPOSITION[error.disposition] + ')' : '')
+  // A failure's reason in plain words, from its kind and its disposition: the one function the run page and Home's
+  // "Since you last looked" both lead with (T160); null when neither is known.
+  const failureReason = (error) => {
+    const kind = KIND_WORDS[error.kind]
+    const next = DISPOSITION[error.disposition]
+    return kind ? kind + (next ? ' (' + next + ')' : '') : next || null
+  }
+  // On the run page: the same plain-words reason (failureReason, T160), then the system's own message.
+  const failureText = (error) => { const reason = failureReason(error); return reason ? reason + ' — ' + error.message : error.message }
   // A step's id as a person reads it: a team's steps by member ("member 1's answer"), the id beside it.
   const stepWords = (nodeId) => {
     const m = /^(.+):m(\\d+):(propose|ballot:\\d+)$/.exec(nodeId)
@@ -775,7 +810,10 @@ export const APP_JS = `'use strict'
     const task = (id) => titles.get(id)
     if ('value' in activity.runs) for (const r of activity.runs.value) {
       const what = task(r.taskId) ? '"' + task(r.taskId) + '"' : 'a ' + r.template + ' run'
-      items.push({ at: r.at, line: el('span', { class: r.status === 'failed' ? 'state failed' : '' }, r.status === 'failed' ? 'Failed: ' + what + (r.error ? ' — ' + r.error : '') + ' ' : 'Finished: ' + what + ' '), link: runLink({ runId: r.runId }, 'open the run') })
+      // A failure leads with the run page's plain-words reason (failureReason, T160); the system's own text is folded under it.
+      const reason = r.status === 'failed' && r.error ? failureReason(r.failure || {}) || 'no reason in words is known for it' : null
+      items.push({ at: r.at, line: el('span', { class: r.status === 'failed' ? 'state failed' : '' }, r.status === 'failed' ? 'Failed: ' + what + (reason ? ' — ' + reason : '') + ' ' : 'Finished: ' + what + ' '), link: runLink({ runId: r.runId }, 'open the run'),
+        fold: reason ? el('details', { class: 'raw' }, el('summary', {}, 'What the system said'), el('div', { class: 'muted' }, r.error)) : null })
     }
     if ('value' in activity.tasks) for (const t of activity.tasks.value) {
       const l = t.landing
@@ -819,7 +857,7 @@ export const APP_JS = `'use strict'
     mark.addEventListener('click', () => { markSeen(snapshot); refresh() })
     return el('section', { class: 'panel', 'aria-label': 'Since you last looked' },
       el('h3', {}, 'Since you last looked ', el('span', { class: 'muted' }, relative(seen.at) + ' (' + clockOf(seen.at) + ')')),
-      items.length ? el('ul', { class: 'since' }, items.slice(0, SINCE_SHOWN).map((i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at))))) : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
+      items.length ? el('ul', { class: 'since' }, items.slice(0, SINCE_SHOWN).map((i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at)), i.fold || null))) : el('p', { class: 'muted' }, 'Nothing happened that needs you. Runs that end, tasks that move, and requests that expire appear here.'),
       items.length > SINCE_SHOWN ? el('p', { class: 'muted' }, (items.length - SINCE_SHOWN) + ' older not shown.') : null,
       'value' in activity.runs ? null : el('p', { class: 'unknown' }, 'The runs that ended are unknown (' + activity.runs.unknown + ').'),
       'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
@@ -948,6 +986,9 @@ export const APP_JS = `'use strict'
         // Each account's capacity in one line, its 5 h bar beside it (the CEO's view of what is left).
         roster && 'value' in roster.workers && accountsOf(roster.workers.value).some((g) => g.account)
           ? el('ul', { class: 'capacities', 'aria-label': 'Capacity of each account' }, accountsOf(roster.workers.value).filter((g) => g.account).map(capacityLine)) : null,
+        // Right now by name, from the same capacity summary the Workers page renders (T152), by the same function (T160).
+        roster && roster.now && 'value' in roster.workers && roster.workers.value.length
+          ? glanceView(roster.now, readyNow(roster.now) !== undefined ? readyNow(roster.now) : ready, roster.workers.value) : null,
         ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'see the board')) : null),
       queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
       reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
@@ -1440,7 +1481,12 @@ export const APP_JS = `'use strict'
   // counted free); who is stuck; which accounts have no quota left; who cannot work; and the ready tasks with the Worker
   // each would likely go to. Each said in words (never by colour alone); a free Worker while tasks are ready is waste the
   // operator can end on the Board.
-  const glanceView = (now, ready) => {
+  // The ready tasks as capacity now read them, when it could read every active project; else undefined (the caller counts the board's).
+  const readyNow = (now) => (now && isKnown(now.ready) && !now.ready.value.unread ? now.ready.value.items.length + now.ready.value.more : undefined)
+  // The Workers page and Home both render it (T160), from the same roster read, so they name the same Workers; a free
+  // Worker the operator keeps out of teams (D58, the roster's \`teams\`) is said free for every other step, not for team work.
+  const glanceView = (now, ready, workers) => {
+    const keptOut = new Set((workers || []).filter((w) => w.teams && isKnown(w.teams)).map((w) => w.worker))
     const has = (k) => isKnown(k) && k.value.items.length > 0
     const said = (k, line) => !isKnown(k) ? 'unknown (' + k.unknown + ').' : k.value.items.length ? k.value.items.map(line).join('; ') + (k.value.more ? '; and ' + k.value.more + ' more' : '') : 'none.'
     const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left, resets ' + clockOf(q.resetsAt) : 'no quota tracked'
@@ -1448,7 +1494,7 @@ export const APP_JS = `'use strict'
     const stalled = now.stalled
     return el('section', { class: 'panel', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'),
       el('ul', {},
-        el('li', {}, el('strong', {}, 'Free: '), has(now.free) ? [said(now.free, (f) => f.name + ' (' + quota(f.quota) + ')'), ready ? ['. ' + ready + (ready === 1 ? ' task is' : ' tasks are') + ' ready: start one on the ', pageLink('board', 'Board'), '.'] : '.'] : said(now.free)),
+        el('li', {}, el('strong', {}, 'Free: '), has(now.free) ? [said(now.free, (f) => f.name + ' (' + quota(f.quota) + (keptOut.has(f.worker) ? '; kept out of teams by you: free for other steps, not for team work' : '') + ')'), ready ? ['. ' + ready + (ready === 1 ? ' task is' : ' tasks are') + ' ready: start one on the ', pageLink('board', 'Board'), '.'] : '.'] : said(now.free)),
         has(now.quotaUnknown) ? el('li', {}, el('strong', {}, 'Quota unknown, not counted free: '), said(now.quotaUnknown, (u) => u.name + ' (' + u.why + ')')) : null,
         el('li', {}, el('strong', {}, 'Stalled: '), has(stalled) ? [stalled.value.items.map((s, i) => [i ? '; ' : '', s.name + ' ', s.runId ? runOpen(s.runId) : null]), stalled.value.more ? '; and ' + stalled.value.more + ' more' : null, whatIs('stalled')] : said(stalled),
           isKnown(stalled) && stalled.value.unread ? el('span', { class: 'unknown' }, ' ' + stalled.value.unread) : null),
@@ -1460,7 +1506,8 @@ export const APP_JS = `'use strict'
     const roster = await api('roster')
     // The ready tasks as capacity now read them, when it could read every active project; else the board's own count.
     const now = roster.now
-    const ready = now && isKnown(now.ready) && !now.ready.value.unread ? now.ready.value.items.length + now.ready.value.more : await readyTasks()
+    const counted = readyNow(now)
+    const ready = counted !== undefined ? counted : await readyTasks()
     // One Worker's card; inside its account's section it is headed by its work (its role or tier).
     const card = (w, inAccount) => el('article', { class: 'panel request worker', 'aria-label': w.name + ' (' + w.worker + ')' },
       el('h4', {}, inAccount ? cut(w.name)[1] : w.name),
@@ -1508,7 +1555,7 @@ export const APP_JS = `'use strict'
     show(
       pageHead('workers'),
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
-      now && isKnown(roster.workers) && roster.workers.value.length ? glanceView(now, ready) : null,
+      now && isKnown(roster.workers) && roster.workers.value.length ? glanceView(now, ready, roster.workers.value) : null,
       ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
       el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),

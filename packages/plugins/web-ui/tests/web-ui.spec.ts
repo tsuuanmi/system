@@ -613,7 +613,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const steps = page.locator('ol.timeline > li')
     expect(await steps.nth(1).innerText()).toMatch(/^team member 1's answer \(review:m1:propose\) done/)
     // The earlier attempt's error on a step that went on is history: said, never as the step's failure.
-    expect(await steps.nth(1).innerText()).toContain('An earlier attempt failed: the site was busy, or answered with its own error — scripted overloaded')
+    expect(await steps.nth(1).innerText()).toContain('An earlier attempt failed: the site was busy, or answered with its own error (it is tried again later) — scripted overloaded')
     expect(await steps.nth(1).locator('.state.failed').count()).toBe(0)
   }, 60_000)
 
@@ -641,6 +641,44 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await card.innerText()).not.toContain('Kept out of teams')
     await card.getByText('details', { exact: true }).click()
     expect(await card.innerText()).toContain('Teams\nunknown (it could not be read: the router is busy)')
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('names the same free, stalled, and no-quota Workers on Home as on the Workers page, from the one capacity summary, and never offers a Worker kept out of teams for team work (T152, D58, T160)', async () => {
+    const { origin, token, ctx, workflow } = await boot({ roster: true })
+    // A Worker of no account, free with no quota tracked, which the operator keeps out of teams.
+    const router = (ctx as unknown as { workers: StubRouter }).workers
+    router.extra = [{ worker: 'worker:local/economy', provider: 'ollama', family: 'ollama', tier: 'economy', quotaClass: 'local', locality: 'local', state: 'ready', observedAt: AT }]
+    workflow.excluded = { entries: ['worker:local/economy'], workers: ['worker:local/economy'] }
+    const roster = await (await fetch(`${origin}/ui/api/roster`, { headers: { authorization: `Bearer ${token}` } })).json() as { now: { free: { value: { items: Array<{ worker: string; name: string }> } } } }
+    const free = roster.now.free.value.items
+    expect(free.map((f) => f.worker)).toEqual(['worker:local/economy'])
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await pinnedPage(browser)
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const lines = async () => {
+      const now = page.getByRole('region', { name: 'Right now' })
+      await expect.poll(() => now.count()).toBe(1)
+      const said = (await now.innerText()).split('\n')
+      return Object.fromEntries(['Free', 'Stalled', 'No quota left'].map((head) => [head, said.find((l) => l.startsWith(`${head}: `))]))
+    }
+    // Home renders the summary by the same function as the Workers page: the same names on each line.
+    const home = await lines()
+    expect(await page.getByRole('region', { name: 'Workers at a glance' }).getByRole('region', { name: 'Right now' }).count()).toBe(1)
+    expect(home['Free']).toBe(`Free: ${free[0]!.name} (no quota tracked; kept out of teams by you: free for other steps, not for team work).`)
+    expect(home['Stalled']).toBe('Stalled: none.')
+    expect(home['No quota left']).toBe('No quota left: Chatgpt · Studio Plus until 11:00 (in 2 h)')
+    await page.getByRole('link', { name: 'Workers' }).click()
+    await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
+    expect(await lines()).toEqual(home)
+    // Kept in teams again, it is free for every step: said the same on both pages.
+    workflow.excluded = undefined
+    await page.reload()
+    await expect.poll(async () => (await lines())['Free']).toBe(`Free: ${free[0]!.name} (no quota tracked).`)
+    const workers = await lines()
+    await page.getByRole('link', { name: 'Home' }).click()
+    await expect.poll(() => page.getByRole('region', { name: 'Since you last looked' }).count()).toBe(1)
+    expect(await lines()).toEqual(workers)
   }, 60_000)
 
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {

@@ -4,8 +4,10 @@ import type { WorkChange } from '@tsuuanmi/system-workers-core'
 import { chromium } from 'patchright-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
+import type { ArtifactRef } from '@tsuuanmi/system-board-core'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
-import { boot, OPERATOR, reviewed } from './store-backed.ts'
+import { acceptanceOf, checkStates, requiredChecks } from '../src/index.ts'
+import { boot, bundlePolicies, OPERATOR, reviewed } from './store-backed.ts'
 
 // End to end over the store-backed board, approval queue, and engine, under the bundle's own
 // default studio policy, with the operator's verdicts through the web UI's API. Only Worker
@@ -33,6 +35,11 @@ describe('web UI: the operator accepts or rejects a board review held for the op
       taskId: task.taskId, project: { projectId: 'p1', title: 'project p1' }, subject: task.result!.subject, artifacts: [run.result],
       pendingChecks: ['tests', 'lint'], run: expect.objectContaining({ runId: run.runId }), heldFor: 'operator', expiresAt: task.waiting!.expiresAt,
     })])
+    // Each check the policy requires, with its state (ADR-0063, T160): the run recorded neither, so both are pending, never passed.
+    expect((listed.value.reviews as Array<Record<string, unknown>>)[0]!.checks).toEqual({ value: [
+      { check: 'tests', state: 'pending', why: 'the run recorded no result of it' },
+      { check: 'lint', state: 'pending', why: 'the run recorded no result of it' },
+    ] })
 
     // Only the operator's channel decides (INV-6): a client token is refused by the guard before any route.
     expect((await call(`reviews/${task.taskId}/decide`, { verdict: 'accept', subject: task.result!.subject }, client)).status).toBe(401)
@@ -80,6 +87,63 @@ describe('web UI: the operator accepts or rejects a board review held for the op
     schemas.assertRecord(expired)
     expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
     expect((await call(`reviews/${task.taskId}/decide`, { verdict: 'accept', subject: task.result!.subject })).status).toBe(409)
+  })
+})
+
+describe('web UI: each required check of a review with its state, from what the run recorded at acceptance (ADR-0063, T160)', () => {
+  const ACCEPTANCE = `sha256:${'a'.repeat(64)}` as ArtifactRef
+  const HOLD = `sha256:${'b'.repeat(64)}` as ArtifactRef
+  /** A run's acceptance as the engine records it, and the board's hold that names it first among its inputs. */
+  const ledger = (detail: Record<string, unknown>) => (ref: ArtifactRef): unknown => (ref === HOLD
+    ? { decisionType: 'board', inputs: [ACCEPTANCE, `sha256:${'c'.repeat(64)}`], outcome: { option: 'operator-review', detail: { pendingChecks: ['lint'] } } }
+    : ref === ACCEPTANCE ? { decisionType: 'acceptance', inputs: [], outcome: { option: 'accept', detail } } : undefined)
+
+  it('says passed and failed with their exit codes only on a record, not run with why, and pending for a check nothing recorded', () => {
+    const detail = {
+      checks: { schema: true, tests: true, typecheck: false },
+      checkRun: { asked: ['tests', 'typecheck', 'lint'], source: 'agents', outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }, { check: 'typecheck', outcome: 'failed', exitCode: 2 }, { check: 'lint', outcome: 'error' }] },
+    }
+    const acceptance = acceptanceOf({ lastDecision: HOLD }, ledger(detail))
+    expect(acceptance).toEqual(detail)
+    expect(checkStates(['tests', 'typecheck', 'lint', 'review'], ['lint', 'review'], acceptance)).toEqual([
+      { check: 'tests', state: 'passed', exitCode: 0 },
+      { check: 'typecheck', state: 'failed', exitCode: 2 },
+      { check: 'lint', state: 'not-run', why: 'it did not run to an exit code on the result' },
+      { check: 'review', state: 'pending', why: 'the run recorded no result of it' },
+    ])
+  })
+
+  it('says why the checks the run asked for did not run: no source held the worktree, or the source refused', () => {
+    const notRun = { checks: {}, checkRun: { asked: ['tests', 'lint'], outcome: 'not-run', reason: 'no Worker source holds the worktree /w/run_1 of the run' } }
+    expect(checkStates(['tests', 'lint'], ['tests', 'lint'], acceptanceOf({ lastDecision: HOLD }, ledger(notRun)))).toEqual([
+      { check: 'tests', state: 'not-run', why: 'no Worker source holds the worktree /w/run_1 of the run' },
+      { check: 'lint', state: 'not-run', why: 'no Worker source holds the worktree /w/run_1 of the run' },
+    ])
+    const refused = { checks: {}, checkRun: { asked: ['tests'], source: 'agents', outcome: 'refused', cause: 'confinement' } }
+    expect(checkStates(['tests'], ['tests'], acceptanceOf({ lastDecision: ACCEPTANCE }, ledger(refused)))).toEqual([
+      { check: 'tests', state: 'not-run', why: 'the Worker source agents refused to run it (confinement)' },
+    ])
+  })
+
+  it('never says passed without a record: no acceptance read, a check the board still holds pending, or a check required and not recorded (INV-2)', () => {
+    // No acceptance could be read: every required check is pending, with why.
+    expect(acceptanceOf({ lastDecision: HOLD }, () => undefined)).toBeUndefined()
+    expect(acceptanceOf({}, ledger({}))).toBeUndefined()
+    expect(checkStates(['tests', 'lint'], [], undefined)).toEqual([
+      { check: 'tests', state: 'pending', why: 'no acceptance of the run that records it could be read' },
+      { check: 'lint', state: 'pending', why: 'no acceptance of the run that records it could be read' },
+    ])
+    // A record of passed the board does not count (it holds the check pending) is not shown as passed.
+    const states = checkStates(['tests'], ['tests'], { checks: { tests: true } })
+    expect(states).toEqual([{ check: 'tests', state: 'pending', why: 'the run recorded no result of it' }])
+    // Required and never recorded.
+    expect(checkStates(['tests', 'lint'], [], { checks: { schema: true } }).map((c) => c.state)).toEqual(['pending', 'pending'])
+  })
+
+  it('takes the required checks from every rule for the class in the policies that apply, in one order', () => {
+    const policies = bundlePolicies()
+    expect(requiredChecks(policies, 'workspace-write')).toEqual(['tests', 'lint'])
+    expect(requiredChecks(policies, 'read')).toEqual([])
   })
 })
 
@@ -230,6 +294,10 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.innerText()).toContain('Approved by the review at review:1 (w:standard)')
     expect(await card.innerText()).toContain('The header name is matched case-sensitively (src/limits.ts)')
     expect(await card.innerText()).toContain('The run\'s last step, solo, reported this, in its own words:')
+    // Each required check with its state (ADR-0063, T160): the run recorded neither, so neither reads as passed.
+    const required = card.getByRole('list', { name: 'Required checks' })
+    expect(await required.innerText()).toBe('tests: pending: the run recorded no result of it\nlint: pending: the run recorded no result of it')
+    expect(await card.innerText()).not.toContain('Every check the policy requires passed')
     const pending = card.locator('p.pending-checks')
     expect(await pending.innerText()).toMatch(/^Checks not run: tests, lint\. Accepting counts them as passed — run them first\./)
     const wait = await page.evaluate(() => { const probe = document.createElement('span'); probe.style.color = 'var(--wait)'; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color })
@@ -258,5 +326,38 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     await page.goto(`${origin}/ui/`)
     await expect.poll(() => page.getByRole('heading', { name: 'Reviews' }).count()).toBe(1)
     expect(await page.getByRole('region', { name: 'Accepted, on their way in' }).count()).toBe(0)
+  }, 90_000)
+
+  it.runIf(canRunBrowser)('says a required check the run recorded as failed, and the board still holds pending, failed — never also not run (T160)', async () => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    const { task } = await reviewed(ctx, 'Keep the retry budget')
+    expect(task.waiting?.pendingChecks).toEqual(['tests', 'lint'])
+    // The acceptance the board's hold names first records tests failed with exit code 1; lint it did not record.
+    const store = ctx.artifacts as unknown as { get: (ref: string) => { body?: unknown } | undefined }
+    const get = store.get.bind(store)
+    const hold = get(task.lastDecision!)?.body as { inputs?: string[] }
+    const acceptanceRef = [task.lastDecision!, ...(hold.inputs ?? [])].find((ref) => (get(ref)?.body as { decisionType?: string } | undefined)?.decisionType === 'acceptance')!
+    store.get = (ref) => {
+      const found = get(ref)
+      if (ref !== acceptanceRef || !found) return found
+      const body = found.body as { outcome: { detail?: Record<string, unknown> } }
+      return { ...found, body: { ...body, outcome: { ...body.outcome, detail: { ...body.outcome.detail,
+        checks: { tests: false }, checkRun: { asked: ['tests'], source: 'agents', outcome: 'checked', results: [{ check: 'tests', outcome: 'failed', exitCode: 1 }] } } } } }
+    }
+    onTestFinished(() => void (store.get = get))
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article', { name: 'Keep the retry budget' })
+    const required = card.getByRole('list', { name: 'Required checks' })
+    await expect.poll(() => required.count(), { timeout: 15_000 }).toBe(1)
+    expect(await required.innerText()).toBe('tests: failed, exit code 1\nlint: pending: the run recorded no result of it')
+    const pending = card.locator('p.pending-checks')
+    expect(await pending.innerText()).toMatch(/^Checks that failed: tests\. Checks not run: lint\. Accepting counts them as passed — fix the failed ones and run the others first\./)
+    expect(await pending.innerText()).not.toMatch(/not run: [^.]*tests/)
   }, 90_000)
 })

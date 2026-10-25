@@ -7,8 +7,10 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   last looked, each counted and linked, then named one by one under its count (up to 5 a group,
   each linked to its card, with when it expires), and counted in the window's title on every page
   from one route, `GET waiting`: *(3) system — Home*), what happened since the
-  operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`), the
-  Workers at a glance, then those decisions and the recent runs by their tasks' titles, each step
+  operator last looked (kept in the browser only, until **Mark as seen**; `GET activity`; a failed
+  run led by the run page's own plain-words reason, by one function, its raw text folded, T160), the
+  Workers at a glance (with **Right now**, the Workers page's own section, so both name the same
+  Workers), then those decisions and the recent runs by their tasks' titles, each step
   with its Worker's name; a running run's page and Board card say where it is now (its step, Worker,
   last event, and a stall; `GET runs/live`), and a start names who would likely take each step.
   Both reads are bounded per request and read the newest first: the runs by state and by when
@@ -68,10 +70,13 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   A queue at contract 1.0 takes no proposal (`501`);
 - when `ctx.board` is present, the **reviews**: every board task in review, those the board
   holds for the operator first ([board](../../../docs/design/board.md#required-checks-bind-at-acceptance)),
-  each with its project, exact subject, result artifacts, the checks still pending, its run, and
+  each with its project, exact subject, result artifacts, each required check with its state (passed
+  or failed with its exit code only on the run's record at acceptance, not run and why, or pending;
+  [ADR-0063](../../../docs/decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md), T160),
+  the checks still pending, its run, and
   until when it waits; what it changed (each file of its worktree's change, folded, read through
   `ctx.workers.changes`), what its reviewers said, and what its checks measured (the run's report),
-  with the checks not run in warning; and the operator's **Accept / Reject**; then, once accepted,
+  with the checks still pending in warning (those recorded as failed apart from those not run); and the operator's **Accept / Reject**; then, once accepted,
   where the result stands on its way into the repository, until it is merged or refused
   ([what a review shows](../../../docs/reference/web-ui.md#what-a-review-shows)); above them, and on Home's waiting
   line, when the first review held for the operator expires (marked within the hour), since an
@@ -106,7 +111,8 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   `accounts`, `agentWorkers`, `resources`, `eventLog`, the engine, `board`): the counts (working,
   free, resting and until when the first is, unavailable); **Right now**, rendered from the roster's
   `now` as the server made it (`readCapacity`, T152; the page computes none of it), by name: who is
-  free, the quota lost soonest unused first, with what each has left (and how many tasks are ready,
+  free, the quota lost soonest unused first, with what each has left, one kept out of teams said
+  free for other steps, not for team work (D58, T160) (and how many tasks are ready,
   linked to the Board), whose quota is unknown (never counted free), who is stalled, which accounts
   have no quota left and until when, who cannot work, and each ready task's likely Worker; then the Workers by account, each
   account once under a small header with its name and roles (`Claude Code · science: develop
@@ -203,7 +209,9 @@ its run), on a page whose clock stands at a fixed instant in UTC, so each time i
 exactly whenever the test runs; Home's waiting items by name, each linked to its card; a run's
 *What happened* (started from the previous attempt's work, a team member's answer sent again once,
 its result merged; an earlier attempt's error as history, never as the step's failure); and a
-Worker kept out of teams, *Right now* by name, and an engine that cannot tell folded (T141).
+Worker kept out of teams, *Right now* by name, and an engine that cannot tell folded (T141); and
+the same free, stalled, and no-quota names on Home as on the Workers page, a free Worker kept out
+of teams never offered for team work (T160).
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
@@ -221,15 +229,19 @@ change, verdicts, and report served to the operator only (a source that cannot r
 and, with a browser, a review card with what changed (stat, files folded, show all), the verdict,
 the report, the checks not run in warning, and after Accept where the result stands; a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
-client token, bound to the subject shown, accepted to done; a rejection as another attempt; and a
-review that expires `review-expired`.
+client token, bound to the subject shown, accepted to done; a rejection as another attempt; a
+review that expires `review-expired`; and each required check with its state from the run's
+acceptance (passed and failed with their exit codes only on a record, not run and why, pending;
+never passed without a record), listed on the card, a failed check the board still holds pending
+warned as failed, never as not run (T160).
 [`tests/help.spec.ts`](tests/help.spec.ts), with a browser: Help in the navigation, its sections
 and links, the glossary's anchors focused by a link (without a token too), each **?** named and
 controlling its note, opened and closed by keyboard and linked to Help, and the empty states.
 [`tests/live.spec.ts`](tests/live.spec.ts): what happened since a time (runs ended, tasks moved,
 requests expired) for the operator only, the Workers that could likely take a start's step, a
 running run's steps, last event, and a stall; and, with a browser, Home's *Since you last looked*
-until marked as seen, the waiting count in the window's title, the start's likely Workers, and a
+until marked as seen, a failed run there led by the run page's plain-words reason with the raw
+text folded (T160), the waiting count in the window's title, the start's likely Workers, and a
 running run's page and Board card.
 [`tests/dispatch.spec.ts`](tests/dispatch.spec.ts): `GET dispatch` for the operator only (the
 settings, an ask with its Worker and windows, the bounds, the last pass); and, with a browser,

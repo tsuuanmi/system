@@ -30,10 +30,12 @@ then named one by one under its count, at most 5 a group with how many more: eac
 asks, each review by its task and project, each with when it expires, and each run by its task's title
 (else its template) with why, each linked to its card; and what of it could not be read), the Workers at a glance (the roster's counts, then each account's capacity in one
 line, its 5 h bar beside it: *Claude Code · science: 5 h used 42 %, resets 03:08*, with *resting
-until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*), the approval cards, the reviews as
+until 02:38 (in 2 h)* first when it rests, or *5 h no reading yet*; then **Right now**, the same
+section the Workers page shows, by the same function from the same roster read, so both name the
+same free, stalled, and no-quota Workers, T160), the approval cards, the reviews as
 cards, under a line saying how many are held for you and when the first expires, marked when
 within the hour, since an unanswered one expires and its task waits for input that nothing
-revives (what was asked, the checks not run, the run that made the result, the exact result
+revives (what was asked, each required check with its state, the checks not run, the run that made the result, the exact result
 folded; **Accept: mark it done** and **Reject: send it back**, each with its own note), the runs
 that need a look (waiting for a plan approval or a deciding vote, or outside the board and failed
 since you last marked Home as seen) with why and a link, and the 15 most
@@ -42,7 +44,9 @@ its Worker's roster `name`.
 
 *Since you last looked*, under *Waiting for you*, says what happened since the operator last marked
 Home as seen, one line each with a link, the latest first, at most 20 (a part that holds more than it read says *More runs ended than the 50 read here.*, and one that cannot be read says so): the runs that finished or
-failed (with why), the tasks that moved (accepted, merged, waiting for a review, an approval, or
+failed (a failure led by the same plain-words reason the run page gives, from its kind and
+disposition by one function: *Failed: a solo run — its account must sign in again (it needs you)*;
+the system's own text folded under *What the system said*, T160), the tasks that moved (accepted, merged, waiting for a review, an approval, or
 input, cancelled), the requests that expired unanswered (counted as denied), and the Workers that
 started resting, came back, became unavailable, or are available again. **Mark as seen** starts it
 again from now. When and each Worker's status then are kept in this browser only
@@ -52,7 +56,7 @@ again from now. When and each Worker's status then are kept in this browser only
 | Route | Body | Answer |
 |---|---|---|
 | `GET waiting?since=<ISO time>` | — | `{asOf, since?, requests, reviews, runs, count, partial?}`, each part `{value}` or `{unknown}` with why ([what waits for you](#what-waits-for-you)); `count` adds the known parts, and `partial` says a part is unknown or holds more than it read. An invalid `since` is `400` |
-| `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`, each part `{value, more?}` or `{unknown}` with why when it cannot be read (never empty in its place): the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), read by state and by when their state changed (`ctx.workflow.usage` with a filter, contract 1.7), so a run that started long ago is there; the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`); and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), read newest first (`ctx.eventLog`, contract 1.1), at most 5 pages of 1,000. Each part lists at most 50, the latest first; `more` says it holds more than it lists, or that a read stopped at its bound before the end. A missing or invalid `since` is `400` |
+| `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`, each part `{value, more?}` or `{unknown}` with why when it cannot be read (never empty in its place): the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`, the raw message, and `failure {kind, disposition}` beside it), read by state and by when their state changed (`ctx.workflow.usage` with a filter, contract 1.7), so a run that started long ago is there; the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`); and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), read newest first (`ctx.eventLog`, contract 1.1), at most 5 pages of 1,000. Each part lists at most 50, the latest first; `more` says it holds more than it lists, or that a read stopped at its bound before the end. A missing or invalid `since` is `400` |
 
 ### Dispatch
 
@@ -171,7 +175,7 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET reviews` | — | `{reviews, accepted}`: `accepted`, the latest 20 done tasks whose accepted result is still on its way into the repository (landing `watch`, `commit`, `committed`, `asked`, `merging`), each with `taskId`, `title`, `project`, `run`, and `landing` as the Board's cards give it; `reviews`, every task in review, those held for the operator first, by expiry: `taskId`, `title`, `goal`, `actionClass`, `acceptance`, `attempts`, `project {projectId, title}`, the result's exact `subject`, `artifacts` (and `digest`, `files`), `pendingChecks`, `run`, `heldFor` (`operator`, or `reviewer` while a run's lease holds it), `since`, `expiresAt`, `lastDecision` |
+| `GET reviews` | — | `{reviews, accepted}`: `accepted`, the latest 20 done tasks whose accepted result is still on its way into the repository (landing `watch`, `commit`, `committed`, `asked`, `merging`), each with `taskId`, `title`, `project`, `run`, and `landing` as the Board's cards give it; `reviews`, every task in review, those held for the operator first, by expiry: `taskId`, `title`, `goal`, `actionClass`, `acceptance`, `attempts`, `project {projectId, title}`, the result's exact `subject`, `artifacts` (and `digest`, `files`), `pendingChecks`, `checks` (below), `run`, `heldFor` (`operator`, or `reviewer` while a run's lease holds it), `since`, `expiresAt`, `lastDecision` |
 | `POST reviews/<taskId>/decide` | `{verdict: accept \| reject, subject, note?}` | `{task, decision}`: the task after `ctx.board.accept`, and the `acceptance` decision recorded |
 
 - `subject` is the exact subject of the result the page showed (INV-5): a result on another
@@ -183,6 +187,20 @@ Served when `ctx.board` and `ctx.artifacts` are present; without either, both ro
   accepts a review.
 - A malformed body is `400`, an unknown task `404`. A refusal by the board is `409`, with its
   failure (`invalid`, `invalid-transition`, …).
+- `checks` (T160, [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)):
+  `{value, requiredUnknown?}`, each check the policy requires of the task's class (every rule for it
+  in the studio's and the project's policies) and each the board holds pending, in the order tests,
+  typecheck, lint, schema, quote-check, review, as `{check, state, exitCode?, why?}`, read from the
+  acceptance decision the task was judged on (its last decision, or the one the board's hold names
+  first among its inputs: `outcome.detail.checks` and the run's `checkRun`): `passed` or `failed`
+  (with the command's `exitCode`) only on a record of it, and never `passed` while the board holds it
+  pending; `not-run` with why when the run asked for it and it did not run to an exit code (no
+  Worker source held the worktree, a source refused, the command errored); `pending` with why when
+  nothing recorded it. When the policy cannot be read, `requiredUnknown` says why and the list holds
+  the pending checks only. The card lists them under *Required checks* (*tests: passed (exit code
+  0)*, *lint: failed, exit code 1*, *typecheck: not run: …*, *review: pending: …*), then the checks
+  the board holds pending in warning, from their recorded states: one recorded as failed under
+  *Checks that failed: …*, the others under *Checks not run: …*, never a failed check as not run.
 
 ### What a review shows
 
@@ -405,13 +423,16 @@ Served always; each service it reads that is not mounted reads as unknown with w
   and quarantined when any); **Right now**, rendered from the roster's `now` as the server made it
   (the page computes none of it, T152), by name, each said in words and never by colour alone:
   *Free:* the Workers that take work now, the one whose quota would be lost unused soonest first,
-  each with what is left (*Claude Code · science · develop (90 % of 5 h left, resets 10:10)*), and
+  each with what is left (*Claude Code · science · develop (90 % of 5 h left, resets 10:10)*), one
+  the operator keeps out of teams (D58, its roster entry's `teams`) said *kept out of teams by you:
+  free for other steps, not for team work*, and
   how many tasks are ready, linked to the Board; *Quota unknown, not counted free:* each Worker
   whose account's quota cannot be read, with why (only when any); *Stalled:* each Worker with a
   stalled run (linked); *No quota left:* each account resting or at a limit and until when;
   *Cannot work:* each unavailable or quarantined Worker with why (T141); and *Ready:* each ready
   task with the Worker its start would likely go to (only when any). The tasks ready the page counts
-  are `now`'s when it read every active project, else the board's own count; then the
+  are `now`'s when it read every active project, else the board's own count. Home's *Workers at a
+  glance* renders this same section by the same function (T160); then the
   Workers by account: each account once, under a small header
   with its name and its Workers' roles (*Claude Code · science: develop [code], review, review-2*),
   what stops it (*Its account is resting until 02:16 (in 2 h)*, signed out, quarantined, signed in
