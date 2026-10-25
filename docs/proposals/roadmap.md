@@ -73,6 +73,18 @@ produces PRs.
 | **W1** to **W4** Code-host observer | deferred until the pilot produces PRs | code-host observations briefing the next attempt | B8 |
 | **W5** Landing | built in part (T105, after T99 left an accepted result uncommitted): once the board has a task `done` on a result in its run's worktree, the engine has the `agents` source commit it on `system/run/<runId>` and asks a `merge` request bound to the base and head SHAs, merged on the approval ([landing an accepted result](../design/workflow-engine.md#landing-an-accepted-result), [ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md), proposed). Open: `apply`, MCP `land` and `system land`, and whether `merge` is always asked (PROP-0013 open question 5) | landing on an approval bound to the base and head SHAs | B8 |
 
+## Dispatch by quota (PROP-0014)
+
+Proposed 2026-10-25, from the operator's request of that day; not yet reviewed. What each
+increment delivers is in [PROP-0014](0014-dispatch-by-quota.md#increments).
+
+| Increment | State | Delivers | Depends on |
+|---|---|---|---|
+| **D1** Ask to start, chosen by quota | proposed | the dispatch pass by age; the `dispatch` class at `ask`; the quota score and `candidates`; bounds per account, project, and in total; Home's *Waiting for your go* | — |
+| **D2** Starting by itself | proposed | `notify` and `auto` per project; hourly bounds; per-project pause; task `priority`; `startedBy` on the roster and Home | D1 |
+| **D3** Quota in every route | proposed | the score as a routing order key for every step, with its ADR | D1 |
+| **D4** Metered pools | proposed | dispatch onto metered pools inside a project cap | D2 |
+
 ## Done and open milestones
 
 | Milestone | State | What remains | Evidence |
