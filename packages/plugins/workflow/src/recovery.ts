@@ -291,8 +291,8 @@ function resend(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, exe
 export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; execution?: WorkerExecution; decisions?: ArtifactRef[] }, lease: () => Lease): void {
   // A site's own error after the send, as its source read it on the execution's page (ADR-0062).
   const siteError = attempt.sent && attempt.execution?.error?.siteError === true ? attempt.execution : undefined
-  const keptFirst = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
-  const notResent = siteError ? resend(e, run, node, error, siteError, keptFirst, lease) : undefined
+  const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
+  const notResent = siteError ? resend(e, run, node, error, siteError, kept, lease) : undefined
   if (siteError && notResent === undefined) return
   const max = e.config.maxAttempts ?? 3
   const reasons = {
@@ -339,7 +339,6 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // What failed, in the decision `explain` shows, so the CLI alone tells why.
   const said = errorLine(error.message)
   if (said) (failover ? reasons.failover : retry ? reasons.retry : reasons.fail).push(`error: ${said}`)
-  const kept = keptFirst
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'recovery',
     question: `How does node ${node.node_id} of run ${run.run_id} recover from ${error.kind}?`,
