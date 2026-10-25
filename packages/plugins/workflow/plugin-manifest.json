@@ -10,7 +10,7 @@
   "provides": [
     {
       "seam": "workflow",
-      "version": "1.8.0"
+      "version": "1.9.0"
     }
   ],
   "consumes": [
@@ -64,7 +64,7 @@
     },
     {
       "seam": "resources",
-      "range": "^1.1.0",
+      "range": "^1.2.0",
       "optional": true
     }
   ],
@@ -139,6 +139,10 @@
     },
     {
       "key": "digestsPerHour",
+      "sensitive": false
+    },
+    {
+      "key": "dispatch",
       "sensitive": false
     },
     {

@@ -411,6 +411,12 @@ No options.
 | `pageSize` | number (1…100) | `20` | Records per resources_usage page when the caller names no limit |
 | `maxRecords` | number (1…1000000) | `10000` | Records usage() returns at most; more matching is refused (narrow the filter or page) |
 | `holdSeconds` | number (60…604800) | `14400` | How long a reservation nobody releases (a crashed run) keeps counting against its caps |
+| `quota` | object | `{}` | Quota settings the quota score reads (ADR-0063): the reserve kept free of dispatched work, and how windows are read |
+| `quota.reservePercent` | number (0…90) | `20` | Share of every window, in percent, kept for your own use: work System starts by itself never starts into it (D63); a run already going keeps going |
+| `quota.useSoonMinutes` | number (0…1440) | `90` | A window that resets within this many minutes is used first, before its unused share is lost (0: never) |
+| `quota.minHeadroomPercent` | number (1…100) | `10` | The least headroom above the reserve a window about to reset needs to be used first |
+| `quota.headroomBucketPercent` | number (1…25) | `5` | Headroom is compared in buckets this many points wide, so readings a few points apart do not reorder Workers |
+| `quota.staleReadingSeconds` | number (60…86400) | `1800` | A reading older than this is stale: its window is not known, so it is never read as capacity (keep it above the agent providers' limitReadSeconds) |
 
 ## `runtime-acp`
 
@@ -555,6 +561,17 @@ No options.
 | `tasksFile.maxTasks` | number (0…10000) | `200` | Tasks it lists at most, open ones first, the rest counted; 0 writes no file |
 | `tasksFile.maxChars` | number (1024…1048576) | `65536` | Characters it holds at most; past it, it is cut at a line with a note |
 | `digestsPerHour` | number (0…1000) | `6` | Digests of board task results the engine asks ctx.digests for in any hour, one per attempt, after its result reached the board (INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why |
+| `dispatch` | object | `{}` | Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself) |
+| `dispatch.enabled` | boolean | `true` | System asks to start ready board tasks on free Workers chosen by quota (ADR-0063); false: nothing is asked or started |
+| `dispatch.sweepSeconds` | number (10…3600) | `60` | Seconds between dispatch passes; one runs at start too, after the runs are reconciled |
+| `dispatch.maxPerPass` | number (1…16) | `2` | Starts or asks one pass makes at most |
+| `dispatch.maxRunning` | number (1…10000) |  | Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less) |
+| `dispatch.maxRunningPerProject` | number (1…16) | `2` | The same, per project |
+| `dispatch.maxRunningPerAccount` | number (1…16) | `1` | The same, per account of the chosen Worker; and the most its account's load may be for it to be free |
+| `dispatch.maxRunningPerRepository` | number (1…16) | `4` | The same, per repository (the chosen writing Worker's workspace): tasks without a write subject on one repository run in parallel up to this (D64) |
+| `dispatch.leaveRunsFree` | number (0…10000) |  | Active runs dispatch leaves for the lead's and your own starts (at most maxActiveRuns less 1; default 4, or that when less) |
+| `dispatch.maxOpenAsks` | number (1…32) | `4` | Dispatch requests open at once, waiting for your go |
+| `dispatch.approvedHoldMinutes` | number (1…240) | `30` | Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |
