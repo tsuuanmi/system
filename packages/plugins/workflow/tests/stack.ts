@@ -4,7 +4,8 @@
  * A test file calls {@link browserStack} once, at its top: that registers the file's one Xvfb and
  * returns `boot`, whose stack is stopped when its test finishes. The files are split by theme so they
  * run side by side, and page opens are not paced (the drivers' `pageGapMs` and the turn runtime's
- * `providerPageGapMs` are 0).
+ * `providerPageGapMs` are 0). An answer counts as complete after {@link STABLE_MS} of unchanged
+ * text (the drivers' `stableMs`), as in the drivers' own specs, not production's 1.5 s.
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -37,7 +38,10 @@ import Workflow from '../src/index.ts'
 import type { RunView } from '../src/types.ts'
 import { TEST_TEMPLATES } from './templates.ts'
 
-export const REPORT = 'Plugins matter <a href="https://src.example/catalog">[1]</a>.'
+/** The drivers' answer-stable window on the fake sites, in milliseconds (production keeps 1.5 s). */
+export const STABLE_MS = 300
+
+export const REPORT ='Plugins matter <a href="https://src.example/catalog">[1]</a>.'
 /** A team member's answers, as the engine's prompts ask for them (docs/design/teams.md). */
 export const isProposal = (prompt: string): boolean => prompt.includes('Answer on your own')
 export const kind = (prompt: string): string => (isProposal(prompt) ? 'proposal' : prompt.includes('is split') ? 'debate' : prompt.includes('your ballot') ? 'ballot' : 'other')
@@ -117,8 +121,8 @@ export function browserStack() {
       ctx.plugin(TestDisplay),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
-      ...(gemini ? [ctx.plugin(GeminiWeb, { origin: gemini.origin, pageGapMs: 0 })] : []),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, stableMs: STABLE_MS, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
+      ...(gemini ? [ctx.plugin(GeminiWeb, { origin: gemini.origin, pageGapMs: 0, stableMs: STABLE_MS })] : []),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WorkerRouter, {}),
       ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, providerPageGapMs: 0, ...options.turns }),

@@ -369,6 +369,7 @@ No options.
 | `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"}}` | Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift |
 | `defaultMode` | string | `"instant"` | Preset when a caller names none |
 | `pageGapMs` | number (0…600000) | `10000` | Minimum gap between the opens of the account's pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced |
+| `stableMs` | number (100…60000) | `1500` | How long an answer's text must stay unchanged, with generation stopped, before it counts as complete, in milliseconds, from 100 ms to 1 min; test stacks on the fake site use 300 |
 
 ## `provider-gemini-web`
 
@@ -382,6 +383,7 @@ No options.
 | `researchMode` | string |  | Preset Deep research selects, whatever its turn names; unset, the picker is left as the site has it. A thinking level not shown with Deep research chosen is skipped |
 | `maxPromptChars` | number (1…) | `30000` | The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error) |
 | `pageGapMs` | number (0…600000) | `10000` | Minimum gap between the opens of the account's pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced |
+| `stableMs` | number (100…60000) | `1500` | How long an answer's text must stay unchanged, with generation stopped, before it counts as complete, in milliseconds, from 100 ms to 1 min; test stacks on the fake site use 300 |
 
 ## `providers`
 

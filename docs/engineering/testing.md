@@ -196,7 +196,12 @@ absence of automation leaks are properties of the real browser.
   runs and what it may be sent, provider families, a member woken by a message, one that needs a
   peer's input, one handed off to a new conversation), each file on its own Xvfb through its
   package's `tests/stack.ts`. Those stacks do not pace page opens (the drivers' `pageGapMs` and the
-  runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing.
+  runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing. They also
+  set the drivers' answer-stable window (`stableMs`) to 300 ms, as the drivers' own specs do,
+  instead of production's 1.5 s. Production waits that long for a live site that pauses mid-answer.
+  The fake sites stream a word every 60 ms and then mark the answer done, so the longer window only
+  added idle time to every turn of every spec. The drivers' specs still cover completion on stable
+  text.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
   product's own `discoverChrome` and launch it with the product's arguments.
   The order is `CHROME_PATH`, then a system Chrome no older than the engine,
