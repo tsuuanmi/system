@@ -46,21 +46,23 @@ describe.runIf(canRunBrowser)('ctx.turns: a restarted turn that must wait, and i
     await settled(() => first.ctx.turns.get(turn.turnId)?.binding !== undefined)
     await first.stop()
     const second = await boot({ dir, shared: first.fake })
-    // Each look at the conversation while the turn waits reads it on the site (a snapshot), then reconciles.
-    const driver = second.ctx.providers.get('chatgpt-web') as unknown as { snapshot: (...args: unknown[]) => Promise<unknown> }
-    const snapshot = driver.snapshot.bind(driver)
+    // Each look at the conversation while the turn waits reads it on the site, then reconciles what it
+    // read; after a WAIT the runtime waits 5 s before its next look.
+    const receipts = second.ctx.turnReceipts as unknown as { reconcile: (...args: unknown[]) => unknown }
+    const reconcile = receipts.reconcile.bind(receipts)
     let looks = 0
-    driver.snapshot = async (...args) => {
+    receipts.reconcile = (...args) => {
+      const decided = reconcile(...args)
       looks += 1
-      return snapshot(...args)
+      return decided
     }
     const waits = () => second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' })
       .filter((a) => (a.body as { outcome: { option: string } }).outcome.option === 'WAIT')
     await settled(() => waits().length > 0)
-    // Two more looks reconciled after the first WAIT (a look starts only once the one before it was
-    // reconciled), so the third one after it has begun.
+    // Two more looks reconciled after the first WAIT: the cancel below lands while the turn waits
+    // between looks, as the operator's would (a cancel during a look is the next test).
     const seen = looks
-    await settled(() => looks >= seen + 3)
+    await settled(() => looks >= seen + 2)
     // Waiting is one decision, not one per look (INV-9).
     expect(waits()).toHaveLength(1)
     // Decisions are content-addressed, so the same WAIT recorded again is the same artifact: the
