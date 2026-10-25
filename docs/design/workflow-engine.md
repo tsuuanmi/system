@@ -1187,7 +1187,7 @@ flowchart TD
 - **Explained**: `explain` on a run dispatch started lists its dispatch decisions first, then the
   run's own; `dispatch_status` (client scope; `system dispatch`) gives the settings, the pause, each
   bound and its use, the live asks with their Worker and windows, and the last pass with its reason
-  for each ready task; Home lists the asks under *Waiting for your go*
+  for each ready task; Home lists the asks under *Starts awaiting approval*
   ([web UI API](../reference/web-ui.md#dispatch)).
 
 ## A plain run's acceptance

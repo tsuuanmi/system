@@ -2714,8 +2714,8 @@ chooses none until:
    `maxActiveRuns` kept for you and the lead (`leaveRunsFree`). `system check` names a value out of
    its range.
 
-Then, on Home, **Waiting for your go** lists each start: the task, its attempt, the Worker, each
-window of its account (`5 h: used 12 % — reserve 20 % — resets 14:20`), and why that Worker.
+Then, on Home, **Starts awaiting approval** lists each start: the task, its attempt, the Worker, each
+window of its account (`5 h · used 12 % · reserve 20 % · resets 14:20`), and, folded, why that Worker.
 **Approve: start it** starts it at the next pass (within a minute), on that Worker, while the task is
 still ready and the Worker free; past `approvedHoldMinutes` (30) waiting for the Worker, the
 approval is used for nothing and System asks again. **Deny**, or no answer by its expiry, and System

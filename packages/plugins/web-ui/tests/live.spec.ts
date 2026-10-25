@@ -197,8 +197,11 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     // Home and the run page agree: the run page leads its failure with the very reason Home showed, then the raw text.
     const reason = /^Failed: a solo run — (.+?) open the run/.exec(await item.innerText())![1]!
     await page.goto(`${origin}/ui/?run=${encodeURIComponent(failed.runId)}#token=${OPERATOR}`)
-    await expect.poll(() => page.locator('body').innerText(), { timeout: 15_000 }).toContain('It failed')
-    expect(await page.locator('body').innerText()).toContain(`: ${reason} — ${error.message}`)
+    // Its status line (T172): the Failed chip, where it failed, then that reason and the raw text.
+    const status = page.locator('p.status-line')
+    await expect.poll(() => status.count(), { timeout: 15_000 }).toBe(1)
+    expect(await status.innerText()).toMatch(/^■ Failed at solo: /)
+    expect(await status.innerText()).toContain(`: ${reason} — ${error.message}`)
   }, 90_000)
 
   it.runIf(canRunBrowser)('shows on Home what happened since the operator last looked, until marked as seen; names the waiting count in the window\'s title; the start names who would likely take it; a running run\'s page and card say where it is, and a stall (T124)', async () => {
@@ -232,9 +235,11 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     await expect.poll(() => page.title()).toBe('(1) system — Home')
     await since.getByRole('button', { name: 'Mark as seen' }).click()
     await expect.poll(() => since.innerText()).toContain('Nothing happened that needs you.')
-    // Recent runs: by the task's title, each step with its Worker's display name.
+    // Recent runs: by the task's title, its state as a chip, its progress and current Worker in sight; each step with its Worker's display name folded (T171).
     const recent = page.locator('table tr', { hasText: 'Research the hosting options' })
-    expect(await recent.innerText()).toMatch(/solo: Conformance · \w+ · \w+/)
+    expect(await recent.innerText()).toMatch(/Running/)
+    expect(await recent.innerText()).toMatch(/0\/1 steps · running: solo · Conformance · \w+ · \w+/)
+    expect(await recent.textContent()).toMatch(/solo: Conformance · \w+ · \w+/)
 
     // The Board: the start names who would likely take it; the running card its last event, then a stall.
     await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: 'Board' }).click()

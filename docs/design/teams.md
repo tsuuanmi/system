@@ -187,7 +187,7 @@ may be on a held account too); any other is refused for the account.
 - **Shown where the operator looks.** The engine's read-only `teamExclusion()` gives the entries
   and every Worker they leave out now, with its account's Workers; the
   [roster](roster.md#one-workers-entry) carries it per Worker (`teams`, `mcp-roster@1.6`), and the
-  Workers page says *Kept out of teams by you* on each such Worker's card (T141).
+  Workers page shows an *Excluded from teams* chip on each such Worker's card (T141, T172).
 
 ## Procedure
 

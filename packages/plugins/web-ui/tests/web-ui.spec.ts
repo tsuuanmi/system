@@ -47,7 +47,9 @@ class StubWorkflow extends Service {
     return ([RUN, ...this.extra] as Array<{ status: string; updatedAt: string }>)
       .filter((r) => (filter.status === undefined || filter.status.includes(r.status)) && (filter.changedSince === undefined || r.updatedAt > filter.changedSince)).slice(0, limit)
   }
-  get(id: string) { return id === RUN.runId ? RUN : id === CARRIED.runId ? CARRIED : undefined }
+  /** When set, no run can be read: a page's refresh fails (the stale banner's suite). */
+  gone = false
+  get(id: string) { return this.gone ? undefined : id === RUN.runId ? RUN : id === CARRIED.runId ? CARRIED : undefined }
   explain(id: string) {
     if (id === CARRIED.runId) return { runId: id, nodes: [{ nodeId: 'develop:1', state: 'COMPLETED', decisions: [] }, { nodeId: 'review:m1:propose', state: 'COMPLETED', decisions: [{ id: 'sha256:44', type: 'recovery', outcome: 'resend', reasons: ['the site answered the sent prompt with its own error'] }] }] }
     return id === RUN.runId ? { runId: id, nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', decisions: [{ id: 'sha256:22', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason'] }] }] } : undefined
@@ -362,19 +364,20 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.getByRole('link', { name: 'Workers' }).click()
+    await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(new URL(page.url()).search).toBe('?view=workers')
     // The operator's words: free, and resting until a clock time.
     expect(await page.getByLabel('Worker counts').innerText()).toBe('1 working · 0 free · 1 resting (the first until 11:00) · 0 unavailable')
-    // The account once, its roles in its header, its rest said once for both.
+    // The account once, how many Workers in its header (their roles under its details), its rest said once for both.
     const account = page.getByRole('region', { name: 'Account Chatgpt · Studio Plus' })
-    expect(await account.getByRole('heading', { level: 3 }).innerText()).toMatch(/^Chatgpt · Studio Plus: frontier, standard\b/)
+    expect(await account.getByRole('heading', { level: 3 }).innerText()).toMatch(/^Chatgpt · Studio Plus · 2 Workers\b/)
     expect(await account.innerText()).toContain('Its account is resting until 11:00 (in 2 h)')
+    expect(await account.locator('details.facts').first().textContent()).toContain('Rolesfrontier, standard')
     const busy = account.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
     expect(await busy.getByRole('heading', { level: 4 }).innerText()).toBe('standard')
     const shown = await busy.innerText()
-    for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working: 1 of 2 slot(s) in use; it still takes work',
+    for (const said of ['The studio\'s chat subscription for quick questions (standard tier)', 'Working · 1/2 slots · 1 slot free',
       // The step in words (T141): a team member's answer, not its node id; the roster's own sentence is under details.
       'Running team member 1\'s answer in a team run',
       // Beside what it does now, the earlier run that holds its session for want of a verdict, and what frees it (PROP-0013): never folded.
@@ -401,7 +404,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows each window of an account\'s pool as "5 h: used X % — resets HH:MM (read HH:MM)" with a small bar, at its limit first, and what its reading does not give as unknown, with why (ADR-0059, T116)', async () => {
+  it.runIf(canRunBrowser)('shows each window of an account\'s pool as "5 h · used X % · resets HH:MM" with a small bar, when it was read under the account\'s details, at its limit first, and what its reading does not give as unknown, with why (ADR-0059, T116, T171)', async () => {
     const { origin, token } = await boot({ roster: true, pools: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
@@ -412,9 +415,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const line = (window: string) => busy.getByLabel(`window ${window} of plan/plus`)
     await expect.poll(() => line('five-hour').count()).toBe(1)
     // Read a minute before NOW; reset 15 min and 1 h after it: each on the page's day, so a clock time.
-    expect(await line('five-hour').innerText()).toBe('5 h: used 42 % — resets 09:45 (read 09:29)')
-    expect(await line('seven-day').innerText()).toBe('7 d: at its limit, used unknown (its latest reading gives no used share) — resets 10:30 (read 09:29)')
-    expect(await line('credit').innerText()).toBe('credit: no reading yet')
+    expect(await line('five-hour').innerText()).toBe('5 h · used 42 % · resets 09:45')
+    expect(await line('seven-day').innerText()).toBe('7 d · at its limit · used unknown (its latest reading gives no used share) · resets 10:30')
+    expect(await line('credit').innerText()).toBe('credit · no reading yet')
+    // When each window was read: under the account's details, never dropped (T171).
+    expect(await busy.locator('details.facts').first().textContent()).toContain('Quota read5 h read 09:29; 7 d read 09:29')
     // A small bar beside a window whose share is read; the window at its limit first, in a pool at its limit (T116).
     expect(await line('five-hour').locator('meter').getAttribute('value')).toBe('42')
     expect(await line('credit').locator('meter').count()).toBe(0)
@@ -428,11 +433,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await capacity.innerText()).toBe('Chatgpt · Studio Plus: resting until 11:00 (in 2 h); 5 h used 42 %, resets 09:45')
     expect(await capacity.locator('meter').getAttribute('value')).toBe('42')
     expect(await page.getByLabel('Capacity of Claude · slot 1').innerText()).toBe('Claude · slot 1: 5 h no reading yet')
-    await page.getByRole('link', { name: 'Workers' }).click()
+    await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('article', { name: 'agent:acc-a/develop' }).count()).toBe(1)
     // No reading yet, with why its account's usage report could not be read, its time on the clock (T111).
     const agent = page.getByRole('region', { name: 'Account Claude · slot 1' }).getByLabel('window five-hour of plan/agent')
-    expect(await agent.innerText()).toBe('5 h: no reading yet: its account\'s usage report could not be read at 09:20: the runtime gave no answer within 30 s')
+    expect(await agent.innerText()).toBe('5 h · no reading yet: its account\'s usage report could not be read at 09:20: the runtime gave no answer within 30 s')
     expect(await agent.innerText()).not.toContain('2026-10-24T')
     expect(await page.locator('main').innerText()).not.toContain('null')
   }, 60_000)
@@ -444,22 +449,33 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
     const queue = page.getByRole('region', { name: 'Approval queue' })
-    await expect.poll(() => queue.getByText('Batch batch-1: 2 related requests').count()).toBe(1)
+    // A batch by its size, its id folded behind its copy button (T171).
+    const batch = queue.getByRole('region', { name: 'Batch batch-1' })
+    await expect.poll(() => batch.getByRole('heading', { level: 3 }).first().innerText()).toMatch(/^2 related requests/)
+    expect(await batch.locator('button.copy', { hasText: 'Copy batch ID' }).getAttribute('data-copy')).toBe('batch-1')
     for (const text of ['merge apr-1', 'the branch lands on main', 'deploy', 'content board-task:apr-1:attempt:0 @ approval-needed', 'Decided one by one',
-      'Allow a merge step: merge apr-1']) {
+      'Allow a merge step: merge apr-1', 'batch-1']) {
       expect(await queue.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
     }
-    expect(await queue.innerText()).toContain('3 requests wait for your verdict')
+    expect(await queue.innerText()).toMatch(/3 approvals · next expiry /)
     expect(await queue.innerText()).toContain('task apr-1 of project p1, attempt 1')
+    // Each card: who asked and until when, with what no response does; its id and exact expiry folded.
+    const third = page.locator('#request-apr-3')
+    expect(await third.innerText()).toMatch(/Asked by the board, for task task-apr-3 of project p1 · Expired .+ ago · No response: denied/)
+    expect(await third.innerText()).not.toContain('request apr-3')
+    expect(await third.textContent()).toContain('request apr-3')
     expect(await page.locator('main').innerText()).not.toContain('null')
-    await queue.getByRole('textbox', { name: 'Note for every request of this batch (optional)' }).fill('ship it')
-    await queue.getByRole('button', { name: 'Approve all 2 in this batch' }).click()
+    await queue.getByRole('textbox', { name: 'Note for all (optional)' }).fill('ship it')
+    await queue.getByRole('button', { name: 'Approve all 2' }).click()
     await expect.poll(() => approvals().calls.length).toBe(1)
     expect(approvals().calls[0]![0]).toEqual([
       { requestId: 'apr-1', subject: QUEUE[0]!.subject, verdict: 'approved', note: 'ship it' },
       { requestId: 'apr-2', subject: QUEUE[1]!.subject, verdict: 'approved', note: 'ship it' },
     ])
-    await expect.poll(() => page.locator('#outcome').innerText()).toContain('2 verdicts recorded')
+    // The result counted, what happens next for each; the records' ids folded.
+    await expect.poll(() => page.locator('#outcome').innerText()).toContain('2 approved')
+    expect(await page.locator('#outcome').innerText()).not.toContain('approval record')
+    expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request apr-1 (approval record sha256:')
     await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Deny: hold the task' }).click()
     await expect.poll(() => approvals().calls.length).toBe(2)
     expect(approvals().calls[1]![0]).toEqual([{ requestId: 'apr-3', subject: QUEUE[2]!.subject, verdict: 'rejected' }])
@@ -523,27 +539,36 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    const waiting = page.getByRole('region', { name: 'Waiting for you', exact: true })
-    await expect.poll(() => waiting.innerText()).toContain('3 requests wait for your verdict')
-    expect(await waiting.innerText()).toContain('1 run needs a look')
-    // Each one by name under its count, linked to where it is decided (T141).
+    // Each group a label and its count (T171), each one by name under it, linked to where it is decided (T141).
+    const waiting = page.getByRole('region', { name: 'Needs your attention', exact: true })
+    await expect.poll(() => waiting.innerText()).toContain('Approvals · 3')
+    expect(await waiting.innerText()).toContain('Runs needing attention · 1')
     expect(await waiting.innerText()).toMatch(/Allow a merge step: merge apr-1 · expires /)
-    expect(await waiting.innerText()).toContain('an investigate run · its plan waits for your approval')
+    expect(await waiting.innerText()).toContain('an investigate run · Plan awaiting approval')
     await waiting.getByRole('link', { name: 'Allow a deploy step: merge apr-3' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('request-apr-3')
     expect(await page.getByRole('region', { name: 'Workers at a glance' }).innerText()).toContain('1 working · 0 free · 1 resting · 0 unavailable')
-    // The blocked run is listed with why and where it is decided.
-    const look = page.getByRole('region', { name: 'Runs that need a look' })
-    expect(await look.innerText()).toContain('its plan waits for your approval')
-    await look.getByRole('link', { name: 'Open it to decide' }).click()
-    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    // The blocked run is listed by its title, why as a chip, and one action; its id behind a copy button.
+    const look = page.getByRole('region', { name: 'Runs needing attention' })
+    expect(await look.innerText()).toContain('Plan awaiting approval')
+    expect(await look.innerText()).not.toContain('run_abc')
+    expect(await look.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe('run_abc')
+    await look.getByRole('link', { name: 'Open run' }).click()
+    await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     await page.goBack()
-    await waiting.getByRole('link', { name: '3 requests wait for your verdict' }).click()
+    await waiting.getByRole('link', { name: 'Approvals · 3' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('approvals')
     expect(await page.getByRole('heading', { name: 'Recent runs' }).count()).toBe(1)
+    // A recent run: its title, its state as a chip (a word and a symbol, never colour alone), its progress; its steps' Workers and id folded.
+    const row = page.locator('table tr', { hasText: 'investigate run' })
+    expect(await row.innerText()).toContain('▲ Needs your attention')
+    expect(await row.innerText()).toContain('1/2 steps · waiting: plan:1:gate')
+    expect(await row.innerText()).not.toContain('run_abc')
+    expect(await row.textContent()).toContain('plan:1: worker:a/standard')
+    expect(await row.textContent()).toContain('template investigate · run run_abc')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('has one navigation on every page, the current page marked, and each page a title with one line of what it is for (T97)', async () => {
+  it.runIf(canRunBrowser)('has one navigation on every page, the current page marked, and each page a title with a few words of what it is for (T97, T171)', async () => {
     const { origin, token } = await boot({ approvals: true, roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
@@ -553,8 +578,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const current = () => nav.locator('[aria-current="page"]').innerText()
     await expect.poll(() => page.getByRole('heading', { name: 'Home', exact: true }).count()).toBe(1)
     expect(await current()).toBe('Home')
-    expect(await page.locator('p.lead').innerText()).toContain('What waits for your verdict')
-    for (const [link, purpose] of [['Board', 'Every project and its open tasks'], ['Workers', 'Every account and its Workers: what each is for'], ['Autonomy policy', 'Which actions run on their own']] as const) {
+    expect(await page.locator('p.lead').innerText()).toBe('Your next actions and recent activity.')
+    for (const [link, purpose] of [['Board', 'Projects and tasks.'], ['Workers', 'Availability, quota, and current work.'], ['Autonomy policy', 'Control which actions need approval.']] as const) {
       await nav.getByRole('link', { name: link }).click()
       await expect.poll(() => page.getByRole('heading', { name: link, exact: true }).count()).toBe(1)
       expect(await current()).toBe(link)
@@ -565,23 +590,28 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await nav.getByRole('link', { name: 'Home' }).focus()
     await page.keyboard.press('Enter')
     await expect.poll(() => current()).toBe('Home')
-    await page.getByRole('link', { name: 'run_abc' }).first().click()
-    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    await page.getByRole('link', { name: 'investigate run' }).first().click()
+    await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2 }).first().innerText()).toBe('investigate run')
+    expect(await page.locator('p.lead').innerText()).toBe('Result and progress.')
     expect(await page.locator('main').innerText()).not.toContain('← ')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows a run as a sentence, what you can do, the answer, and its steps as a timeline in words, the decisions and spec folded (T97)', async () => {
-    const { origin, token } = await boot({ roster: true })
+  it.runIf(canRunBrowser)('shows a run as a status chip and where it is, what you can do, the answer, and its steps as a timeline in words, the decisions, spec, and ids folded (T97, T171)', async () => {
+    const { origin, token, workflow } = await boot({ roster: true })
     const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
-    await expect.poll(() => page.getByRole('heading', { name: 'Run run_abc' }).count()).toBe(1)
+    await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     const text = await page.locator('main').innerText()
-    expect(text).toContain('investigate run, started')
-    expect(text).toContain('It waits for you: its plan waits for your approval.')
-    expect(text).toContain('Step plan:1:gate waits for your approval of its plan before it runs.')
-    expect(text).toContain('No answer yet: it comes when the last step is done.')
+    expect(await page.locator('p.status-line').innerText()).toMatch(/^▲ Needs your attention Plan awaiting approval · started .+ ago$/)
+    expect(text).toContain('Plan awaiting approval · plan:1:gate')
+    expect(text).toContain('No answer yet.')
+    // The run's id, its template, and its last change behind a copy button and under Technical details.
+    expect(text).not.toContain('run_abc')
+    expect(await page.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe('run_abc')
+    expect(await page.locator('details', { hasText: 'Technical details' }).textContent()).toMatch(/Template investigate · last changed .+ · spec sha256:00/)
     const steps = page.locator('ol.timeline > li')
     expect(await steps.count()).toBe(2)
     expect(await steps.nth(0).innerText()).toMatch(/^plan:1 done · worker:a\/standard · standard tier/)
@@ -592,7 +622,18 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByText('How it was decided (1)').click()
     expect(await page.getByText('proves reason').isVisible()).toBe(true)
     expect(await page.getByText('sha256:00').isVisible()).toBe(false)
-    expect(await page.getByText('ends it now: nothing more of it runs').count()).toBe(1)
+    // Stop ends the run, so it asks first: nothing is sent until Confirm stop, and Cancel sends nothing (T170).
+    expect(await page.getByText('Ends this run').count()).toBe(1)
+    await page.getByRole('button', { name: 'Stop run' }).click()
+    const confirm = page.getByRole('group', { name: 'Confirm stop' })
+    await expect.poll(() => confirm.innerText()).toContain('Stop this run? Nothing more of it runs.')
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('Confirm stop')
+    await confirm.getByRole('button', { name: 'Cancel' }).click()
+    expect(await confirm.count()).toBe(0)
+    expect(workflow.calls).toEqual([])
+    await page.getByRole('button', { name: 'Stop run' }).click()
+    await page.getByRole('button', { name: 'Confirm stop' }).click()
+    await expect.poll(() => workflow.calls).toEqual([['stop', 'run_abc', 'stopped from the web UI']])
   }, 60_000)
 
   it.runIf(canRunBrowser)('says on a run\'s page what happened to it in plain words: it started from the previous attempt\'s work, a team member\'s answer was sent again once, and its result was merged (ADR-0060, ADR-0061, ADR-0062, T141)', async () => {
@@ -603,17 +644,26 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.goto(`${origin}/ui/?run=run_carried#token=${token}`)
     const happened = page.getByRole('region', { name: 'What happened' })
     await expect.poll(() => happened.count()).toBe(1)
+    // Each outcome in a line; its mechanics (the worktree, the commit, the new conversation) folded under it (T171).
     const said = await happened.innerText()
-    expect(said).toContain('It started from the work attempt 1 left (its run): that change was already in its worktree, saved as cccccccccccc, so its writing step built on it instead of starting over.')
-    expect(said).toContain('Team member 1\'s answer: the site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker.')
+    expect(said).toContain('Continued from attempt 1 (its run)')
+    expect(said).toContain('Team member 1\'s answer: retried once after a service error.')
     expect(said).toContain('Accepted and merged into main as eeeeeeeeeeee · not pushed')
+    expect(said).not.toContain('worktree')
+    const folded = await happened.textContent()
+    expect(folded).toContain('That change was already in its worktree, saved as cccccccccccc; its writing step built on it instead of starting over.')
+    expect(folded).toContain('The site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker; never a third time.')
     expect(await happened.getByRole('link', { name: 'its run' }).getAttribute('href')).toBe('?run=run_first')
-    // Each new word has its "?" (T126), and the step reads by member, its id beside.
-    for (const word of ['started from earlier work', 'sent again']) expect(await happened.getByRole('button', { name: `What is ${word}?` }).count(), word).toBe(1)
+    // Each new word has its "?" (T126); the run is headed by its template with no task; the step reads by member, its id folded.
+    for (const word of ['continued from earlier work', 'retried after a service error']) expect(await happened.getByRole('button', { name: `What is ${word}?` }).count(), word).toBe(1)
     const steps = page.locator('ol.timeline > li')
-    expect(await steps.nth(1).innerText()).toMatch(/^team member 1's answer \(review:m1:propose\) done/)
-    // The earlier attempt's error on a step that went on is history: said, never as the step's failure.
-    expect(await steps.nth(1).innerText()).toContain('An earlier attempt failed: the site was busy, or answered with its own error (it is tried again later) — scripted overloaded')
+    expect(await steps.nth(1).innerText()).toMatch(/^team member 1's answer done/)
+    expect(await steps.nth(1).innerText()).not.toContain('review:m1:propose')
+    expect(await steps.nth(1).textContent()).toContain('review:m1:propose')
+    // The earlier attempt's error on a step that went on is history: folded under Attempt history, never as the step's failure;
+    // its reason in the plain words of failureReason, its disposition included (T160).
+    expect(await steps.nth(1).innerText()).toContain('Attempt history')
+    expect(await steps.nth(1).textContent()).toContain('An earlier attempt failed: the site was busy, or answered with its own error (it is tried again later) — scripted overloaded')
     expect(await steps.nth(1).locator('.state.failed').count()).toBe(0)
   }, 60_000)
 
@@ -625,27 +675,28 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const page = await pinnedPage(browser)
     await page.goto(`${origin}/ui/?view=workers#token=${token}`)
     const card = page.getByRole('article', { name: 'Chatgpt · Studio Plus · standard' })
-    await expect.poll(() => card.innerText()).toContain('Kept out of teams by you: it is never a team member; it takes every other step.')
+    // The operator's own choice as a chip, never folded; what it means behind its "?" (T171).
+    await expect.poll(() => card.innerText()).toContain('◆ Excluded from teams')
     expect(await card.getByRole('button', { name: 'What is team?' }).count()).toBe(1)
     await card.getByText('details', { exact: true }).click()
     expect(await card.innerText()).toContain('Kept out of teams by the operator: its account is named in teams.excludeWorkers')
-    // Right now, by name: who is free, who is stalled, and which account has no quota left (T141).
+    // Right now, by name: a count each, then who is free, who is stalled, and which account has no quota left (T141, T171).
     const now = page.getByRole('region', { name: 'Right now' })
-    expect(await now.innerText()).toContain('Free: none.')
-    expect(await now.innerText()).toContain('Stalled: none.')
-    expect(await now.innerText()).toContain('No quota left: Chatgpt · Studio Plus until 11:00 (in 2 h)')
-    // An engine that cannot tell: no line on the card, the unknown under its details (INV-2).
+    expect(await now.innerText()).toContain('Free: 0')
+    expect(await now.innerText()).toContain('Stalled: 0')
+    expect(await now.innerText()).toContain('No quota left: 1 — Chatgpt · Studio Plus until 11:00 (in 2 h)')
+    // An engine that cannot tell: no chip on the card, the unknown under its details (INV-2).
     workflow.excluded = new Error('the router is busy')
     await page.reload()
     await expect.poll(() => card.count()).toBe(1)
-    expect(await card.innerText()).not.toContain('Kept out of teams')
+    expect(await card.innerText()).not.toContain('Excluded from teams')
     await card.getByText('details', { exact: true }).click()
     expect(await card.innerText()).toContain('Teams\nunknown (it could not be read: the router is busy)')
   }, 60_000)
 
   it.runIf(canRunBrowser)('names the same free, stalled, and no-quota Workers on Home as on the Workers page, from the one capacity summary, and never offers a Worker kept out of teams for team work (T152, D58, T160)', async () => {
     const { origin, token, ctx, workflow } = await boot({ roster: true })
-    // A Worker of no account, free with no quota tracked, which the operator keeps out of teams.
+    // A Worker of no account, free with no quota tracked, which the operator excludes from teams.
     const router = (ctx as unknown as { workers: StubRouter }).workers
     router.extra = [{ worker: 'worker:local/economy', provider: 'ollama', family: 'ollama', tier: 'economy', quotaClass: 'local', locality: 'local', state: 'ready', observedAt: AT }]
     workflow.excluded = { entries: ['worker:local/economy'], workers: ['worker:local/economy'] }
@@ -665,16 +716,16 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // Home renders the summary by the same function as the Workers page: the same names on each line.
     const home = await lines()
     expect(await page.getByRole('region', { name: 'Workers at a glance' }).getByRole('region', { name: 'Right now' }).count()).toBe(1)
-    expect(home['Free']).toBe(`Free: ${free[0]!.name} (no quota tracked; kept out of teams by you: free for other steps, not for team work).`)
-    expect(home['Stalled']).toBe('Stalled: none.')
-    expect(home['No quota left']).toBe('No quota left: Chatgpt · Studio Plus until 11:00 (in 2 h)')
-    await page.getByRole('link', { name: 'Workers' }).click()
+    expect(home['Free']).toBe(`Free: 1 — ${free[0]!.name} (quota not tracked; excluded from teams: free for other steps, not team work)`)
+    expect(home['Stalled']).toBe('Stalled: 0')
+    expect(home['No quota left']).toBe('No quota left: 1 — Chatgpt · Studio Plus until 11:00 (in 2 h)')
+    await page.getByRole('link', { name: 'Workers', exact: true }).click()
     await expect.poll(() => page.getByRole('heading', { name: 'Workers', exact: true }).count()).toBe(1)
     expect(await lines()).toEqual(home)
     // Kept in teams again, it is free for every step: said the same on both pages.
     workflow.excluded = undefined
     await page.reload()
-    await expect.poll(async () => (await lines())['Free']).toBe(`Free: ${free[0]!.name} (no quota tracked).`)
+    await expect.poll(async () => (await lines())['Free']).toBe(`Free: 1 — ${free[0]!.name} (quota not tracked)`)
     const workers = await lines()
     await page.getByRole('link', { name: 'Home' }).click()
     await expect.poll(() => page.getByRole('region', { name: 'Since you last looked' }).count()).toBe(1)
@@ -687,7 +738,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.getByRole('link', { name: 'run_abc' }).first().click()
+    await page.getByRole('link', { name: 'investigate run' }).first().click()
+    await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
     await expect.poll(() => page.getByText('worker:a/standard').count()).toBeGreaterThan(0)
     await expect.poll(() => page.getByText('proves reason').count()).toBeGreaterThan(0)
     // The token leaves the address bar once read; absent sections leave no stray text.
@@ -698,5 +750,122 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(workflow.calls[0]![0]).toBe('approve')
     // The page approves the plan it shows (INV-5).
     expect(workflow.calls[0]![2]).toMatchObject({ verdict: 'approved', plan: 'sha256:11' })
+  }, 60_000)
+})
+
+describe('web UI: the shared building blocks and the production states (T172)', () => {
+  const GLYPHS = ['●', '▲', '■', '◆', '○']
+
+  it.runIf(canRunBrowser)('builds every page from one status chip (a word and a symbol, never colour alone), one count with its unit, one relative time with its exact time on hover and focus, one fold closed by default, and one copy button for ids', async () => {
+    const { origin, token } = await boot({ approvals: true, roster: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] })
+    const page = await context.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    await expect.poll(() => page.getByRole('region', { name: 'Runs needing attention' }).count()).toBe(1)
+    for (const path of ['/ui/', '/ui/?run=run_abc', '/ui/?view=workers', '/ui/?view=help']) {
+      if (path !== '/ui/') await page.goto(origin + path)
+      await expect.poll(() => page.locator('main h2.page').count(), { message: path }).toBe(1)
+      await expect.poll(() => page.locator('main .loading').count(), { message: path }).toBe(0)
+      // Chips: each a symbol of its own shape and a word.
+      const chips = await page.locator('main .chip').evaluateAll((list) => list.map((c) => [c.querySelector('.glyph')?.textContent ?? '', (c.textContent ?? '').slice(1).trim()]))
+      for (const [glyph, word] of chips) {
+        expect(GLYPHS, path).toContain(glyph)
+        expect(word, path).not.toBe('')
+      }
+      // Relative times: the exact time on hover (title) and on focus (tabindex, data-exact).
+      const times = await page.locator('main time.rel').evaluateAll((list) => list.map((t) => [t.getAttribute('datetime'), t.getAttribute('title'), t.getAttribute('data-exact'), t.getAttribute('tabindex')]))
+      for (const [datetime, title, exact, tabindex] of times) {
+        expect(datetime, path).toBeTruthy()
+        expect(title, path).toBeTruthy()
+        expect(exact, path).toBe(title)
+        expect(tabindex, path).toBe('0')
+      }
+      // Folds: closed by default.
+      expect(await page.locator('main details.fold[open]').count(), path).toBe(0)
+      // An id is never the first thing in a row.
+      for (const first of await page.locator('main table tbody tr > td:first-child').allInnerTexts()) expect(first, path).not.toMatch(/^(run_|apr-|sha256:|pch-)/)
+    }
+    expect(await page.locator('main details.fold').count()).toBeGreaterThan(0)
+    // A relative time shows its exact time when focused by keyboard.
+    await page.goto(`${origin}/ui/?run=run_abc`)
+    const time = page.locator('main time.rel:visible').first()
+    await expect.poll(() => time.count()).toBe(1)
+    await time.focus()
+    const after = await time.evaluate((t) => getComputedStyle(t, '::after').content)
+    expect(after.includes((await time.getAttribute('data-exact'))!) || after.includes('attr(data-exact)')).toBe(true)
+    // The count with its unit.
+    await page.goto(`${origin}/ui/`)
+    const queue = page.getByRole('region', { name: 'Approval queue' })
+    await expect.poll(() => queue.locator('.qty').first().innerText()).toBe('3 approvals')
+    expect(await queue.locator('.qty .n').first().innerText()).toBe('3')
+    // The copy button: the id behind it, copied on a press (or shown, selected, where no clipboard is).
+    const copy = page.getByRole('region', { name: 'Runs needing attention' }).getByRole('button', { name: 'Copy run ID' })
+    expect(await copy.getAttribute('data-copy')).toBe('run_abc')
+    await copy.click()
+    await expect.poll(async () => (await page.locator('code.copied').count()) > 0 || (await page.evaluate(() => navigator.clipboard.readText().catch(() => ''))) === 'run_abc').toBe(true)
+    if (await page.locator('code.copied').count()) expect(await page.locator('code.copied').innerText()).toBe('run_abc')
+  }, 90_000)
+
+  it.runIf(canRunBrowser)('shows a skeleton while a page first loads, still under reduced motion, and puts the keyboard on Skip to content first (T170)', async () => {
+    const { origin, token, approvals } = await boot({ approvals: true })
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    let release!: () => void
+    approvals().held = new Promise((resolve) => { release = resolve })
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${token}`)
+    const loading = page.locator('main .loading')
+    await expect.poll(() => loading.count()).toBe(1)
+    expect(await loading.innerText()).toBe('Loading…')
+    expect(await page.locator('main').getAttribute('aria-busy')).toBe('true')
+    expect(await loading.evaluate((l) => getComputedStyle(l).animationName)).toBe('pulse')
+    // Reduced motion: the skeleton stays, still.
+    const still = await (await browser.newContext({ reducedMotion: 'reduce' })).newPage()
+    await still.goto(`${origin}/ui/#token=${token}`)
+    await expect.poll(() => still.locator('main .loading').count()).toBe(1)
+    expect(await still.locator('main .loading').evaluate((l) => getComputedStyle(l).animationName)).toBe('none')
+    release()
+    approvals().held = undefined
+    await expect.poll(() => page.getByRole('heading', { name: 'Home', exact: true }).count()).toBe(1)
+    expect(await page.locator('main').getAttribute('aria-busy')).toBeNull()
+    expect(await loading.count()).toBe(0)
+    // The first Tab reaches Skip to content, shown while focused; the next, the navigation.
+    await page.keyboard.press('Tab')
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('Skip to content')
+    expect((await page.getByRole('link', { name: 'Skip to content' }).boundingBox())!.x).toBeGreaterThanOrEqual(0)
+    await page.keyboard.press('Tab')
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe('home')
+    // A focused control shows its focus.
+    expect(await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle)).toBe('solid')
+  }, 60_000)
+
+  it.runIf(canRunBrowser)('says the data is stale, and when it was read, when a refresh fails over a page already shown, and clears it once a refresh succeeds; a page that never loaded says so with Try again (T170)', async () => {
+    const { origin, token, workflow } = await boot()
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/?run=run_abc#token=${token}`)
+    await expect.poll(() => page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
+    await expect.poll(() => page.locator('#status').innerText()).toMatch(/^updated \d+ s ago$/)
+    const stale = page.locator('#stale')
+    expect(await stale.isVisible()).toBe(false)
+    workflow.gone = true
+    await expect.poll(() => stale.isVisible(), { timeout: 15_000 }).toBe(true)
+    expect(await stale.innerText()).toMatch(/^Stale: the last refresh failed \(unknown run run_abc\)\. Showing what was read at .+; trying again every 5 s\.$/)
+    // What was read stays on the page, and the header says the refresh failed.
+    expect(await page.locator('h2.page[data-page="run:run_abc"]').count()).toBe(1)
+    expect(await page.locator('#status').innerText()).toContain('could not refresh: unknown run run_abc')
+    workflow.gone = false
+    await expect.poll(() => stale.isVisible(), { timeout: 15_000 }).toBe(false)
+    await expect.poll(() => page.locator('#status').innerText()).toMatch(/^updated \d+ s ago$/)
+    // A page that never loaded: its error and one next action.
+    await page.goto(`${origin}/ui/?run=run_nope`)
+    const failed = page.locator('main .error-state')
+    await expect.poll(() => failed.count()).toBe(1)
+    expect(await failed.innerText()).toContain('This page could not be loaded: unknown run run_nope.')
+    expect(await failed.getByRole('button', { name: 'Try again' }).count()).toBe(1)
+    expect(await stale.isVisible()).toBe(false)
   }, 60_000)
 })
