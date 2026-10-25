@@ -6,7 +6,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, constants, fstatSync, openSync, readSync, statSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { sha256 } from './canonical.ts'
 
@@ -113,14 +113,26 @@ function untrackedFile(path: string, maxBytes: number, budget: { left: number })
 }
 
 /**
+ * A name `git check-ignore` could read as more than itself: pathspec magic (a leading `:`) or a
+ * glob character. check-ignore takes no `--literal-pathspecs`, so such a name is never judged.
+ */
+const NOT_LITERAL = /^:|[*?[\\]/
+
+/**
  * Whether git leaves `path` (relative to the working tree `workspace`, taken literally) out of every
- * subject: it holds no tracked file and git's ignore rules ignore it, so nothing under it is in
- * {@link captureGitSubject}'s hash. Throws when git cannot answer.
+ * subject: it holds no tracked file and git's ignore rules ignore it as it is, or, when nothing is
+ * there yet, as the directory it will be made, so nothing under it is in {@link captureGitSubject}'s
+ * hash. False, never a guess, for a name git could read as a pattern or pathspec magic (INV-2).
+ * Throws when git cannot answer.
  */
 export function ignoredPath(workspace: string, path: string, timeoutMs = 10_000): boolean {
+  if (NOT_LITERAL.test(path)) return false
   if (git(workspace, ['--literal-pathspecs', 'ls-files', '-z', '--', path], timeoutMs).length) return false
+  // git judges a path that is not there as a file, so one not made yet is asked as the directory
+  // it will be (the trailing `/`): a rule for directories only (`node_modules/`) holds for it.
+  const there = lstatSync(join(workspace, path), { throwIfNoEntry: false })
   try {
-    git(workspace, ['--literal-pathspecs', 'check-ignore', '-q', '--', path], timeoutMs)
+    git(workspace, ['check-ignore', '-q', '--', there ? path : `${path}/`], timeoutMs)
     return true
   } catch (error) {
     // git check-ignore exits 1 when the path is not ignored.

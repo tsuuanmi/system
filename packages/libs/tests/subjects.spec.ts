@@ -98,8 +98,13 @@ describe('exact git subjects (REQ-WF-5)', () => {
     execFileSync('git', ['-C', dir, 'add', '-f', 'kept.log'])
     expect(ignoredPath(dir, 'kept.log')).toBe(false)
     expect(ignoredPath(dir, 'other.log')).toBe(true)
-    // A pathspec's magic is not read: `*` is a name, not every file.
+    // An ignored file is out of every subject as it is.
+    writeFileSync(join(dir, 'other.log'), 'x')
+    expect(ignoredPath(dir, 'other.log')).toBe(true)
+    // Neither a pattern nor pathspec magic is read: such a name is never judged ignored.
     expect(ignoredPath(dir, '*')).toBe(false)
+    expect(ignoredPath(dir, 'node_*')).toBe(false)
+    expect(ignoredPath(dir, ':/node_modules')).toBe(false)
   })
 
   it('is undefined outside a repository', () => {
