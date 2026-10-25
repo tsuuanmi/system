@@ -27,8 +27,10 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
+import type { Check } from '@tsuuanmi/system-approvals-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskCarries } from './carries.ts'
+import { type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
 import { TaskDigests } from './digests.ts'
 import { TaskLandings } from './landings.ts'
@@ -1186,7 +1188,7 @@ export class TaskRuns {
    * names a working tree), else the result artifact itself. Undefined when the run is not a task's,
    * or the result binds; else why it does not, and the run fails (INV-5).
    */
-  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef): WorkflowError | undefined {
+  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks): WorkflowError | undefined {
     const row = this.row(run.run_id)
     if (!row) return undefined
     const writes = row.writes ? JSON.parse(row.writes) as Subject : undefined
@@ -1209,20 +1211,22 @@ export class TaskRuns {
       subject = { type: body!.subject.type, ref: body!.subject.ref, ...(body!.subject.version !== undefined ? { version: body!.subject.version } : {}) }
       artifacts = [...new Set([source!, final])]
     }
-    const checks = this.checksOf(done, subject)
+    // The required checks the run ran on this very subject (./checks.ts) count with its own; one bound elsewhere never does (INV-5).
+    const checks: Partial<Record<Check, boolean>> = { ...this.checksOf(done, subject), ...ranOn(ran, subject) }
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
     const option = failed.length ? 'reject' : 'accept'
-    const ran = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
+    const said = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
+    const notes = ran?.notes ?? []
     const acceptance = this.e.ctx.artifacts.recordDecision({
       decisionType: 'acceptance',
       question: `Does run ${run.run_id}'s result complete its attempt of board task ${row.task_id}?`,
-      inputs: artifacts,
+      inputs: [...artifacts, ...(ran?.evidence ? [ran.evidence] : [])],
       candidates: [
-        { option: 'accept', selected: !failed.length, reasons: failed.length ? [`not accept: the run's own ${failed.join(', ')} check failed`] : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, ran] },
-        { option: 'reject', selected: !!failed.length, reasons: failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`] : ['not reject: no check the run ran failed'] },
+        { option: 'accept', selected: !failed.length, reasons: failed.length ? [`not accept: the run's own ${failed.join(', ')} check failed`] : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, said, ...notes] },
+        { option: 'reject', selected: !!failed.length, reasons: failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`, ...notes] : ['not reject: no check the run ran failed'] },
       ],
-      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '1' },
-      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks } },
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '2' },
+      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks, ...(ran ? { checkRun: ran.detail } : {}) } },
       deterministic: true,
     }, { ...PRODUCER, runId: run.run_id }).id as ArtifactRef
     const result: Result = { artifacts, subject }
@@ -1250,10 +1254,11 @@ export class TaskRuns {
   }
 
   /**
-   * The checks the run itself ran on its result, by the board's names: `schema`, when the final
+   * The checks the run judged itself on its result, by the board's names: `schema`, when the final
    * step's answer was checked against a result schema; `review`, when an exact-subject review of
-   * the very subject the result is on passed its gate (passed when it approved). Nothing else is
-   * reported: a check the run did not run is never claimed.
+   * the very subject the result is on passed its gate (passed when it approved). The required checks
+   * that are commands come from the run's checks (./checks.ts); a check the run did not run is never
+   * claimed.
    */
   checksOf(done: NodeRow[], subject: Subject): Partial<Record<'schema' | 'review', boolean>> {
     const checks: Partial<Record<'schema' | 'review', boolean>> = {}

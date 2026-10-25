@@ -1,7 +1,7 @@
 # Workflow engine
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-WF-1..11, REQ-WF-13. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
+> Requirements: REQ-WF-1..11, REQ-WF-13..15. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
 > Templates: [workflow templates](../reference/workflow-templates.md).
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md); differs from target:
@@ -697,8 +697,9 @@ is refused (`config_error`), and every other run is unaffected.
   `acceptance` decision (`workflow.task-acceptance`) names the task, the run, the subject, and
   the checks the run itself ran: `schema` when the final step's answer was checked against its
   result schema, `review` when an exact-subject review of that subject passed its gate (passed
-  when it approved). Every result artifact is among its inputs. It accepts unless a check the
-  run ran failed, which rejects: the work goes back as another attempt.
+  when it approved), and the required checks it ran on that subject (`tests`, `typecheck`, `lint`,
+  [below](#a-runs-required-checks)). Every result artifact is among its inputs. It accepts unless a
+  check the run ran failed, which rejects: the work goes back as another attempt.
 - **The report** is the board's own move, read against the board's record first, so a report
   repeated after a crash moves nothing twice. With its holder, a completed run's result is
   submitted, then its acceptance applied; when only the operator may accept it (a required check
@@ -713,7 +714,8 @@ is refused (`config_error`), and every other run is unaffected.
 - **Explained.** These decisions are the run's, not a step's: `explain` lists them first, in the
   order they were made (REQ-ART-3), before each step's own: the task's admission and session,
   whether the run starts from the previous attempt's work and what was carried, a lost holder, the
-  result's subject and acceptance, the report, a funding gate, and the digest.
+  result's subject and acceptance (with the required checks it ran), the report, a funding gate,
+  and the digest.
 - **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
   worktree ([below](#tasksmd-in-a-runs-workspace)).
 - **A question.** A step may answer with questions instead of a result; the task then waits for
@@ -1064,6 +1066,38 @@ stateDiagram-v2
   a merge already made instead of making it twice.
 - A run reported before landing existed lands nothing: merge its branch by hand.
 
+## A run's required checks
+
+> Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)
+> (proposed), T151, REQ-WF-15. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (`src/checks.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/checks.ts`, [a run's checks](agent-runtimes.md#a-runs-checks)).
+
+A policy rule's `requires` are checks the result must pass before it is accepted
+([approvals](approvals.md#a-verdict-is-not-yet-a-permission)). Those that are commands (`tests`,
+`typecheck`, `lint`) the run runs itself, on the exact tree its result is on, before its
+acceptance is decided; a model's account of a command, such as `validate:1`'s report, is never one.
+
+| Step | Records | On failure |
+|---|---|---|
+| asked | once every step of a run that wrote has completed (`algorithm-development`: after `validate:1`), for a board task's run whose task writes a `git-head` subject, or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
+| run | `ctx.workers.check` with the run, the worktree, the exact subject, the checks, and the run's classification: the source that holds the worktree runs them ([a run's checks](agent-runtimes.md#a-runs-checks)) and records a `check-run@1.0` evidence artifact | no `check` on the seam, no source holding the worktree, or a refusal (`moved`, `gone`, `busy`, `failed`): none ran, and each stays pending, the reason recorded |
+| reported | the acceptance decision ([board tasks](#board-tasks), or [a plain run's](#a-plain-runs-acceptance)) reports each check that ran to an exit code on that very subject, `passed` or `failed`, in `outcome.detail.checks`; names the evidence among its inputs; gives each `error` as a reason; and records what was asked and answered in `outcome.detail.checkRun` (rule version 2) | a check the source answered `error` is not reported: it stays pending (INV-2) |
+
+- **What the board does** with them is unchanged ([required checks](board.md#required-checks-bind-at-acceptance)):
+  every required check passed, the engine's acceptance applies without the operator; one failed,
+  the result goes back as another attempt; one pending, the review is held for the operator.
+- **Exact** (INV-5): the checks are reported only on the subject they ran on, which is the
+  subject the acceptance binds; the source runs them only while the worktree is that tree, and a
+  check that changed it is an `error`.
+- **Restart** (INV-4): a check changes nothing it checks, so it is safe to repeat; a run stopped
+  before its acceptance asks for them again. A stop of the run (the operator's, a lost lease)
+  stops the commands in flight, and nothing is recorded.
+- **Bounded** (INV-9): at most the three checks, each within the source's deadline.
+- **Configuration**: the commands are the operator's, per repository
+  ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,
+  each check is an `error` and stays pending, as before this section.
+
 ## A plain run's acceptance
 
 A run that serves no board task applies nothing: its result is not accepted onto a task, merged,
@@ -1072,10 +1106,11 @@ run completes, an `acceptance` decision (rule `workflow.run-acceptance`, under t
 so `explain` shows it) naming the autonomy policy's required checks it did not pass:
 
 - the policy is asked about `workspace-write` with the checks the run ran on its result, as the
-  board's acceptance names them (`schema`, `review` on the subject its writing left); its
-  `failedChecks` are recorded as pending (`pendingChecks`), with the policy's `autonomy`
-  decision. Under the bundle's studio policy these are `tests` and `lint`, which a Worker's tool
-  calls left pending ([approvals](approvals.md#a-verdict-is-not-yet-a-permission));
+  board's acceptance names them (`schema`, `review` on the subject its writing left, and the
+  required checks it ran there, [above](#a-runs-required-checks)); its `failedChecks` are
+  recorded as pending (`pendingChecks`), with the policy's `autonomy` decision. Under the bundle's
+  studio policy these are `tests` and `lint` unless the run ran them, since a Worker's tool calls
+  leave them pending ([approvals](approvals.md#a-verdict-is-not-yet-a-permission));
 - they never block the run, and the run is never held for them: they bind where its result is
   applied, as a [board task's acceptance](board.md#required-checks-bind-at-acceptance) binds
   them;

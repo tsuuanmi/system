@@ -12,6 +12,7 @@ import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, provesFor, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
+import { checksFor } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
@@ -349,11 +350,15 @@ export class Engine {
           }
           if (nodes.every((n) => n.state === 'COMPLETED')) {
             const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
+            // The checks the policy requires of a written result run on its exact tree first (./checks.ts):
+            // safe to repeat, so a restart before the run finished runs them again.
+            const ran = await checksFor(this, run, nodes, signal)
+            if (signal.aborted) return
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
-            const unbound = this.tasks.complete(run, nodes, final)
+            const unbound = this.tasks.complete(run, nodes, final, ran)
             if (unbound) return this.finish(run, 'failed', { error: JSON.stringify(unbound) }, current)
             // A plain run that wrote records the policy's checks still pending; it applies nothing, so they never block it.
-            if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final)
+            if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final, ran)
             return this.finish(run, 'completed', { result: final }, current)
           }
           // A run that lost its board task's holder starts nothing new: it reconciles what is in

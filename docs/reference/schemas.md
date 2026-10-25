@@ -900,6 +900,25 @@ guesses.
   cut (a note at its end says so). Its classification is the run's. Example:
   [`board-projection.tasks-md.json`](../../schemas/examples/board-projection.tasks-md.json).
 
+### `check-run`
+
+- The body of an `evidence` artifact: a workflow run's required checks as the Worker source that
+  holds its worktree ran them on the exact tree its result is on (`subject`, INV-5), in the
+  confinement and views of the repository's setup (`setup`, its content id)
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks),
+  [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)). Its envelope's
+  inputs are the `autonomy` decisions that let each command run; its classification is the run's.
+- One entry per check asked, in order. `passed`: the command exited 0 and the tree was still the
+  subject after it; `failed`: it exited with another code, the tree unchanged; `error`: anything
+  else (no command configured, a policy that does not let it run unasked, a confinement that cannot
+  be proven, a command that cannot start, a timeout, a signal, or a tree the check changed), which
+  is neither passed nor failed: the check stays pending. After a check that changed the tree, the
+  later ones are `error` without running.
+- `output` keeps the last 4000 characters of what the command printed, stdout and stderr as they
+  came, with the length and SHA-256 of all of it. The engine's acceptance decision names the
+  artifact among its inputs and reports each `passed` or `failed` in `outcome.detail.checks`.
+  Example: [`check-run.lint-failed.json`](../../schemas/examples/check-run.lint-failed.json).
+
 ### `digest`
 
 - The body of a `report` artifact whose envelope inputs are its `sources`. Every

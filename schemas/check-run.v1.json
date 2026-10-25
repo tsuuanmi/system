@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:check-run:v1",
+  "title": "Check run",
+  "description": "Body of an `evidence` artifact: a workflow run's required checks (tests, typecheck, lint) as the Worker source that holds its worktree ran them on the exact tree its result is on, each the operator's command for the check, judged by the autonomy policy and run confined (design/workflow-engine.md#a-runs-required-checks, ADR-0063). Its envelope's inputs are the `autonomy` decisions that let the commands run. A check passes only on exit code 0 with the tree unchanged after it; `error` neither passes nor fails.",
+  "type": "object",
+  "required": ["schema", "runId", "repository", "workspace", "subject", "setup", "checks"],
+  "properties": {
+    "schema": { "const": "check-run@1.0" },
+    "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "repository": { "description": "The repository the worktree belongs to (its real path).", "type": "string", "minLength": 1, "maxLength": 4096 },
+    "workspace": { "description": "The run's worktree the checks ran in.", "type": "string", "minLength": 1, "maxLength": 4096 },
+    "subject": {
+      "description": "The exact tree the checks ran on: the result's subject (INV-5).",
+      "type": "object",
+      "required": ["type", "ref", "version"],
+      "properties": {
+        "type": { "const": "git-head" },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "setup": { "description": "The content id of the repository's setup whose confinement and views the checks ran in.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+    "checks": {
+      "description": "One entry per check asked, in the order asked.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["check", "outcome", "reason"],
+        "properties": {
+          "check": { "enum": ["tests", "typecheck", "lint"] },
+          "outcome": {
+            "description": "passed: exited 0 on the subject and left it unchanged; failed: exited with another code on the subject; error: did not run to an exit code on the subject (no command configured, not allowed unasked by the policy, could not be confined or started, timed out, ended on a signal, or changed the tree).",
+            "enum": ["passed", "failed", "error"]
+          },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "argv": { "description": "The command as run: its words, never parsed by a shell.", "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+          "autonomy": { "description": "The autonomy decision on the command, when the policy was asked.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+          "exitCode": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "signal": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "durationMs": { "type": "integer", "minimum": 0 },
+          "output": {
+            "description": "What the command printed (stdout and stderr as they came): the end of it, and the length and hash of all of it.",
+            "type": "object",
+            "required": ["tail", "bytes", "sha256"],
+            "properties": {
+              "tail": { "type": "string", "maxLength": 4000 },
+              "bytes": { "type": "integer", "minimum": 0 },
+              "sha256": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -788,6 +788,31 @@ export class Worktrees {
   }
 
   /**
+   * The worktree `workspace` of workflow run `runId` as a run's checks find it (T151): undefined
+   * when no worktree of this source is that one; else its repository and its setup's hash, when it
+   * is intact, no agent run of its workflow run is unfinished or not known to be gone (INV-15), and
+   * it is exactly `subject` now (INV-5); else why not. Read only.
+   */
+  async checkable(runId: string, workspace: string, subject: { ref: string; version: string }): Promise<undefined | { repository: string; path: string; setupHash: string | null } | { cause: 'moved' | 'gone' | 'busy' | 'failed'; reason: string }> {
+    const row = this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND path = ?').get(runId, workspace) as (WorktreeRow & { setup_hash?: string | null }) | undefined
+    if (!row) return undefined
+    const tree = subjectId({ type: 'git-head', ...subject })
+    if (row.removed_at !== null || !existsSync(row.path)) return { cause: 'gone', reason: `the worktree ${row.path} was removed, so the tree ${tree} can no longer be checked` }
+    if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, null)) {
+      return { cause: 'busy', reason: `an agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so it may still write ${row.path} (INV-15)` }
+    }
+    try {
+      await this.verify(row)
+    } catch (error) {
+      return { cause: 'failed', reason: (error as Error).message }
+    }
+    const current = captureGitSubject(row.path)
+    if (!current) return { cause: 'failed', reason: `${row.path} is no longer a git working tree` }
+    if (current.subject.ref !== subject.ref || current.subject.version !== subject.version) return { cause: 'moved', reason: `the worktree ${row.path} is now ${subjectId(current.subject)}, not ${tree}, the tree the result is on` }
+    return { repository: row.repository, path: row.path, setupHash: row.setup_hash ?? null }
+  }
+
+  /**
    * The change of workflow run `runId` in each of its worktrees (T122), read only: what the worktree
    * holds against the commit it forked from on the repository's checked-out branch, committed or
    * not, untracked files as added; a removed worktree's from its branch. Once its branch is merged

@@ -367,6 +367,27 @@ describe('digest-extract@1.0', () => {
   })
 })
 
+describe('check-run@1.0', () => {
+  const run = example('check-run.lint-failed')
+
+  it('binds every check to one exact git tree, by a name a policy can require and an outcome that is never guessed (INV-5, T151)', () => {
+    expect(valid('check-run@1.0', run)).toBe(true)
+    // Only a working tree at an exact version: a check on a ref alone, or on another subject type, is no check of the result.
+    const { version: _, ...unversioned } = run.subject
+    expect(valid('check-run@1.0', { ...run, subject: unversioned })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, subject: { ...run.subject, type: 'artifact' } })).toBe(false)
+    // The checks that are commands, each with an outcome the reader knows.
+    for (const check of ['review', 'schema', 'quote-check', 'benchmark']) expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[0], check }] }), check).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[0], outcome: 'skipped' }] })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [] })).toBe(false)
+    // An error says why, and a command's output is kept to its bound, its digest whole.
+    expect(valid('check-run@1.0', { ...run, checks: [{ check: 'lint', outcome: 'error', reason: 'no command for the lint check is configured' }] })).toBe(true)
+    expect(valid('check-run@1.0', { ...run, checks: [{ check: 'lint', outcome: 'error' }] })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[1], output: { ...run.checks[1].output, tail: 'x'.repeat(4001) } }] })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[1], output: { tail: '', bytes: 0 } }] })).toBe(false)
+  })
+})
+
 describe('plugin-manifest@1.0', () => {
   const manifest = example('plugin-manifest.digest-provider')
 

@@ -77,7 +77,25 @@ export interface Script {
   reviewFails?: number
   /** Whether the developer commits its change in its worktree, moving the worktree's HEAD off the commit the task writes (default false). */
   commits?: boolean
+  /**
+   * The repository's checks (T151): the command of each, as the operator configures them in its
+   * worktree setup and lists them in the studio policy. The repository then holds {@link CHECK_FILES}.
+   */
+  checks?: { tests?: string; lint?: string }
 }
+
+/**
+ * Check scripts the repository holds when a pilot configures checks: `tests.mjs` passes when add()
+ * adds, `lint.mjs` always passes, and `lint-strict.mjs` fails (exit 2) on a calc.py with no header
+ * comment, as a stricter lint rule would.
+ */
+export const CHECK_FILES: Record<string, string> = {
+  'tests.mjs': "import { readFileSync } from 'node:fs'\nconst ok = readFileSync('calc.py', 'utf8').includes('a + b')\nconsole.log(ok ? 'tests: 3 passed' : 'tests: add() does not add')\nprocess.exit(ok ? 0 : 1)\n",
+  'lint.mjs': "console.log('lint: clean')\n",
+  'lint-strict.mjs': "import { readFileSync } from 'node:fs'\nif (!readFileSync('calc.py', 'utf8').startsWith('#')) { console.error('lint-strict: calc.py has no header comment'); process.exit(2) }\n",
+}
+/** The worktree setup a pilot with checks configures: one command, listed in the policy. */
+export const SETUP_COMMAND = 'true'
 
 /** The scripted agent runtime: every run asks its gate before each tool call, then acts as its role does. */
 export class PilotAgent implements AgentRuntimeProvider {
@@ -179,6 +197,7 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   const repo = join(dir, 'algo')
   execFileSync('git', ['init', '-q', '-b', 'main', repo])
   writeFileSync(join(repo, 'calc.py'), ORIGINAL)
+  if (script.checks) for (const [name, text] of Object.entries(CHECK_FILES)) writeFileSync(join(repo, name), text)
   git(repo, 'add', '.')
   git(repo, 'commit', '-q', '-m', 'init')
   const agent = new PilotAgent(script)
@@ -191,10 +210,14 @@ export async function bootPilot(script: Script = {}, extra: Plugin[] = []): Prom
   const ctx = new Context()
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
-    ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }),
+    // With checks, the operator lists the setup's command and each check's in the studio policy, so each runs unasked.
+    ctx.plugin(StoreApprovals, { policies: [script.checks ? { ...POLICY, commands: [...POLICY.commands!, SETUP_COMMAND, ...Object.values(script.checks)] } : POLICY], sweepSeconds: 3600 }),
     ctx.plugin(StoreResources, { pools: [{ pool: POOL, account: 'plan', kind: 'programmatic', unknown: 'available', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }] }] }),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(AgentRuntimeRegistry),
-    ctx.plugin(AgentWorkers, { workers: [...writers, worker('reviewer', 'read-only', 'standard'), worker('digester', 'read-only', 'economy')], worktreeRoot: join(dir, 'worktrees') }),
+    ctx.plugin(AgentWorkers, {
+      workers: [...writers, worker('reviewer', 'read-only', 'standard'), worker('digester', 'read-only', 'economy')], worktreeRoot: join(dir, 'worktrees'),
+      ...(script.checks ? { worktreeSetup: [{ repository: repo, commands: [SETUP_COMMAND], checks: script.checks }] } : {}),
+    }),
     ctx.plugin(StoreBoard, { sweepSeconds: 0 }), ctx.plugin(StoreDigests, {}),
     ctx.plugin(Workflow, { retryDelayMs: 50, maxAttempts: 2, approvalPollSeconds: 1 }),
   ]

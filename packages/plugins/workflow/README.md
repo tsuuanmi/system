@@ -344,8 +344,9 @@ second execution path (INV-1).
     the board refuses the generation, the run starts nothing new (`workflow.task-holder`
     `wind-down`), reconciles what is in flight, and fails the rest as `holder_lost`;
   - a completed run's result is bound to the subject the task writes (else `stale_subject`),
-    with an `acceptance` decision (`workflow.task-acceptance`) naming the task, the subject, and
-    the checks the run ran (`schema`, `review`), then submitted and accepted; one only the
+    with an `acceptance` decision (`workflow.task-acceptance`, version 2) naming the task, the
+    subject, and the checks the run ran (`schema`, `review`, and the required checks it ran on
+    that subject, below), then submitted and accepted; one only the
     operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
@@ -510,13 +511,27 @@ second execution path (INV-1).
     with the approval, and `workflow.run.continued` (`by: rule`). For a run outside the board, a
     rejected request, or a run that moved on (continued, stopped, deleted, or failed elsewhere),
     continues nothing.
+- **A run's required checks
+  ([design](../../../docs/design/workflow-engine.md#a-runs-required-checks), T151,
+  [ADR-0063](../../../docs/decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)).**
+  Once every step of a run that wrote completed (a board task's run whose task writes a `git-head`
+  subject, or a plain run with a completed `develop` step), on an agent's result on a git working
+  tree, and no check the run judged itself failed: `ctx.approvals.check` on the class its
+  acceptance is judged under (the task's action class and project, else `workspace-write`) gives
+  the required checks still failed; those that are commands (`tests`, `typecheck`, `lint`) are
+  asked of `ctx.workers.check` (optional) on the run's worktree and the exact subject, under the
+  run's lease and stop. Each `passed` or `failed` is reported in the acceptance's `checks` (only
+  on the subject they ran on), the `check-run@1.0` evidence among its inputs, each `error` and a
+  refusal as a reason, and what was asked in `outcome.detail.checkRun`; nothing else is claimed.
+  No queue, no `check`, or no source holding the worktree: none run, and they stay pending. Safe
+  to repeat after a restart.
 - **A plain run's acceptance
   ([design](../../../docs/design/workflow-engine.md#a-plain-runs-acceptance)).** A run that
   serves no board task and wrote (a `develop` step completed) records, before it completes, an
-  `acceptance` decision (`workflow.run-acceptance`, under its final step) with the checks it ran
-  (`schema`, `review`) and the policy's required checks for `workspace-write` it did not pass,
-  pending (`ctx.approvals.check`; `unknown` with none loaded). They never block it: a plain run
-  applies nothing.
+  `acceptance` decision (`workflow.run-acceptance`, version 2, under its final step) with the
+  checks it ran (`schema`, `review`, and the required checks above) and the policy's required
+  checks for `workspace-write` it did not pass, pending (`ctx.approvals.check`; `unknown` with none
+  loaded). They never block it: a plain run applies nothing.
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -750,7 +765,7 @@ second execution path (INV-1).
   funding a spent one asks for; a task with a budget is refused without it), asks `digests` (the
   abstract `Digests` of `digest-core`) when present, for a task's results, and reads `approvals`
   (the abstract `Approvals` of `approvals-core`) when present: remediation gates, deferred calls'
-  continuations, a plain run's acceptance.
+  continuations, a run's required checks, a plain run's acceptance.
 - **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
   the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
@@ -792,6 +807,13 @@ second execution path (INV-1).
   material shown once, so the member fits the site; a member over a site's bound routed at its own
   tier; a rejected answer its session cannot escalate failed with the rejection and why, never a
   family shortage that is not there, and one it can escalated within its session.
+  [`tests/checks.spec.ts`](tests/checks.spec.ts) covers a run's required checks over the
+  store-backed board and queue with a scripted source: passed (the task done without the
+  operator, the evidence among the acceptance's inputs), a failed one (another attempt), one that
+  did not run, a refusal, and no source (held for the operator with them pending), none asked for
+  a class that requires none, and a plain run's acceptance reporting them; on the real stack with
+  confined commands in
+  [`profile-software-development`'s checks tests](../profile-software-development/tests/checks.spec.ts).
 
 ## Source layout
 
@@ -811,6 +833,7 @@ in `engine.ts`:
 | `review.ts` | exact-subject review and remediation cycles; what a node's instructions are composed from, a re-review's from its review |
 | `queue.ts` | a remediation fix's gate on the approval queue: the request on its exact subject, its verdict, adoption after a crash |
 | `continuations.ts` | a deferred tool call: a board task's step waiting on its request in the live run, or a plain run's request noted when its node fails; read from the queue, the session continued once when approved; a board task's attempt ending with the requests it left open withdrawn |
+| `checks.ts` | a run's required checks: which the policy requires of a written result, run on its exact tree through `ctx.workers.check`, for its acceptance |
 | `acceptance.ts` | a plain run's acceptance: the policy's required checks it did not pass, recorded as pending |
 | `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members; the caller's text shown once where a prompt shows its snapshot |
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |

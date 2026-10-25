@@ -324,6 +324,32 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('runs a run\'s checks through the source that holds its worktree, with its name; none holding it is undefined, and a source that throws is a refusal, never a check passed (T151, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.check !== 'function') return
+        const step = (workspace: string) => ({ runId: 'run_1', workspace, subject: { ref: 'a'.repeat(40), version: 'b'.repeat(64) }, checks: ['tests' as const, 'lint' as const], classification: 'local-private' as const })
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b')], {
+          check: async (s) => s.workspace === '/wt/two'
+            ? { outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0, reason: 'exited 0' }, { check: 'lint', outcome: 'failed', exitCode: 1, reason: 'exited 1' }], evidence: `sha256:${'c'.repeat(64)}` }
+            : undefined,
+        }))
+        ctx.workers.register(source('broken', [worker('w:c')], {
+          check: async (s) => {
+            if (s.workspace === '/wt/broken') throw new Error('the store failed')
+            return undefined
+          },
+        }))
+        expect(await ctx.workers.check(step('/wt/two'))).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }, { check: 'lint', outcome: 'failed' }], source: 'two' })
+        expect(await ctx.workers.check(step('/wt/nobody'))).toBeUndefined()
+        expect(await ctx.workers.check(step('/wt/broken'))).toMatchObject({ outcome: 'refused', cause: 'failed', source: 'broken', reason: expect.stringMatching(/could not run the checks of run run_1 in \/wt\/broken: the store failed/) })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('lists the runs whose liveness needs a look from every source that tells it, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
       const { ctx, dispose } = await boot()
       try {

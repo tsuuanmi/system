@@ -2068,9 +2068,12 @@ ever starts work ([board](../design/board.md#what-ends-an-input-wait)).
 ## Accept or reject a review
 
 A board task reaches review when the run that served an attempt submits its result. Under the
-bundle's studio policy every `workspace-write` task stops here for you: the policy requires `tests`
-and `lint`, the engine reports only the checks it ran itself (`schema`, `review`), so the board
-holds the review for the operator ([board](../design/board.md#required-checks-bind-at-acceptance)).
+bundle's studio policy a `workspace-write` task stops here for you unless its run passed `tests`
+and `lint` itself: the policy requires them, and the engine reports only the checks it ran itself
+(`schema`, `review`, and the required checks it ran on the result's tree with the commands you
+configured: [let a run pass the required checks](#let-a-run-pass-the-required-checks)), so the
+board holds the review for the operator while one is pending
+([board](../design/board.md#required-checks-bind-at-acceptance)).
 A task of a class that needs no check (`read`) or that the policy asked about before its attempt
 is accepted by the engine's own decision and never shows here. A run whose own check failed is
 rejected by the engine as another attempt, also without you.
@@ -2084,7 +2087,7 @@ rejected by the engine as another attempt, also without you.
 2. Read the result: the run's page, `system artifact <artifact id>` for an answer, and for a
    `git-head` subject the run's worktree, which is that exact tree
    ([worktree](#a-runs-worktree)). Run the pending checks there yourself: **your Accept applies
-   whatever is pending**, since nothing else has run them.
+   whatever is pending**, since nothing else has run them on that tree.
 3. Add a note if you like, then press **Accept** or **Reject**. The page sends the exact subject it
    showed. A result that changed since, or a task no longer in review, is refused (`409`), nothing
    is decided, and an alert at the top of the page says why; it stays until you dismiss it.
@@ -2790,3 +2793,58 @@ When a run fails at start (`config_error`, nothing sent to the agent), its messa
 
 A setup that ran is not run again in that worktree while its definition is unchanged; change the
 setup and every worktree is set up again before its next run (and asked about again).
+
+## Let a run pass the required checks
+
+The studio policy requires `tests` and `lint` of a `workspace-write` result. A run passes them only
+by running them itself, on the exact tree its result is on, with the commands you configure for the
+repository; a Worker that says it ran them does not count. Then a result whose checks pass and
+whose review approved is accepted without you (its landing still asks you to merge it), and one
+whose check fails goes back as another attempt
+([a run's required checks](../design/workflow-engine.md#a-runs-required-checks),
+[ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)). Without this,
+every such result waits for you in **Reviews** with `tests, lint` pending.
+
+1. **The setup first.** The checks run in the environment the repository's setup prepares, in its
+   confinement (no network) and views: [set up a run's worktree](#set-up-a-runs-worktree).
+2. **The commands**, beside the setup in the `agent-workers` row of your profile patch. For the
+   `system` repository:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       worktreeSetup:
+         - repository: /home/me/src/system
+           commands: [ ... ]            # the setup, unchanged
+           views: [ ... ]
+           checks:
+             tests: corepack pnpm test:affected
+             lint: corepack pnpm lint
+           checkTimeoutSeconds: 1800    # each check's deadline; at most 3600
+   ```
+
+   Each is a command line as the policy matches it: words split on single spaces, no shell
+   metacharacter, at most 200 characters. Only `tests`, `typecheck`, and `lint` can be named. The
+   checks are not part of the setup's hash: adding them sets no worktree up again.
+3. **The policy.** A check runs only when the policy lets its exact argv run unasked: list each
+   line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy));
+   a line already listed for the validation step is enough. A check whose command would ask is not
+   run, and stays pending: nothing is put to you for it.
+4. `system check`, then restart. After the next run's last step, `system explain <runId>` shows
+   its acceptance with `the checks it ran: review passed, tests passed, lint passed` (or which
+   failed), and `system artifact <evidence id>` (among the decision's inputs) shows each check's
+   command, exit code, duration, and the end of its output.
+
+What a check that did not pass means:
+
+| The acceptance says | Do |
+|---|---|
+| `the run's own lint check failed on git-head …` | nothing: the task goes back as another attempt, as for a rejecting review. The evidence shows what the command printed |
+| `its tests check did not run to an exit code on the result (no command for the tests check is configured …)` | add the command (step 2); until then the check stays pending and the result waits for you |
+| `… (the autonomy policy asks the operator about its command …)` | list the command (step 3) |
+| `… (the worktree … was not set up under … setup as loaded now …)` | the setup changed after the worktree was made, or never ran there: the next attempt's worktree is set up again |
+| `… did not finish within 1800 s` | raise `checkTimeoutSeconds`, or find what hangs |
+| `… left the worktree as git:…, no longer git:…` | the command writes files git does not ignore: make it write only ignored ones (a cache under `node_modules/`), or add them to `.gitignore` |
+| `… did not run: source agents refused (busy) …` or `(moved)` | an agent run of the workflow run had not ended, or the tree changed after the last step: the result waits for you; check its worktree |
+
+A pending check is never failed: the review waits for you as before, and your Accept applies it.

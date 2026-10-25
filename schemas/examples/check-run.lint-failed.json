@@ -1,0 +1,30 @@
+{
+  "schema": "check-run@1.0",
+  "runId": "run_5f2c1a90b7e34d21",
+  "repository": "/home/me/src/system",
+  "workspace": "/home/me/.dsh/system/worktrees/system-3f9a1c/run_5f2c1a90b7e34d21",
+  "subject": { "type": "git-head", "ref": "60cb8ca5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6", "version": "4f6c2e8a1b3d5f7092a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8" },
+  "setup": "sha256:9a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9",
+  "checks": [
+    {
+      "check": "tests",
+      "outcome": "passed",
+      "reason": "its command (corepack pnpm test:affected) exited 0 on git:60cb8ca5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6:4f6c2e8a1b3d5f7092a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8",
+      "argv": ["corepack", "pnpm", "test:affected"],
+      "autonomy": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "exitCode": 0,
+      "durationMs": 184233,
+      "output": { "tail": " Test Files  41 passed (41)\n      Tests  612 passed (612)\n", "bytes": 48211, "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222" }
+    },
+    {
+      "check": "lint",
+      "outcome": "failed",
+      "reason": "its command (corepack pnpm lint) exited with code 1 on git:60cb8ca5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6:4f6c2e8a1b3d5f7092a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8",
+      "argv": ["corepack", "pnpm", "lint"],
+      "autonomy": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "exitCode": 1,
+      "durationMs": 2410,
+      "output": { "tail": "  x eslint(no-unused-vars): Variable 'kept' is declared but never used.\nFound 0 warnings and 1 error.\n", "bytes": 312, "sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444" }
+    }
+  ]
+}

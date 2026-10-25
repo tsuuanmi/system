@@ -185,9 +185,12 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   defer it on.
 - `validate:1` is the final node, so the run's result is the validation's report on the subject
   the task writes, after any fix: the task keeps it, its digest cites it, and the next attempt's
-  brief points at it. The engine reports the `review` check on that subject, never `tests`: a
-  model's account of a command is not a check, so under a policy that requires `tests` the board
-  holds the result for the operator.
+  brief points at it. The engine reports the `review` check on that subject, never `tests` from the
+  validation's report: a model's account of a command is not a check. After `validate:1`, the run
+  itself runs the checks the policy requires that are commands, on that subject, with the commands
+  the operator configured for the repository, and reports those by their exit codes
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks)); with none
+  configured, under a policy that requires `tests` the board holds the result for the operator.
 
 #### Which inputs reach which step
 
