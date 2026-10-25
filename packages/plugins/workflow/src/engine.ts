@@ -15,7 +15,7 @@ import { acceptPlain } from './acceptance.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
-import { admissionKind, assignmentOf, cutShort, escalate, failAttempt, heldWorkers, inputHint, routedDecisions, waitForLimit } from './recovery.ts'
+import { admissionKind, assignmentOf, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
@@ -726,7 +726,7 @@ export class Engine {
           // source renders the prompt from it (INV-13, INV-12).
           const brief = recordBrief(this, run, node, draft, source.sandbox?.(admitted.worker.worker, run.run_id))
           const started = source.start({
-            key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
+            key: executionKey(run.run_id, node, attempt),
             worker: admitted.worker.worker, brief, sessionId: spec.session.sessionId, runId: run.run_id,
             requirement: record.requirement, decisions: admitted.decisions,
           })
@@ -769,7 +769,9 @@ export class Engine {
     if (current.status === 'failed') {
       // A board task's step whose Worker stopped at a tool call deferred to the operator waits on that request.
       if (await awaitCall(this, run, node, current, lease)) return
-      return failAttempt(this, run, node, current.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }, { sent: current.submitted, execution: current }, lease)
+      // The node keeps the failure's kind, disposition, and message; a site's own error is read from the execution (ADR-0062).
+      const failed = current.error ? { kind: current.error.kind, disposition: current.error.disposition, message: current.error.message } : { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }
+      return failAttempt(this, run, node, failed, { sent: current.submitted, execution: current }, lease)
     }
     if (!current.result) {
       return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `${node.source} reported execution ${current.id} completed without a result` }, { sent: true, execution: current }, lease)

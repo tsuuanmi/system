@@ -195,15 +195,105 @@ export function waitForLimit(e: Engine, run: RunRow, node: NodeRow, failure: Adm
 
 const round = (hours: number): string => (Math.round(hours * 100) / 100).toString()
 
+/** The key an attempt's execution is started under: one per node, attempt, escalation, and input. */
+export function executionKey(runId: string, node: NodeRow, attempt: number): string {
+  const record = JSON.parse(node.record) as NodeRecord
+  return `workflow:${runId}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`
+}
+
+/** The rule and version of a resend after a site's own error (ADR-0062). */
+const RESEND = { type: 'rule', id: 'workflow.recovery', version: '2' } as const
+
+/**
+ * Why a step the site answered with its own error after the send is not resent (ADR-0062), or
+ * undefined when it is: only a read-only team member's first step (`propose`, whose prompt is the
+ * whole request and material, so a new conversation loses nothing), on a session of its own, with
+ * an attempt left, never twice. A ballot or debate relies on its conversation (teams.md), and any
+ * other step may have done more than answer.
+ */
+function noResend(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode): string | undefined {
+  const team = spec.team
+  if (!team?.member) return 'it is not a team member\'s step: only a read-only team member\'s first step is resent'
+  if (team.role !== 'propose') return `it is member m${team.member}'s ${team.role}, which relies on its conversation: only a member's first step (propose) is resent`
+  if (spec.capabilities.includes('develop') || spec.grows) return 'the step may write: only a step that writes nothing is resent'
+  if (!spec.session.sessionId) return 'the step has no session of its own to start a new conversation in'
+  const earlier = e.ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: run.run_id, nodeId: node.node_id, limit: 1000 })
+    .some((a) => (a.body as { outcome?: { option?: string } }).outcome?.option === 'resend')
+  if (earlier) return `node ${node.node_id} was resent once already: never twice`
+  const max = e.config.maxAttempts ?? 3
+  if (node.attempt >= max) return `attempt ${node.attempt} of ${max} failed`
+  return undefined
+}
+
+/**
+ * A read-only team member's first step that the site answered with its own error after the prompt
+ * was sent (`siteError`, live 2026-10-24: Gemini's "Sorry, something went wrong") runs once more in a
+ * new conversation of its session (operator decision D60, ADR-0062): its session's native
+ * conversation is reset, the member (its session, account, and Worker) stays, and the next attempt
+ * opens a new conversation. The `recovery` decision `resend` names why, the failed execution (the
+ * failed turn), and the key the new attempt's execution starts under (the new turn), recorded in the
+ * transaction that resets the conversation and readies the node, so a restart finds both or neither
+ * (INV-4). Returns why it is not resent, or undefined once it is.
+ */
+function resend(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, execution: WorkerExecution, kept: ArtifactRef[], lease: () => Lease): string | undefined {
+  const spec = JSON.parse(node.spec) as ResolvedNode
+  const why = noResend(e, run, node, spec)
+  if (why) return why
+  const sessionId = spec.session.sessionId!
+  const max = e.config.maxAttempts ?? 3
+  const next = node.attempt + 1
+  const key = executionKey(run.run_id, node, next)
+  const said = errorLine(error.message)
+  const delay = (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
+  return e.ctx.store.transaction(() => {
+    // No source owns the session: no new conversation can be shown to start, so it is not resent (INV-2).
+    if (!e.ctx.workers.reset(sessionId)) return `no Worker source owns session ${sessionId}, so no new conversation can be started for it`
+    const decision = e.ctx.artifacts.recordDecision({
+      schema: 'decision@1.9',
+      decisionType: 'recovery',
+      question: `How does node ${node.node_id} of run ${run.run_id} recover from ${error.kind}?`,
+      inputs: kept,
+      candidates: [
+        { option: 'resend', selected: true, reasons: [
+          `the site answered the sent prompt with its own error in place of an answer (execution ${execution.id}), so nothing was answered`,
+          `member m${spec.team!.member}'s first step writes nothing and its prompt is the whole request: it is resent once, in a new conversation of session ${sessionId} (D60)`,
+          ...(said ? [`error: ${said}`] : []),
+        ] },
+        { option: 'retry', selected: false, reasons: ['not retry: the prompt was sent; only a resend in a new conversation may run it again'] },
+        { option: 'failover', selected: false, reasons: [`not failover: the prompt was sent, and the member stays on its session's Worker ${node.worker ?? ''}`.trim()] },
+        { option: 'fail', selected: false, reasons: [`not fail: it was never resent, and ${max - node.attempt} attempt(s) of ${max} remain`] },
+      ],
+      decider: { ...RESEND },
+      outcome: { option: 'resend', detail: { kind: error.kind, disposition: error.disposition, attempt: node.attempt, sessionId, failed: { execution: execution.id }, next: { attempt: next, key, conversation: 'new' } } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
+    e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...(kept.length ? { decisions: JSON.stringify(kept) } : {}) },
+      (r) => {
+        const fresh: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
+        delete fresh.execution
+        return fresh
+      }, lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.resent', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { attempt: node.attempt, kind: error.kind, failed: execution.id, sessionId, delayMs: delay } })
+    return undefined
+  })
+}
+
 /**
  * Retry, fail over, or fail a node after a failed attempt (REQ-WF-6), recorded as a
  * `recovery` decision (INV-13). A retry needs a retryable disposition, attempts left, and a
  * prompt that never reached the provider: once sent, only the turn runtime may resubmit, within
- * its own bound, so the engine never causes a duplicate provider turn (INV-4). An unsent
- * usage limit, challenge, sign-out, or overload fails over instead: the next attempt leaves the
- * failed Worker out (ADR-0034), unless the node's session is held to it.
+ * its own bound, so the engine never causes a duplicate provider turn (INV-4). The one exception
+ * is a site's own error in place of an answer to a read-only team member's first step, resent once
+ * in a new conversation (ADR-0062). An unsent usage limit, challenge, sign-out, or overload fails
+ * over instead: the next attempt leaves the failed Worker out (ADR-0034), unless the node's session
+ * is held to it.
  */
 export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; execution?: WorkerExecution; decisions?: ArtifactRef[] }, lease: () => Lease): void {
+  // A site's own error after the send, as its source read it on the execution's page (ADR-0062).
+  const siteError = attempt.sent && attempt.execution?.error?.siteError === true ? attempt.execution : undefined
+  const keptFirst = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
+  const notResent = siteError ? resend(e, run, node, error, siteError, keptFirst, lease) : undefined
+  if (siteError && notResent === undefined) return
   const max = e.config.maxAttempts ?? 3
   const reasons = {
     retry: [] as string[],
@@ -249,7 +339,7 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // What failed, in the decision `explain` shows, so the CLI alone tells why.
   const said = errorLine(error.message)
   if (said) (failover ? reasons.failover : retry ? reasons.retry : reasons.fail).push(`error: ${said}`)
-  const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
+  const kept = keptFirst
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'recovery',
     question: `How does node ${node.node_id} of run ${run.run_id} recover from ${error.kind}?`,
@@ -258,6 +348,8 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
       { option: 'retry', selected: retry && !failover, reasons: reasons.retry },
       { option: 'failover', selected: failover, reasons: reasons.failover },
       { option: 'fail', selected: !retry, reasons: reasons.fail },
+      // A site's own error after the send that is not resent says why (ADR-0062).
+      ...(notResent !== undefined ? [{ option: 'resend', selected: false, reasons: [`not resend: ${notResent}`] }] : []),
     ],
     decider: { type: 'rule', id: 'workflow.recovery', version: '1' },
     outcome: {

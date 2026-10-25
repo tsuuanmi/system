@@ -11,7 +11,7 @@
   "consumes": [
     {
       "seam": "workflow",
-      "range": "^1.7.0"
+      "range": "^1.8.0"
     }
   ],
   "license": "UNLICENSED"
