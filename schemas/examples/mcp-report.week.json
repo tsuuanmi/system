@@ -88,7 +88,7 @@
       "perAcceptedResult": { "tokens": 2432805.5, "costUsd": 4.6046, "turns": 152.75, "interruptions": 2, "attempts": 1.75 }
     },
     "notes": [
-      "1 run(s) whose usage the ledger could not count, and has not counted since: no figure counts them, and a cap counts them as 0 (1 recorded in the period: 1 interrupted; system events --type usage.unknown)"
+      "1 run(s) whose usage the ledger could not count, and has not counted since: a figure counts at most a lower bound of them, and a cap of their task or project in their pool is refused (1 recorded in the period: 1 interrupted; system events --type usage.unknown)"
     ]
   }
 }

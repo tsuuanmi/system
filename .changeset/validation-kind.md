@@ -1,0 +1,7 @@
+---
+"@tsuuanmi/system-profile-software-development": minor
+---
+
+`algorithm-development`'s validation is a kind of work of its own, and each step's kind is configuration (ADR-0057, amended 2026-10-25):
+- **Behaviour change for Workers given kinds:** `validate:1` (it runs the checks and tests and changes nothing) is now `validation` work; it was `tests` work, so a Worker given `tests` took both writing tests and running them. A Worker given kinds takes `validate:1` only when it lists `validation`: add `validation` to the Worker (or role) that should run the validations, for example `kinds: [docs, tests, validation]`, or give it to another Worker (`kinds: [validation]`). Once every Worker that proves `validate` is given kinds and none lists `validation`, `validate:1` fails admission with nothing sent, saying `no Worker that proves validate, local-data takes validation work`, and the start form on `/ui` says no Worker can take it. Workers given no kinds take it as before; with no Worker given kinds nothing changes. The writing kinds (`code`, and `docs` and `tests` in those variants) and the review (no kind) are unchanged.
+- **Config `kinds`** on the `profile-software-development` row sets the kind each step names, by step (`develop`, `docs`, `tests`, `validate`), defaulting to `code`, `docs`, `tests`, `validation`; `kinds: { validate: tests }` keeps the earlier routing. The profile exports `checkConfig`, so `system check` names a key that is not a step or a kind that is not a kind of work; the load refuses them too. No key gives the review a kind.

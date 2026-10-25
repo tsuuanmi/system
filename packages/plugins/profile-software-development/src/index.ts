@@ -7,10 +7,57 @@
  * @module @tsuuanmi/system-profile-software-development
  */
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import type { NodeTemplate } from '@tsuuanmi/system-workflow'
+import { WORK_KIND } from '@tsuuanmi/system-workers-core'
 
 export const name = 'profile-software-development'
 export const inject = ['workflow']
+
+/**
+ * The kind of work (ADR-0057) each step of `algorithm-development` names, by step: `develop` is
+ * `develop:1` (and the fix a review grows from it), `docs` and `tests` are `develop:1` in the variant
+ * of that name, and `validate` is `validate:1`, which runs the checks and tests and changes nothing.
+ * The review names none, and no configuration gives it one.
+ */
+export interface StepKinds {
+  develop: string
+  docs: string
+  tests: string
+  validate: string
+}
+
+/** The kinds the profile ships: three writing kinds, and `validation` for the step that only runs checks. */
+export const DEFAULT_KINDS: Readonly<StepKinds> = { develop: 'code', docs: 'docs', tests: 'tests', validate: 'validation' }
+
+const STEPS = Object.keys(DEFAULT_KINDS) as Array<keyof StepKinds>
+
+export interface Config {
+  /** The kind each step names, by step; an unset step names its shipped kind ({@link DEFAULT_KINDS}). */
+  kinds?: Partial<StepKinds>
+}
+
+export const Config: z<Config> = z.object({
+  kinds: z.object({
+    develop: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.develop).description('The kind of work develop:1 is, and the fix a review grows from it (default code)'),
+    docs: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.docs).description('The kind of work develop:1 is in the docs variant (default docs)'),
+    tests: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.tests).description('The kind of work develop:1 is in the tests variant (default tests)'),
+    validate: z.string().pattern(WORK_KIND).default(DEFAULT_KINDS.validate).description('The kind of work validate:1 is: it runs the checks and tests and changes nothing (default validation). A Worker given kinds takes it only when it lists this one, so a writer given tests does not run it'),
+  }).description('The kind of work (ADR-0057) each algorithm-development step names, by step, so which Worker takes which step is the Workers\' kinds: a Worker given kinds takes a step only when it lists that step\'s kind. The review names none'),
+}) as unknown as z<Config>
+
+/**
+ * What this code would refuse in the row's configuration (`system check`, and at load, INV-2): a
+ * `kinds` key that is not a step, and a kind that is not a kind of work (empty, or not matching
+ * `WORK_KIND`). Empty when the configuration is fine.
+ */
+export function checkConfig(config: Partial<Config> = {}): string[] {
+  const kinds: unknown = config.kinds
+  if (kinds === undefined) return []
+  if (typeof kinds !== 'object' || kinds === null || Array.isArray(kinds)) return [`kinds must be an object of steps (${STEPS.join(', ')}), each naming a kind of work`]
+  return Object.entries(kinds).flatMap(([step, kind]) => !STEPS.includes(step as keyof StepKinds) ? [`kinds.${step} is not a step; kinds takes ${STEPS.join(', ')}`]
+    : typeof kind !== 'string' || !WORK_KIND.test(kind) ? [`kinds.${step}: ${JSON.stringify(kind)} is not a kind of work (${WORK_KIND})`] : [])
+}
 
 /** A review on this machine by a local agent Worker, which alone proves `review` and `local-data`. */
 export const AGENT_REVIEW: NodeTemplate[] = [
@@ -35,10 +82,16 @@ const DEVELOP_PROMPT = [
  * the diff and the criteria, never the maker's context), so this text points at no step's result.
  * The engine appends the exact subject, the request, and the assessment it asks for; a remediation
  * cycle's re-review is given this text composed as the review's is.
+ *
+ * The reviewer reads and judges; it never runs the project's tests or builds. `validate:1` runs them,
+ * and the run's required checks at acceptance (ADR-0063). A reviewer runs read-only, so a command it
+ * could not run is an environment limit, not a finding about the change: at most `info`, never a
+ * blocking finding that would grow a remediation cycle no fix can satisfy.
  */
 const REVIEW_PROMPT = [
   'Review this change as an independent reviewer: you see the task, its acceptance criteria, and the exact change, never its developer\'s conversation.',
   'Judge whether the change does what the task asks, correctly, and nothing beyond it. A defect, a change the task does not need, or a test or benchmark weakened, skipped, or made unreliable is a blocking finding.',
+  'You read and judge the change; you never run the project\'s tests or builds: the validation step after you runs them, and so do the run\'s required checks. A command you could not run is not a finding about the change; an environment limit is at most an info finding.',
 ].join('\n')
 
 /** The `docs` variant's develop step: the attempt changes the documentation the task names, never the code it documents. */
@@ -84,8 +137,9 @@ const VALIDATE_PROMPT = [
  *
  * - `develop:1` states one hypothesis and changes the code in the run's own worktree, in the run's
  *   session, which the task's next attempt resumes;
- * - `review:1` reviews that exact change on a read-only Worker; blocking findings grow a fix and a
- *   re-review, the fix waiting on the approval queue (engine remediation);
+ * - `review:1` reviews that exact change on a read-only Worker, reading and judging it and running
+ *   no test or build; blocking findings grow a fix and a re-review, the fix waiting on the approval
+ *   queue (engine remediation);
  * - `validate:1` runs the task's tests and benchmarks on the reviewed change, confined to the
  *   worktree, on a Worker that proves `validate` (its commands proven confined). It reads the task's
  *   criteria and their checks from its brief, never the caller's input (the develop step's orders)
@@ -98,31 +152,41 @@ const VALIDATE_PROMPT = [
  * Its measurements are evidence, not a check the engine reports: under a policy that requires tests,
  * the board holds the result for the operator.
  *
- * Each writing step names its kind of work (ADR-0057): `develop:1` is `code` work, or `docs` or
- * `tests` work in the variant of that name, and `validate:1` is `tests` work. A Worker the operator
- * gives kinds takes only steps of those kinds; one given none takes them all, as before. The review
- * names no kind, so any reviewer the operator gives none takes it.
+ * Each step but the review names its kind of work (ADR-0057), as the row's `kinds` configure it
+ * ({@link DEFAULT_KINDS}): `develop:1` is `code` work, or `docs` or `tests` work in the variant of
+ * that name, and `validate:1` is `validation` work, so a writer is never given the validation by
+ * taking test writing. A Worker the operator gives kinds takes only steps of those kinds; one given
+ * none takes them all, as before. The review names no kind, so any reviewer the operator gives none
+ * takes it.
  */
-export const ALGORITHM_DEVELOPMENT: NodeTemplate[] = [
-  {
-    nodeId: 'develop:1', objective: 'Test one hypothesis toward the task: state it, and change the code to try it', prompt: DEVELOP_PROMPT,
-    capabilities: ['develop', 'local-data'], tier: 'standard', kind: 'code', conversation: 'persistent', acceptance: 'acceptance.answer',
-    variants: {
-      docs: { kind: 'docs', objective: 'Change the documentation toward the task: state what it should say, and write it', prompt: DOCS_PROMPT },
-      tests: { kind: 'tests', objective: 'Change the tests toward the task: state what they should check, and write them', prompt: TESTS_PROMPT },
+export function algorithmDevelopment(configured: Partial<StepKinds> = {}): NodeTemplate[] {
+  const kinds: StepKinds = { ...DEFAULT_KINDS, ...Object.fromEntries(Object.entries(configured).filter(([, kind]) => kind !== undefined)) }
+  return [
+    {
+      nodeId: 'develop:1', objective: 'Test one hypothesis toward the task: state it, and change the code to try it', prompt: DEVELOP_PROMPT,
+      capabilities: ['develop', 'local-data'], tier: 'standard', kind: kinds.develop, conversation: 'persistent', acceptance: 'acceptance.answer',
+      variants: {
+        docs: { kind: kinds.docs, objective: 'Change the documentation toward the task: state what it should say, and write it', prompt: DOCS_PROMPT },
+        tests: { kind: kinds.tests, objective: 'Change the tests toward the task: state what they should check, and write them', prompt: TESTS_PROMPT },
+      },
     },
-  },
-  {
-    nodeId: 'review:1', objective: 'Review the exact change against the task, independently of its developer', dependsOn: ['develop:1'], prompt: REVIEW_PROMPT,
-    capabilities: ['review', 'local-data'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer',
-  },
-  {
-    nodeId: 'validate:1', objective: 'Run the task\'s tests and benchmarks on the reviewed change, and report what they measured', dependsOn: ['review:1'], prompt: VALIDATE_PROMPT,
-    capabilities: ['validate', 'local-data'], tier: 'economy', kind: 'tests', conversation: 'temporary', acceptance: 'acceptance.answer',
-  },
-]
+    {
+      nodeId: 'review:1', objective: 'Review the exact change against the task, independently of its developer', dependsOn: ['develop:1'], prompt: REVIEW_PROMPT,
+      capabilities: ['review', 'local-data'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer',
+    },
+    {
+      nodeId: 'validate:1', objective: 'Run the task\'s tests and benchmarks on the reviewed change, and report what they measured', dependsOn: ['review:1'], prompt: VALIDATE_PROMPT,
+      capabilities: ['validate', 'local-data'], tier: 'economy', kind: kinds.validate, conversation: 'temporary', acceptance: 'acceptance.answer',
+    },
+  ]
+}
 
-export function apply(ctx: Context): void {
+/** `algorithm-development` with the shipped kinds. */
+export const ALGORITHM_DEVELOPMENT: NodeTemplate[] = algorithmDevelopment()
+
+export function apply(ctx: Context, config: Config = {}): void {
+  const problems = checkConfig(config)
+  if (problems.length) throw new Error(`profile-software-development: ${problems.join('; ')}`)
   ctx.effect(() => ctx.workflow.template('agent-review', AGENT_REVIEW))
-  ctx.effect(() => ctx.workflow.template('algorithm-development', ALGORITHM_DEVELOPMENT))
+  ctx.effect(() => ctx.workflow.template('algorithm-development', algorithmDevelopment(config.kinds)))
 }

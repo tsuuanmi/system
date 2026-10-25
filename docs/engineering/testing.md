@@ -119,6 +119,10 @@ scenario of the suite, on the same provider, does not stay.
     leaves that worktree marked, no agent run in it; past the retention it is put back to its base
     and removed with nothing committed on its branch, and the run's agent later works on the base's
     files ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
+    An engine killed between a team member's `resend` decision and its new attempt (the
+    decision, the session's reset, and the ready node one transaction) resends that step exactly
+    once after a restart, in the new conversation, and the team completes
+    ([ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)).
 - **Architecture rules**
   ([`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
   Capability-routed code names no tools (INV-11). Native protocol objects stay
@@ -184,13 +188,20 @@ absence of automation leaks are properties of the real browser.
   waiting out the production default.
 - The turn runtime's and the workflow engine's browser specs are split by theme the same way
   (turns: asks, sessions, sign-in, routing, limits, the session-bound login profile, the ChatGPT
-  one, kept tabs, a site's notice or check; workflow: static DAGs, acceptance, plans, plan
-  approval, the operator's stop and supersede, deletion, team votes, ties and their deciding vote,
-  runs that wait on a vote, review findings, where a member runs and what it may be sent,
-  provider families), each file on
-  its own Xvfb through its
+  one, kept tabs, a site's notice or check, a turn across a restart, a restarted turn that must
+  wait and its cancel, the runtime's bounds and stop, the conversation ledger, a conversation kept
+  or failing to delete; workflow: static DAGs, acceptance, plans, plan approval, the operator's
+  stop and supersede, deletion, failures, restarts, retention, explain and MCP, re-plans, team
+  votes, ties and their deciding vote, runs that wait on a vote, review findings, where a member
+  runs and what it may be sent, provider families, a member woken by a message, one that needs a
+  peer's input, one handed off to a new conversation), each file on its own Xvfb through its
   package's `tests/stack.ts`. Those stacks do not pace page opens (the drivers' `pageGapMs` and the
-  runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing.
+  runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing. They also
+  set the drivers' answer-stable window (`stableMs`) to 300 ms, as the drivers' own specs do,
+  instead of production's 1.5 s. Production waits that long for a live site that pauses mid-answer.
+  The fake sites stream a word every 60 ms and then mark the answer done, so the longer window only
+  added idle time to every turn of every spec. The drivers' specs still cover completion on stable
+  text.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
   product's own `discoverChrome` and launch it with the product's arguments.
   The order is `CHROME_PATH`, then a system Chrome no older than the engine,
@@ -209,7 +220,27 @@ absence of automation leaks are properties of the real browser.
 
 `pnpm test` runs the whole suite, at most 32 test files at once, one per CPU but one on a smaller
 host ([`vitest.config.ts`](../../vitest.config.ts)): vitest's own default of one per CPU ran every
-file at once on a 256-CPU host, where in-process tests passed their bounds. Every workspace
+file at once on a 256-CPU host, where in-process tests passed their bounds. Its wall time is the
+longer of its slowest file and the sum of its files over those 32, so the slow files must start
+first. vitest's own order reads its duration cache from the last run on that checkout; with none (a
+fresh worktree, every CI run) it starts the largest files first, so a short file of slow tests
+started among the last, and a cold run took about 40 s more than a warm one. The suite's sequencer
+([`scripts/test-durations.ts`](../../scripts/test-durations.ts)) orders by a committed table
+instead, [`scripts/test-durations.json`](../../scripts/test-durations.json) (each file's path →
+seconds): the files the table does not hold first (a new file is not known to be short), in
+vitest's own order, then the rest longest first, cache or none. Refresh the table after adding,
+splitting, or slowing files, from a full run on a quiet host, and commit it:
+
+```sh
+pnpm test --reporter=json --outputFile=$TMPDIR/vitest-report.json
+pnpm gen:test-durations $TMPDIR/vitest-report.json
+```
+
+A stale table only costs time: a removed file is ignored, and a new one starts first. A
+file whose tests take about a minute or more together is split by theme, its shared setup in a
+module beside it (the agent Worker source's specs on `agent-workers/tests/stack.ts`, the login
+profile pool's on `browser-patchright/tests/profile-stack.ts`, the
+[browser specs](#real-display-and-browser-tests) on their package's `tests/stack.ts`). Every workspace
 package's tests, and the repository scripts', belong to one functional group: `kernel`,
 `workflow`, `workers`, `websites`, `surfaces`, and `libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
 `pnpm test:group` with no name lists each with its packages; its own test fails when a package or
@@ -235,7 +266,8 @@ The rule:
 ## CI gates
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request, every
-push to `main` (every merge), nightly on `main`, and on each release tag (the
+push to `main` or `dev` (every merge; `dev` is where the lead integrates batches and the live install
+follows), nightly on `main`, and on each release tag (the
 [release workflow](releasing.md) calls it), on Node 24.18.1 (the floor), the latest 24, and the
 latest 26, with a real Xvfb, TigerVNC, bubblewrap, and Chrome installed. A pull request runs
 `pnpm check` and its affected [test groups](#test-groups); everything else runs the full gate.
@@ -245,7 +277,16 @@ a root [`package.json`](../../package.json) script:
 1. `pnpm check`:
    - `check:docs` ([`scripts/check-docs.ts`](../../scripts/check-docs.ts)):
      every `docs/**` directory has exactly one `README.md`, no `topic.md` sits
-     beside `topic/`, and every relative Markdown link and anchor resolves;
+     beside `topic/`, and every relative Markdown link and anchor resolves; and no
+     tracked text file holds an unresolved git conflict marker
+     ([`scripts/check-conflicts.ts`](../../scripts/check-conflicts.ts)), named by file and
+     line. A line of exactly seven `<`, `|` (diff3's base), or `>`, alone or followed by a
+     space and a label, is always a marker. A line of exactly seven `=` is one only when a
+     `<` marker comes before it in the same file; alone it is a Markdown setext heading
+     underline. A file holding a NUL byte is binary and skipped. Two ADRs
+     (`docs/decisions/adr/NNNN-*.md`) or two proposals (`docs/proposals/NNNN-*.md`) with one
+     number fail, the later file named: parallel changes that each took the next number collide
+     ([what parallel changes collide on](#what-parallel-changes-collide-on));
    - `check:secrets` ([`scripts/check-secrets.ts`](../../scripts/check-secrets.ts)):
      no tracked text file holds a credential, by the scan `egress` applies to
      outgoing payloads (secretlint's recommended rules plus the shapes they miss,
@@ -253,7 +294,15 @@ a root [`package.json`](../../package.json) script:
      at run time instead of committing them; there is no opt-out;
    - `check:schemas` ([`scripts/check-schemas.ts`](../../scripts/check-schemas.ts)):
      every file in `schemas/` compiles under Ajv draft 2020-12 with
-     `strict: true`, and every file in `schemas/examples/` validates;
+     `strict: true`, every file in `schemas/examples/` validates, and no schema changes its
+     contract in place: against the committed snapshot
+     [`scripts/schema-snapshot.json`](../../scripts/schema-snapshot.json), a change that requires
+     a property, stops requiring one, removes one, or narrows or relaxes an existing subschema
+     fails unless the schema carries a newer version note
+     ([schema contracts](#schema-contracts-against-a-committed-snapshot));
+   - `check:migrations` ([`scripts/check-migrations.ts`](../../scripts/check-migrations.ts)): within
+     each owner's store migrations, across all its `migrate` calls, no version appears twice, and
+     each list's versions strictly increase in list order ([store migrations](#store-migration-versions));
    - `check:reference`, `check:packages`, and `check:traceability`: the generated
      [configuration catalog](../reference/configuration.md),
      [package graph](../architecture/packages.md), and
@@ -271,7 +320,9 @@ a root [`package.json`](../../package.json) script:
    ([`vitest.config.ts`](../../vitest.config.ts)): unit, contract, driver,
    concurrency, and architecture tests, and the tests of the repository's scripts.
    The agent read confinement tests run against the real bubblewrap; locally they
-   are skipped when `bwrap` is missing, and in CI a missing one fails the run. On a
+   are skipped, with the reason, when `bwrap` is missing or cannot confine a command
+   there, and in CI (`SYSTEM_REQUIRE_BWRAP=1`) such a one fails the run (see
+   [running the suite inside a run's check](#running-the-suite-inside-a-runs-check)). On a
    pull request, `pnpm test:affected --base origin/<its base branch>` instead, with
    the same environment.
 3. `pnpm test:e2e`: build, then every `*.e2e.ts`, one file at a time
@@ -297,3 +348,100 @@ comment; a test in [`scripts/checks.spec.ts`](../../scripts/checks.spec.ts) chec
 
 CI cannot prove account-bound flows. The
 [release checklist](../validation/release-checklist.md) covers them.
+
+### What parallel changes collide on
+
+Parallel runs each take "the next" number from the same tree, and each passes alone. Landing
+them side by side on `dev` on 2026-10-26: two runs wrote ADR-0065, two added agent-workers store
+migration 18, and one made a field of `mcp-roster@1.7` optional in place instead of adding a
+version. Three checks in `pnpm check` refuse these, each with a test of a fixture that fails and of
+the real tree that passes ([`scripts/collisions.spec.ts`](../../scripts/collisions.spec.ts)). A
+writer takes the next free number, version, and schema version
+([CONTRIBUTING](../../CONTRIBUTING.md)); after a collision, the change that lands second renumbers.
+
+#### Numbered documents
+
+`check:docs` groups `docs/decisions/adr/` and `docs/proposals/` by their `NNNN-` prefix; a number
+held by two files fails, naming the later file and the one it collides with.
+
+#### Store migration versions
+
+The store records each `(owner, version)` it applied, once
+([store](../../packages/plugins/store/src/index.ts)), so a second migration with a version an
+install already ran never runs there. `check:migrations` reads every
+`<x>.store.migrate(<owner>, <list>)` call (and any other `migrate` call with a string-literal owner
+or an array-literal list) under a package's `src/` with
+the TypeScript parser, without running the code: the owner is a string literal or a constant
+holding one, the list an array literal or a constant holding one, and each element an object
+literal with exactly one `version: <number literal>` and no object spread or computed key (either
+could set the version at runtime), or a constant holding one (`GATE_MIGRATION`), in the same
+file or imported from a relative module. A version twice, or a version not above the one before
+it in list order, fails, and so does one owner's version declared again by another `migrate`
+call (the store records it once, whichever call ran it). An owner, list, or element it cannot
+read that way (a computed owner, a call, a spread, a computed or repeated version) fails too, so
+no list hides from it. Tests and conformance suites, outside `src/`, are
+not read: they migrate out of order on purpose.
+
+#### Schema contracts, against a committed snapshot
+
+[`scripts/schema-snapshot.json`](../../scripts/schema-snapshot.json) holds each schema's contract:
+its newest version, and for every subschema by JSON pointer a digest of its own constraints
+(descriptions, titles, examples, and defaults left out; nested subschemas are their own entries),
+its `required` list, and its property names. `check:schemas` compares each schema with its entry;
+a change fails when it requires a property, stops requiring one, removes a property or a
+subschema, changes an existing subschema's constraints (narrows or relaxes it), or adds a
+constraint subschema to an existing one (a `not`, `items`, `if`, or `dependentSchemas` entry that
+was not there), unless the
+schema's version moved past the snapshot's. A schema's version is the highest `<major>.<minor>` of
+its file's major among the version notes in its descriptions (`1.9 adds …`, `1.4: …`, `(1.1)`,
+`<name>@1.9 …`; `other@1.3` names another schema and does not count). Only descriptions count: a
+`<name>@<major>.<minor>` tag elsewhere, such as an advanced `properties.schema.const`, is not a
+note, so a contract change needs its note in a description.
+Adding an optional property or a `$defs` entry is not a change in place.
+
+`pnpm gen:reference` rewrites the snapshot: every schema's current contract, except a schema
+changed in place, whose old entry it keeps, so regenerating never hides the change. The check also
+fails while the snapshot is out of date, so every versioned change commits its new entry.
+
+A snapshot, not a diff against the merge base with `main`: work lands on `dev` and `main` takes it
+only at the operator's merge ([branches](development.md#branches-dev-and-main)), so the merge base
+is a different, older tree on each branch, and a shallow checkout may not hold it. The snapshot is
+in the tree, so the check answers the same everywhere, offline. Two changes that both version one
+schema both rewrite its entry, and meet as a merge conflict in the snapshot. Its limit: a version
+note anywhere in a schema admits a change anywhere in it, so the note must say what changed.
+
+## Running the suite inside a run's check
+
+A workflow run's `tests` check ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md))
+runs `pnpm test:affected` inside the run's confinement: bubblewrap, the host read-only but the
+check's scratch paths, the worktree read-only too, a private `/tmp`, no network but loopback, its
+own PID namespace and `/dev`, and the daemon's umask (077 when
+[`scripts/live-update.sh`](../../scripts/live-update.sh) started it). The suite gives the verdict
+there that it gives on the host (T174):
+
+- **One helper decides what the environment can do, by doing it:**
+  [`packages/agent-runtime-core/tests/host.ts`](../../packages/agent-runtime-core/tests/host.ts).
+  `CAN_CONFINE` runs `true` under real bubblewrap with the features the code relies on (an agent
+  child's PID namespace, a check's read-only host without network, tmpfs and bind mounts), once
+  per test file; inside a check that is a nested bubblewrap, which a host can refuse. The probes'
+  command lines are written out in the helper, never built by `confinedCommand`: a regression in
+  the code under test then fails the confinement tests instead of skipping them. `cannotWrite(dir)` makes a directory there and removes it.
+  `createdMode(mode)` creates a file and reads its mode. No environment variable stands in for
+  any of these; `SYSTEM_REQUIRE_BWRAP=1` only makes a bubblewrap that cannot confine fail the
+  tests instead of skipping them.
+- **A test that needs what the environment cannot do skips, with the reason:** a `describe`
+  whose tests run commands under real bubblewrap calls `needsBubblewrap()`, and each of its tests
+  is skipped with `needs real bubblewrap: <why>` (vitest's skip note) where bubblewrap cannot
+  confine. A test that needs a writable directory outside the paths hidden from agents skips
+  where `cannotWrite` names why. Where the environment can, the test asserts what it does today.
+- **A test whose expectation follows from the environment asserts what the code does there:**
+  the Codex launcher hides `/dev/ptmx` with the null device where it is the device, and with
+  `/dev/pts` where it links into `/dev/pts` (bubblewrap's own `/dev`, inside a check); a brief's
+  file, created 0o444, has the mode the umask leaves (0o400 under umask 077).
+- **The proof:** [`host.spec.ts`](../../packages/agent-runtime-core/tests/host.spec.ts) runs the
+  tests that once failed only inside a check (the Codex launcher's command line, the brief's file
+  mode) under a check's command line with umask 077, and expects them to pass.
+
+A new test that reads host state (real bubblewrap, a device under `/dev`, a file's mode, the
+host's `/tmp`, the network, the operator's home, a write outside the temporary directory) takes
+its answer from this helper, never from a check of its own.

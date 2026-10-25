@@ -25,7 +25,8 @@
 > remediation fix's gate asks it ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)),
 > an approved deferred call's session is continued
 > ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), an accepted result's merge is
-> asked as a `merge` request ([below](#a-landing)), and a plain run that wrote
+> asked as a `merge` request ([below](#a-landing)), a start its dispatch pass proposes as a
+> `dispatch` request ([below](#a-start-system-proposes)), and a plain run that wrote
 > records the checks still pending ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)).
 > Differs from target: with no queue loaded, remediation falls back to the operator's plan gate
 > (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a
@@ -85,6 +86,12 @@ request that never expires (INV-9).
   The schema refuses a policy that says so (for `remediation` and `merge`, which the schema
   predates, a load-time rule does), and the provider raises each of them to at least `ask`
   whatever a rule says.
+- `dispatch` ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)):
+  System starting a ready board task's attempt with no person or lead asking for it
+  ([below](#a-start-system-proposes)). It is reversible (the run can be stopped, nothing lands
+  without `merge`), so it is not in `ALWAYS_ASK`. A policy that names no rule for it takes its
+  `default`: the bundle's studio policy names none and asks. Under `auto` or `notify` the dispatch
+  pass asks the queue nothing: the queue's seam is unchanged, it is simply not asked (D2).
 - A failed required check sends the action back to the lead as work, not to the operator. A
   check nobody reported is not a failure: the board holds such a review for the operator's own
   acceptance ([board](board.md#required-checks-bind-at-acceptance)).
@@ -113,7 +120,9 @@ request that never expires (INV-9).
 > - A caller that **accepts or applies a result** (the board's `accept`, an acceptance gate)
 >   passes the checks it ran (`action.checks`) and treats a non-empty `failedChecks` as **not yet
 >   allowed**: a failed check is work for the lead, never a reason to accept the result or to ask
->   the operator. Such a caller that reads `mode` alone fails open.
+>   the operator. Such a caller that reads `mode` alone fails open. The workflow engine runs the
+>   required checks that are commands on the result's exact tree first, and reports those
+>   ([a run's required checks](workflow-engine.md#a-runs-required-checks)).
 > - A caller that gates the work **while it runs** (a board task becoming ready, a Worker's tool
 >   call) cannot have run them: it lets the work go on under `auto` or `notify`, records the
 >   checks as pending (the `autonomy` decision's `failedChecks`, and its own record), and they
@@ -172,8 +181,9 @@ verdict and puts the action to the new policy again:
   amendment is dropped) when no request can be opened. A request the board withdrew itself
   changes nothing there.
 - A Worker's deferred call is denied when its session runs it again, as for any withdrawn
-  request, and nothing new is queued for that call ([below](#a-deferred-call)); the workflow
-  engine continues nothing for it.
+  request, and nothing new is queued for that call ([below](#a-deferred-call)). A board task's
+  step waiting on it ends its attempt when the new policy forbids the call's class, and otherwise
+  continues its session once, told the call was denied; a run outside the board continues nothing.
 - A workflow run's remediation gate closes (`plan_rejected`), and the fix does not run;
   `continue` puts the plan to the policy loaded now on a new request
   ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)).
@@ -259,11 +269,12 @@ another type, is denied, its reason naming the field.
 | Tool | Action |
 |---|---|
 | `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image` | `read`, for a path inside the run's workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal leading directory is outside it, or that climbs with `..`, is denied |
+| `mcp__workspace__read_file`, `mcp__workspace__list_dir`, `mcp__workspace__search` | `read`: the three tools of System's own [workspace reads server](agent-runtimes.md#the-workspace-reads-server) (T200b), which run no program, only for a run whose runtime reports it gives its agent that server (`workspaceReads`; elsewhere every `mcp__workspace__…` tool is denied, `unclassified-tool`); for the `path` they name inside the workspace (absent or empty for `list_dir` and `search`: the workspace), with no `..` segment and not in git's own data. Their other fields are the server's own: `read_file`'s `startLine` and `endLine` (numbers), `search`'s `pattern` (text) and `regex` and `ignoreCase` (booleans). Any other tool of that server (`mcp__workspace__…`) is denied by name (`unclassified-tool`); a `..` segment is `outside-workspace`, git's data `git-data` |
 | `read_file` | `read`, for the file `Path` names inside the workspace; its other fields are `StartLine`, `EndLine`, and `ByteOffset` (numbers) |
-| `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `workspace-write`, for a file inside the workspace; outside it is denied (and refused by the runtime) |
+| `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `workspace-write`, for a file inside the workspace; outside it is denied (and refused by the runtime), and so is a file in git's own data (`.git` anywhere in its path, as written or on disk; the same for `write_file`, `edit_file`, and `apply_patch`), whose configuration a git command would run |
 | `write_file`, `edit_file` | `workspace-write`, for the file `Path` names inside the workspace; `write_file`'s other fields are `Content` (text), `Append`, and `Overwrite` (booleans), `edit_file`'s `Target` and `Replacement` (text); `ArtifactMetadata`, which writes one of agy's own artifacts, is denied |
 | `apply_patch` | `workspace-write`, when its patch (`command`) reads strictly in the patch grammar (`*** Begin Patch`; `Add File` with `+` lines, `Delete File`, `Update File` with an optional `Move to`, `@@`, ` `, `+`, `-`, and empty lines, and `*** End of File`; `*** End Patch`) and every file a header names (added, deleted, updated, or moved to) is inside the workspace; a `***` line the grammar does not allow where it stands, a carriage return, or a name with surrounding spaces denies the whole patch |
-| `Bash` | `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`. A word with a shell metacharacter (the policy's own set, `SHELL_METACHARACTER`), or an empty word (a doubled, leading, or trailing space), is denied by the gate before the policy is asked; the policy forbids the former too. Its input fields are `command`, `description`, `timeout`, and `run_in_background`: `dangerouslyDisableSandbox` is denied. Codex reports its `exec_command` as `Bash` with `command` alone |
+| `Bash` | Only where the run's runtime itself starts every call's shell non-login and non-interactive, with no startup file or startup variable, in a shell the agent cannot choose (`cleanShells`, [agent runtimes](agent-runtimes.md#an-agents-shells-read-no-startup-code), T198), can a `Bash` call be a `read`: elsewhere a function or an alias a startup file defined, or a shell the call picked, could run in place of the program a word names, so each of the forms below is the `command` it is. Neither Codex (each call picks its shell and login mode) nor Claude Code (each command sources its shell snapshot) enforces it, so under both every `Bash` call is a `command`. Under a runtime that does: `read`, for a probe that can do nothing: `echo` with zero or more words (any word, `-e` and `-n` included), `pwd` with no argument, `true`, and `false`, each a shell builtin that reads no file and changes nothing (with no metacharacter it only prints its words, the working directory's name, or nothing), so a Worker's probe never waits on the operator; any argument to `pwd`, `true`, or `false` leaves it `command`. `read` also for a fixed read-only inspection command inside the workspace, each word matched exactly ([Codex's gate](agent-runtimes.md#codexs-gate): `cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `sed -n <range>p`, `rg`, `grep`, and `find` without actions, every path absolute and at least one named, since the gate does not see the directory a command runs in; a relative path, a form with no path, and `git` stay `command`); otherwise `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`. A word with a shell metacharacter (the policy's own set, `SHELL_METACHARACTER`), or an empty word (a doubled, leading, or trailing space), is denied by the gate before the policy is asked; the policy forbids the former too. Its input fields are `command`, `description`, `timeout`, and `run_in_background`: `dangerouslyDisableSandbox` is denied. Codex reports its `exec_command` as `Bash` with `command` alone |
 | `WebFetch`, `WebSearch` | `external-send`, which always asks |
 | any other tool (the Antigravity CLI's `run_command` among them: no confinement of its commands is proven), or an input that is not an object | denied by the gate's own rule |
 
@@ -295,6 +306,38 @@ recorded as a `gate` decision of rule `agent-workers.tool-gate`. A denied or def
 appends an `agent-workers.tool.denied` or `agent-workers.tool.deferred` event; events carry
 ids, never the call's input.
 
+### Why a call was denied
+
+Every `agent-workers.tool.denied` event says why (T207), so a denial that repeats is seen and its
+cause fixed rather than asked again. Its data adds, to the agent run, the Worker, and the tool:
+`reason`, a stable code; `explanation`, the code's fixed plain sentence (at most 300 characters,
+never the call's input: the agent's own reason and the decision name the path or command);
+`workerKind`, the Worker's runtime; `actionClass`, once the call was classified; and `decision`,
+the decision behind it, also on the entry itself. A `gate` decision's outcome detail names the
+code too. The codes ([events reference](../reference/schemas.md#event)):
+
+| Code | The call |
+|---|---|
+| `metacharacter`, `empty-word` | a `Bash` word holds a shell metacharacter, or is empty; denied before the policy is asked |
+| `outside-workspace` | names a path outside the workspace, as written or on disk, or a `Glob` pattern that reaches out |
+| `git-data` | writes git's own data (`.git`), or reads it through the workspace reads server |
+| `unclassified-tool` | a tool the gate does not classify (a workspace reads server tool under a runtime that gives no such server among them) |
+| `unsupported-field` | an input field the gate does not classify, or one of another type |
+| `invalid-input`, `invalid-patch` | an input that is no object or names nothing where it must; a patch outside the grammar |
+| `policy-forbid` | the policy forbids its class |
+| `not-listed` | a command no line of the studio policy's commands list matches, under a policy that forbids every other command |
+| `request-rejected`, `request-expired`, `request-withdrawn`, `workflow-denied` | its request for exactly this call was rejected, expired, or withdrawn, or the engine denied it: denied for good in its session |
+| `request-mismatch`, `request-unreadable` | the request recorded for it is for another call, or cannot be read |
+| `no-session`, `run-stopped`, `review-member`, `no-approvals` | an `ask` with no session to resume; a run already stopped at a deferred call; a review member's run; no queue |
+| `unknown-checks`, `unknown-mode`, `gate-error` | a verdict the gate does not know, or a gate that failed |
+
+A code is never renamed or reused; a new cause gets a new code. Health's `tool-denials` check
+counts the denials of its window (`driftWindowHours`, default 24) by reason code per Worker kind
+per UTC day, an event from before the codes as `unrecorded`; it is a notice, never degraded. The
+event's data is declared by `agent-tool-event@1.0` (T211; [schemas](../reference/schemas.md#event)):
+an entry that is not a valid denial (a code the schema does not list, an explanation past 300
+characters, a field no denial carries) is counted apart, never by reason.
+
 ### A deferred call
 
 - **The request** binds to the exact call (INV-5): subject `{ type: content, ref:
@@ -309,9 +352,30 @@ ids, never the call's input.
   blocked, its output in the thread naming the request, and the runtime stops Codex; in the later
   run the model makes the call again.
 - **Resume.** The same session continues in a later run (by its native handle): the workflow
-  engine starts it by itself once the request is approved, once per approval; a board task's step
-  waits on the request in its live run meanwhile, and a rejection or expiry ends that attempt for
-  the operator ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). The hook
+  engine starts it by itself once the request is approved, once per approval. A board task's step
+  waits on the request in its live run meanwhile, a `command` call at most
+  `deferredCommandMinutes` (default 10; 0 waits until the request expires), after which the engine
+  withdraws the request and treats that call alone as denied. The bound is derived from the request
+  (its class and creation): when the queue cannot be read as the step starts to wait,
+  `gateTimeoutHours` bounds it, and the first read that finds the request applies the bound after
+  all, a second `wait` decision with `boundMinutes` and the bounded deadline on the node's row, in
+  one transaction, so a restart keeps it and it is applied once (T209). A denied call (rejected, expired,
+  withdrawn, unanswered past that bound or the request's expiry, whether or not the queue's sweep
+  recorded the expiry yet, or approved only after that deadline) does not end the attempt: the
+  session continues once, its brief saying the call was denied and why, and the gate denies that
+  exact call there, so the agent's tool result is the denial and it works on without it. The
+  attempt ends for the operator only when the policy now forbids the call's class or the session
+  cannot resume ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)).
+- **A denied call stays denied in its session.** Before it allows any call, `auto` and `notify`
+  included, the gate looks up the request it last opened for that exact call in that session: one
+  rejected, expired, or withdrawn denies the call; and so does any request of the session for that
+  call the engine denied. The engine keeps its denial on the gate's own row of the request (the
+  `recovery` decision `deny` and its cause, written in the transaction that records the decision,
+  through `ctx.agentWorkers.denyToolCall`; with nothing to keep it, the attempt ends instead), and
+  the gate reads it from the store by session, never from the event log, whose retention may drop
+  the `workflow.run.continued` event. So a policy change that lists the command, an approval given
+  after the step's deadline, or a later attempt or chained task that continues the session in
+  another workflow run never runs a call the session was told was denied, across restarts too. The hook
   runs again on the deferred call. The gate finds the request opened for that exact call in
   that session, and checks it in full before using it: subject type `content`, ref
   `agent-tool-call:<the agent run that opened it>:<tool>`, version the input's content id, the
@@ -322,6 +386,38 @@ ids, never the call's input.
   input is a different call, with a request of its own.
 - **A run with no session** cannot be continued, so an `ask` there is denied, not deferred, and
   nothing is queued: the operator is never asked for an approval no run could use.
+- **Asking less.** Every Worker but a review member (whose gate allows no call) is given, with
+  every turn's prompt, one Tools section (T199, extended by T207) from its gate, its sandbox, its
+  runtime's evidence, and the policy as it stands (`ctx.approvals.policy()`): its workspace path;
+  under a runtime that gives its agent the
+  [workspace reads server](agent-runtimes.md#the-workspace-reads-server) (T200b), to read with
+  its `read_file`, `list_dir`, and `search`, never with a shell; for a read-only sandbox, that no
+  tool call writes a file (it is then given no writing tool); the calls its gate lets run
+  unasked, reading tools when `read` runs unasked (the workspace reads server's where the runtime
+  gives it, else the runtime's own; and the read-only inspection commands of the table above
+  only under a runtime that enforces clean shells, where the gate takes them for reads; elsewhere
+  it says no `Bash` command is a read), writing tools when `workspace-write` does (never in a
+  read-only sandbox), and the studio policy's commands list, its exact lines (at most 50 shown),
+  when `workspace-write` runs unasked and `command` is not forbidden, whatever the sandbox, since
+  the gate runs a listed command unasked in either (every command when `command` itself runs
+  unasked), or that none runs unasked; that a word with a shell metacharacter or an empty word is
+  refused, and that a relative path makes no command a read; and whether an approval resumes the
+  step (the run has a session) or a call that would ask is denied at once (it has none). At most
+  4,000 characters: the commands list is cut first, its rest counted. Nothing it names as
+  unasked is a call the policy asks about now; the gate still judges every call. With no queue,
+  or a policy that cannot be read, the prompt goes without it.
+  For `Bash` the section follows the policy's rule that a command on the commands list is judged
+  as `workspace-write`, unless `command` is forbidden, and any other command as `command` (T209):
+  - `command` `auto` or `notify`: every other command runs unasked; when `workspace-write` does
+    not, the listed commands are named as the exception (at most 50 lines);
+  - `command` `ask`: the listed commands' exact lines (at most 50) when `workspace-write` runs
+    unasked; any other command waits for the operator;
+  - `command` `forbid`: no list; any other command is denied.
+
+  With a list (and `command` not forbidden) it says that a listed command is judged as a workspace
+  write, and what that does now: runs unasked, waits for the operator (so with `workspace-write`
+  `ask` it still asks, even where other commands run unasked), or is denied; and under `command`
+  `auto` or `notify` it never says that other commands wait.
 
 ### Where a Worker's gate leaves room
 
@@ -342,16 +438,27 @@ ids, never the call's input.
   that deferred as a new attempt on the same session, at most once per approval, with a
   `recovery` decision ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). A board
   task's step waits on the request in its live run, so the task's attempt is not spent on the
-  wait; a run outside the board fails until the verdict. When a board task's attempt ends without
+  wait (a `command` call at most `deferredCommandMinutes`), and a denied call continues the
+  session once, told so, a `recovery` decision `deny`; a run outside the board fails until the
+  verdict, and a denial continues nothing there. When a board task's attempt ends without
   a verdict, the engine withdraws the requests its Workers left open, so none is left on a session
   no later attempt resumes. The engine finds the request from the gate's
   `agent-workers.tool.deferred` event and checks it through `ctx.approvals`, so `WorkerStart` and
   the workers seam stay as they are.
 - **Where pending checks bind.** The bundle's studio policy gives `workspace-write` `auto` with
   `tests` and `lint` required, so a Claude Code Worker reads and writes inside its workspace,
-  those checks pending. They bind at the board's acceptance of the task's result. A run outside
-  the board applies nothing, so they never block it: when it wrote, its completion records them
-  as pending on an `acceptance` decision (rule `workflow.run-acceptance`) for the operator to see
+  those checks pending. They bind at the board's acceptance of the task's result. Before it, the
+  run runs those that are commands on the result's exact tree, with the commands the operator
+  configured for the repository, and its acceptance reports each that ran to an exit code
+  ([a run's required checks](workflow-engine.md#a-runs-required-checks)); a Worker's own account of
+  a command never counts. A check sees the result read-only, so it cannot pass on code it swapped in
+  for a while; one whose command was never executed (the exec itself tells), or a nonzero exit whose command reports its
+  nested bubblewrap refused, is an infrastructure `error`, pending for the operator, never a failed
+  check sent back as another attempt (any other nonzero exit is `failed`); and each check's outcome,
+  even one a stop of the run came after or killed, is stored on its subject and reused, never run
+  again to replace it ([a run's checks](agent-runtimes.md#a-runs-checks)). A run outside the board applies nothing, so they never block it: when it
+  wrote, its completion records them as passed, failed, or pending on an `acceptance` decision
+  (rule `workflow.run-acceptance`) for the operator to see
   ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)), and they bind
   wherever its result is applied.
 
@@ -417,6 +524,35 @@ task's project. A merge always asks the operator, whatever the policy's mode for
   [PROP-0013](../proposals/0013-feedback-from-work.md#open-questions)'s open question 5: a policy
   that gives `merge` `auto` or `notify` is refused when loaded, and a proposed change that would is
   refused too.
+
+## A start System proposes
+
+The workflow engine's [dispatch pass](workflow-engine.md#dispatch-starting-ready-work-by-itself)
+([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md),
+accepted) judges `dispatch` with `check` for the task's project before it starts a ready task on the
+free Worker it chose.
+
+| Verdict | The start | Recorded |
+|---|---|---|
+| `forbid` | not dispatched in that project; the lead and the operator still start its tasks by hand | the `autonomy` decision; the pass's reason for the task |
+| `ask` | one request; started once it is approved, exactly as asked | the `autonomy` decision, the `dispatch.select` and `dispatch.choice` decisions, the request, the operator's `approval` decision |
+| `auto` | started with no request (PROP-0014 D2, D70): the queue is not asked, and nothing enters it; the start is shown on Home under *Started by itself* | the `autonomy` decision (the start's go), the `dispatch.select` and `dispatch.choice` decisions |
+| `notify` | the same, and a notice of the start (`workflow.dispatch.notice`, told by the notifier as `dispatch.started`) | the same, and the notice |
+
+- **The request** binds to exactly that start (INV-5): subject `{ type: content, ref:
+  dispatch:<taskId>:attempt:<n>, version: quota-score@2:<sha256 of the Worker and the score's
+  inputs> }` (`n`, the attempts already made), class `dispatch`, requester `workflow` with the task
+  and project; its summary names the task, the attempt, the Worker, and each window it would draw on,
+  its consequences what each verdict does and why that Worker.
+- **Approved**, the run starts on that Worker while the task is still ready at that attempt and the
+  Worker free, within `dispatch.approvedHoldMinutes`; otherwise it is used for nothing and a new
+  choice asks again. Rejected or expired: nothing starts, and dispatch never asks again for that
+  attempt. Withdrawn on a policy change: put to the policy in force at the next pass. The engine
+  withdraws a request itself when the task moves on or dispatch is paused.
+- **The board's gate counts** (D62): an attempt the operator approved through the board's own
+  request on `board-task:<id>:attempt:<n>` starts with no `dispatch` request, a `gate` decision
+  (rule `dispatch.approval`) naming that approval.
+- With no queue loaded, nothing is dispatched (fail-closed rule 5).
 
 ## A policy change
 

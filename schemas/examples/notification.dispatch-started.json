@@ -1,0 +1,12 @@
+{
+  "schema": "notification@1.2",
+  "id": "dispatch.started:run_4f1c2a9b7d3e5a60:6210",
+  "kind": "dispatch.started",
+  "subject": "run_4f1c2a9b7d3e5a60",
+  "at": "2026-10-25T09:12:00.000Z",
+  "event": { "seq": 6210, "type": "workflow.dispatch.notice" },
+  "title": "Started by itself: board task task-6755c1d17c2d",
+  "text": "System started attempt 1 of board task task-6755c1d17c2d of project system on agent:codex-sdk:2/develop (run run_4f1c2a9b7d3e5a60), as the project's policy gives dispatch notify. Nothing lands without your merge approval.",
+  "act": ["system explain run_4f1c2a9b7d3e5a60", "system stop run_4f1c2a9b7d3e5a60", "system dispatch pause --project system"],
+  "link": "http://127.0.0.1:47317/ui/"
+}

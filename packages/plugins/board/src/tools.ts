@@ -38,7 +38,7 @@ const artifactRef = () => zod.string().regex(/^sha256:[0-9a-f]{64}$/)
 const timestamp = () => zod.iso.datetime({ offset: true })
 const projectState = () => zod.enum(['proposed', 'active', 'paused', 'closed'])
 const taskState = () => zod.enum(['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled'])
-const actionClass = () => zod.enum(['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion'])
+const actionClass = () => zod.enum(['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion', 'dispatch'])
 const subject = () => zod.strictObject({ type: zod.enum(['content', 'git-head', 'pull-request', 'artifact', 'external']), ref: zod.string().min(1).max(512), version: zod.string().max(128).optional() })
 const budgetLine = () => zod.strictObject({ pool: id(), unit: zod.enum(['tokens', 'usd', 'turns', 'runs', 'minutes']), amount: zod.number().min(0).max(1e12) })
 const charter = () => zod.strictObject({

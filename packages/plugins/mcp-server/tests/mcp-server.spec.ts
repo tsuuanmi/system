@@ -164,7 +164,10 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await usage()).toMatchObject({ state: 'ok' })
     const observedAt = new Date().toISOString()
     ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
-    expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window \(the last 5h\) whose usage the ledger could not count \(1 not-reported\)\. A cap counts each as 0/) })
+    expect(await usage()).toMatchObject({
+      state: 'degraded',
+      detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window \(the last 5h\) whose usage the ledger could not count \(1 not-reported\) — arun_1 \(not-reported\): its runtime reported neither tokens nor turns\. A cap of such a run's task or project in its pool is refused/),
+    })
     // Reconciled: the ledger now counts a record of the run.
     await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_1', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_1', turns: 4 })
     expect(await usage()).toMatchObject({ state: 'ok' })
@@ -178,7 +181,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
   })
 
-  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.5 (REQ-HOST-8)', async () => {
+  it('serves the roster to the operator and to a client (the lead), the client without account labels, valid against mcp-roster@1.6 (REQ-HOST-8)', async () => {
     const { url, tokens, ctx } = await boot()
     const at = '2026-10-24T09:29:58.000Z'
     const plus = { id: 'plus', group: 'chatgpt-web', mode: 'assigned' as const }
@@ -219,7 +222,7 @@ describe('system MCP server on ctx.webServer', () => {
     const roster = async (token: string) => (await connect(url, token)).callTool({ name: 'roster', arguments: {} })
     const operator = await roster(tokens.operator)
     const schemas = new SchemaRegistry()
-    schemas.assertDef('mcp-roster@1.5', 'roster-output', operator.structuredContent)
+    schemas.assertDef('mcp-roster@1.6', 'roster-output', operator.structuredContent)
     expect(operator.structuredContent).toMatchObject({
       counts: { ready: 0, busy: 1, resting: 1, unavailable: 0, quarantined: 0 },
       workers: { value: [
@@ -230,8 +233,18 @@ describe('system MCP server on ctx.webServer', () => {
       ] },
     })
     expect((operator.content as Array<{ text: string }>)[0]!.text).toMatch(/^Roster as of .*: 2 Worker\(s\): 0 ready, 1 busy, 1 resting, 0 unavailable, 0 quarantined\n/)
+    // Capacity now, made once on the server (mcp-roster@1.7 `now`, T152): no Worker free, the account at its limit until its reset.
+    const now = (operator.structuredContent as { now: unknown }).now
+    schemas.assertDef('mcp-roster@1.7', 'capacity', now)
+    expect(now).toMatchObject({
+      free: { value: { items: [], more: 0 } },
+      noQuota: { value: { items: [{ account: 'plus', name: 'Chatgpt · Studio Plus', until: { value: '2026-10-24T11:00:00.000Z' } }], more: 0 } },
+      accounts: { value: { items: [{ account: 'plus', canWork: { value: false }, summary: 'at its limit until 2026-10-24T11:00:00.000Z' }], more: 0 } },
+    })
+    expect((operator.content as Array<{ text: string }>)[0]!.text).toContain('\nRight now (as of ')
     const client = await roster(tokens.client)
-    schemas.assertDef('mcp-roster@1.5', 'roster-output', client.structuredContent)
+    schemas.assertDef('mcp-roster@1.7', 'roster-output', client.structuredContent)
+    expect(client.structuredContent).toMatchObject({ now: { noQuota: { value: { items: [{ name: 'Chatgpt · plus' }] } } } })
     expect(JSON.stringify(client.structuredContent)).not.toContain('Studio Plus')
     // A client's names carry the account id, never the operator's label.
     expect(client.structuredContent).toMatchObject({ counts: { busy: 1, resting: 1 }, workers: { value: [{ name: 'Chatgpt · plus · frontier' }, { name: 'Chatgpt · plus · standard' }] } })
@@ -272,7 +285,7 @@ describe('system MCP server on ctx.webServer', () => {
     const read = async () => {
       const client = await connect(url, tokens.operator)
       const roster = await client.callTool({ name: 'roster', arguments: {} })
-      schemas.assertDef('mcp-roster@1.5', 'roster-output', roster.structuredContent)
+      schemas.assertDef('mcp-roster@1.6', 'roster-output', roster.structuredContent)
       const status = (await client.callTool({ name: 'status', arguments: { checks: true } })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }
       return { roster, text: (roster.content as Array<{ text: string }>)[0]!.text, workers: status.health.checks.find((c) => c.name === 'workers')! }
     }

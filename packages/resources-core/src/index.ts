@@ -1,7 +1,7 @@
 /**
  * Resource ledger seam definition: `ctx.resources`, the configured resource pools, their limit
  * readings, reservations before a run, and usage records after it (docs/design/resources.md).
- * The types mirror `usage-record@1.0` and `limit-state@1.0`; the schemas in `schemas/` are
+ * The types mirror `usage-record@1.1` and `limit-state@1.0`; the schemas in `schemas/` are
  * canonical. Numbers come from objective sources only. A guarantee seam: it fails closed (INV-2),
  * and its contract changes only by an ADR (ADR-0036).
  * @module @tsuuanmi/system-resources-core
@@ -14,8 +14,32 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The contract version of this seam; its conformance suite names the same. 1.1: pool templates and the optional `declare` (ADR-0052). */
-export const RESOURCES_CONTRACT = '1.1'
+/**
+ * The contract version of this seam; its conformance suite names the same. 1.1: pool templates and the
+ * optional `declare` (ADR-0052). 1.2: the optional `quota` (ADR-0064): the operator's quota settings.
+ * 1.3: `record` takes `usage-record@1.1`, whose `partial` says the record is a lower bound of its
+ * run; it is kept on the record, and a cap of its scope and pool is refused while the run has no
+ * whole record there (ADR-0065).
+ */
+export const RESOURCES_CONTRACT = '1.3'
+
+/**
+ * The operator's quota settings (contract 1.2, ADR-0064), read by the quota score (`quota-score@2` in
+ * `@tsuuanmi/system-libs`): the share of every window kept free of work System starts by itself, and
+ * how the score reads windows. Each is a whole number in its range, validated when the provider loads.
+ */
+export interface QuotaSettings {
+  /** Share of every window, in percent, kept for the operator's own use: dispatched work never starts into it (0 to 90; default 20, D63). */
+  reservePercent: number
+  /** A window that resets within this many minutes is used first (0 to 1440; default 90; 0: never). */
+  useSoonMinutes: number
+  /** The least headroom, in percent, a window about to reset needs to be used first (1 to 100; default 10). */
+  minHeadroomPercent: number
+  /** Headroom is compared in buckets this many points wide (1 to 25; default 5). */
+  headroomBucketPercent: number
+  /** A reading older than this is stale, and its window is not known (60 to 86400 seconds; default 1800). */
+  staleReadingSeconds: number
+}
 
 export type ArtifactRef = `sha256:${string}`
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
@@ -75,9 +99,9 @@ export interface LimitState {
   evidence?: ArtifactRef
 }
 
-/** `usage-record@1.0`. */
+/** `usage-record@1.0`, or `@1.1` with `partial`. */
 export interface UsageRecord {
-  schema: 'usage-record@1.0'
+  schema: 'usage-record@1.0' | 'usage-record@1.1'
   requestId: string
   source: 'runtime-result' | 'provider-usage' | 'transcript' | 'turn-count' | 'invoice'
   observedAt: string
@@ -97,6 +121,13 @@ export interface UsageRecord {
   durationMs?: number
   cost?: { amount: number; currency: 'USD'; basis: 'runtime-estimate' | 'price-table' | 'invoice'; priceVersion?: string }
   outcome?: 'completed' | 'failed' | 'aborted'
+  /**
+   * (1.1, with `runId`) The record is a lower bound of its run, and why, in plain words: the run
+   * ended before its runtime's final count, and its numbers are what the runtime reported while it
+   * ran. Counted, never the run's usage: a cap of its scope and pool fails closed while the run has
+   * no record there without it (INV-2, ADR-0065).
+   */
+  partial?: string
 }
 
 /** A pool now: its configuration, the latest reading of each window, and whether new work may draw on it. */
@@ -178,4 +209,11 @@ export abstract class Resources extends Service {
    * them; their readings and records stay, under their ids.
    */
   declare?(source: string, accounts: readonly DeclaredAccount[]): Promise<string[]>
+
+  /**
+   * Optional (contract 1.2, ADR-0064): the operator's quota settings, as configured and validated
+   * when the provider loaded. A caller that finds none cannot keep the operator's reserve, so it
+   * starts no work on a quota reading (INV-2).
+   */
+  quota?(): QuotaSettings
 }

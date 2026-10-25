@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:agent-tool-event:v1",
+  "title": "Agent tool event",
+  "description": "The data of the agent Workers' tool-gate events (design/approvals.md#a-workers-tool-calls): `agent-workers.tool.denied`, `.deferred`, `.notified`, and `.checks-pending`, each under `$defs/<kind>`. The data carries no schema tag (event data never did): a reader validates it against the definition its event type names, as `agent-tool-event@1.0`, and counts an entry that does not validate apart, never guessing (INV-14). 1.0 declares the fields T207 added (a denial's `reason`, `explanation`, `actionClass`, `requestId`, `decision`; `workerKind` on every kind) as optional, so an entry from before T207 stays valid. The root describes one entry (its event type and data), which is what the examples are.",
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "enum": ["agent-workers.tool.denied", "agent-workers.tool.deferred", "agent-workers.tool.notified", "agent-workers.tool.checks-pending"] },
+    "data": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "agent-workers.tool.denied" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/denied" } } } },
+    { "if": { "properties": { "type": { "const": "agent-workers.tool.deferred" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/deferred" } } } },
+    { "if": { "properties": { "type": { "const": "agent-workers.tool.notified" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/notified" } } } },
+    { "if": { "properties": { "type": { "const": "agent-workers.tool.checks-pending" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/checks-pending" } } } }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "call": {
+      "description": "What every tool event names: the agent run, its Worker, the Worker's kind (its runtime, since T207), and the tool.",
+      "type": "object",
+      "required": ["agentRun", "worker", "tool"],
+      "properties": {
+        "agentRun": {
+          "description": "The agent run (`arun_…`) the call was made in.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "workerKind": {
+          "description": "The Worker's kind, its runtime (`claude-agent-sdk`, `codex-sdk`, …), cut to 100 characters (T207). Absent from an entry from before T207, or for a Worker that names none.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "tool": {
+          "description": "The tool's name as the runtime reported it, cut to 100 characters. Never the call's input.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "actionClass": {
+          "description": "The class the gate classified the call into; absent from a denial of a call it did not classify.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass"
+        }
+      }
+    },
+    "reason": {
+      "description": "Why the gate denied a call, a stable code (T207): never renamed or reused; a new cause gets a new code (a minor version). The gate's own list (`DENIAL_REASONS`, agent-workers) is tested to be in this enum.",
+      "enum": [
+        "metacharacter", "empty-word", "outside-workspace", "git-data", "unclassified-tool", "unsupported-field", "invalid-input", "invalid-patch",
+        "policy-forbid", "not-listed", "request-rejected", "request-expired", "request-withdrawn", "workflow-denied", "request-mismatch", "request-unreadable",
+        "no-session", "run-stopped", "review-member", "no-approvals", "unknown-checks", "unknown-mode", "gate-error"
+      ]
+    },
+    "pendingChecks": {
+      "description": "The checks the policy rule leaves pending, which bind when the result is accepted, never per call.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review"] }
+    },
+    "denied": {
+      "description": "`agent-workers.tool.denied`: a call its gate denied. Since T207 it says why: `reason`, the code's fixed `explanation` (never the call's input), `requestId` for a denial on an approval request, and the `decision` behind it (as on the entry). An entry from before T207 has none of them, and stays valid.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/call" }],
+      "properties": {
+        "reason": { "$ref": "#/$defs/reason" },
+        "explanation": {
+          "description": "The reason code's fixed plain explanation, at most 300 characters (`EXPLANATION_MAX`).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "requestId": {
+          "description": "The approval request the denial is on (a rejected, expired, or withdrawn request; a workflow's denial of it).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "decision": {
+          "description": "The decision behind the denial: the gate's own, the autonomy decision, or the queue's.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "dependentRequired": { "explanation": ["reason"] },
+      "unevaluatedProperties": false
+    },
+    "deferred": {
+      "description": "`agent-workers.tool.deferred`: a call the policy asks the operator about, deferred on its approval request; the run stops there.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/call" }],
+      "required": ["actionClass", "requestId"],
+      "properties": {
+        "actionClass": true,
+        "requestId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+      },
+      "unevaluatedProperties": false
+    },
+    "notified": {
+      "description": "`agent-workers.tool.notified`: a call the policy's `notify` rule let run, with the checks it leaves pending, if any.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/call" }],
+      "required": ["actionClass"],
+      "properties": {
+        "actionClass": true,
+        "pendingChecks": { "$ref": "#/$defs/pendingChecks" }
+      },
+      "unevaluatedProperties": false
+    },
+    "checks-pending": {
+      "description": "`agent-workers.tool.checks-pending`: the first call of an action class in a run that an `auto` rule let run with checks pending.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/call" }],
+      "required": ["actionClass", "pendingChecks"],
+      "properties": {
+        "actionClass": true,
+        "pendingChecks": { "$ref": "#/$defs/pendingChecks" }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

@@ -157,6 +157,28 @@ describe('ctx.workflow lands an accepted result through the source that holds it
     expect(optionsOf(ctx, merged)).toEqual(['commit', 'merge'])
   })
 
+  it('names the files a merge regenerated, and the commands that made them, in its merge decision (T166, INV-13)', async () => {
+    const lander = new Lander()
+    const { ctx, runId } = await boot('ask', lander)
+    const asked = await until(ctx, runId, 'asked')
+    // The commands' autonomy decision: any recorded artifact stands for it here.
+    const autonomy = asked.decisions![0]!
+    lander.answer = (step) => step.step === 'merge'
+      ? { outcome: 'merged', repository: '/repo', branch: `system/run/${step.runId}`, head: step.head, base: step.base, commit: 'e'.repeat(40), already: false,
+        regenerated: { files: ['docs/validation/traceability.md'], commands: ['corepack pnpm gen:traceability'], autonomy: [autonomy] } }
+      : undefined
+    const [request] = await merges(ctx)
+    await ctx.approvals.decide([{ requestId: asked.requestId!, subject: request!.subject, verdict: 'approved' }])
+    const merged = await until(ctx, runId, 'merged')
+    expect(merged.commit).toBe('e'.repeat(40))
+    const decision = ctx.artifacts.get(merged.decisions!.at(-1)!)!
+    const body = decision.body as { outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; reasons: string[] }> }
+    expect(body.outcome).toMatchObject({ option: 'merge', detail: { regenerated: { files: ['docs/validation/traceability.md'], commands: ['corepack pnpm gen:traceability'] } } })
+    expect(body.candidates[0]!.reasons.join('\n')).toContain('regenerated: docs/validation/traceability.md')
+    expect(body.candidates[0]!.reasons.join('\n')).toContain('corepack pnpm gen:traceability')
+    expect(decision.inputs).toContain(autonomy)
+  })
+
   it('refuses the merge a forbid policy forbids, recorded, asking no one; a merge always asks, whatever the policy says, and a denied one merges nothing (D56, REQ-WF-13, INV-2)', async () => {
     const forbidden = await boot('forbid', new Lander())
     const refused = await until(forbidden.ctx, forbidden.runId, 'refused')

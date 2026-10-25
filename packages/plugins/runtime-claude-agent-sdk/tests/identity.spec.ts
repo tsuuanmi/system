@@ -45,9 +45,13 @@ const query = ((params: { prompt: string }) => (async function* () {
   yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'm' }
   yield { type: 'result', subtype: 'success', is_error: false, result: `echo: ${params.prompt}`, session_id: 'h-1', uuid: 'r-1', num_turns: 1 }
 })()) as unknown as QueryFn
+/** Where each run's private shell home is made (T198): outside `root`, which a run here takes for its workspace. */
+const RUN_DIR = mkdtempSync(join(tmpdir(), 'claude-id-run-'))
+afterAll(() => rmSync(RUN_DIR, { recursive: true, force: true }))
 const runtime = (extra: Partial<RuntimeOptions> = {}) => new ClaudeAgentRuntime({
   query, executable: '/usr/bin/claude', findExecutable: () => undefined, version: async () => '2.1.308', home: join(root, 'own-home'),
-  confine, prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => '', status, ...extra,
+  confine, prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => '', status,
+  runDir: RUN_DIR, ...extra,
 })
 
 agentRuntimeIdentityConformance('claude-agent-sdk', { make: () => runtime(), signIn: (home, login) => signIn(home, login), signOut })
@@ -165,7 +169,8 @@ describe('claude-agent-sdk identity reader (ADR-0051, REQ-ACC-11)', () => {
     const r = runtime()
     const result = await r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: at }, new AbortController().signal)
     expect(result.text).toBe('echo: x')
-    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root] })
+    // The named home bound back writable; the run's private shell home (T198) read-only.
+    expect(binds.at(-1)).toEqual({ writable: [at], readOnly: [root, expect.stringMatching(new RegExp(`^${RUN_DIR}/agent-home-`))] })
     await expect(r.run({ prompt: 'x', workspace: root, sandbox: 'read-only', home: join(root, 'nowhere') }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
     expect(existsSync(join(root, 'nowhere'))).toBe(false)
     expect(r.home).toBe(join(root, 'own-home'))

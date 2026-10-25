@@ -103,6 +103,39 @@ accepted/implemented -> superseded
   same session, bounded and failing closed; and a liveness verdict under which a failed probe is
   never death and no automation sends input to a session blocked on an approval.
 
+- [PROP-0014: Dispatch by quota](0014-dispatch-by-quota.md), **accepted** (D61 to D66, 2026-10-25:
+  increment D1, ask to start, chosen by quota, built under
+  [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md);
+  never a metered pool, a 20 % reserve of every window). System starts ready
+  board tasks on free Workers by itself instead of waiting for the lead. A dispatch sweep in the
+  workflow engine takes the ready tasks of active projects by priority, then age. A new action
+  class `dispatch` gates each start: the shipped studio policy asks, so the operator approves by
+  button, and a project may set auto. The writing step's Worker is chosen among those routing
+  admits by a versioned quota score: headroom above a reserve kept for the operator, a window
+  about to reset used first, unknown readings after known ones, and metered pools last and only
+  inside a cap. Each choice records a reason on every candidate. Parallel runs are bounded per
+  account, per project, and in total, with one task per write subject. Starts are capped per
+  hour, and dispatch can be paused per project.
+
+- [PROP-0015: Right worker, right job](0015-right-worker-right-job.md), **accepted** (D71 to D78,
+  2026-10-25, every open question answered as proposed: the 20 % reserve stays the hard line for
+  starts with a light band of 65 % to 80 % for measured light work; the reserve also keeps a
+  dispatched run's later steps out of the operator's share, not starts made by hand; Jev sees
+  features only; shadow for 100 dispatched attempts with outcomes; E1, then E2 and E5, then E4 and
+  E3, then E6, J0 in parallel; a step may propose child tasks under the board's gate, depth 1, at
+  most 3 per attempt; Claude Code writes code, docs, and tests, Codex validates and reviews,
+  website Workers research, the Antigravity CLI validates only once it proves `validate`;
+  fresh-context review on tasks the lead marks, measured; nothing built yet). From the operator's
+  request of 2026-10-25 and research runs T177 to T182. One quota rule: the
+  roster's capacity summary reads `accountQuotaOf` with the reserve, so "free" means what it means
+  to dispatch (E1, buildable now, no new vendor). Then the quota each attempt drew, recorded from
+  the account's readings; a start refused when its kind's observed draw would not fit, with a
+  light band below the reserve, shadow first; each Worker's acceptance by kind measured from
+  recorded decisions; one *Needs you* list on Home with board questions in it; a step's typed
+  handoffs becoming child board tasks with fresh-context briefs; and Jev as an advisor behind
+  PROP-0002's `ctx.decisions` seam, one query per decision with the whole distribution recorded,
+  in shadow, never widening a gate.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.

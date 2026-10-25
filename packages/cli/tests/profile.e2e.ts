@@ -175,7 +175,7 @@ describe('system profile (e2e through dsh)', () => {
     expect(clientTools).toEqual([
       'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
       'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
-      'brainstorm', 'digests_get', 'digests_request', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'roster', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
+      'brainstorm', 'digests_get', 'digests_request', 'dispatch_status', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'roster', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
     ])
     // Digests are on (B6): a request names stored artifacts only, and one that names none is refused with nothing done.
     const digester = await client2(url, tokenOf('client'))
@@ -190,7 +190,7 @@ describe('system profile (e2e through dsh)', () => {
     const lead = await client2(url, tokenOf('client'))
     const roster = await lead.callTool({ name: 'roster', arguments: {} }).finally(() => lead.close())
     expect(roster.isError).toBeFalsy()
-    new SchemaRegistry().assertDef('mcp-roster@1.5', 'roster-output', roster.structuredContent)
+    new SchemaRegistry().assertDef('mcp-roster@1.6', 'roster-output', roster.structuredContent)
     expect(roster.structuredContent).toMatchObject({ unlisted: 0, counts: { ready: 0, busy: 0, resting: 0, unavailable: 0, quarantined: 0 }, unknownUsage: { value: { unreadable: 0, unconfigured: [] } } })
     // The approval queue is core and on, with the bundle's default studio policy; the board asks through it (B5).
     const queue = await client2(url, tokenOf('client'))
@@ -203,7 +203,7 @@ describe('system profile (e2e through dsh)', () => {
     const week = await reporter.callTool({ name: 'report', arguments: {} }).finally(() => reporter.close())
     expect(week.structuredContent).toMatchObject({ projects: [], approvals: { asked: 0 }, usage: { total: { records: 0 } }, baseline: { acceptedResults: 0 } })
     expect((week.content as Array<{ text: string }>)[0]!.text).toMatch(/^# Report: every project\n/)
-    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'approvals_decide', 'approvals_policy_propose', 'board_pause', 'board_resume', 'board_close', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
+    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'approvals_decide', 'approvals_policy_propose', 'board_pause', 'board_resume', 'board_close', 'dispatch_pause', 'dispatch_resume', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {
       method: body ? 'POST' : 'GET', ...(body ? { body: JSON.stringify(body) } : {}),

@@ -49,9 +49,20 @@ The **`agents` Worker source**: agent runtimes as Workers
   name one of them, never a step that names none; unset, it takes any work. A
   malformed or repeated kind, an empty list, or kinds on a review member (whose
   steps name no kind) is refused at load (`config_error`). `checkConfig(config)`
-  makes the same checks of the row's Workers and roles, and of its `worktreeSetup`
-  entries (ADR-0058), without a host, so `system check` names such a problem
-  before a restart.
+  makes the same checks of the row's Workers and roles, of its `worktreeSetup`
+  entries (ADR-0058), and of its `workspaceReads` bounds, without a host, so
+  `system check` names such a problem before a restart.
+- **The workspace reads server's bounds** (`workspaceReads`, T200b,
+  [design](../../../docs/design/agent-runtimes.md#the-workspace-reads-server)):
+  each within its range (agent-runtime-core's `WORKSPACE_READ_BOUNDS`), the rest
+  at their defaults, passed with every run as `RunSpec.workspaceReads`. For a run
+  whose runtime reports `workspaceReads` (its evidence, threaded to the gate as
+  `shellReads` is), the gate classifies exactly that server's
+  `mcp__workspace__read_file`, `…list_dir`, and `…search` as reads and refuses any
+  other tool of it (`unclassified-tool`); elsewhere it refuses every
+  `mcp__workspace__…` tool. Such a Worker's Tools section (`unaskedNote`, never a
+  review member's) names them as its reading tools and tells it to read with them,
+  never with a shell.
 - **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
   [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
   - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,
@@ -356,6 +367,48 @@ The **`agents` Worker source**: agent runtimes as Workers
       `agent-workers.worktree-setup`, `start` or `refuse`) among the run's
       decisions, and an `agent-workers.worktree.setup` event (`ran`, `refused`,
       `waits`);
+  - **a run's checks** (`worktreeSetup[].checks`, [`src/checks.ts`](src/checks.ts),
+    T151, [ADR-0063](../../../docs/decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md),
+    [design](../../../docs/design/workflow-engine.md#a-runs-required-checks),
+    [runbook](../../../docs/operations/runbooks.md#let-a-run-pass-the-required-checks)):
+    a repository's setup may name the command of each check a policy can require
+    (`tests`, `typecheck`, `lint`; each a command line as above, outside the
+    setup's hash, so changing them asks nothing again) and `checkTimeoutSeconds`
+    (default 1800, at most 3600). The source's `check` (the workers seam's) runs
+    the checks a workflow run asks for on its worktree:
+    - only while the worktree is intact, no agent run of its workflow run is
+      unfinished or not known to be gone, and it is exactly the result's subject
+      (else `refused`: `gone`, `busy`, `failed`, `moved`, nothing run);
+    - each check is an `error`, never run, when the repository names no command
+      for it, the worktree was not set up under the setup loaded now, no queue is
+      loaded, or the policy does not let its exact argv run unasked (`auto` or
+      `notify`; an `ask` opens no request: list the line in the studio policy);
+    - the allowed ones run in order in the setup's confinement and views
+      (`confineIn` in its `check` mode), each within its deadline, **with the
+      worktree read-only** (T164): a check cannot change what it checks, even for
+      a while; its writable places are its private `/tmp` and the setup's
+      `checkScratch` paths (git-ignored, nothing tracked; each a fresh private
+      directory of that check alone, its own confinement, discarded after it).
+      Each command starts through a fixed launcher (System's own Node, bound back
+      read-only) that spawns it and says on fd 3 `started` once the exec itself
+      succeeded, or `exec-failed <code>` (a missing `#!` interpreter among them);
+      the command may report on the descriptor `SYSTEM_CHECK_REPORT_FD` names
+      (fd 4). Exit 0 is `passed`, any other code (127 too) `failed`; a command
+      never executed, a nonzero
+      exit whose command reported `nested-confinement-refused: <detail>` there,
+      a timeout, or a signal is an `error`; after each, the tree is captured
+      again, and a check that changed it is an `error`, the later ones not run;
+    - each check that ran is stored (`agent_check_runs`: run, worktree, subject,
+      check, argv, setup hash; `started`, then `done` with its record) and its
+      record is the answer when asked again on that key, after a restart too; one
+      left `started` by a crash is an `error` stored in its place; a stop of the
+      run (a lost lease) is honoured only once the check's outcome is stored: as
+      it ended, or an `error` when the stop killed it (INV-4);
+    - what ran is one `check-run@1.0` evidence artifact (its inputs the commands'
+      `autonomy` decisions; per check the argv, exit code, duration, and the last
+      4000 characters of its output with its length and SHA-256), at the run's
+      classification, returned with the results. Nothing is retried; the engine's
+      acceptance reports each `passed` or `failed`, and an `error` stays pending;
   - an agent can write the worktree's `.git` file, so git never follows it: a
     run whose worktree's `.git` file no longer points to the worktree's own
     directory fails as `reconciliation_failed`, and the worktree is left for
@@ -393,6 +446,21 @@ The **`agents` Worker source**: agent runtimes as Workers
     aborted (`git merge --abort`), its files named, and the repository checked to be as it was
     (`conflict`); a merge git refuses before starting changes nothing (`failed`). Never a force, a
     reset, a branch deletion, or a push.
+  - a conflict only in generated files (`worktreeSetup[].generated`, [`src/regenerate.ts`](src/regenerate.ts),
+    T166, [runbook](../../../docs/operations/runbooks.md#regenerate-generated-files-on-a-landing)):
+    a repository's setup may declare `generated: { paths, commands }` (1 to 32 repository-relative
+    paths, a `*` matching within one segment; 1 to 16 command lines as above; outside the setup's
+    hash). When every conflicted file is one of them, the merge, aborted in the repository, is made
+    again in the run's worktree (intact, free, clean, on its branch at the head): detached at the
+    base, `git merge --no-ff --no-commit`, each conflicted file taken from either side, then the
+    commands run in order, each only when the policy lets its argv run unasked, in the setup's
+    confinement and views (`confineIn`), within the setup's deadline, in a worktree set up under
+    the setup loaded now. They must exit 0, change only declared files, and leave the index; the
+    merge is committed (parents the base and the head), the commands run again and must change
+    nothing, and the base, checked again, is fast-forwarded to that commit (`merged` with
+    `regenerated`: the files, the commands, their autonomy decisions). The worktree goes back on
+    its branch (`merge --abort`, `checkout --force`) in every case. Anything else is `conflict`
+    (or `base-moved`, `dirty`), the repository as it was.
 - **A run's change** (`changes` on the `workers` seam, T122,
   [design](../../../docs/design/agent-runtimes.md#a-runs-change-for-the-operators-review)): for each
   worktree it holds of a workflow run, read only, what it holds against the commit it forked from
@@ -409,7 +477,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   `--no-optional-locks`, after the landing's check that the worktree is intact; one that is not
   throws.
 - **Carrying** (`carry` on the `workers` seam, [ADR-0061](../../../docs/decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-  proposed: the carry is on by default, pending the operator's acceptance (D59), [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
+ accepted 2026-10-25, D59, [design](../../../docs/design/agent-runtimes.md#carrying-an-earlier-runs-work)): the
   workflow engine asks it before the first step of a board task's next attempt, for the earlier
   attempt's worktree (by workflow run and path; any other is undefined), one change at a time per
   repository:
@@ -467,8 +535,19 @@ The **`agents` Worker source**: agent runtimes as Workers
     `runId`), its data `usage-unknown@1.0`: `not-reported` for a run that
     reported neither tokens nor turns, `refused` (the ledger's `failure`, and
     the refused record kept as an `evidence` artifact when it is a valid
-    record) or `failed` for one it did not take, and `interrupted` below. A
-    fact that cannot be appended is logged. A cap counts such a run as 0;
+    record) or `failed` for one it did not take, and `interrupted` below. Its
+    `reason` says in plain words how the run ended (`it completed`, `it was
+    stopped: cancelled by the operator`, `it ran past its timeout of … ms and
+    was stopped`, `the host stopped while it ran, and stopped it (a drain at
+    stop or restart)`, `it stopped at a <tool> call that waits for approval
+    request <id>`, `it failed (<kind>)`), then what its runtime reported. A run
+    that ended before its runtime's final count, whose runtime reported some
+    usage while it ran (`partial`), gets its record of that lower bound and a
+    `not-reported` fact (`usage-unknown@1.1`) whose `partial` names that
+    record, which never reconciles it; a partial report with no number above
+    0 gets no record. A fact that cannot be appended is logged. A cap of such
+    a run's task or project in its pool is refused until it is reconciled
+    ([ADR-0065](../../../docs/decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md));
   - **observe** each rate-limit observation the runtime reported as a
     `limit-state` reading (source `runtime-result`) of the window `windows`
     maps it to: `limited` with `resetsAt` when `rejected`, `limited` until
@@ -496,6 +575,19 @@ The **`agents` Worker source**: agent runtimes as Workers
     when it names neither); such an `ok` reading is not recorded, and is
     logged; a report's rejections are recorded first, so its own `ok` of a
     window it closes is not either. Its unmapped windows are logged once;
+  - **what the run drew** (PROP-0015 E2,
+    [quota drawn per run](../../../docs/design/resources.md#quota-drawn-per-run)):
+    for a derived Worker on a declared pool, each window's latest reading is
+    read before the run is submitted and again once the report after it is
+    recorded, and the run is watched for other runs on its account in flight
+    meanwhile (`src/overlaps.ts`). One `quota-draw@1.0` record, an `evidence`
+    artifact and a `quota.draw` event, gives per window the draw in
+    percentage points, or why there is none (`reset-crossing`, `no-reading`),
+    and marks it `confounded` when another run overlapped. It names the kind
+    of work (`WorkRequirement.kind`) and the template step (`WorkerStart.step`)
+    the run was started for, kept on the run (columns `kind`, `step_template`,
+    `step_node`, migration 19). A failure to record it is logged, and the run's
+    outcome stands;
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 
@@ -582,8 +674,11 @@ The **`agents` Worker source**: agent runtimes as Workers
     the queue's own decision for a resolved request, or a `gate` decision (rule
     `agent-workers.tool-gate`) where the gate decided without the policy; denied
     and deferred calls also append `agent-workers.tool.denied` and
-    `agent-workers.tool.deferred` (ids only, never the input). A gate that fails
-    denies the call.
+    `agent-workers.tool.deferred` (ids only, never the input). A denial's event
+    says why: a stable `reason` code, its fixed `explanation` (at most 300
+    characters), the `workerKind`, the `actionClass` once classified, and the
+    `decision` ([why a call was denied](../../../docs/design/approvals.md#why-a-call-was-denied)).
+    A gate that fails denies the call.
 
   The requests a gate opened are kept in `agent_tool_requests`: the session and
   exact call each is for, and when an approved one was used. Starting the later

@@ -31,6 +31,12 @@ guarantee seam: it fails closed (INV-2).
     a cap with neither task nor project bounds the run's own lines. A counted record without the
     figure of a cap's unit (no token counts, cost, turns, or duration) counts 0 of it
     ([usage the ledger cannot count](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
+    Usage it could not count never counts as 0 (INV-2,
+    [ADR-0065](../../../docs/decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md)):
+    caps with a scope are refused while a run of it (by its `usage.unknown` fact, else by its
+    reservation) has a fact in a capped pool and no counted record there other than the lower
+    bound its fact names, each such run named with its Worker and why; and when no event log is
+    loaded, more than 10,000 `usage.unknown` entries are kept, or an entry is not a valid record.
     Amounts are compared at a millionth. A malformed request (an id that is not one, no line, more than 64 lines or caps,
     a unit or amount out of `budgetLine`'s bounds) is refused `invalid`, recording nothing.
   - A reservation's holds last `holdSeconds` (the request's, else the configured default) and
@@ -57,6 +63,10 @@ guarantee seam: it fails closed (INV-2).
     nothing: a source that is not a name, more than 64 accounts, an account that is not an id or
     a group that is not a name, a pool configured or another source's, or more than 64 pools in
     all ([pool templates](../../../docs/design/resources.md#pool-templates)).
+  - `quota()` (contract 1.2, ADR-0064): the operator's quota settings, the defaults under the
+    configured `quota`, as a copy ([quota settings](../../../docs/design/resources.md#quota-settings)).
+    The ledger itself reserves, counts, and closes nothing by them; the dispatch pass's quota score
+    reads them.
 - **Records:** `resource_usage` (counted records, one per `(source, requestId)`, indexed by
   run, project, task, account, pool, and time), `resource_readings` (the latest reading per
   pool and window, with its artifact), `resource_reservations` and `resource_holds`. Every
@@ -69,22 +79,26 @@ guarantee seam: it fails closed (INV-2).
   `unknown`, default `unavailable`), `templates` (each `template` and `group`, names of letters,
   digits, `.`, `_`, `-`, at most 64; `kind`, `windows`, `unknown` as a pool's; at most 64, unique
   ids), `pageSize` (default 20), `maxRecords` (default 10000),
-  `holdSeconds` (default 14400). A stored reading of a window whose kind or account changed in
+  `holdSeconds` (default 14400), `quota` (`reservePercent` 20 of 0 to 90, `useSoonMinutes` 90 of
+  0 to 1440, `minHeadroomPercent` 10 of 1 to 100, `headroomBucketPercent` 5 of 1 to 25,
+  `staleReadingSeconds` 1800 of 60 to 86400; one out of its range refuses the plugin, naming its
+  path). A stored reading of a window whose kind or account changed in
   configuration since counts as no reading.
   Pools come from configuration only, never a plan named in code
   ([INV-11](../../../docs/architecture/invariants.md#inv-11-no-tool-lock-in)). At load, a
   duplicate pool or window id, a pool with no window or more than 8, more than 64 pools, or an
   id that is not one refuses the plugin. The bundle's row configures none: every pool is
   unavailable until the operator configures it.
-- **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional.
+- **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional (without `eventLog`, a
+  reservation with scoped caps is refused).
 - **Not yet:** only agent Workers configured with a pool report to it (and reserve their own
   runs); the engine reserves only before each step of a board task's run that declares a budget
-  (its lines as caps; ADR-0047, step 1), not before every run. Usage it cannot count is a 0
-  against a cap: the Worker source records the run as `usage.unknown`, and no cap fails closed
-  on it yet. Released and expired reservations, older readings, and duplicate records stay (as
+  (its lines as caps; ADR-0047, step 1), not before every run. Nothing reconciles a run whose usage
+  it could not count until transcript reconciliation exists, so its scope's capped pool stays
+  refused (the way out is in the runbook). Released and expired reservations, older readings, and duplicate records stay (as
   rows and artifacts) until a retention rule exists for them.
 - Tests: [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`resources-core/conformance/resources.ts`](../../resources-core/conformance/resources.ts),
-  at contract 1.1 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)
-  covers restart, configuration (templates and the declaration bound included), paging, the MCP outputs, and a reservation race across
-  processes.
+  at contract 1.2 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)
+  covers restart, configuration (templates, the declaration bound, and the quota settings
+  included), paging, the MCP outputs, and a reservation race across processes.

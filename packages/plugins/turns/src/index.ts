@@ -60,7 +60,8 @@ export interface TurnView {
   routeDecision?: ContentId
   tierDecision?: ContentId
   egressDecision?: ContentId
-  error?: { kind: string; disposition: Disposition; message: string }
+  /** `siteError`: the site answered the sent prompt with its own error in place of an answer (ADR-0062). */
+  error?: { kind: string; disposition: Disposition; message: string; siteError?: true }
   createdAt: string
   updatedAt: string
 }
@@ -330,9 +331,12 @@ export class Turns extends Service {
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
       // The account stays (session affinity); without a binding the next turn opens a new conversation.
       reset: (sessionId) => {
-        // A lost conversation's kept tab shows nothing to continue.
-        this.discardTab(sessionId)
-        return Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0
+        const reset = Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0
+        // A lost conversation's kept tab shows nothing to continue. It closes once the caller's
+        // transaction commits, never before: a reset that rolls back leaves the tab, which a turn
+        // of the session may be using, as it was (ADR-0062).
+        if (reset) this.discardTab(sessionId)
+        return reset
       },
       // The caller is done with these sessions: their recorded conversations are deleted on their sites.
       release: (sessionIds, reason) => this.release(sessionIds, reason),
@@ -497,10 +501,13 @@ export class Turns extends Service {
     return released
   }
 
-  /** Close a session's kept tab, if its account keeps one. */
+  /**
+   * Close a session's kept tab, if its account keeps one, once the store transaction it is asked in
+   * commits (at once outside any): a rolled-back caller closes nothing.
+   */
   private discardTab(sessionId: string): void {
     const account = this.session(sessionId)?.account
-    if (account) void this.ctx.browser.discardTab(account, sessionId).catch(() => undefined)
+    if (account) this.ctx.store.afterCommit(() => void this.ctx.browser.discardTab(account, sessionId).catch(() => undefined))
   }
 
   /** The conversation ledger, oldest first (operator). */
@@ -1262,9 +1269,14 @@ export class Turns extends Service {
     // A finished turn stays as it finished: a later failure (closing its browser turn) never rewrites it.
     if (TERMINAL.has(this.row(turnId)?.status ?? 'queued')) return
     const typed = toProviderError(error)
-    const account = this.row(turnId)?.account
+    const row = this.row(turnId)
+    const account = row?.account
     if (typed.kind === 'quota_exhausted' && account) this.cool(account, typed)
-    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
+    // The site's own error in place of an answer, read on the turn's page after its receipt was
+    // written (ADR-0062): told to the caller, whose rule alone may start the work again. Without a
+    // receipt nothing was sent, so it is not that.
+    const siteError = typed.siteError && row?.submitted_at ? { siteError: true } : {}
+    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message, ...siteError }) }, lease)
   }
 
   /** Write turn fields; with a lease, only while that lease still holds the turn (fenced). */

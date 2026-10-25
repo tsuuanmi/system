@@ -138,6 +138,11 @@ by a read-only local agent Worker; never a website account.
 `review:1` names no kind of work, so a Worker the operator gives kinds never takes it: keep a
 read-only Worker given none ([work kinds](../design/routing.md#work-kinds)).
 
+Bound to an exact subject, the review is told by the engine's subject block to read and judge the
+change and never run the project's tests or builds: a command it could not run is not a finding
+about the change, and an environment limit (a read-only sandbox, a denied or failing command) is
+at most an `info` finding, never a `blocking` one. A remediation cycle's re-review is told the same.
+
 ### `algorithm-development`
 
 Provided by
@@ -154,14 +159,19 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
 | `develop:1` (variant `docs`) | `develop`, `local-data` | standard | `docs` | persistent | `acceptance.answer` |
 | `develop:1` (variant `tests`) | `develop`, `local-data` | standard | `tests` | persistent | `acceptance.answer` |
 | `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | none | temporary | `acceptance.answer` |
-| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `tests` | temporary | `acceptance.answer` |
+| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | `validation` | temporary | `acceptance.answer` |
 
 - **Kinds of work** ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)). With no Worker given
-  kinds, every step routes as it always did. Once the operator gives writers kinds
+  kinds, every step routes as it always did. Once the operator gives Workers kinds
   ([route work by kind](../operations/runbooks.md#route-work-by-kind)), `develop:1` and its fix run
   on a writer given `code` (or, in the `docs` and `tests` variants, `docs` or `tests`), and
-  `validate:1` on one given `tests`; `review:1` names none, so it needs a reviewer given no kinds.
-  The variants are this template's docs work and test work; no other template carries them.
+  `validate:1`, which runs the checks and tests and changes nothing, on one given `validation`: a
+  Worker given `tests` writes tests and never runs the validation unless it is given `validation`
+  too. `review:1` names none, so it needs a reviewer given no kinds. The kinds in the table are the
+  shipped ones; the row's `kinds` configuration changes the kind a step names, by step (`develop`,
+  `docs`, `tests`, `validate`; [configuration](configuration.md#profile-software-development)),
+  never the review's. The variants are this template's docs work and test work; no other template
+  carries them.
 - `develop:1` states the hypothesis it tests, then changes the code toward the task; in the `docs`
   variant it changes documentation only, in the `tests` variant tests only. When the attempt before
   failed only after its `develop:1` completed (its review's session broke, say), no review having
@@ -169,7 +179,12 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   it ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
 - `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
   and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
-  change, never the developer's answer. Blocking findings grow a fix (on `develop:1`'s
+  change, never the developer's answer. It reads and judges, and never runs the project's tests or
+  builds: `validate:1` and the run's required checks at acceptance
+  ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)) run them. A command it
+  could not run is not a finding about the change; an environment limit (its read-only sandbox, a
+  denied command) is at most an `info` finding, so it never grows a remediation cycle that no fix
+  could satisfy. Its instructions and the engine's subject block both say so. Blocking findings grow a fix (on `develop:1`'s
   capabilities) behind the approval queue and a re-review given the review's own instructions on
   the fixed subject, as for any template
   ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`
@@ -185,9 +200,12 @@ Worker, in the run's own git worktree when the Workers (or their role) set `work
   defer it on.
 - `validate:1` is the final node, so the run's result is the validation's report on the subject
   the task writes, after any fix: the task keeps it, its digest cites it, and the next attempt's
-  brief points at it. The engine reports the `review` check on that subject, never `tests`: a
-  model's account of a command is not a check, so under a policy that requires `tests` the board
-  holds the result for the operator.
+  brief points at it. The engine reports the `review` check on that subject, never `tests` from the
+  validation's report: a model's account of a command is not a check. After `validate:1`, the run
+  itself runs the checks the policy requires that are commands, on that subject, with the commands
+  the operator configured for the repository, and reports those by their exit codes
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks)); with none
+  configured, under a policy that requires `tests` the board holds the result for the operator.
 
 #### Which inputs reach which step
 

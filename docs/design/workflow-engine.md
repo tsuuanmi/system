@@ -1,7 +1,7 @@
 # Workflow engine
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-WF-1..11, REQ-WF-13. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
+> Requirements: REQ-WF-1..11, REQ-WF-13..16. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
 > Templates: [workflow templates](../reference/workflow-templates.md).
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md); differs from target:
@@ -104,7 +104,10 @@ provider family than the Workers that served those nodes
   A node that routes again forgets its old Worker, so no peer differs from a stale one.
 - With `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)), a
   node that no Worker of another family admits routes again without the exclusion (a team
-  member, also without the distinct-account rule; a session's own Worker still binds it). The
+  member, also without the distinct-account rule; a session's own Worker still binds it, and
+  the operator's `teams.excludeWorkers` still keeps a member off the Workers it leaves out of
+  teams; a team that exclusion leaves too few families fails before this fallback,
+  [teams](teams.md#workers-left-out-of-teams)). The
   fallback is an `admission` decision (`workflow.same-family`, outcome `same-family`) kept among
   the node's decisions, and the run's answer starts with a line naming those steps (`Same
   provider family (allowSameFamily): …`; a team says it in its own answer). Off by default:
@@ -500,7 +503,9 @@ back-off and retries there, while an account that hit a limit or needs the opera
 by its own state or cooldown, and the node fails with that kind (or, on an assigned account,
 [waits for the limit](#waiting-for-an-accounts-limit)). A node never fails over:
 
-- once its prompt may have been sent: reconciliation and the dispositions above apply (INV-4);
+- once its prompt may have been sent: reconciliation and the dispositions above apply (INV-4),
+  and only a team member's first step after a site's own error is resent, once, in a new
+  conversation ([below](#a-team-members-first-step-after-a-sites-own-error));
 - when its session holds an account: a turn of it was sent, or it has a conversation (a session
   whose turns all failed unsent holds none);
 - as a team member, which joins its team bound to the Worker of its first admission (Model A).
@@ -509,6 +514,58 @@ A bare `ask` outside a run has no recovery and fails as before.
 
 This failover applies to a Worker whose account is `pooled`, or that declares none. For an
 `assigned` account it is narrowed, below.
+
+### A team member's first step after a site's own error
+
+> Decision: [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)
+> (accepted, operator decision D60, 2026-10-25). Contract 1.8 of the `workflow` seam.
+
+A step whose prompt was sent is never started again by the engine, with one exception. A website
+can answer a sent prompt with its own error in place of an answer (live 2026-10-24, Gemini:
+"Sorry, something went wrong. Please try your request again."); the turn fails `overloaded`, its
+execution `submitted`, and its source marks the failure `siteError` (the optional
+`WorkerExecution.error.siteError`, set only by a source that read that error on the execution's
+own page after the send: [provider turns](provider-turns.md#a-sites-own-error-after-the-send)).
+The conversation then holds the prompt and the error and nothing else, and reopening it later can
+show an empty chat, so neither reconciliation nor `continue` can help a team member there
+([teams](teams.md#membership-model-a)).
+
+- **Which step.** Only a team member's first step, its `propose`: its prompt is the whole request
+  and material, so a new conversation loses nothing, and it writes nothing (website and model
+  Workers write nothing; a review member's agent Worker is read-only; a step that proves `develop`
+  or grows a plan never qualifies). A ballot or debate relies on its conversation, and any other
+  step may have done more than answer: they fail for the operator as before (`USER_ACTION`).
+- **Which error.** Only one whose disposition is retryable (`IMMEDIATE`, `BACKOFF`, or
+  `RECREATE_SESSION`, as for a retry): a site error a source marks on a kind the operator must act
+  on (`USER_ACTION`, `NONE`, a fix) fails as before.
+- **Once.** At most one resend per node, ever: a node with a `resend` decision on record fails on
+  a second site error. The engine asks for that decision directly (`ctx.artifacts.list` with
+  `outcome: 'resend'`, the node's recovery decisions, at most one), not by reading the node's
+  decisions and filtering them. It also needs an attempt left (`maxAttempts`); the resend is that
+  attempt.
+- **A new conversation, the same member.** The engine resets the member's session
+  (`ctx.workers.reset`: its native conversation is cleared, its account and Worker kept, so session
+  affinity routes it back to the same Worker), and the node runs again as its next attempt, under
+  that attempt's execution key, after the `overloaded` back-off. The abandoned conversation stays
+  in the [conversation ledger](provider-turns.md#conversation-ledger), owned by the session, and is
+  deleted with it when the run releases it. A source that owns no such session refuses the reset,
+  and the step fails as before (INV-2).
+- **Recorded first** (INV-13). The `recovery` decision (`decision@1.9`, rule `workflow.recovery`
+  version 2) chooses `resend`, its reasons saying why, its `detail` naming the failed execution
+  (the failed turn), the session, and the new attempt and the key its execution starts under (the
+  new turn, in a new conversation). It is recorded in the transaction that resets the session and
+  readies the node, so a restart finds all three or none (INV-4); the event log has
+  `workflow.node.resent`. Like any retry, the new attempt starts on the run's next pass, once the
+  steps running beside it have settled. A site's own error that is not resent fails as before, its
+  `recovery` decision carrying a `resend` candidate that says why not, under rule version 2 as
+  well: every decision that weighs a resend is version 2, and one with no site error stays version
+  1, so the same inputs never decide differently under one version.
+- **Under the run's lease.** The resend's transaction fences the run's lease before it resets the
+  session, as every node write is fenced: an engine that lost the run (a host suspend, a takeover)
+  records, resets, and readies nothing; its pass ends and the run is taken back under a new lease,
+  whose holder decides. What a reset does outside the store runs only after that transaction
+  commits: the turn runtime closes the session's kept tab in its after-commit effect, so a resend
+  that rolls back never closes a tab that another engine's resent turn may be using.
 
 ### Waiting for an account's limit
 
@@ -558,15 +615,20 @@ resumed, [above](#a-board-tasks-brief)). The step waits instead, in a live run:
 
 | Step | Records | On failure |
 |---|---|---|
-| waits | when a sent execution of a node on a session fails as `config_error` and its gate's event names the request: a `recovery` decision `wait` (`decision@1.8`, rule `workflow.deferred-call`, naming the request, the execution, the session, and until when), and in its transaction the node `BLOCKED` with the request on its row (`approval_request`) until the request's `expiresAt` (`gateTimeoutHours` from now when the queue cannot be read then); `workflow.node.blocked` | not for a run that lost its holder or whose budget refused a step: it starts nothing new, so the node fails as before |
+| waits | when a sent execution of a node on a session fails as `config_error` and its gate's event names the request: a `recovery` decision `wait` (`decision@1.8`, rule `workflow.deferred-call`, naming the request, the execution, the session, until when, and for a bounded call `boundMinutes`), and in its transaction the node `BLOCKED` with the request on its row (`approval_request`) until the request's `expiresAt`, or for a call of class `command` until `deferredCommandMinutes` (default 10; 0: no bound) after the request's `createdAt` when that is sooner (`gateTimeoutHours` from now when the queue cannot be read then); `workflow.node.blocked` | not for a run that lost its holder or whose budget refused a step: it starts nothing new, so the node fails as before |
 | while it waits | the run holds its task and renews its lease; the task stays `running`, its attempt not spent. The run's view shows `blocked: { kind: tool-call, nodeId, approvalRequest, until }`, `wait` and `result` return at once, and the run counts against `maxWaitingRuns`. The engine reads the request through `ctx.approvals.get` every `approvalPollSeconds`, under the run's lease | a queue not loaded or unreadable: it waits, logged once, until its deadline |
-| approved | the operator's verdict on exactly that call (requester `worker`, the deferred execution as its run, the node's session, `cause: verdict` with its approval), given by the request's expiry: under the run's lease, in one transaction, a `recovery` decision `continue` (rule `workflow.approved-call`), and the node reopened as a new attempt on the same session, as below; `workflow.run.continued` (`by: rule`) | an approval that does not bind that call, or given after the expiry, is not used (INV-5): the node fails as below |
-| rejected, expired, or no verdict by the deadline | a `recovery` decision `fail` (rule `workflow.deferred-call`), the node `FAILED` as `call_rejected` (a verdict, a withdrawal, an approval not bound) or `call_expired` (an expiry, or no verdict read by the deadline, after which the request is withdrawn), disposition `USER_ACTION`, nothing of the call run; `workflow.node.failed` names the request. The run fails on it, and its report is an attempt the board counts (`reconcileRun`) | — |
+| approved | the operator's verdict on exactly that call (requester `worker`, the deferred execution as its run, the node's session, `cause: verdict` with its approval), given by the step's deadline (the node's `not_before`, its wait decision's `until`: a bounded call's bound, else the request's expiry): under the run's lease, in one transaction, a `recovery` decision `continue` (rule `workflow.approved-call`), and the node reopened as a new attempt on the same session, as below; `workflow.run.continued` (`by: rule`) | an approval that does not bind that call is not used (INV-5): the node fails as below. One given after the deadline (the engine was down across it, so nothing withdrew the request) is a denial, cause `late`, as below |
+| unanswered past the deadline | still open at the step's deadline: a bounded call's bound (`boundMinutes`), or the request's own expiry, whether or not the queue's sweep has recorded that expiry yet: the request is withdrawn (the queue's `approval` decision `withdrawn`, rule `approvals.withdraw`), then settled on what the queue says now, as below: a denial with cause `bound` or `expired`, or the operator's verdict if it came first | a withdrawal that fails is logged, and the call is denied all the same, the engine's `deny` decision and event on record |
+| rejected, expired, withdrawn, or approved too late: the call is denied | the call does not run. The class is judged again (`check` on the request's class: an `autonomy` decision). Unless it is now `forbid`: under the run's lease, in one transaction, a `recovery` decision `deny` (rule `workflow.deferred-call`, inputs the resolution's (and a late approval) and the autonomy decisions; detail the request, its `cause` — `rejected`, `expired`, `withdrawn`, `bound`, or `late` — the execution, the session, and `boundMinutes` for a bound), the denial kept on the gate's own row of the request (`ctx.agentWorkers.denyToolCall`: the decision and the cause), and the node reopened as a new attempt on the same session, its instructions ending with a line that says the call was denied, why, and to go on without it; `workflow.run.continued` (`by: rule`, `denied: true`, `cause`). The resumed Worker's gate, and any later run of the session in any workflow run, denies that exact call (the agent's tool result is the denial), reading that row by session whatever the queue, a newer policy, or the event log's retention says, and the attempt goes on to its result | the class forbidden, a policy that cannot be read, or nothing to keep the denial (no `ctx.agentWorkers`, or no gate row for the request; the transaction rolls back): the node fails as below |
+| ends for the operator: forbidden, an approval not bound, or the deadline with no queue to read | a `recovery` decision `fail` (rule `workflow.deferred-call`), the node `FAILED` as `call_rejected` (a verdict, a withdrawal, an approval not bound, the class forbidden) or `call_expired` (an expiry, or no queue to read at the deadline), disposition `USER_ACTION`, nothing of the call run; `workflow.node.failed` names the request. The run fails on it, and its report is an attempt the board counts (`reconcileRun`) | — |
 | the attempt ends any other way | when the run has ended (stopped, its holder lost, a step beside it failed, its budget spent), before its report, every request still open that its Workers' gates opened (requester `worker`, one of the run's executions) or its remediation gates opened (requester `workflow`, the run) is withdrawn, so an approval given later runs nothing unseen | one that cannot be withdrawn is logged and expires on its own (INV-9) |
 
 - **Restart** (INV-4): the request and the deadline are on the node's row, its decision recorded
-  with it, so a restart reads the same request again and asks nothing; an execution whose failure
-  the engine had not yet read is read again, and waits then.
+  with it (the bound too, on the wait decision), so a restart reads the same request again and
+  asks nothing; an execution whose failure the engine had not yet read is read again, and waits
+  then. A restart between a bound's withdrawal and the denial finds the request withdrawn past
+  the bound, and denies it as `bound`; a withdrawal is idempotent, and a step continued once is no
+  longer waiting, so nothing continues twice.
 - The board's task stays `running` throughout: the wait is the run's, which keeps its holder, so
   the board's contract is unchanged; the operator decides the request in the queue (`/ui`, MCP
   `approvals_decide`), and notify tells it as `approval.opened` and `approval.expiring`.
@@ -601,7 +663,9 @@ resumed, [above](#a-board-tasks-brief)). The step waits instead, in a live run:
 
 A run may serve one attempt of one [board task](board.md): the start names the task, and the
 claim a lead hands over (holder and generation): MCP `run`'s `task`, or `system run --task <taskId>
-[--holder <owner> --generation <n>]` ([CLI](../reference/cli.md#work)). The engine is that run's owner on `ctx.board`,
+[--holder <owner> --generation <n>]` ([CLI](../reference/cli.md#work)); or the engine's own
+dispatch pass starts it, on the operator's approval or, where the project's policy gives `dispatch`
+`auto` or `notify`, by itself ([below](#dispatch-starting-ready-work-by-itself)). The engine is that run's owner on `ctx.board`,
 an optional seam it reaches through the abstract `Board` only; without a board, a run for a task
 is refused (`config_error`), and every other run is unaffected.
 
@@ -641,8 +705,9 @@ is refused (`config_error`), and every other run is unaffected.
   `acceptance` decision (`workflow.task-acceptance`) names the task, the run, the subject, and
   the checks the run itself ran: `schema` when the final step's answer was checked against its
   result schema, `review` when an exact-subject review of that subject passed its gate (passed
-  when it approved). Every result artifact is among its inputs. It accepts unless a check the
-  run ran failed, which rejects: the work goes back as another attempt.
+  when it approved), and the required checks it ran on that subject (`tests`, `typecheck`, `lint`,
+  [below](#a-runs-required-checks)). Every result artifact is among its inputs. It accepts unless a
+  check the run ran failed, which rejects: the work goes back as another attempt.
 - **The report** is the board's own move, read against the board's record first, so a report
   repeated after a crash moves nothing twice. With its holder, a completed run's result is
   submitted, then its acceptance applied; when only the operator may accept it (a required check
@@ -657,7 +722,8 @@ is refused (`config_error`), and every other run is unaffected.
 - **Explained.** These decisions are the run's, not a step's: `explain` lists them first, in the
   order they were made (REQ-ART-3), before each step's own: the task's admission and session,
   whether the run starts from the previous attempt's work and what was carried, a lost holder, the
-  result's subject and acceptance, the report, a funding gate, and the digest.
+  result's subject and acceptance (with the required checks it ran), the report, a funding gate,
+  and the digest.
 - **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
   worktree ([below](#tasksmd-in-a-runs-workspace)).
 - **A question.** A step may answer with questions instead of a result; the task then waits for
@@ -844,7 +910,7 @@ person's answer. The protocol is the brief's: every brief of a board task's run 
 ### Starting from the previous attempt's work
 
 > Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-> (proposed: the carry is on by default, pending the operator's acceptance (D59)), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (accepted 2026-10-25, D59), T112 after T110a. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
 > (`src/carries.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > ([carrying an earlier run's work](agent-runtimes.md#carrying-an-earlier-runs-work)).
 
@@ -977,7 +1043,7 @@ stateDiagram-v2
   asked --> merging: approved
   asked --> rejected: denied, expired, or withdrawn
   asked --> commit: withdrawn on a policy change
-  merging --> merged: merged into the checked-out branch (gate decision merge)
+  merging --> merged: merged into the checked-out branch, a conflict only in generated files regenerated (gate decision merge)
   merging --> commit: the base moved, or its tree is not clean
   merging --> refused: a conflict (aborted), the branch moved, a failure
   merged --> [*]
@@ -992,7 +1058,7 @@ stateDiagram-v2
 | commit | the source commits the worktree on its branch, as the system, with a message naming the task, the run, the reviews of that tree, and the acceptance decision (`System-Task`, `System-Run`, `System-Acceptance`, `System-Subject` trailers); a `gate` decision (`workflow.landing`, `commit`; inputs the acceptance and the result) | an agent run of the workflow run unfinished or not known to be gone: it waits; a tree that is no longer the accepted subject, a worktree removed or tampered with: refused, nothing committed, a `gate` decision (`refuse`); no source holds the tree, or the tree holds no change (a review's): `none` |
 | ask | `ctx.approvals.check` on `merge` for the task's project; on `ask`, one request on `{ git-head, system/run/<runId>, landing:merge:<base>:<head> }`, requester `workflow` with the run, its final step, the task, and the project; its summary and consequences name the branches, the SHAs, that a merge always asks the operator (D56), and the `git diff --stat`; a base that already holds the head is merged at once. A merge always asks, whatever the policy's mode for `merge`: `merge` is in `ALWAYS_ASK`, so no policy that gives it `auto` or `notify` loads | `forbid`, or a `merge` rule whose required checks nothing reported (a landing runs none): refused; a verdict other than `ask` (a provider that gave `auto` or `notify`): refused, nothing merged; no queue loaded: it waits |
 | approved | the operator's verdict on that exact version (`approval` decision) | denied, expired, or withdrawn by its requester: `rejected`, nothing merged; withdrawn on a policy change: put to the policy in force again |
-| merge | the source merges the branch into the repository's checked-out branch as one merge commit, the system its author (`System-Landing` trailer); a `gate` decision (`merge`) naming the commit | a base that moved, or tracked changes in the checkout: a decision (`refuse`), then asked again on the base as it is; the branch moved, a conflict (aborted, the repository as it was), or another failure: refused |
+| merge | the source merges the branch into the repository's checked-out branch as one merge commit, the system its author (`System-Landing` trailer); a `gate` decision (`merge`) naming the commit. A conflict only in files the repository declares generated is resolved by the source by running the repository's commands for them ([a conflict only in generated files](agent-runtimes.md#landing-a-worktree), T166): the decision then names the regenerated files and the commands, the commands' autonomy decisions among its inputs | a base that moved, or tracked changes in the checkout: a decision (`refuse`), then asked again on the base as it is; the branch moved, a conflict (aborted, the repository as it was) in any file not declared generated, or one whose commands were not allowed, failed, changed another file, or changed anything on a repeat, or another failure: refused |
 
 - **Exact** (INV-5): the commit binds to the accepted tree, the request to both heads; a base or a
   branch that moved is never merged under an approval of another.
@@ -1008,6 +1074,159 @@ stateDiagram-v2
   a merge already made instead of making it twice.
 - A run reported before landing existed lands nothing: merge its branch by hand.
 
+## A run's required checks
+
+> Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)
+> (accepted 2026-10-25, D67), T151, REQ-WF-15. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
+> (`src/checks.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/checks.ts`, [a run's checks](agent-runtimes.md#a-runs-checks)).
+
+A policy rule's `requires` are checks the result must pass before it is accepted
+([approvals](approvals.md#a-verdict-is-not-yet-a-permission)). Those that are commands (`tests`,
+`typecheck`, `lint`) the run runs itself, on the exact tree its result is on, before its
+acceptance is decided; a model's account of a command, such as `validate:1`'s report, is never one.
+
+| Step | Records | On failure |
+|---|---|---|
+| asked | once every step of a run that wrote has completed (`algorithm-development`: after `validate:1`), for a board task's run whose task writes a `git-head` subject or writes none (the tree is then its latest agent result's, as a plain run's: T165), or a plain run with a completed `develop` step, whose result is an agent's on a git working tree: `ctx.approvals.check` on the class its acceptance is judged under (the task's action class and project; `workspace-write` for a plain run), with the checks the run judged itself (`schema`, `review`); under `auto` or `notify`, its `failedChecks` that are commands are asked for | a check the run judged itself failed (the acceptance rejects), no queue, a policy that cannot be read, another mode, or none required: nothing is asked, and the checks stay as the policy says |
+| run | `ctx.workers.check` with the run, the worktree, the exact subject, the checks, and the run's classification: the source that holds the worktree runs them ([a run's checks](agent-runtimes.md#a-runs-checks)) and records a `check-run@1.0` evidence artifact | no `check` on the seam, no source holding the worktree, or a refusal (`moved`, `gone`, `busy`, `failed`): none ran, and each stays pending, the reason recorded |
+| reported | the acceptance decision ([board tasks](#board-tasks), or [a plain run's](#a-plain-runs-acceptance)) reports each check that ran to an exit code on that very subject, `passed` or `failed`, in `outcome.detail.checks`; names the evidence among its inputs; gives each `error` as a reason; and records what was asked and answered in `outcome.detail.checkRun` (rule version 2) | a check the source answered `error` is not reported: it stays pending (INV-2) |
+
+- **What the board does** with them is unchanged ([required checks](board.md#required-checks-bind-at-acceptance)):
+  every required check passed, the engine's acceptance applies without the operator; one failed,
+  the result goes back as another attempt; one pending, the review is held for the operator.
+- **Exact** (INV-5): the checks are reported only on the subject they ran on, which is the
+  subject the acceptance binds; the source runs them only while the worktree is that tree, and a
+  check that changed it is an `error`.
+- **A task with no write subject** (T165): the lead proposes tasks without `writes` so several run
+  on one repository at once ([board](board.md#required-checks-bind-at-acceptance), rule 6). Their
+  checks run on the tree the run's latest agent result names, and when at least one ran there to
+  an exit code, the task's result binds to that tree: its subject is that `git-head` at that
+  version, and its artifacts name the agent result on it beside the final result (INV-5). If the
+  working tree is no longer that version, the result binds to the final result artifact as
+  before, and the checks, on another subject, stay pending. A result on no git working tree runs
+  none, and they stay pending for the operator. A task that writes a subject keeps binding to it.
+- **Restart** (INV-4): a run stopped before its acceptance asks for them again, and the source
+  answers with each check's stored outcome on that subject, never running one again to replace
+  what it came to (one a crash interrupted is an `error`, pending;
+  [a run's checks](agent-runtimes.md#a-runs-checks)). A board task's run whose acceptance was
+  stored before the stop finishes on it, its checks not asked again. A stop of the run (the
+  operator's, a lost lease) stops the commands in flight; the source stores each as it ended, one
+  the stop killed as an `error`.
+- **Bounded** (INV-9): at most the three checks, each within the source's deadline.
+- **Configuration**: the commands are the operator's, per repository
+  ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,
+  each check is an `error` and stays pending, as before this section.
+
+## Dispatch: starting ready work by itself
+
+> Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
+> (accepted 2026-10-25, D61 to D66), [PROP-0014](../proposals/0014-dispatch-by-quota.md) increments
+> D1 and D2 (D70: using idle quota must be automatic). Contract 1.10 of the `workflow` seam (1.9: D1).
+> Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (`src/dispatch.ts`). Not built
+> (D2's rest and later): a task's priority (it orders by age), withdrawing an ask whose Worker's pool
+> closed, the score in every route.
+
+A ready board task waits for the lead or the operator to start it. The engine's dispatch pass starts
+it by itself, on a free Worker chosen by quota. Under a project policy whose `dispatch` mode is `auto`
+it starts with nothing asked; under `notify` it starts and records a notice; under `ask` (the bundle's
+default) every start is asked first, except an attempt the operator already approved through the
+board's gate (D62); under `forbid` nothing is dispatched.
+
+```mermaid
+flowchart TD
+  P["pass: every dispatch.sweepSeconds, and at start"] --> S["settle the live asks:<br/>adopt, read verdicts, start approved, withdraw stale"]
+  S --> Z{"paused, off, draining,<br/>or a seam missing?"}
+  Z -->|yes| K["take nothing; keep why"]
+  Z -->|no| T["ready tasks of active projects, oldest first"]
+  T --> B{"a live or denied ask, the project paused, no template,<br/>a bound or the hour's starts reached, a subject held?"}
+  B -->|yes| N["not this pass: why kept"]
+  B -->|no| C["writing step's candidates (nothing reserved),<br/>quota-score@2"]
+  C -->|none free| N
+  C -->|first free| A{"policy for dispatch"}
+  A -->|forbid| N
+  A -->|ask| R["decisions, row asking, one request"]
+  A -->|board-approved attempt (D62)| G["decisions, gate, row approved"]
+  A -->|auto or notify (D2)| G2["decisions, row approved:<br/>no request"]
+  R -->|operator approves| G
+  G2 --> G
+  G --> ST["start: claim, run first, then work;<br/>writing step on that Worker first"]
+```
+
+| Step | Records | On failure |
+|---|---|---|
+| a pass | every `dispatch.sweepSeconds` (default 60), and once at start after the runs are reconciled; one at a time in the process; a test passes its own time (`sweepDispatch(at)`) | it never throws: a pass that fails starts nothing, logged, and the next tries again |
+| live asks settled | first, oldest first, at most 64: an `asking` row adopts the open request on its subject, or asks it; an `asked` one reads the queue; an `approved` one, or a `starting` one with no run admitted yet (a crash before the admission), is checked again alike and starts when it can (a `starting` one with a run admitted adopts it first); each run admitted and each request newly opened is charged to the pass's one `maxPerPass` allowance, which selection then shares | a queue or board that does not answer: the row stays as it is |
+| ready tasks looked at | the `ready` tasks of `active` projects, by `createdAt`, then id, at most 128 (`MAX_LOOKED`); each skipped one gets its reason: an ask live or denied for this attempt, its project's dispatch paused, no template or one not served, `maxPerPass` taken, the hour's starts reached, a bound reached, the subject it writes held, no free Worker, the policy | every reason is kept as the last pass (`dispatch_status`, Home) on a durable row, so a restart shows the same |
+| Worker chosen | the run's writing step (its first step that proves `develop`, else its first Worker step), its requirement as the engine would build it from the admitted spec (INV-6); `ctx.workers.candidates` (routing's checks, nothing reserved); `quotaScoreOf` (`quota-score@2`, [routing](routing.md#candidates-without-a-reservation)) over each candidate's account's pools and the ledger's `quota()`: the first free one | none free: the task's reason lists each admitted Worker with why it is not |
+| policy | `ctx.approvals.check({ class: 'dispatch', projectId })`, once per project per pass, its `autonomy` decision recorded | `forbid`: not dispatched; a queue that cannot judge: not dispatched |
+| auto, notify (D2) | the policy's verdict is the go: the row starts `approved` (mode `auto` or `notify`) with no request and no queue entry, its decisions the select, the choice, and that `autonomy` decision, and it starts as below; under `notify` the start also appends `workflow.dispatch.notice` (task, project, attempt, Worker, run) in the row's transaction, which the notifier tells as `dispatch.started` ([notifications](notifications.md#what-each-event-tells)) | as for any approved row: it waits for its Worker within `approvedHoldMinutes`, else closes unused and a new choice is made |
+| taken | in order: an `admission` decision (rule `dispatch.select`) over the tasks looked at, each with why; a `route` decision (rule `dispatch.choice`, its `hash` the quota settings') over every Worker with its keys or routing's refusal, and the sources that did not answer; then the row (`workflow_dispatch`), and `workflow.dispatch.chosen` | another process's live ask for the attempt (the row's unique index): this pass takes nothing for it |
+| asked | under `ask`: one request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@2:<sha256 of the Worker and the score's inputs>}`, class `dispatch`, requester `workflow` with the task and project; its summary the task, attempt, Worker, and each window's use and headroom above the reserve; at most `maxOpenAsks` open | a refusal by the queue (`not-asked`: the policy changed since its verdict): closed, nothing asked; any other failure leaves the row `asking`, adopted or asked again next pass |
+| approved | the operator's verdict on exactly that subject, requester, and class (INV-5); its `approval` decision joins the row's decisions | an approval not bound so: closed (`unbound`), nothing starts; denied or expired: closed, and dispatch never asks again for that attempt; withdrawn on a policy change: closed, and the next pass puts the task to the policy in force |
+| D62 | the task's `lastDecision` is the operator's `approval` of the board's own request on `board-task:<id>:attempt:<n>` for this attempt and class: a `gate` decision (rule `dispatch.approval`, outcome `board-approval`) naming it, and the row starts `approved` with no request | anything else, or anything unreadable, is no such approval: the start is asked |
+| started | a run already admitted for the row is adopted first; otherwise, whether the row is `approved` or `starting`, only while dispatch is not paused there, the task is still `ready` at attempt `n` and its project active, the approval is within `approvedHoldMinutes` (checked before anything else, a free Worker or not), the chosen Worker still admitted and free, the bounds leave room, and the pass's allowance is not spent: the engine's own start (`clientRequestId` `dispatch:<askId>`), its `workflow.task-admission` decision naming the dispatch decisions; the run's writing step is bound to that Worker; the row's `started_at`; `workflow.dispatch.started`; the run's `task.startedBy` is `dispatch` | the task moved on: closed, the approval used for nothing; paused: closed (`paused`); past the hold: closed (`hold-expired`), and a new choice asks again; the Worker not free, the engine full or draining, or the allowance spent: it waits, `approved`, within the hold; any other refusal: closed |
+
+- **Free** (INV-2): admitted by routing; `ready`, its account's load (running, queued, pending)
+  below `maxRunningPerAccount`, and no step of a running run on it; every pool of its account
+  available and every window known (a reading at most `quota.staleReadingSeconds` old, `ok`, with a
+  used share) with headroom above `quota.reservePercent`; not metered (D65); its account below
+  `maxRunningPerAccount` and its repository (the Worker's workspace) below
+  `maxRunningPerRepository` (D64), counting dispatched runs not finished and asks open or approved.
+  A Worker that names no account, a pool configured `unknown: available` with no reading, or a ledger
+  without `quota()` is never free.
+- **Bounds** (INV-9), counted from the rows each pass: `maxRunning`, `maxRunningPerProject`,
+  `maxRunningPerAccount`, `maxRunningPerRepository`, `maxOpenAsks`, `maxPerPass`, and the
+  `leaveRunsFree` of `maxActiveRuns` dispatch never fills. An ask open or approved counts as the run it
+  would be, so approving every ask never passes a bound. A task that writes a subject another task
+  holds (claimed, running, in review) or has a live ask on is not taken (board rule 6, INV-15; the
+  board already refuses a second open task on one subject).
+- **The hour** (D2, INV-9): at most `maxPerHour` (default 6, 0 to 120; 0 starts nothing) starts in any
+  rolling hour, and `maxPerHourPerProject` (default 3, at most `maxPerHour`), counted from the rows'
+  `started_at`, so a restart counts the same. A pass counts the rows approved or starting with them, so
+  it never takes more than the hour leaves; an approved row waits while the hour's starts made are at
+  the bound (only starts made count there, so two approved rows never hold each other back). An ask
+  counts when its run starts, not when it is asked.
+- **`maxPerPass`** is one allowance a pass (review T202): settlement and selection share it. Each run
+  admitted and each request newly opened is charged; an approved row left waiting and a request
+  adopted after a crash are not. Once it is spent, approved rows wait, `asking` rows stay for the
+  next pass, and ready tasks say `this pass took its <n> (dispatch.maxPerPass)`.
+- **The chosen Worker binds the step** (review T202): only the writing step's first execution is
+  bound, routing restricted to the chosen Worker, and it runs there or on none, so every start
+  dispatch makes is on the Worker its decisions name (INV-13). Refused (its state changed since), it
+  routes nowhere else. It waits for that Worker (`READY`, its next look at most 30 s on, routing's
+  refusal its decision, nothing sent, no attempt spent) within `dispatch.approvedHoldMinutes` of the
+  run's start; a step that waited is checked against that deadline before it is routed again, so
+  the Worker free again only after it does not start it. Then, or at once when a teams restriction leaves the Worker out, the attempt fails
+  for the operator (`USER_ACTION`), not retried, so the board's next attempt is dispatch's to choose
+  again. A retry, an escalation, or a `continue` is never pinned back to it. A run that resumes its task's earlier session keeps that
+  session's Worker; the preference is then not taken.
+- **Pause**: `pauseDispatch(reason?, projectId?)` and `resumeDispatch(projectId?)` (MCP
+  `dispatch_pause`, `dispatch_resume` with an optional `projectId`, operator scope;
+  `system dispatch pause|resume [--project <id>]`), each a `gate` decision (rule `dispatch.pause`) on a
+  durable row (`global`, or `project:<id>` for one project's, D2), kept across restarts. Paused, a pass
+  withdraws the open asks there, closes the approved ones unused, and takes nothing there (a paused
+  project's tasks say so); the lead's and the operator's own starts go on. `dispatch.enabled: false`
+  runs no pass at all.
+- **Restart** (INV-4): everything is on the engine's rows (`workflow_dispatch`, at most one live ask
+  per task attempt, with its `mode` and `started_at`; `workflow_dispatch_control`;
+  `workflow_tasks.dispatch` and `started_by` on a run it started) and in the queue; a pass after a
+  crash adopts the request on its subject, finds a run already admitted for its ask (a row left
+  `approved` or `starting` mid-start is moved to `started` on that run, never started again), checks
+  a row left `starting` before its run was admitted again like an approved one (pause, hold, task,
+  Worker, bounds), and counts the same.
+- **Who started a run** (D2): a board task's run says it (`task.startedBy`, kept as
+  `workflow_tasks.started_by`): `dispatch`, `operator` when its start says so (`startedBy` on the
+  start; Start on `/ui` does), else `lead`. The roster gives it on each step (`mcp-roster@1.8`
+  `work[].startedBy`, [roster](roster.md)), and the Workers tab shows a *started by itself* chip.
+- **Explained**: `explain` on a run dispatch started lists its dispatch decisions first, then the
+  run's own; `dispatch_status` (client scope; `system dispatch`) gives the settings, the pauses, each
+  bound and its use (the hour's starts too), the live asks with their Worker and windows, what it
+  started in the last 24 h (`started`, at most 32, newest first, each with its mode and its run's
+  state), and the last pass with its reason for each ready task; Home lists the asks under *Starts
+  awaiting approval* and the starts under *Started by itself*, one line each with its run's state as
+  a chip ([web UI API](../reference/web-ui.md#dispatch)).
+
 ## A plain run's acceptance
 
 A run that serves no board task applies nothing: its result is not accepted onto a task, merged,
@@ -1016,10 +1235,11 @@ run completes, an `acceptance` decision (rule `workflow.run-acceptance`, under t
 so `explain` shows it) naming the autonomy policy's required checks it did not pass:
 
 - the policy is asked about `workspace-write` with the checks the run ran on its result, as the
-  board's acceptance names them (`schema`, `review` on the subject its writing left); its
-  `failedChecks` are recorded as pending (`pendingChecks`), with the policy's `autonomy`
-  decision. Under the bundle's studio policy these are `tests` and `lint`, which a Worker's tool
-  calls left pending ([approvals](approvals.md#a-verdict-is-not-yet-a-permission));
+  board's acceptance names them (`schema`, `review` on the subject its writing left, and the
+  required checks it ran there, [above](#a-runs-required-checks)); its `failedChecks` are
+  recorded as pending (`pendingChecks`), with the policy's `autonomy` decision. Under the bundle's
+  studio policy these are `tests` and `lint` unless the run ran them, since a Worker's tool calls
+  leave them pending ([approvals](approvals.md#a-verdict-is-not-yet-a-permission));
 - they never block the run, and the run is never held for them: they bind where its result is
   applied, as a [board task's acceptance](board.md#required-checks-bind-at-acceptance) binds
   them;

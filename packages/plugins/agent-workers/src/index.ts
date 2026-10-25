@@ -35,15 +35,16 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf, readLimits,
+  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunObserver, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, WORKSPACE_READ_BOUNDS, type WorkspaceReadBounds,
+  meteringOf, readLimits, workspaceReadBounds,
 } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
-  type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, drawEntries, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
+  type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type PoolState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
@@ -53,14 +54,17 @@ import {
   type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
-import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
+import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
+import { Overlaps } from './overlaps.ts'
 import { Probes, refused } from './probes.ts'
+import { regenerationOf } from './regenerate.ts'
 import { ReportSchedule, type ReportTarget } from './reports.ts'
 import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
   MAX_LIMIT_READ_SECONDS, setsDerivedOnly,
 } from './roles.ts'
+import { CHECKS_MIGRATION, RunChecks } from './checks.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
 import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
@@ -137,7 +141,7 @@ export interface AgentWorkerConfig {
 type WorkerSpec = AgentWorkerConfig & { derived?: DerivedWorker['derived'] }
 
 export type { AgentAssignmentConfig, AgentProviderConfig, AgentRoleConfig } from './roles.ts'
-export type { WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
+export type { WorktreeGeneratedConfig, WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
 export type { MigrationPlan } from './migrate.ts'
 
 /** What `system account migrate` gives (`mcp-agent-accounts` `account-migrate-output`). */
@@ -212,8 +216,19 @@ export interface Config {
    * works in it (dependencies installed without a network, say), each allowed by the autonomy
    * policy, run confined: the host read-only but the worktree and the views named, no network
    * (./setup.ts, ADR-0058). A worktree whose setup did not run under this definition takes no run.
+   * Its `checks` name the command of each check a policy can require, which a workflow run runs on
+   * its result in the same confinement, but with the worktree read-only to it except its
+   * `checkScratch` paths (./checks.ts, T151).
    */
   worktreeSetup?: WorktreeSetupConfig[]
+  /**
+   * The bounds of the workspace reads server a runtime gives its agent (T200b, INV-9): bytes a
+   * `read_file` returns and a file is read through, entries a `list_dir` returns, and a `search`'s
+   * matches, files, line length, pattern length, and deadline. Each within its range
+   * (`WORKSPACE_READ_BOUNDS` in agent-runtime-core), at its default when not given; passed with every
+   * run (`RunSpec.workspaceReads`).
+   */
+  workspaceReads?: Partial<WorkspaceReadBounds>
 }
 
 interface RunRow {
@@ -266,11 +281,19 @@ interface RunRow {
   liveness_freed?: string | null
   /** The `gate` decision of its worktree's setup (ADR-0058), when its repository has one. */
   setup_decision?: string | null
+  /** The kind of work it was admitted for (`WorkRequirement.kind`, ADR-0057), for what it drew. */
+  kind?: string | null
+  /** The workflow template and step it serves (`WorkerStart.step`), for what it drew. */
+  step_template?: string | null
+  step_node?: string | null
   created_at: string
   updated_at: string
 }
 
 const ID = /^[a-z][a-z0-9-]*$/
+/** A kind of work (`common@1` workKind) and an id (`common@1` id), as a quota draw names them. */
+const WORK_KIND = /^[a-z][a-z0-9-]{0,31}$/
+const DRAW_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const LEASE_TTL_MS = 60_000
 const PREFIX = 'agent:'
 const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
@@ -370,6 +393,15 @@ function configuredWorkers(config: Partial<Config>): { derived: boolean; workers
   }
 }
 
+/** The workspace reads server's bounds (T200b): each given one within its range, the rest at their defaults; `config_error` otherwise (INV-9). */
+function readBoundsOf(bounds: Partial<WorkspaceReadBounds> | undefined): WorkspaceReadBounds {
+  try {
+    return workspaceReadBounds(bounds)
+  } catch (error) {
+    throw new ProviderError('config_error', `agent Workers: workspaceReads: ${(error as Error).message}`)
+  }
+}
+
 /**
  * What the load would refuse in this row's Workers and their worktree setups, before a host starts
  * on it (`system check`): the first problem {@link configuredWorkers} or {@link loadSetups} finds, or
@@ -380,6 +412,7 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
   try {
     const { workers } = configuredWorkers(config)
     loadSetups(config.worktreeSetup, [...workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
+    readBoundsOf(config.workspaceReads)
     return []
   } catch (error) {
     return [(error as Error).message]
@@ -464,7 +497,22 @@ export class AgentWorkers extends Service {
         readOnly: z.array(z.string()).description('Paths inside it (relative) bound back read-only into the private directory, for example a package store\'s files'),
       })).description('Host directories the setup sees as private copies; never a path hidden from agents'),
       timeoutSeconds: z.natural().min(1).max(3600).default(600).description('The whole setup\'s deadline'),
+      checks: z.object({
+        tests: z.string().description('The command of the tests check, its words split on single spaces (no shell)'),
+        typecheck: z.string().description('The command of the typecheck check'),
+        lint: z.string().description('The command of the lint check'),
+      }).description('The command of each check a policy can require, run by a workflow run on its result\'s exact tree in this setup\'s confinement, only when the autonomy policy allows it unasked (T151)'),
+      checkTimeoutSeconds: z.natural().min(1).max(3600).default(1800).description('Each check\'s deadline'),
+      checkScratch: z.array(z.string()).description('Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner\'s cache (node_modules/.vite); the checks see the rest of the worktree read-only'),
+      // An omitted object comes back as {}: read as none declared when loaded (src/setup.ts).
+      generated: z.object({
+        paths: z.array(z.string()).description('1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json'),
+        commands: z.array(z.string()).description('1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked'),
+      }).description('The repository\'s generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run\'s worktree in this setup\'s confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166)'),
     })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
+    workspaceReads: z.object(Object.fromEntries(Object.entries(WORKSPACE_READ_BOUNDS).map(([name, bound]) => [
+      name, z.natural().min(bound.min).max(bound.max).default(bound.default).description(`${bound.description} (${bound.min} to ${bound.max})`),
+    ]))).description('The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range'),
   }) as unknown as z<Config>
 
   private readonly workers = new Map<string, WorkerSpec>()
@@ -493,6 +541,8 @@ export class AgentWorkers extends Service {
   /** Each repository's worktree setup, by its path as configured (resolved), and what runs them (ADR-0058). */
   private readonly setups: Map<string, Setup>
   private readonly worktreeSetups: WorktreeSetups
+  /** A workflow run's required checks, run on its result's worktree in its repository's setup's confinement (./checks.ts, T151). */
+  private readonly runChecks: RunChecks
   /** Each runtime's account setting (ADR-0052); a runtime not configured is assigned. */
   private readonly accounts: Map<string, AccountSetting>
   /** The enrollment slots of each runtime and the accounts in them (ADR-0051). */
@@ -503,7 +553,11 @@ export class AgentWorkers extends Service {
   private readonly reports: ReportSchedule
   /** Each account whose last usage report could not be read: why, and when (for the roster); a report read clears it. */
   private readonly unreadReports = new Map<string, { why: string; at: string }>()
+  /** The runs in flight on each account, for whether a draw was confounded (PROP-0015 E2). */
+  private readonly overlaps = new Overlaps()
   private sweeping: Promise<SweepOutcome> | undefined
+  /** The workspace reads server's bounds every run is given (T200b), checked at load. */
+  private readonly readBounds: WorkspaceReadBounds
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
@@ -515,12 +569,15 @@ export class AgentWorkers extends Service {
     this.accounts = configured.accounts
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     const worktreeRoot = config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees')
-    this.worktrees = new Worktrees(ctx, worktreeRoot)
+    // A landing whose merge conflicts only in a repository's declared generated files makes them again, in the setup's confinement (T166).
+    this.worktrees = new Worktrees(ctx, worktreeRoot, (repository, setupHash) => regenerationOf(ctx, this.setups, join(worktreeRoot, '.setup'), repository, setupHash))
     // A setup is for the worktrees of a repository a worktreePerRun Worker works in; any other is refused at load.
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
+    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'))
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
+    this.readBounds = readBoundsOf(config.workspaceReads)
     const slots = new Map<string, number>()
     for (const entry of providers) {
       if (entry.slots === undefined) continue
@@ -627,7 +684,14 @@ export class AgentWorkers extends Service {
       // The operator frees what a run that ended not known to be gone held, on their word that its agent is gone.
       version: 14,
       sql: 'ALTER TABLE agent_runs ADD COLUMN liveness_freed TEXT;',
-    }, CARRY_MIGRATION, FORK_MIGRATION])
+    }, CARRY_MIGRATION, FORK_MIGRATION, CHECKS_MIGRATION, DENIAL_MIGRATION, {
+      // What a run drew (PROP-0015 E2, quota-draw@1.0) names the kind of work it was admitted for and
+      // the template step it served, from the trusted requirement and the engine's start (INV-6).
+      version: 19,
+      sql: `ALTER TABLE agent_runs ADD COLUMN kind TEXT;
+      ALTER TABLE agent_runs ADD COLUMN step_template TEXT;
+      ALTER TABLE agent_runs ADD COLUMN step_node TEXT;`,
+    }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -672,6 +736,8 @@ export class AgentWorkers extends Service {
       changes: (runId) => this.worktrees.changes(runId),
       // A board task's next attempt starting from the work its previous attempt left (ADR-0061).
       carry: (step) => this.worktrees.carry(step),
+      // A workflow run's required checks, run on its result's exact tree (T151).
+      check: (step, signal) => this.runChecks.check(step, signal),
     })
     // The operator's enrollment tools and the tool that frees a run's holds, when the MCP endpoint is mounted (operator scope).
     ctx.inject(['mcp'], (c) => {
@@ -861,8 +927,11 @@ export class AgentWorkers extends Service {
   private rowOf(plan: MigrationPlan): Record<string, unknown> {
     const { workers: _, providers: __, roles: ___, assignments: ____, ...settings } = this.config
     // A setting at its default (an empty worktreeSetup among them) is left out.
-    const kept = Object.fromEntries(Object.entries(settings).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
-    return { ...kept, providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
+    const { workspaceReads, ...rest } = settings
+    const kept = Object.fromEntries(Object.entries(rest).filter(([key, value]) => value !== undefined && value !== SETTING_DEFAULTS[key] && !(Array.isArray(value) && !value.length)))
+    // So is each workspace reads bound at its default, and the setting when all are (T200b).
+    const reads = Object.fromEntries(Object.entries(workspaceReads ?? {}).filter(([name, value]) => value !== WORKSPACE_READ_BOUNDS[name as keyof WorkspaceReadBounds]?.default))
+    return { ...kept, ...(Object.keys(reads).length ? { workspaceReads: reads } : {}), providers: plan.providers, roles: plan.roles, assignments: plan.assignments }
   }
 
   /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */
@@ -1064,6 +1133,18 @@ export class AgentWorkers extends Service {
   }
 
   /**
+   * The workflow engine denies the call a Worker's gate deferred on approval request `requestId`,
+   * for good in its session (docs/design/approvals.md#a-deferred-call): recorded on the request's
+   * row, in the caller's transaction, with the engine's `recovery` decision `deny` and its cause.
+   * Every later run of that session, in any workflow, is denied that exact call, whatever the queue
+   * says of the request later and however long the event log keeps its events. False when no gate
+   * of this source opened that request.
+   */
+  denyToolCall(requestId: string, denial: { decision: string; cause: string }): boolean {
+    return recordDenial(this.ctx, requestId, denial)
+  }
+
+  /**
    * Retire the worktrees of finished workflow runs (INV-9): those whose agent runs have all
    * finished, the last more than `worktreeRetentionHours` before `at`, have their changes committed
    * on their branch and are removed; one that cannot be is left in place and tried again next
@@ -1172,6 +1253,8 @@ export class AgentWorkers extends Service {
     const projectId = taskId !== null && typeof task?.projectId === 'string' ? task.projectId : null
     // Its files' text, resolved now like the prompt, so the egress check reads what the agent will (INV-12).
     const files = places && Array.isArray(task?.files) && task.files.length ? JSON.stringify(task.files.map((file) => this.fileOf(file))) : null
+    // The template step it serves, as the engine named it: kept only when both are ids.
+    const step = request.step && DRAW_ID.test(request.step.template) && DRAW_ID.test(request.step.node) ? request.step : undefined
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
@@ -1191,11 +1274,15 @@ export class AgentWorkers extends Service {
         classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
         workflow_run_id: request.runId ?? null, task_id: taskId, project_id: projectId, files,
         // The work it was admitted for, from the trusted requirement (INV-6): only a review member's step is ever replayed.
-        scope: request.requirement.scope ?? null, session_generation: generation, created_at: now(), updated_at: now(),
+        scope: request.requirement.scope ?? null, session_generation: generation,
+        // Its kind of work and template step, for what it draws (PROP-0015 E2): only well-formed ones, never guessed.
+        kind: request.requirement.kind !== undefined && WORK_KIND.test(request.requirement.kind) ? request.requirement.kind : null,
+        step_template: step?.template ?? null, step_node: step?.node ?? null,
+        created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
-        row.scope ?? null, generation, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, kind, step_template, step_node, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
+        row.scope ?? null, generation, row.kind ?? null, row.step_template ?? null, row.step_node ?? null, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -1752,7 +1839,7 @@ export class AgentWorkers extends Service {
         const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
         if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
-        const turn = await this.turnOf(row, worker, current)
+        const turn = await this.withUnasked(await this.turnOf(row, worker, current), row, worker)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
         const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
@@ -1845,6 +1932,35 @@ export class AgentWorkers extends Service {
     }
   }
 
+  /**
+   * The turn with its Tools section appended (gate.ts `unaskedNote`, T199 and T207): the workspace,
+   * the calls its gate lets run unasked (the autonomy policy's exact lines), the gate's refusals,
+   * and whether an approval resumes the step, so the agent asks the operator less and is denied
+   * less: for every Worker, fit to its sandbox (a read-only one is told it writes nothing and given
+   * no writing tool or commands list), never for a review member (its gate allows no call). Read from `ctx.approvals.policy()` now, and the
+   * runtime's evidence of clean shells and of the workspace reads server (T200b: its tools are the
+   * reading tools, and the agent is told to read with them, never with a shell), as the gate reads
+   * it (a probe that fails: neither); with no
+   * queue, or one that cannot be read, the turn is sent as it is (logged), since the gate still
+   * decides every call. Appended before the egress check, which sees it.
+   */
+  private async withUnasked(turn: Turn, row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
+    if (row.scope === REVIEW_MEMBER) return turn
+    const approvals = this.ctx.get('approvals')
+    if (!approvals) return turn
+    const workspace = worker.worktreePerRun && row.workflow_run_id && RUN_ID.test(row.workflow_run_id) ? this.worktrees.pathOf(worker.workspace, row.workflow_run_id) : worker.workspace
+    try {
+      const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
+      const note = unaskedNote(await approvals.policy(), workspace, {
+        shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
+      })
+      return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the autonomy policy could not be read for ${row.run_id}'s note of the calls that run unasked; it is sent without it: ${(error as Error).message}`)
+      return turn
+    }
+  }
+
   /** The runs of a run's session before it, of the same generation (a reset starts a new one), in order. */
   private earlierRuns(row: RunRow): Array<{ run_id: string; status: ExecutionStatus }> {
     return this.ctx.store.db.prepare(`SELECT run_id, status FROM agent_runs
@@ -1925,8 +2041,12 @@ export class AgentWorkers extends Service {
     // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
     // Under the review-member profile, the gate denies every one.
     const gate = runGate(this.ctx, {
-      runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
+      runId: row.run_id, worker: row.worker, workerKind: worker.runtime, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
       classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : {}),
+      // A shell command is taken for a read only where the runtime enforces shells that read no startup code (T198).
+      shellReads: evidence.cleanShells === true,
+      // The workspace reads server's tools are reads only where the runtime gives its agent that server (T200b).
+      workspaceReads: evidence.workspaceReads === true,
     })
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,
@@ -1936,6 +2056,8 @@ export class AgentWorkers extends Service {
       ...(turn.resume ? { resume: turn.resume } : {}),
       // A derived Worker's account in another home than the runtime's own runs there, and only there (ADR-0051).
       ...(named ? { home: named.home } : {}),
+      // A runtime that gives its agent the workspace reads server bounds it so (T200b); one that gives none ignores it.
+      workspaceReads: this.readBounds,
       toolGate: gate.gate,
     }
     // Metered: nothing runs without a reservation (INV-2, INV-9).
@@ -1956,6 +2078,17 @@ export class AgentWorkers extends Service {
    * brief names one and no run is asked to resume it.
    */
   private async submit(row: RunRow, worker: WorkerSpec, provider: AgentRuntimeProvider, spec: RunSpec, native: boolean, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined): Promise<RunResult> {
+    // What a run of a derived Worker on a declared pool draws (PROP-0015 E2): its pool's readings
+    // before it, taken before it is submitted, and the runs on its account it overlaps from now on.
+    const drawing = worker.derived && meter ? await this.beginDraw(row, meter) : undefined
+    try {
+      return await this.submitRun(row, worker, provider, spec, native, signal, lease, meter, deferral, drawing)
+    } finally {
+      drawing?.end()
+    }
+  }
+
+  private async submitRun(row: RunRow, worker: WorkerSpec, provider: AgentRuntimeProvider, spec: RunSpec, native: boolean, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined, drawing: Drawing | undefined): Promise<RunResult> {
     // Submitted from here on: the agent may act as soon as it starts. Its holder, this process, is
     // recorded with it, and the submission is its first activity (PROP-0013).
     const submittedAt = now()
@@ -1989,8 +2122,16 @@ export class AgentWorkers extends Service {
       const kind = toProviderError(failure).kind
       const metering = meteringOf(error)
       const durationMs = Date.now() - startedAt
+      const endedAt = now()
       const report = await reportAfter(kind)
-      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', durationMs, report) : false
+      // How it ended, in plain words, for a fact of its usage (docs/design/resources.md#usage-the-ledger-cannot-count).
+      const ending = deadline.aborted && !signal.aborted ? `it ran past its timeout of ${this.config.runTimeoutMs ?? 15 * 60_000} ms and was stopped`
+        : signal.aborted ? this.stopOf(signal)
+          : deferred ? `it stopped at a ${deferred.tool} call that waits for approval request ${deferred.requestId}`
+            : `it failed (${kind})`
+      const outcome = kind === 'aborted' ? 'aborted' : 'failed'
+      const limited = meter ? await this.account(row, worker, meter, metering, outcome, durationMs, report, ending) : false
+      if (drawing && meter) await this.finishDraw(row, meter, drawing, outcome, endedAt)
       // A limit hit that left no limited reading in the ledger is never retried there unseen (INV-2).
       if (kind === 'quota_exhausted' && !limited) {
         // The run's own outcome stays the limit, whatever recording it does.
@@ -2006,13 +2147,77 @@ export class AgentWorkers extends Service {
     // A run whose gate deferred a call did not finish, whatever its runtime reported (INV-2).
     const deferred = deferral()
     const durationMs = Date.now() - startedAt
+    const endedAt = now()
     if (deferred) {
       this.noteDeferral(row, deferred, lease)
-      if (meter) await this.account(row, worker, meter, result, 'failed', durationMs, await reportAfter(undefined))
+      if (meter) await this.account(row, worker, meter, result, 'failed', durationMs, await reportAfter(undefined), `it stopped at a ${deferred.tool} call that waits for approval request ${deferred.requestId}`)
+      if (drawing && meter) await this.finishDraw(row, meter, drawing, 'failed', endedAt)
       throw waiting(row, deferred)
     }
-    if (meter) await this.account(row, worker, meter, result, 'completed', durationMs, await reportAfter(undefined))
+    if (meter) await this.account(row, worker, meter, result, 'completed', durationMs, await reportAfter(undefined), 'it completed')
+    if (drawing && meter) await this.finishDraw(row, meter, drawing, 'completed', endedAt)
     return result
+  }
+
+  /** Who stopped a run whose signal aborted, in plain words: the host stopping (a drain), the operator, or a lost lease. */
+  private stopOf(signal: AbortSignal): string {
+    if (this.stopped.signal.aborted) return 'the host stopped while it ran, and stopped it (a drain at stop or restart)'
+    const reason: unknown = signal.reason
+    if (reason instanceof ProviderError) return `it was stopped: ${reason.message}`
+    return 'it was stopped, its lease on the run lost'
+  }
+
+  /**
+   * Begin watching what a run draws (PROP-0015 E2): the runs on its account it overlaps from now on,
+   * then its pool's windows and their latest readings, the readings before it; none when the ledger
+   * cannot tell (each window then has no reading before). Never throws.
+   */
+  private async beginDraw(row: RunRow, meter: Meter): Promise<Drawing> {
+    const end = this.overlaps.begin(meter.account, row.run_id)
+    const before = await this.poolNow(meter)
+    return { before, startedAt: now(), end }
+  }
+
+  /** The run's pool now, its windows and their latest readings; undefined when the ledger cannot tell. */
+  private poolNow(meter: Meter): Promise<PoolState | undefined> {
+    return meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
+  }
+
+  /**
+   * Record what a run drew (PROP-0015 E2, docs/design/resources.md#quota-drawn-per-run), once its
+   * account's usage report after it was recorded: each window's last reading before the run and first
+   * after it (`drawEntries`), as a `quota-draw@1.0` `evidence` artifact and a `quota.draw` event whose
+   * data is the record. A window that reset, read no share, or went down has no draw; another run on
+   * the account while it ran marks it confounded. Never throws: the run's own outcome never depends on it.
+   */
+  private async finishDraw(row: RunRow, meter: Meter, drawing: Drawing, outcome: QuotaDraw['outcome'], endedAt: string): Promise<void> {
+    try {
+      const after = await this.poolNow(meter)
+      const overlapping = drawing.end()
+      const windows = (after ?? drawing.before)?.windows ?? []
+      if (!windows.length) {
+        this.ctx.logger.warn(`agent Workers: what ${row.run_id} on ${row.worker} drew is not recorded: the ledger gives pool ${meter.pool} no window`)
+        return
+      }
+      const record = quotaDraw({
+        runId: row.run_id, worker: row.worker, account: meter.account, pool: meter.pool,
+        ...(row.workflow_run_id ? { workflowRunId: row.workflow_run_id } : {}),
+        ...(row.step_template && row.step_node ? { template: row.step_template, step: row.step_node } : {}),
+        ...(row.kind ? { kind: row.kind } : {}), ...scopeOf(row),
+        outcome, startedAt: drawing.startedAt, endedAt, overlapping: Math.min(overlapping, 1000),
+        windows: drawEntries({ windows, before: drawing.before?.readings ?? [], after: after?.readings ?? [], startedAt: drawing.startedAt, endedAt, overlapping }),
+        observedAt: now(),
+      })
+      this.ctx.artifacts.put({
+        kind: 'evidence', bodySchema: record.schema, body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker },
+        runId: row.workflow_run_id ?? row.run_id, ...(row.workflow_run_id && row.step_node ? { nodeId: row.step_node } : {}),
+      })
+      const eventLog = this.ctx.get('eventLog')
+      if (!eventLog) throw new Error('no event log (ctx.eventLog) is loaded, so no surface can read it back')
+      eventLog.append({ type: QUOTA_DRAW_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.workflow_run_id && row.step_node ? { nodeId: row.step_node } : {}), data: { ...record } })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: what ${row.run_id} on ${row.worker} drew from pool ${meter.pool} could not be recorded: ${(error as Error).message}`)
+    }
   }
 
   /**
@@ -2130,9 +2335,10 @@ export class AgentWorkers extends Service {
    * `usage-unknown@1.0` record (docs/design/resources.md#usage-the-ledger-cannot-count): the run,
    * Worker, pool, board task, how it ended, and why. A cap counts the run as 0 until the ledger
    * counts a record of it. A fact that cannot be appended (no event log, the store failing) is
-   * logged, never dropped silently; the run's own outcome never depends on it.
+   * logged, never dropped silently, with what still holds the run unknown (`held`: a lower bound's
+   * own record, which says it is one); the run's own outcome never depends on it.
    */
-  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record'> = {}): void {
+  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record' | 'partial'> = {}, held?: string): void {
     try {
       const eventLog = this.ctx.get('eventLog')
       if (!eventLog) throw new Error('no event log (ctx.eventLog) is loaded')
@@ -2142,7 +2348,7 @@ export class AgentWorkers extends Service {
       })
       eventLog.append({ type: USAGE_UNKNOWN_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), data: { ...fact } })
     } catch (error) {
-      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} (pool ${meter.pool}) is unknown (${kind}: ${reason}), and that could not be recorded: ${(error as Error).message}`)
+      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} (pool ${meter.pool}) is unknown (${kind}: ${reason}), and that could not be recorded: ${(error as Error).message}${held ? `; ${held}` : ''}`)
     }
   }
 
@@ -2151,16 +2357,18 @@ export class AgentWorkers extends Service {
    * `invalid` with a per-model split is offered again with its totals alone, which are what a cap
    * counts. Otherwise the run's usage is unknown: a refused record is kept as an `evidence`
    * artifact (when it is a valid `usage-record@1.0`) that the fact names, `refused` with the
-   * ledger's failure; anything else the ledger threw is `failed`. Never throws.
+   * ledger's failure; anything else the ledger threw is `failed`. Never throws. Returns what the
+   * ledger counted, its totals, if it took them.
    */
-  private async unrecorded(row: RunRow, meter: Meter, record: UsageRecord, error: unknown): Promise<void> {
+  private async unrecorded(row: RunRow, meter: Meter, record: UsageRecord, error: unknown): Promise<{ ref: ArtifactRef } | undefined> {
     let cause = error
     if (cause instanceof ResourcesError && cause.failure === 'invalid' && record.models) {
       const { models: _, ...totals } = record
-      cause = await meter.resources.record(totals).then(() => undefined, (again: unknown) => again)
+      let taken: { ref: ArtifactRef } | undefined
+      cause = await meter.resources.record(totals).then((r) => { taken = { ref: r.ref as ArtifactRef } }, (again: unknown) => again)
       if (cause === undefined) {
         this.ctx.logger.warn(`agent Workers: the ledger refused the per-model split of ${row.run_id} on ${row.worker} (${(error as Error).message}); its totals were recorded`)
-        return
+        return taken
       }
     }
     const message = cause instanceof Error ? cause.message : String(cause)
@@ -2168,12 +2376,13 @@ export class AgentWorkers extends Service {
     const failure = cause instanceof ResourcesError && (cause.failure === 'invalid' || cause.failure === 'unknown-pool') ? cause.failure : undefined
     const kept = failure ? this.keep(row, record) : undefined
     this.unknownUsage(row, meter, failure ? 'refused' : 'failed', message, { ...(record.outcome ? { outcome: record.outcome } : {}), ...(failure ? { failure } : {}), ...(kept ? { record: kept } : {}) })
+    return undefined
   }
 
   /** A record the ledger refused, as an `evidence` artifact when it is a valid `usage-record@1.0`, so its numbers are not lost; else nothing. */
   private keep(row: RunRow, record: UsageRecord): ArtifactRef | undefined {
     try {
-      return this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'usage-record@1.0', body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker }, runId: row.run_id }).id as ArtifactRef
+      return this.ctx.artifacts.put({ kind: 'evidence', bodySchema: record.schema, body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker }, runId: row.run_id }).id as ArtifactRef
     } catch {
       return undefined
     }
@@ -2199,24 +2408,34 @@ export class AgentWorkers extends Service {
    * Meter a run from what its runtime reported: each limit observation as a `limit-state`
    * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
    * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
-   * is reconciled later). The run's own outcome never depends on the ledger: a refusal is logged.
+   * is reconciled later). A run that ended before its runtime's final count (`partial`: a stop, a
+   * timeout, a drain, a deferred call) is recorded with what the runtime did report, a lower bound
+   * that says so on the record itself (`usage-record@1.1`, `partial`), and stays a `not-reported`
+   * unit that names that record (`usage-unknown@1.1`): a lower bound never reconciles it, so a cap
+   * of its scope stays closed (INV-2, ADR-0065), even when the fact is never appended. A partial report with
+   * no number above 0 is no record: a reported 0 would read as known. `ending`: how the run ended,
+   * in plain words. The run's own outcome never depends on the ledger: a refusal is logged.
    * `report`: what the account's usage report said after the run (ADR-0059), recorded after the run's
    * own observations, so the latest reading has its share, and never opening a window a limit closed.
    * Whether a `limited` reading of the pool was recorded.
    */
-  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number, report: readonly LimitObservation[] = []): Promise<boolean> {
+  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number, report: readonly LimitObservation[], ending: string): Promise<boolean> {
     const ran = metering?.limits?.length ? await this.observe(row.worker, worker, meter, metering.limits) : false
     const reported = report.length ? await this.observe(row.worker, worker, meter, report, true) : false
     const limited = ran || reported
     const usage = usageOf(metering)
-    if (!usage.usage && metering?.turns === undefined) {
-      this.unknownUsage(row, meter, 'not-reported', 'its runtime reported neither tokens nor turns', { outcome })
-      this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage; it is left to transcript reconciliation`)
+    const partial = metering?.partial
+    if ((!usage.usage && metering?.turns === undefined) || (partial && !anyCounted(usage.usage, metering?.turns))) {
+      const said = partial ? `its runtime reported no number above 0 before it ended: ${partial}` : 'its runtime reported neither tokens nor turns'
+      this.unknownUsage(row, meter, 'not-reported', `${ending}; ${said}`, { outcome })
+      this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage (${ending}); it is left to transcript reconciliation`)
       return limited
     }
     const model = { ...(worker.model ? { request: worker.model } : {}), ...(metering?.model ? { response: metering.model } : {}) }
     const record: UsageRecord = {
-      schema: 'usage-record@1.0',
+      // A lower bound says so on its record (`@1.1`, `partial`), in the ledger's one write of it: a
+      // crash or a failed append before its fact never leaves it reading as the run's usage (INV-2).
+      schema: partial ? 'usage-record@1.1' : 'usage-record@1.0',
       // The runtime's own identity of its result, so another source of the same unit is a duplicate.
       requestId: `${worker.runtime}:${metering?.resultId ?? row.run_id}`,
       source: 'runtime-result', observedAt: now(), account: meter.account, pool: meter.pool, worker: row.worker, runId: row.run_id,
@@ -2224,11 +2443,14 @@ export class AgentWorkers extends Service {
       ...(Object.keys(model).length ? { model } : {}), ...usage,
       ...(metering?.turns !== undefined ? { turns: metering.turns } : {}), durationMs: Math.max(0, Math.round(durationMs)),
       ...(metering?.costUsd !== undefined ? { cost: { amount: metering.costUsd, currency: 'USD' as const, basis: 'runtime-estimate' as const } } : {}),
-      outcome,
+      outcome, ...(partial ? { partial } : {}),
     }
-    await meter.resources.record(record).catch((error: unknown) => {
-      return this.unrecorded(row, meter, record, error)
-    })
+    const recorded = await meter.resources.record(record).catch((error: unknown) => this.unrecorded(row, meter, record, error))
+    // A lower bound counted: the run stays unknown, named with what was counted and why it is partial.
+    if (partial && recorded) {
+      this.unknownUsage(row, meter, 'not-reported', `${ending}; the ledger counted what its runtime reported while it ran (${figures(usage.usage, metering?.turns)}), a lower bound: ${partial}`, { outcome, partial: recorded.ref as ArtifactRef },
+        'its record says it is a lower bound, so a cap of its scope and pool stays closed (INV-2); without the fact, health and the report do not name the run')
+    }
     return limited
   }
 
@@ -2529,6 +2751,13 @@ interface Meter {
   account: string
 }
 
+/** What a run's draw is watched with (PROP-0015 E2): its pool before it, when it started, and the end of its overlap watch (the other runs it overlapped). */
+interface Drawing {
+  before: PoolState | undefined
+  startedAt: string
+  end: () => number
+}
+
 /**
  * The token usage of a run as records carry it: totals, and the per-model split when it fits
  * (at most `MAX_MODELS`, or the totals alone).
@@ -2537,6 +2766,20 @@ function usageOf(metering: RunMetering | undefined): Pick<UsageRecord, 'usage' |
   if (!metering?.usage) return {}
   const models = metering.models && metering.models.length <= MAX_MODELS ? metering.models : undefined
   return { usage: { ...metering.usage }, ...(models ? { models: models.map((m) => ({ model: m.model, usage: { ...m.usage }, ...(m.costUsd !== undefined ? { costUsd: m.costUsd } : {}) })) } : {}) }
+}
+
+/** Whether a partial report carries a number above 0: a token count or a turn. */
+function anyCounted(usage: UsageRecord['usage'], turns: number | undefined): boolean {
+  return (usage !== undefined && usage.inputTokens + usage.outputTokens > 0) || (turns ?? 0) > 0
+}
+
+/** A report's figures in words: "412,300 input and 9,800 output tokens, 14 turns". */
+function figures(usage: UsageRecord['usage'], turns: number | undefined): string {
+  const n = (value: number): string => value.toLocaleString('en-US')
+  return [
+    ...(usage ? [`${n(usage.inputTokens)} input and ${n(usage.outputTokens)} output tokens`] : []),
+    ...(turns !== undefined ? [`${n(turns)} turn${turns === 1 ? '' : 's'}`] : []),
+  ].join(', ')
 }
 
 export type { RunWorktree, RunWorktreeRelease, SweepOutcome } from './worktrees.ts'

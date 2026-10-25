@@ -51,9 +51,10 @@ export interface Decision {
    * keep their ids. A recorder that uses a later minor's fields names it (`@1.2`: a review's quote checks;
    * `@1.3`: a `retention` decision; `@1.4`: an `autonomy`, `approval`, `board`, or `budget` decision;
    * `@1.5`: a `lifecycle` decision; `@1.6`: a `policy-change` decision; `@1.7`: a `registration` or `verdict` decision;
-   * `@1.8`: an `enrollment` decision, or a `recovery` decision whose outcome is `wait`).
+   * `@1.8`: an `enrollment` decision, or a `recovery` decision whose outcome is `wait`; `@1.9`: a
+   * `recovery` decision whose outcome is `resend`).
    */
-  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6' | 'decision@1.7' | 'decision@1.8'
+  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6' | 'decision@1.7' | 'decision@1.8' | 'decision@1.9'
   decisionType: string
   question: string
   inputs: ContentId[]
@@ -297,9 +298,10 @@ export class Artifacts extends Service {
 
   /**
    * The artifacts that match `filter`, in the order they were stored (oldest first; `newest`: newest
-   * first, contract 1.1), at most `limit` (100 by default, 1 to 1000).
+   * first, contract 1.1), at most `limit` (100 by default, 1 to 1000). `outcome` (contract 1.2) keeps
+   * only decisions whose outcome is that option.
    */
-  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; limit?: number; newest?: boolean } = {}): Envelope[] {
+  list(filter: { kind?: ArtifactKind; runId?: string; nodeId?: string; decisionType?: string; outcome?: string; limit?: number; newest?: boolean } = {}): Envelope[] {
     const clauses: string[] = []
     const params: string[] = []
     for (const [column, value] of [['a.kind', filter.kind], ['a.decision_type', filter.decisionType], ['r.run_id', filter.runId], ['r.node_id', filter.nodeId]] as const) {
@@ -307,6 +309,10 @@ export class Artifacts extends Service {
         clauses.push(`${column} = ?`)
         params.push(value)
       }
+    }
+    if (filter.outcome !== undefined) {
+      clauses.push("a.kind = 'decision' AND json_extract(a.envelope, '$.body.outcome.option') = ?")
+      params.push(filter.outcome)
     }
     const join = filter.runId !== undefined || filter.nodeId !== undefined ? 'JOIN artifact_runs r ON r.id = a.id' : ''
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''

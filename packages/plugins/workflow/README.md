@@ -219,7 +219,7 @@ second execution path (INV-1).
     exactly one plan; with several waiting, the call is refused and lists them,
     so a plan that arrived later is never approved unseen.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
-- **Teams (REQ-TEAM-1, 2, 4..7, [design](../../../docs/design/teams.md)).**
+- **Teams (REQ-TEAM-1, 2, 4..8, [design](../../../docs/design/teams.md)).**
   - A template node with `team: { kind: brainstorm | review, members (2-5,
     default 2), debateRounds (0-2, default 1) }` is unrolled at admission:
     - `id:m<k>:propose` per member, with no peer text (the independent-first
@@ -314,6 +314,21 @@ second execution path (INV-1).
     how many are ready; otherwise the admission's own reasons are why, and a
     member over every other family's input bound fails as `invalid_input`,
     naming the bound to change.
+  - No member, the first included, joins on a Worker the operator's
+    `teams.excludeWorkers` leaves out (a Worker id, or an account as
+    `<group>/<id>` or its bare id, each with every other Worker on its
+    account): each routes only to the Workers listed then, less those, and its
+    route decision gives each one left out the reason `left out of teams by the
+    operator's teams.excludeWorkers`. `allowSameFamily` never lifts it. When it
+    leaves fewer families ready than the team has members, every member fails
+    `config_error` before anything is sent, `allowSameFamily` or not. The
+    Workers still take every other node; a member already in its team's
+    conversation in that run keeps it, recorded, and one resuming another
+    run's session on a Worker left out is refused. Entries that match nothing
+    are recorded (`workflow.team.unmatched-exclusions`)
+    ([Workers left out of teams](../../../docs/design/teams.md#workers-left-out-of-teams)).
+    `ctx.workflow.teamExclusion()` reads them for a surface, deciding nothing: the
+    entries and every Worker they leave out now (the roster's `teams`).
   - When the run finishes, its members' leftover mail is acknowledged.
   - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
     readable with `explain` and `result`; `continue` and `supersede` refuse it
@@ -333,8 +348,9 @@ second execution path (INV-1).
     the board refuses the generation, the run starts nothing new (`workflow.task-holder`
     `wind-down`), reconciles what is in flight, and fails the rest as `holder_lost`;
   - a completed run's result is bound to the subject the task writes (else `stale_subject`),
-    with an `acceptance` decision (`workflow.task-acceptance`) naming the task, the subject, and
-    the checks the run ran (`schema`, `review`), then submitted and accepted; one only the
+    with an `acceptance` decision (`workflow.task-acceptance`, version 2) naming the task, the
+    subject, and the checks the run ran (`schema`, `review`, and the required checks it ran on
+    that subject, below), then submitted and accepted; one only the
     operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
@@ -396,7 +412,7 @@ second execution path (INV-1).
     `maxSessionRuns` runs (default 5); else it starts fresh. Either is an `admission` decision
     (`workflow.task-session`), made before the task is taken;
   - **Starting from the previous attempt's work** ([design](../../../docs/design/workflow-engine.md#starting-from-the-previous-attempts-work),
-    ADR-0061 proposed: the carry is on by default, pending the operator's acceptance (D59)): when the immediately previous attempt's writing step (a `develop` step)
+    ADR-0061, accepted 2026-10-25, D59): when the immediately previous attempt's writing step (a `develop` step)
     completed with an agent's result on a git tree, an `admission` decision
     (`workflow.task-worktree`) made before the task is taken chooses `carry` only when that run
     failed, and only as a later step fails (`session_broken`, `provider_stalled`, `timeout`,
@@ -441,6 +457,70 @@ second execution path (INV-1).
     `approvalPollSeconds`. No source holding the tree: nothing lands (`none`).
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
+- **Dispatch ([design](../../../docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
+  [ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md), contract 1.9; D2 1.10).**
+  The engine starts ready board tasks by itself, on the operator's approval or, where the project's
+  policy gives `dispatch` `auto` or `notify`, with nothing asked (`src/dispatch.ts`):
+  - **A pass** every `dispatch.sweepSeconds` (default 60), and once at start after the runs are
+    reconciled, one at a time (`sweepDispatch(at)`, a test seam): it settles the live asks first
+    (adopts an open request on its subject, reads verdicts, starts approved ones, withdraws stale
+    ones), then looks at the `ready` tasks of `active` projects that name a template it serves,
+    oldest first (`createdAt`, then id), at most 128. One `maxPerPass` (2) allowance covers the whole
+    pass, settlement included: each run admitted and each request newly opened is charged. It never
+    throws: a pass that fails starts nothing and is logged. A pass keeps its reason for every task
+    it looked at as the last pass (`workflow_dispatch_control`).
+  - **The Worker** of the run's writing step (its first step that proves `develop`, else its first
+    Worker step) is the first free one in `quotaScoreOf`'s order (`quota-score@2`, libs) among those
+    `ctx.workers.candidates` admits, over the ledger's `pools()` and `quota()`. Free: `ready`, its
+    account's load below `maxRunningPerAccount`, no running step on it, every pool available, every
+    window known (fresh, `ok`, a used share) with headroom above `quota.reservePercent`, not metered
+    (D65), and its account and repository (its workspace) within their bounds. No account, no
+    reading, a stale one, or a ledger without `quota()`: never free (INV-2).
+  - **The policy** (`ctx.approvals.check` on `dispatch`, once per project per pass): `ask` opens one
+    request on `{content, dispatch:<taskId>:attempt:<n>, quota-score@2:<sha256>}` after the ask's
+    row (`asking`) and its decisions are recorded, adopted after a crash; an attempt the operator
+    approved through the board's gate (the task's `lastDecision` is the operator's approval of the
+    board's own request for this attempt) starts with no request, a `gate` decision
+    (`dispatch.approval`) saying so (D62); `auto` starts it with no request (the row `approved`, mode
+    `auto`, its decisions the select, the choice, and the policy's `autonomy`; PROP-0014 D2);
+    `notify` the same, with a `workflow.dispatch.notice` event appended with the start, which the
+    notifier tells as `dispatch.started`; `forbid` dispatches nothing.
+  - **The start**: the approval binds the task, its attempt, and the Worker (INV-5). A run already
+    admitted for the row is adopted first. Otherwise, whether the row is `approved` or was left
+    `starting` by a crash before the admission, it starts only while dispatch is not paused there,
+    the task is still ready at that attempt, the approval is within `approvedHoldMinutes` (30,
+    checked first), and the Worker is still admitted and free within the bounds. It goes through
+    the engine's own `tasks.start` (`clientRequestId` `dispatch:<askId>`), with its
+    `workflow.task-admission` naming the dispatch decisions. The run's `workflow_tasks.dispatch`
+    names the ask and the Worker its writing step is bound to (`preferred`: that step's first
+    execution only). Refused at routing, the step routes nowhere else: it waits for that Worker
+    within the hold from the run's start, sending nothing, then fails for the operator
+    (`waitForChoice`, `src/recovery.ts`). Past the hold, paused, or once the task moved on, the
+    approval is used for nothing; a denied or expired request is never asked again for that attempt; one
+    withdrawn on a policy change is put to the policy in force.
+  - **Bounds**, counted from the rows each pass: `maxRunning` (8), `maxRunningPerProject` (2),
+    `maxRunningPerAccount` (1), `maxRunningPerRepository` (4, D64), `maxOpenAsks` (4), and
+    `leaveRunsFree` (4) of `maxActiveRuns`; an ask open or approved counts as its run would. A task
+    that writes a subject another holds, or has a live ask on, is not taken. The rolling hour (D2):
+    `maxPerHour` (6) starts, `maxPerHourPerProject` (3), counted from the rows' `started_at` (rows
+    approved or starting counted with them when a pass takes; an approved row waits while the
+    starts made fill the hour).
+  - **Pause**: `pauseDispatch(reason?, projectId?)` and `resumeDispatch(projectId?)`, each a `gate`
+    decision (`dispatch.pause`) on `workflow_dispatch_control` (`global`, or `project:<id>` for one
+    project's, D2), kept across restarts; paused, a pass withdraws the open asks there and takes
+    nothing there. `dispatch.enabled: false` runs no pass.
+  - **Who started a run** (D2): `task.startedBy` on a board task's run (`workflow_tasks.started_by`):
+    `dispatch`, `operator` when the start says so (`startedBy: 'operator'`, Start on `/ui`), else
+    `lead`. A restart mid-start adopts the run already admitted for the row: an attempt starts once.
+  - **Decisions** (INV-13): `dispatch.select` (`admission`), `dispatch.choice` (`route`, its `hash`
+    the quota settings'), the policy's `autonomy`, and the D62 `gate`, only for a take; the events
+    `workflow.dispatch.chosen|started|closed|paused|resumed|notice`.
+  - **Settings** (`dispatch`): `enabled`, `sweepSeconds` (10 to 3600), `maxPerPass` (1 to 16),
+    `maxRunning` (1 to `maxActiveRuns − leaveRunsFree`, default 8 or that), `maxRunningPerProject`,
+    `maxRunningPerAccount`, `maxRunningPerRepository` (each 1 to 16), `leaveRunsFree` (0 to
+    `maxActiveRuns − 1`, default 4 or that), `maxOpenAsks` (1 to 32), `approvedHoldMinutes` (1 to
+    240), `maxPerHour` (0 to 120), `maxPerHourPerProject` (0 to `maxPerHour`); one out of its range
+    refuses the row with its path (`dispatchProblems`, also in `checkConfig`).
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
@@ -478,16 +558,27 @@ second execution path (INV-1).
   Worker's tool gate deferred (sent, `config_error`, on a session) names the request it waits on
   in the gate's `agent-workers.tool.deferred` event.
   - **A board task's step waits** (T99 D2): instead of failing, the node becomes `BLOCKED` on
-    the request (`approval_request`) until the request's expiry (`gateTimeoutHours` with the
-    queue unreadable), after a `recovery` decision `wait` (`decision@1.8`, rule
-    `workflow.deferred-call`). The run stays live, holding its task and renewing its lease (the
-    task stays `running`, its attempt not spent); its view shows `blocked: tool-call`, and it
-    counts against `maxWaitingRuns`. Every `approvalPollSeconds`, under the run's lease, the
-    engine reads the request: approved by the operator for exactly that call before it expired,
-    the session continues once (as below); rejected, expired, withdrawn, approved for anything
-    else, or with no verdict by the deadline, the step fails as `call_rejected` or `call_expired`
-    (`USER_ACTION`, a `recovery` decision `fail`), and the run's report is an attempt the board
-    counts. Not for a run that lost its holder or whose budget refused a step: its node fails as
+    the request (`approval_request`) until the request's expiry, a `command` call at most
+    `deferredCommandMinutes` (default 10; 0: until the expiry) after it was asked
+    (`gateTimeoutHours` with the queue unreadable), after a `recovery` decision `wait`
+    (`decision@1.8`, rule `workflow.deferred-call`, `boundMinutes` for a bounded call). The run
+    stays live, holding its task and renewing its lease (the task stays `running`, its attempt not
+    spent); its view shows `blocked: tool-call`, and it counts against `maxWaitingRuns`. Every
+    `approvalPollSeconds`, under the run's lease, the engine reads the request: approved by the
+    operator for exactly that call by the step's deadline, the session continues once (as below).
+    A call still open past its deadline (its bound, or the request's expiry before the queue's
+    sweep recorded it) has its request withdrawn first. Rejected, expired, withdrawn, or approved
+    only after the deadline, the call is denied (T199): unless the policy now forbids its class,
+    the session continues once, its brief saying the call was denied and why (a `recovery` decision
+    `deny`, its cause `rejected`, `expired`, `withdrawn`, `bound`, or `late`;
+    `workflow.run.continued` with `denied: true`), and the Worker's gate denies that exact call
+    there and in any later run of the session, in any workflow, reading the denial the engine keeps
+    on the gate's row of the request (`ctx.agentWorkers.denyToolCall`, in the decision's
+    transaction), whatever the queue, the policy, or the event log's retention says later.
+    Forbidden (or a policy that cannot be read), approved for anything else, nothing loaded to keep
+    the denial (no `ctx.agentWorkers`, or no gate row for the request), or past the deadline with no queue to read,
+    the step fails as `call_rejected` or `call_expired` (`USER_ACTION`, a `recovery` decision
+    `fail`), and the run's report is an attempt the board counts. Not for a run that lost its holder or whose budget refused a step: its node fails as
     before. When a board task's run has ended, before its report, the requests still open that
     its Workers' gates or its remediation gates opened are withdrawn.
   - **A run that serves no board task** fails on that node, which keeps the request it waits on
@@ -499,13 +590,27 @@ second execution path (INV-1).
     with the approval, and `workflow.run.continued` (`by: rule`). For a run outside the board, a
     rejected request, or a run that moved on (continued, stopped, deleted, or failed elsewhere),
     continues nothing.
+- **A run's required checks
+  ([design](../../../docs/design/workflow-engine.md#a-runs-required-checks), T151,
+  [ADR-0063](../../../docs/decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)).**
+  Once every step of a run that wrote completed (a board task's run whose task writes a `git-head`
+  subject, or a plain run with a completed `develop` step), on an agent's result on a git working
+  tree, and no check the run judged itself failed: `ctx.approvals.check` on the class its
+  acceptance is judged under (the task's action class and project, else `workspace-write`) gives
+  the required checks still failed; those that are commands (`tests`, `typecheck`, `lint`) are
+  asked of `ctx.workers.check` (optional) on the run's worktree and the exact subject, under the
+  run's lease and stop. Each `passed` or `failed` is reported in the acceptance's `checks` (only
+  on the subject they ran on), the `check-run@1.0` evidence among its inputs, each `error` and a
+  refusal as a reason, and what was asked in `outcome.detail.checkRun`; nothing else is claimed.
+  No queue, no `check`, or no source holding the worktree: none run, and they stay pending. Safe
+  to repeat after a restart.
 - **A plain run's acceptance
   ([design](../../../docs/design/workflow-engine.md#a-plain-runs-acceptance)).** A run that
   serves no board task and wrote (a `develop` step completed) records, before it completes, an
-  `acceptance` decision (`workflow.run-acceptance`, under its final step) with the checks it ran
-  (`schema`, `review`) and the policy's required checks for `workspace-write` it did not pass,
-  pending (`ctx.approvals.check`; `unknown` with none loaded). They never block it: a plain run
-  applies nothing.
+  `acceptance` decision (`workflow.run-acceptance`, version 2, under its final step) with the
+  checks it ran (`schema`, `review`, and the required checks above) and the policy's required
+  checks for `workspace-write` it did not pass, pending (`ctx.approvals.check`; `unknown` with none
+  loaded). They never block it: a plain run applies nothing.
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -516,6 +621,27 @@ second execution path (INV-1).
     own bound. A retryable failure after sending fails the node as
     `USER_ACTION`, so the engine never causes a duplicate provider turn
     (INV-4).
+  - **A site's own error after the send (D60, ADR-0062,
+    [design](../../../docs/design/workflow-engine.md#a-team-members-first-step-after-a-sites-own-error)).**
+    The one exception: a team member's `propose` step whose sent execution
+    failed with `error.siteError` (its source read the site's own error in
+    place of an answer) runs once more, in a new conversation of its session
+    (`ctx.workers.reset`), the same member on the same Worker, as its next
+    attempt after the back-off. Only when the error's disposition is retryable
+    (`IMMEDIATE`, `BACKOFF`, or `RECREATE_SESSION`), and the step proves no
+    `develop`, grows no plan, has a session, has an attempt left, and no
+    `resend` decision of the node is on record (never twice; asked for directly,
+    `ctx.artifacts.list` with `outcome: 'resend'`, limit 1). The `recovery`
+    decision `resend` (`decision@1.9`, rule version 2) names the failed
+    execution and the new attempt's key, recorded in the transaction that
+    resets the session and readies the node. That transaction fences the run's
+    lease before the reset, so an engine that lost the run changes nothing, and
+    the reset's one effect outside the store (a website session's kept tab
+    closing) runs only after it commits. The event is `workflow.node.resent`.
+    Like any retry, the new attempt starts on the run's next pass, once the
+    steps running beside it have settled. Otherwise the node fails as above,
+    its `fail` decision carrying a `resend` candidate saying why not, under rule
+    version 2 as well.
   - **Failover (ADR-0034).** An unsent `quota_exhausted`, `challenge`,
     `reauth_required`, or `overloaded` instead routes the node again with the
     failed Worker left out (`excluded` on the node row, the router's `excluded`
@@ -534,9 +660,9 @@ second execution path (INV-1).
     takes the node (`assignment` on the row, `RouteOptions.assignment` on every
     later route); an unsent overload there is retried, never failed over.
     `continue` clears both. The view shows a waiting node's `waitingUntil`.
-  - Each choice is a `recovery` decision (`retry`, `failover`, `wait`, or
-    `fail`). It becomes the node's `lastDecision`, and the `retry` (with
-    `failoverFrom`), `waiting`, or `failed` event names it.
+  - Each choice is a `recovery` decision (`retry`, `failover`, `wait`, `resend`,
+    or `fail`). It becomes the node's `lastDecision`, and the `retry` (with
+    `failoverFrom`), `waiting`, `resent`, or `failed` event names it.
 - **Ownership and restart (REQ-WF-4).**
   - A run advances under a `run:<id>` lease, and every node write is fenced.
   - A lost lease (a host that slept past it, or a takeover) re-arms the run,
@@ -545,9 +671,10 @@ second execution path (INV-1).
   - A scheduler exception fails the run as `internal` (`CODE_FIX`) and never
     loops.
 - **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
-  `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
+  `workflow.node.started|retry|waiting|resent|completed|failed|blocked|escalated|superseded`,
   `workflow.graph.grown|retired`, `workflow.gate.requested|opened|closed`,
-  `workflow.team.tallied|decided`, and `workflow.task.lost|reported`. A completed node's
+  `workflow.team.tallied|decided`, `workflow.task.lost|reported`, and
+  `workflow.dispatch.chosen|started|closed|paused|resumed`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -558,13 +685,22 @@ second execution path (INV-1).
     `usageUnknown`, the kind its Worker source recorded first in the run's
     `usage.unknown` entries
     ([resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
+    `draws()` gives what agent runs drew from their accounts' windows over
+    the latest 1,000 `quota.draw` records, per kind and window and per kind,
+    template step, and window (PROP-0015 E2,
+    [quota drawn per run](../../../docs/design/resources.md#quota-drawn-per-run));
+    the MCP `usage` tool adds it as `draws` once any is recorded. Each start
+    names its template step (`WorkerStart.step`) for it.
     The latest started first, at most `limit` (1 to 500). Since contract 1.7, an optional filter
     (`UsageFilter`): `status`, only runs in those states, whenever they started, so a run that has
     run for hours is never past the limit for being old; `changedSince`, only runs whose state
     changed after that time, the latest changed first (a time that is not one is refused). The
     web UI's live view and activity read by them (T127).
-  - `explain` gives the run's own decisions that no step holds (`decisions`: a board
-    task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
+  - `dispatchStatus` gives dispatch as it stands: the settings, the pause, the last pass with
+    its reason for each ready task, each bound with its use, and the live asks with their Worker
+    and windows (the engine's rows only).
+  - `explain` gives the run's own decisions that no step holds (`decisions`: for a run dispatch
+    started, its dispatch decisions first; a board task's run's `workflow.task-*` decisions, how it took the task, its session, a lost
     holder, the result's subject and acceptance, the report, a funding gate, and the
     digest, in the order they were made; a Worker's own decisions filed under the run
     are not among them), then each step's egress, tier, route (or admission), and
@@ -603,7 +739,10 @@ second execution path (INV-1).
     as `usageView` shows it: the run's id, template, status, session, and times, and per step its
     state, tiers, attempt, execution, source, Worker, quota class, tokens, and `usageUnknown`;
     its answer, result and brief ids, errors, wait, and task are `result`'s;
-  - `explain` takes a run id, any artifact id (its input tree), or an execution whose liveness needs a look.
+  - `explain` takes a run id, any artifact id (its input tree), or an execution whose liveness needs a look;
+  - `dispatch_status` (client scope) gives `dispatchStatus`; `dispatch_pause { reason?, projectId? }`
+    and `dispatch_resume { projectId? }` are the operator's pause and resume of dispatch, entirely or
+    of one project (ADR-0064, PROP-0014 D2).
   - Each answers once ([replies](../mcp-server/README.md#token-budget)): the view is the
     structured content; the text is a completed run's answer, any other run's `standing` (what
     it waits for, why it failed, or how many steps are done), or an `outline` of the answer.
@@ -656,7 +795,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.7 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.10 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -696,6 +835,20 @@ second execution path (INV-1).
     changed, the latest changed first, at most the limit asked; and a start bound to the revision
     of its task the caller read (`task.revision`) is refused before anything is written once the
     task moved, so the run's input and every brief come from one reading of it;
+  - since 1.8 ([ADR-0062](../../../docs/decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)),
+    a team member's first step that the site answered with its own error after the send
+    (`error.siteError`) is resent once, in a new conversation of its session on the same Worker, a
+    `resend` decision naming the failed execution and the new one's key, also when the error
+    arrived while the engine was down; a second such error fails it, never resent twice; a plain
+    or a writing step after such an error fails, its decision saying why not;
+  - since 1.9 ([ADR-0064](../../../docs/decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)),
+    the dispatch pass asks once to start a ready task of an active project on a free Worker chosen
+    by quota, adopted across passes and a restart, and on the operator's approval starts exactly
+    that attempt, its step on exactly that Worker, its admission naming why; with
+    `dispatch.enabled: false` it asks and starts nothing;
+  - since 1.10 (PROP-0014 D2), a board task's run says who started it (`task.startedBy`: `lead` by
+    default, `operator` when its start says so), kept across a restart; and a pause of one
+    project's dispatch asks about and starts nothing there, its tasks saying so, until resumed;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;
@@ -712,7 +865,9 @@ second execution path (INV-1).
   funding a spent one asks for; a task with a budget is refused without it), asks `digests` (the
   abstract `Digests` of `digest-core`) when present, for a task's results, and reads `approvals`
   (the abstract `Approvals` of `approvals-core`) when present: remediation gates, deferred calls'
-  continuations, a plain run's acceptance.
+  continuations, a run's required checks, a plain run's acceptance, and the dispatch pass's verdicts and
+  requests (missing `approvals`, a ledger with `quota()`, or a router with `candidates`, dispatch starts
+  nothing).
 - **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
   the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
@@ -754,6 +909,23 @@ second execution path (INV-1).
   material shown once, so the member fits the site; a member over a site's bound routed at its own
   tier; a rejected answer its session cannot escalate failed with the rejection and why, never a
   family shortage that is not there, and one it can escalated within its session.
+  [`tests/checks.spec.ts`](tests/checks.spec.ts) covers a run's required checks over the
+  store-backed board and queue with a scripted source: passed (the task done without the
+  operator, the evidence among the acceptance's inputs), a failed one (another attempt), one that
+  did not run, a refusal, and no source (held for the operator with them pending), none asked for
+  a class that requires none, and a plain run's acceptance reporting them; on the real stack with
+  confined commands in
+  [`profile-software-development`'s checks tests](../profile-software-development/tests/checks.spec.ts).
+  [`tests/dispatch.spec.ts`](tests/dispatch.spec.ts) runs the dispatch pass over the store-backed
+  board, queue, and ledger: the settings and their ranges (a row refused on one), the operator's
+  case (oldest first, `maxPerPass`, each start on a free Worker chosen by quota, a reason on every
+  task and Worker), an ask interrupted between the request and its record adopted, an approval
+  starting exactly its attempt and Worker, an approval past its hold used for nothing and asked
+  again, a lead's start winning the race (the ask withdrawn), a denied attempt never asked again,
+  every bound, the repository bound (D64), unknown, stale, and reserved windows never free, the
+  board's gate counting as approval (D62), `forbid`, `auto` in D1, off, and a pause across a
+  restart, and the counts across a restart. The crash suite kills it after its request and after
+  its run's record ([`dispatch.crash.ts`](../../system-bundle/tests/crash/dispatch.crash.ts)).
 
 ## Source layout
 
@@ -773,6 +945,7 @@ in `engine.ts`:
 | `review.ts` | exact-subject review and remediation cycles; what a node's instructions are composed from, a re-review's from its review |
 | `queue.ts` | a remediation fix's gate on the approval queue: the request on its exact subject, its verdict, adoption after a crash |
 | `continuations.ts` | a deferred tool call: a board task's step waiting on its request in the live run, or a plain run's request noted when its node fails; read from the queue, the session continued once when approved; a board task's attempt ending with the requests it left open withdrawn |
+| `checks.ts` | a run's required checks: which the policy requires of a written result, run on its exact tree through `ctx.workers.check`, for its acceptance |
 | `acceptance.ts` | a plain run's acceptance: the policy's required checks it did not pass, recorded as pending |
 | `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members; the caller's text shown once where a prompt shows its snapshot |
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |
@@ -783,5 +956,6 @@ in `engine.ts`:
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
 | `carries.ts` | whether a task's run starts from the work its previous attempt left: decided at admission within its bounds, carried through the workers seam's `carry` before the run's first step, recorded, and pointed at by every brief of the run |
 | `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done, its `merge` put to the policy and asked on the queue, merged on the approval, through the workers seam's `land` |
+| `dispatch.ts` | the dispatch pass: its settings, the ready tasks it looks at and why each is not taken, the writing step's Worker chosen by the quota score among the router's candidates, the policy, the decisions, the ask and its request, its verdict, the start on that Worker, the bounds from its rows, the pause, and the status |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

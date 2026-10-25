@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { MAX_UNKNOWN_ENTRIES } from '@tsuuanmi/system-libs'
-import { DETAIL_CHARS, type HealthSources, healthReport, NAMED_ITEMS } from '../src/health.ts'
+import { countDenials, DETAIL_CHARS, type HealthSources, healthReport, MAX_DENIALS, NAMED_ITEMS } from '../src/health.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'system-health-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
@@ -187,11 +187,12 @@ describe('host health (REQ-HOST-6)', () => {
     expect(report.state).toBe('degraded')
     expect(report.checks.find((c) => c.name === 'usage')).toEqual({
       name: 'usage', state: 'degraded',
-      detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported); '
-        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused); '
+      // Each pool names its open runs, the latest first, and why, in their source's own words.
+      detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported) — arun_5 (not-reported): why; '
+        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused) — arun_2 (refused): why | arun_1 (not-reported): why; '
         + 'unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (gone.pool 1), so no window counts them; '
         + '1 usage.unknown entry is not a valid usage-unknown@1.0 record, so no pool counts it. '
-        + 'A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
+        + 'A cap of such a run\'s task or project in its pool is refused until the ledger counts a record of it, never counting it as 0: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
     })
     // Read once, back to the earliest window's start: the start of time for a window that never resets.
     expect(asked).toEqual([new Date(0).toISOString()])
@@ -210,6 +211,31 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ unknownUsage: { pools, entries: () => [gone], counted: async () => true }, now }, 'usage')).toMatchObject({ state: 'ok' })
     // A ledger that cannot be read leaves the check down, saying why, never ok.
     expect(await check({ unknownUsage: { pools: async () => { throw new Error('the store is closed') }, entries: () => [], counted: async () => false } }, 'usage')).toMatchObject({ state: 'down', detail: expect.stringContaining('the store is closed') })
+  })
+
+  it('stays degraded for a run whose lower bound the ledger counted, naming the run, its Worker, and why; never ok on a lower bound (INV-2)', async () => {
+    const at = '2026-10-23T11:00:00.000Z'
+    const reason = 'it was stopped: cancelled by the operator; the ledger counted what its runtime reported while it ran (4,757 input and 53 output tokens, 2 turns), a lower bound: Claude Code was stopped before its result message'
+    const partial = {
+      seq: 1, at, data: { schema: 'usage-unknown@1.1', runId: 'arun_7', kind: 'not-reported', account: 'max', pool: 'max.agents', worker: 'agent:developer', outcome: 'aborted', observedAt: at, reason, partial: `sha256:${'b'.repeat(64)}` },
+    }
+    const pools = async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }]
+    // The ledger counts a record of the run: its own lower bound, which reconciles nothing.
+    const report = await check({ unknownUsage: { pools, entries: () => [partial], counted: async () => true }, now: () => Date.parse('2026-10-23T12:00:00Z') }, 'usage')
+    expect(report).toMatchObject({ state: 'degraded' })
+    expect(report!.detail).toContain(`max.agents: 1 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported) — arun_7 on agent:developer (not-reported, a lower bound counted): ${reason.slice(0, 120)}`)
+    // Past the pool's window, it no longer bears on what the pool admits.
+    expect(await check({ unknownUsage: { pools, entries: () => [partial], counted: async () => true }, now: () => Date.parse('2026-10-24T12:00:00Z') }, 'usage')).toMatchObject({ state: 'ok' })
+  })
+
+  it('names at most three runs of a pool, the latest first, and counts the rest', async () => {
+    const at = '2026-10-23T11:00:00.000Z'
+    const fact = (n: number) => ({ seq: n, at, data: { schema: 'usage-unknown@1.0', runId: `arun_${n}`, kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt: at, reason: `why ${n}` } })
+    const report = await check({
+      unknownUsage: { pools: async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }], entries: () => [1, 2, 3, 4, 5].map(fact), counted: async () => false },
+      now: () => Date.parse('2026-10-23T12:00:00Z'),
+    }, 'usage')
+    expect(report!.detail).toMatch(/^max\.agents: 5 run\(s\) .* \(5 not-reported\) — arun_5 \(not-reported\): why 5 \| arun_4 \(not-reported\): why 4 \| arun_3 \(not-reported\): why 3 \| and 2 more\. A cap/)
   })
 
   it('reads every entry of the windows a page at a time, and past what it reads is degraded, never ok (INV-2, INV-9)', async () => {
@@ -275,6 +301,64 @@ describe('host health (REQ-HOST-6)', () => {
   it('notes what retention removed recently, without degrading health', async () => {
     const events = (type: string) => (type === 'workflow.retention.swept' ? [{ data: { runs: 40, conversations: 12, retainRunsDays: 30 } }, { data: { runs: 2, conversations: 0, retainRunsDays: 30 } }] : [])
     expect(await check({ events }, 'retention')).toMatchObject({ state: 'ok', detail: expect.stringMatching(/^retention expired 42 run\(s\) and released 12 website conversation\(s\)/) })
+  })
+
+  it('counts the agent Workers\' tool denials by reason code per Worker kind per day, without degrading health (T207)', async () => {
+    const day1 = '2026-10-25T09:00:00.000Z'
+    const day2 = '2026-10-26T01:00:00.000Z'
+    const denial = (at: string, workerKind: string | undefined, reason: string | undefined) => ({ at, data: { agentRun: 'arun_1', worker: 'agent:dev', tool: 'Bash', ...(workerKind ? { workerKind } : {}), ...(reason ? { reason } : {}) } })
+    const entries = [
+      denial(day1, 'claude-agent-sdk', 'metacharacter'), denial(day1, 'claude-agent-sdk', 'metacharacter'), denial(day1, 'claude-agent-sdk', 'outside-workspace'),
+      denial(day1, 'codex-sdk', 'not-listed'), denial(day2, 'claude-agent-sdk', 'request-withdrawn'),
+      // From before T207: no kind, no code.
+      denial(day2, undefined, undefined),
+    ]
+    expect(countDenials(entries)).toEqual({
+      counts: [
+        { day: '2026-10-25', workerKind: 'claude-agent-sdk', total: 3, reasons: { 'metacharacter': 2, 'outside-workspace': 1 } },
+        { day: '2026-10-25', workerKind: 'codex-sdk', total: 1, reasons: { 'not-listed': 1 } },
+        { day: '2026-10-26', workerKind: 'claude-agent-sdk', total: 1, reasons: { 'request-withdrawn': 1 } },
+        { day: '2026-10-26', workerKind: 'unrecorded', total: 1, reasons: { unrecorded: 1 } },
+      ],
+      invalid: 0,
+    })
+    const asked: string[] = []
+    const denials = (query: { since: string; afterSeq: number; limit: number }) => {
+      asked.push(query.since)
+      return paged(entries)(query)
+    }
+    const now = () => Date.parse('2026-10-26T12:00:00.000Z')
+    expect(await check({ denials, now }, 'tool-denials')).toEqual({
+      name: 'tool-denials', state: 'ok',
+      detail: '6 tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-25 claude-agent-sdk: 3 (2 metacharacter, 1 outside-workspace); 2026-10-25 codex-sdk: 1 (1 not-listed); '
+        + '2026-10-26 claude-agent-sdk: 1 (1 request-withdrawn); 2026-10-26 unrecorded: 1 (1 unrecorded). Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)',
+    })
+    expect(asked[0]).toBe('2026-10-25T12:00:00.000Z')
+    expect(await check({ denials: paged([]), now }, 'tool-denials')).toEqual({ name: 'tool-denials', state: 'ok', detail: 'no tool call was denied in the last 1d' })
+    expect(await check({}, 'tool-denials')).toBeUndefined()
+    // Bounded: past MAX_DENIALS entries it says so, and still counts what it read.
+    const many = Array.from({ length: MAX_DENIALS + 5 }, () => denial(day2, 'codex-sdk', 'metacharacter'))
+    expect(await check({ denials: paged(many), now }, 'tool-denials')).toMatchObject({ state: 'ok', detail: expect.stringContaining(`more than ${MAX_DENIALS} tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-26 codex-sdk: ${MAX_DENIALS} (${MAX_DENIALS} metacharacter) (only the first ${MAX_DENIALS} were read)`) })
+  })
+
+  it('counts a tool denial whose data is not a valid agent-tool-event@1 denial apart, never by reason (T211)', async () => {
+    const at = '2026-10-26T01:00:00.000Z'
+    const base = { agentRun: 'arun_1', worker: 'agent:dev', workerKind: 'codex-sdk', tool: 'Bash' }
+    const entries = [
+      { at, data: { ...base, reason: 'metacharacter' } },
+      // A code the gate never emits, an explanation past its bound, a field no denial carries, no data at all.
+      { at, data: { ...base, reason: 'made-up' } },
+      { at, data: { ...base, reason: 'metacharacter', explanation: 'x'.repeat(301) } },
+      { at, data: { ...base, reason: 'metacharacter', command: 'rm -rf /' } },
+      { at },
+    ]
+    expect(countDenials(entries)).toEqual({ counts: [{ day: '2026-10-26', workerKind: 'codex-sdk', total: 1, reasons: { metacharacter: 1 } }], invalid: 4 })
+    const now = () => Date.parse('2026-10-26T12:00:00.000Z')
+    expect(await check({ denials: paged(entries), now }, 'tool-denials')).toEqual({
+      name: 'tool-denials', state: 'ok',
+      detail: '5 tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-26 codex-sdk: 1 (1 metacharacter); 4 entry(ies) not a valid denial (agent-tool-event@1), not counted by reason. '
+        + 'Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)',
+    })
   })
 
   it('is degraded by website conversations whose deletion failed every attempt (PROP-0004 Phase 5)', async () => {

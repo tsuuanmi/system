@@ -3,9 +3,10 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostCapacity, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -92,6 +93,48 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(down).toMatchObject({ state: 'down', checks: [{ name: 'host', detail: expect.stringContaining('ECONNREFUSED') }] })
   })
 
+  it('prints dispatch: on, off, or paused with how to resume, the bounds in use, the starts waiting for the operator\'s go, and why each ready task did not start (ADR-0064)', () => {
+    const bounds = { running: { used: 1, max: 8 }, openAsks: { used: 1, max: 4 }, engine: { active: 2, max: 12 } }
+    expect(formatDispatch({
+      enabled: true, bounds,
+      asks: [{ taskId: 'task-1', title: 'Write the notes', attempt: 1, state: 'asked', worker: 'agent:a/develop', requestId: 'apr_1', why: 'tier standard, agent-plan, known, 5 h: used 0 %, headroom 80, load 0 of 1' }],
+      lastPass: { at: '2026-10-25T12:00:00.000Z', state: 'ran', took: [{ taskId: 'task-1', worker: 'agent:a/develop', how: 'asked' }], tasks: [{ taskId: 'task-2', title: 'Fix it', reason: 'no Worker is free for step develop:1 (1 admitted)' }], more: 3 },
+    })).toEqual([
+      'dispatch: on',
+      '  bounds: 1 of 8 dispatched runs and asks, 1 of 4 asks open, 2 of 12 active runs it may fill',
+      '  waiting for your go: "Write the notes" (task task-1, attempt 1) on agent:a/develop, request apr_1: decide it in the queue (system ui, or MCP approvals_decide)',
+      '    why agent:a/develop: tier standard, agent-plan, known, 5 h: used 0 %, headroom 80, load 0 of 1',
+      '  last pass 2026-10-25T12:00:00.000Z: ran; took task-1 on agent:a/develop (asked)',
+      '    task-2 "Fix it": no Worker is free for step develop:1 (1 admitted)',
+      '    and 3 more ready task(s)',
+    ])
+    expect(formatDispatch({ enabled: true, bounds, asks: [], paused: { since: '2026-10-25T12:00:00.000Z', reason: 'quiet', decision: 'sha256:aa' } })[0]).toBe('dispatch: paused since 2026-10-25T12:00:00.000Z: quiet (system dispatch resume; decision sha256:aa)')
+    expect(formatDispatch({ enabled: false, bounds, asks: [] })[0]).toBe('dispatch: off (dispatch.enabled is false): nothing is asked or started by itself')
+  })
+
+  it('prints what dispatch started by itself, the hour\'s starts, and each project paused; pauses and resumes one project (PROP-0014 D2)', () => {
+    const bounds = { running: { used: 1, max: 8 }, openAsks: { used: 0, max: 4 }, engine: { active: 1, max: 12 }, hour: { used: 1, max: 6 } }
+    expect(formatDispatch({
+      enabled: true, bounds, asks: [],
+      pausedProjects: [{ projectId: 'p2', since: '2026-10-25T12:00:00.000Z', reason: 'quiet', decision: 'sha256:bb' }],
+      started: [{ taskId: 'task-1', title: 'Write the notes', attempt: 1, worker: 'agent:a/develop', runId: 'run_1', runStatus: 'running', mode: 'auto', startedAt: '2026-10-25T12:05:00.000Z' }],
+    })).toEqual([
+      'dispatch: on',
+      '  bounds: 1 of 8 dispatched runs and asks, 0 of 4 asks open, 1 of 12 active runs it may fill, 1 of 6 starts this hour',
+      '  project p2 paused since 2026-10-25T12:00:00.000Z: quiet (system dispatch resume --project p2; decision sha256:bb)',
+      '  started by itself (auto) 2026-10-25T12:05:00.000Z: "Write the notes" (task task-1, attempt 1) on agent:a/develop, run run_1 running',
+    ])
+    expect(parseDispatch([])).toEqual({ action: 'status', json: false, args: {} })
+    expect(parseDispatch(['--json'])).toEqual({ action: 'status', json: true, args: {} })
+    expect(parseDispatch(['pause', 'a', 'quiet', 'day'])).toEqual({ action: 'pause', json: false, args: { reason: 'a quiet day' } })
+    expect(parseDispatch(['pause', '--project', 'p1', 'not', 'now'])).toEqual({ action: 'pause', json: false, args: { projectId: 'p1', reason: 'not now' } })
+    expect(parseDispatch(['resume', '--project', 'p1', '--json'])).toEqual({ action: 'resume', json: true, args: { projectId: 'p1' } })
+    expect(parseDispatch(['resume', 'words'])).toBeUndefined()
+    expect(parseDispatch(['pause', '--project'])).toBeUndefined()
+    expect(parseDispatch(['status', '--project', 'p1'])).toBeUndefined()
+    expect(parseDispatch(['go'])).toBeUndefined()
+  })
+
   it('prints the roster from the running profile: its rendering, or with --json the record, and refuses a failed call (REQ-HOST-8)', async () => {
     const record = { asOf: '2026-10-24T09:30:00.000Z', workers: { value: [] }, unlisted: 0, counts: { ready: 0, busy: 0, resting: 0, unavailable: 0, quarantined: 0 }, sources: { value: [] }, unknownUsage: { value: { unreadable: 0, unconfigured: [] } } }
     const calls: string[] = []
@@ -104,6 +147,35 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(calls).toEqual(['roster', 'roster'])
     await expect(hostRoster(false, async () => ({ isError: true, text: 'the roster could not be made: mcp-roster@1.5#/$defs/roster-output: …', structured: undefined }))).rejects.toThrow(/could not be made/)
     await expect(hostRoster(true, async () => ({ isError: false, text: 'x', structured: undefined }))).rejects.toThrow(/no roster record/)
+  })
+
+  it('prints capacity now from the running profile\'s roster: the server\'s Right now block, or with --json its now record, computing nothing (T152)', async () => {
+    const now = {
+      asOf: '2026-10-24T09:30:00.000Z',
+      accounts: { value: { items: [], more: 0 } },
+      free: { value: { items: [{ worker: 'agent:a/develop', name: 'Claude Code · science · develop', account: 'a', tier: 'standard', load: { unknown: 'its Worker source reports no load' }, quota: { pool: 'p', window: 'five-hour', seconds: 18_000, used: 10, left: 90, resetsAt: '2026-10-24T10:10:00.000Z' } }], more: 0 } },
+      quotaUnknown: { value: { items: [], more: 0 } },
+      stalled: { value: { items: [], more: 0 } },
+      noQuota: { value: { items: [], more: 0 } },
+      cannotWork: { value: { items: [], more: 0 } },
+      ready: { unknown: 'the board (ctx.board) is not mounted' },
+    }
+    const block = 'Right now (as of 2026-10-24T09:30:00.000Z):\n  free         Claude Code · science · develop (agent:a/develop; 90 % left of five-hour, resets 2026-10-24T10:10:00.000Z)'
+    const text = `Roster as of 2026-10-24T09:30:00.000Z: 1 Worker(s): 1 ready, 0 busy, 0 resting, 0 unavailable, 0 quarantined\n\nClaude Code · science · develop (agent:a/develop)  ready\n\n${block}`
+    const calls: string[] = []
+    const call = async (name: string) => {
+      calls.push(name)
+      return { isError: false, text, structured: { asOf: now.asOf, now } }
+    }
+    expect(await hostCapacity(false, call)).toBe(block)
+    const json = JSON.parse(await hostCapacity(true, call)) as unknown
+    expect(json).toEqual(now)
+    new SchemaRegistry().assertDef('mcp-roster@1.7', 'capacity', json)
+    expect(calls).toEqual(['roster', 'roster'])
+    // A host whose roster has no now (below mcp-roster@1.7), or a refused call: an error, never an empty capacity.
+    await expect(hostCapacity(true, async () => ({ isError: false, text: 'Roster as of …', structured: { asOf: now.asOf } }))).rejects.toThrow(/no capacity record/)
+    await expect(hostCapacity(false, async () => ({ isError: false, text: 'Roster as of …', structured: { asOf: now.asOf } }))).rejects.toThrow(/no capacity/)
+    await expect(hostCapacity(false, async () => ({ isError: true, text: 'the roster could not be made: …', structured: undefined }))).rejects.toThrow(/could not be made/)
   })
 
   it('lists the plugins with their recorded lifecycle and manifest, and refuses a host whose plugin host lists none (REQ-HOST-7)', async () => {
@@ -256,6 +328,24 @@ describe('system usage and explain output', () => {
       '  compact:2  WAITING  -  -  -',
       '  review:1  COMPLETED  standard  agent-plan  agent:reviewer  usage unknown (not-reported)',
     ])
+  })
+
+  it('shows what agent runs drew per kind and window, then per template step: clean draws counted, median and p90 in points, and what was left out (PROP-0015 E2)', () => {
+    const code = { kind: 'code', window: 'five-hour', draws: 12, median: 4, p90: 9, excluded: { confounded: 2, 'reset-crossing': 1, 'no-reading': 0 } }
+    const none = { kind: 'docs', window: 'five-hour', draws: 0, excluded: { confounded: 0, 'reset-crossing': 0, 'no-reading': 3 } }
+    const lines = formatUsage({
+      runs: [],
+      draws: { byKind: [code, none], byStep: [{ ...code, template: 'algorithm-development', step: 'develop' }, none], records: 18, unreadable: 1, unread: false },
+    })
+    expect(lines).toEqual([
+      'quota drawn per run, in percentage points of each window (18 records; 1 not valid, not counted):',
+      '  code · five-hour: 12 draws, median 4 points, p90 9 points (excluded: 2 confounded, 1 reset-crossing)',
+      '  docs · five-hour: no clean draw (excluded: 3 no-reading)',
+      'by template step:',
+      '  code · algorithm-development:develop · five-hour: 12 draws, median 4 points, p90 9 points (excluded: 2 confounded, 1 reset-crossing)',
+    ])
+    // None recorded: no section.
+    expect(formatUsage({ runs: [] })).toEqual([])
   })
 
   it('prints a run\'s decision chain, step by step', () => {

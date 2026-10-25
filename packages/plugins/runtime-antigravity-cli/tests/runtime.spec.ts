@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { type Confinement, meteringOf, proveConfinement, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeLimitsConformance, agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
+import { BWRAP, needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { HOOK_COMMAND, HOOK_ENV, HOOK_NAME, HOOKS_JSON, openChannel, TOKEN_ENV } from '../src/bridge.ts'
 import { AntigravityRuntime, type HookProof, limitsFromUsage, refusal, type RuntimeOptions, USAGE_ARGS, usageFrom, VERIFIED_HOOK_VERSIONS, VERIFIED_LIMIT_VERSIONS, workspaceCustomizations } from '../src/index.ts'
 
@@ -558,17 +559,6 @@ describe('antigravity-cli: the outcome, and what a run consumed, from agy\'s own
   })
 })
 
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-const BWRAP = findBwrap()
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
-
 describe('antigravity-cli: an account\'s usage report, agy\'s own /usage (ADR-0059, docs/design/agent-runtimes.md#an-accounts-usage-report)', () => {
   const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/agy-1.4.6-usage.json', import.meta.url)), 'utf8')) as {
     observedAt: string; cases: Array<{ case: string; stdout: unknown; limits?: unknown[]; unreadable?: string }>
@@ -683,7 +673,8 @@ describe('antigravity-cli: an account\'s usage report, agy\'s own /usage (ADR-00
   })
 })
 
-describe.skipIf(!BWRAP && !REQUIRED)('antigravity-cli under the real bubblewrap: the hook reaches the run\'s gate from inside the confinement', () => {
+describe('antigravity-cli under the real bubblewrap: the hook reaches the run\'s gate from inside the confinement', () => {
+  needsBubblewrap()
   const host = mkdtempSync(join(tmpdir(), 'system-agy-host-'))
   const dsh = join(host, 'dsh')
   const home = join(dsh, 'system', 'antigravity-home')

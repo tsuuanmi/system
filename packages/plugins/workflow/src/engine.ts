@@ -10,20 +10,22 @@ import type { Board, Subject } from '@tsuuanmi/system-board-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
-import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, provesFor, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
+import { checksFor } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
-import { admissionKind, assignmentOf, cutShort, escalate, failAttempt, heldWorkers, inputHint, routedDecisions, waitForLimit } from './recovery.ts'
+import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
 import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
-import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
-import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type WorkflowError, WorkflowFailure } from './types.ts'
+import { decide, expireTie, proving, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
+import { Dispatcher } from './dispatch.ts'
+import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type TaskCarry, type TaskDispatch, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
 /** Preflight a template and each of its variants, and check that every result schema it names is known. Throws why. */
@@ -40,7 +42,7 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
 export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
 
 /** The board task a run is admitted for, as the board granted it. */
-export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined; carry?: TaskCarry | undefined }
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined; carry?: TaskCarry | undefined; dispatch?: TaskDispatch | undefined; startedBy?: 'lead' | 'operator' | undefined }
 
 export class Engine {
   readonly schemas = new SchemaRegistry()
@@ -48,6 +50,8 @@ export class Engine {
   board: Board | undefined
   /** Runs that serve a board task: taking the task, renewing its lease, reporting the outcome. */
   readonly tasks: TaskRuns = new TaskRuns(this)
+  /** Dispatch (ADR-0064): ready tasks started on free Workers chosen by quota, its settings validated here. */
+  readonly dispatch: Dispatcher
   readonly templates: Record<string, NodeTemplate[]>
   /** Configured templates refused at load, with why (health reports them). */
   readonly refused = new Map<string, string>()
@@ -69,6 +73,8 @@ export class Engine {
   readonly wakeChecks = new Set<Promise<void>>()
 
   constructor(readonly ctx: Context, readonly config: Config) {
+    // A dispatch setting out of its range refuses the row, with its path (INV-2).
+    this.dispatch = new Dispatcher(this)
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
     // Checked at load, not at the first call. A configured template that fails preflight is refused
     // alone, with why (INV-2): the engine and every other template keep working, and health names it.
@@ -88,6 +94,7 @@ export class Engine {
   async close(): Promise<void> {
     this.stopped.abort()
     for (const timer of this.retries) clearTimeout(timer)
+    await this.dispatch.close()
     await Promise.allSettled(this.wakeChecks)
     await Promise.allSettled(this.running.values())
     await this.tasks.close()
@@ -204,9 +211,10 @@ export class Engine {
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
       if (bound) {
-        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, carry, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, carry, dispatch, started_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null,
-            bound.budget ? JSON.stringify(bound.budget) : null, bound.carry ? JSON.stringify(bound.carry) : null, now(), now())
+            bound.budget ? JSON.stringify(bound.budget) : null, bound.carry ? JSON.stringify(bound.carry) : null, bound.dispatch ? JSON.stringify(bound.dispatch) : null,
+            bound.dispatch ? 'dispatch' : bound.startedBy ?? 'lead', now(), now())
         return view(this, run)
       }
       this.open(run.run_id)
@@ -349,11 +357,20 @@ export class Engine {
           }
           if (nodes.every((n) => n.state === 'COMPLETED')) {
             const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
+            // A board task's acceptance stored before a crash stands (INV-4): the run finishes on it, its
+            // checks never asked again, so no later outcome replaces what they came to.
+            const stored = this.tasks.row(runId)
+            if (stored?.acceptance && stored.result) return this.finish(run, 'completed', { result: final }, current)
+            // The checks the policy requires of a written result run on its exact tree first (./checks.ts).
+            // The source stores each check's outcome on the subject, so a restart before the run finished
+            // gets the same outcomes back, never a check run again in place of one that ended.
+            const ran = await checksFor(this, run, nodes, signal)
+            if (signal.aborted) return
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
-            const unbound = this.tasks.complete(run, nodes, final)
+            const unbound = this.tasks.complete(run, nodes, final, ran)
             if (unbound) return this.finish(run, 'failed', { error: JSON.stringify(unbound) }, current)
             // A plain run that wrote records the policy's checks still pending; it applies nothing, so they never block it.
-            if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final)
+            if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final, ran)
             return this.finish(run, 'completed', { result: final }, current)
           }
           // A run that lost its board task's holder starts nothing new: it reconciles what is in
@@ -404,7 +421,8 @@ export class Engine {
             const queued = waiting.filter((n) => isRemediationGate(JSON.parse(n.spec) as ResolvedNode) && n.not_before)
             if (queued.length && await settleQueued(this, run, queued, current)) continue
             // A board task's step whose Worker's tool call waits on the operator: continue it once
-            // approved, or end the attempt on a rejection or expiry (./continuations.ts).
+            // approved, or once told the call was denied on a rejection, an expiry, or a command call's
+            // bound; the attempt ends only when the policy forbids the call's class (./continuations.ts).
             const calls = current_.filter(waitsOnCall)
             if (calls.length && await settleCalls(this, run, calls, current)) continue
             const expired = waiting.find((n) => !(Date.parse(n.not_before ?? '') - Date.now() > 0))
@@ -631,13 +649,19 @@ export class Engine {
         release()
         ;(admitted as AdmittedWorker | undefined)?.release()
       }
-      const restricting = await restriction(this, run, spec)
-      // A team member beside a held account no one can tell apart is refused, whatever the operator allows (INV-2).
+      const restricting = await restriction(this, run, spec, record.requirement)
+      // A team member beside a held account no one can tell apart, or one the operator's
+      // teams.excludeWorkers leaves too few provider families, is refused, whatever the operator allows (INV-2).
       if ('problem' in restricting) {
         done()
         return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: restricting.problem }, { sent: false, decisions: [] }, lease)
       }
-      const { distinctAccounts, ...restricted } = restricting
+      const { distinctAccounts, teams, leftOut, unmatched, ...restricted } = restricting
+      // Entries that leave nothing out are recorded, never passed over in silence (a typo would otherwise keep a Worker in teams).
+      if (unmatched?.length) {
+        this.ctx.eventLog.append({ type: 'workflow.team.unmatched-exclusions', runId: run.run_id, nodeId: node.node_id,
+          data: { reason: 'teams.excludeWorkers entries that match no Worker or account listed now: they leave nothing out of teams', entries: unmatched.slice(0, 16), more: Math.max(0, unmatched.length - 16) } })
+      }
       // The prompt as its source will render and send it, in characters (ADR-0032): a Worker that takes less is not admitted.
       const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
@@ -652,41 +676,72 @@ export class Engine {
         if (!failed.length || !(error instanceof AdmissionFailure)) throw error
         return this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...pinned })
       })
-      try {
-        try {
-          admitted = await route({ ...restricted, ...(exclude ? { exclude } : {}) })
-        } catch (error) {
-          if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
-          // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
-          // A session's own Worker still binds it; only the family and distinct-account rules are
-          // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused.
-          // First the family rule alone: a team on one provider keeps distinct accounts while it can
-          // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
-          // When nothing passes even then, the first refusal, with what the team needs, stands.
-          const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
-          if (kept) {
-            admitted = kept
-            sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
-          } else {
-            admitted = await route(distinctAccounts ? {} : restricted).catch(() => {
-              throw error
-            })
-            const rules = [exclude?.reason, distinctAccounts ? restricted.restrict?.reason : undefined].filter((r): r is string => !!r)
-            sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
-          }
+      // The Worker dispatch chose for a run's writing step, on its first execution (ADR-0064): the step
+      // runs there or nowhere, so every start dispatch made is the one its decisions explain (INV-13).
+      // Refused (its state changed since), it waits for that Worker within dispatch.approvedHoldMinutes
+      // of the run's start, sending nothing, then fails; no other Worker takes it.
+      const prefer = this.tasks.preferred(run.run_id, node)
+      if (prefer) {
+        // A step that waited for it is held to the deadline before it is routed again (ADR-0064).
+        if (choiceHoldEnded(this, run, node, prefer, lease)) {
+          done()
+          return
         }
-      } catch (error) {
-        done()
-        if (!(error instanceof AdmissionFailure)) throw error
-        const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
-        // A team member short of provider families: say what the team needs, beside why this one failed.
-        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec, record.requirement) : ''
-        // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
-        const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
-        if (waiting && 'waited' in waiting) return
-        const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
-        return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
-          { sent: false, decisions: [error.decision] }, lease)
+        let got: AdmittedWorker | AdmissionFailure | undefined
+        try {
+          got = !restricted.restrict || restricted.restrict.workers.includes(prefer.worker)
+            ? await route({ ...restricted, ...(exclude ? { exclude } : {}), restrict: { workers: [prefer.worker], reason: `dispatch chose ${prefer.worker} for this step (decision ${prefer.decision})` } })
+            : undefined
+        } catch (error) {
+          if (!(error instanceof AdmissionFailure)) {
+            done()
+            throw error
+          }
+          got = error
+        }
+        if (!got || got instanceof AdmissionFailure) {
+          done()
+          return waitForChoice(this, run, node, prefer, got, restricted.restrict?.reason, lease)
+        }
+        admitted = got
+      } else {
+        try {
+          try {
+            admitted = await route({ ...restricted, ...(exclude ? { exclude } : {}) })
+          } catch (error) {
+            if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
+            // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
+            // A session's own Worker still binds it; only the family and distinct-account rules are
+            // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and
+            // so does one the operator's teams.excludeWorkers leaves out of teams.
+            // First the family rule alone: a team on one provider keeps distinct accounts while it can
+            // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
+            // When nothing passes even then, the first refusal, with what the team needs, stands.
+            const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
+            if (kept) {
+              admitted = kept
+              sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
+            } else {
+              admitted = await route(distinctAccounts ? (teams ? { restrict: teams } : {}) : restricted).catch(() => {
+                throw error
+              })
+              const rules = [exclude?.reason, distinctAccounts].filter((r): r is string => !!r)
+              sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
+            }
+          }
+        } catch (error) {
+          done()
+          if (!(error instanceof AdmissionFailure)) throw error
+          const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
+          // A team member short of provider families: say what the team needs, beside why this one failed.
+          const team = spec.team?.member && exclude ? await this.familyShortage(spec, record.requirement, leftOut) : ''
+          // Refused only for assigned accounts' limits: it waits for the reset, bounded, spending no attempt (ADR-0052).
+          const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
+          if (waiting && 'waited' in waiting) return
+          const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
+          return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
+            { sent: false, decisions: [error.decision] }, lease)
+        }
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
       if (signal.aborted) {
@@ -726,8 +781,10 @@ export class Engine {
           // source renders the prompt from it (INV-13, INV-12).
           const brief = recordBrief(this, run, node, draft, source.sandbox?.(admitted.worker.worker, run.run_id))
           const started = source.start({
-            key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
+            key: executionKey(run.run_id, node, attempt),
             worker: admitted.worker.worker, brief, sessionId: spec.session.sessionId, runId: run.run_id,
+            // The template step it serves, from the engine's own record: a source may record it with what the run drew (PROP-0015 E2).
+            step: { template: run.template, node: node.node_id },
             requirement: record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({
@@ -769,7 +826,9 @@ export class Engine {
     if (current.status === 'failed') {
       // A board task's step whose Worker stopped at a tool call deferred to the operator waits on that request.
       if (await awaitCall(this, run, node, current, lease)) return
-      return failAttempt(this, run, node, current.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }, { sent: current.submitted, execution: current }, lease)
+      // The node keeps the failure's kind, disposition, and message; a site's own error is read from the execution (ADR-0062).
+      const failed = current.error ? { kind: current.error.kind, disposition: current.error.disposition, message: current.error.message } : { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }
+      return failAttempt(this, run, node, failed, { sent: current.submitted, execution: current }, lease)
     }
     if (!current.result) {
       return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `${node.source} reported execution ${current.id} completed without a result` }, { sent: true, execution: current }, lease)
@@ -810,15 +869,19 @@ export class Engine {
   /**
    * A team's need for provider families, as the start of a member's admission failure, when fewer
    * are ready now than it has members: the families of the Workers ready or busy that prove what
-   * the member's step needs. With enough of them, the shortage is not why it failed: empty.
+   * the member's step needs, and of those only the ones not `leftOut` (the Workers the operator's
+   * `teams.excludeWorkers` left out when the member was restricted, so a Worker described since is
+   * never blamed on it), naming the exclusion when it is what leaves too few. With enough of them,
+   * the shortage is not why it failed: empty.
    */
-  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement): Promise<string> {
-    const ready = new Set((await this.ctx.workers.list())
-      .filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined
-        && requirement.capabilities.every((c) => w.capabilities.some((o) => o.capability === c && provesFor(o, requirement))))
-      .map((w) => w.family))
+  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement, leftOut?: readonly string[]): Promise<string> {
+    const able = proving(await this.ctx.workers.list(), requirement)
+    const out = new Set(leftOut)
+    const ready = new Set(able.filter((w) => !out.has(w.worker)).map((w) => w.family))
     if (ready.size >= spec.team!.members) return ''
-    return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready (ADR-0027). `
+    const left = new Set(able.map((w) => w.family)).size - ready.size
+    const why = left ? ` outside the operator's teams.excludeWorkers, which leaves ${left} more out of teams` : ''
+    return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready${why} (ADR-0027). `
   }
 
   /** Wait for this run's turn to route; the returned function ends it. */

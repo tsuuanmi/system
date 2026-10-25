@@ -23,7 +23,7 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
 
 ## Cutting a release
 
-1. On a branch from `main`, run `pnpm version-packages`
+1. On a branch from `main` ([branches](development.md#branches-dev-and-main)), run `pnpm version-packages`
    ([`scripts/version-packages.ts`](../../scripts/version-packages.ts)). It:
    - applies the pending changesets: the new version in every `package.json`
      (the bundle's presets too, which are layers inside it rather than workspace

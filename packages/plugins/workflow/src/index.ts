@@ -19,6 +19,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-store'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { sweepDeferrals } from './continuations.ts'
+import { dispatchProblems, type DispatchPass, type DispatchStatus } from './dispatch.ts'
 import { checkTemplate, Engine } from './engine.ts'
 import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
@@ -26,15 +27,17 @@ import { pollMs } from './queue.ts'
 import { deleteRun, purge } from './retention.ts'
 import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
-import { teamContracts, vote } from './teams.ts'
+import { leftOutOfTeams, teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
-import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageFilter } from './types.ts'
-import { explain, usage } from './views.ts'
+import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageDraws, UsageFilter } from './types.ts'
+import { draws, explain, usage } from './views.ts'
 
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskCarry, TaskClaim, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
+export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
+export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -42,13 +45,44 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** `teams.excludeWorkers` holds at most this many entries (INV-9). */
+const MAX_EXCLUDED = 64
+/** An entry of `teams.excludeWorkers`: a Worker id, an account id, or `<group>/<account id>`, as system roster lists them. */
+const EXCLUDED_ENTRY = /^\S{1,200}$/
+
+/**
+ * What `teams` would be refused for, as the schema would refuse it, and more: an option it does not
+ * know (a misspelt `excludeWorkers` would leave nothing out of teams), a list that is not one, an
+ * entry the schema refuses, more than {@link MAX_EXCLUDED} entries, an entry listed twice. At most
+ * one line per entry it reads, and it reads at most {@link MAX_EXCLUDED} + 1 entries (INV-9).
+ */
+function checkTeams(teams: unknown): string[] {
+  if (teams === undefined) return []
+  if (teams === null || typeof teams !== 'object' || Array.isArray(teams)) return ['teams must be an object; it takes excludeWorkers, a list of Worker ids and account ids']
+  const problems = Object.keys(teams).filter((key) => key !== 'excludeWorkers').slice(0, 8).map((key) => `teams.${key} is not an option; teams takes excludeWorkers`)
+  const entries = (teams as { excludeWorkers?: unknown }).excludeWorkers
+  if (entries === undefined) return problems
+  if (!Array.isArray(entries)) return [...problems, 'teams.excludeWorkers must be a list of Worker ids and account ids, not a single value']
+  if (entries.length > MAX_EXCLUDED) problems.push(`teams.excludeWorkers lists ${entries.length} entries; it takes at most ${MAX_EXCLUDED}`)
+  const seen = new Set<string>()
+  entries.slice(0, MAX_EXCLUDED + 1).forEach((entry: unknown, i) => {
+    if (typeof entry !== 'string' || !EXCLUDED_ENTRY.test(entry)) problems.push(`teams.excludeWorkers[${i}] must be a Worker id or an account id: 1 to 200 characters, no whitespace`)
+    else if (seen.has(entry)) problems.push(`teams.excludeWorkers lists ${entry} more than once`)
+    else seen.add(entry)
+  })
+  return problems
+}
+
 /**
  * What this code would refuse in a configuration, before a host starts on it (`system check`): each
- * configured template that fails its check, with why. Empty when the configuration is fine.
+ * configured template that fails its check, with why, and what `teams` would be refused for (see
+ * {@link checkTeams}). Empty when the configuration is fine. Whether an entry of
+ * `teams.excludeWorkers` names a Worker or account is known only against the Workers listed when a
+ * member routes: one that matches none is recorded there (`workflow.team.unmatched-exclusions`).
  */
 export function checkConfig(config: Config = {}): string[] {
   const schemas = new SchemaRegistry()
-  return Object.entries(config.templates ?? {}).flatMap(([name, nodes]) => {
+  const templates = Object.entries(config.templates ?? {}).flatMap(([name, nodes]) => {
     try {
       checkTemplate(name, nodes, schemas)
       return []
@@ -56,6 +90,7 @@ export function checkConfig(config: Config = {}): string[] {
       return [`template ${name}: ${(error as Error).message}`]
     }
   })
+  return [...templates, ...checkTeams(config.teams), ...dispatchProblems(config)]
 }
 
 export class Workflow extends Service {
@@ -87,6 +122,9 @@ export class Workflow extends Service {
     maxWaitingRuns: z.natural().default(16).description('Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused'),
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
     allowSameFamily: z.boolean().default(false).description('When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035)'),
+    teams: z.object({
+      excludeWorkers: z.array(z.string().pattern(EXCLUDED_ENTRY)).max(MAX_EXCLUDED).default([]).description('Worker ids and accounts (as system roster lists them: an account as group/id, or its bare id when only one group has it) that no team member joins on, the first member included: a Worker id leaves out that Worker, an account every Worker naming it, each with every other Worker on its account. They still take every other node. A team they leave fewer provider families than members fails config_error before anything is sent, allowSameFamily or not; a member already in its team\'s conversation in that run keeps it, recorded; an entry that matches nothing is recorded as a workflow.team.unmatched-exclusions event'),
+    }).description('Team membership (docs/design/teams.md#workers-left-out-of-teams)'),
     retainRunsDays: z.natural().default(30).description('Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session\'s latest run always stays'),
     maxLimitWaitHours: z.number().min(0).max(720).default(24).description('Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
@@ -94,12 +132,27 @@ export class Workflow extends Service {
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
     gateTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a plan\'s gate waits for the operator\'s approval, then closes and fails the run, by rule (INV-9); continue the run to wait again'),
     approvalPollSeconds: z.natural().min(1).max(300).default(15).description('Seconds between the engine\'s reads of the approval queue: a remediation fix\'s request while its run waits on it, and the requests a Worker\'s deferred tool calls wait on (INV-9)'),
+    deferredCommandMinutes: z.number().min(0).max(1440).default(10).description('Minutes a board task\'s step waits on the operator for a Worker\'s deferred tool call of class command (from its request\'s creation), then treats that call as denied, for it alone: the request is withdrawn, recorded as a recovery decision deny, and the session continues once, told the call was denied (INV-9); 0 waits until the request expires'),
     maxSessionRuns: z.natural().min(1).max(50).default(5).description('Runs one session may serve when a board task\'s next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief'),
     tasksFile: z.object({
       maxTasks: z.natural().max(10_000).default(200).description('Tasks it lists at most, open ones first, the rest counted; 0 writes no file'),
       maxChars: z.natural().min(1024).max(1_048_576).default(65_536).description('Characters it holds at most; past it, it is cut at a line with a note'),
     }).description('The board\'s TASKS.md projection a board task\'s run is given in its own worktree (INV-9)'),
     digestsPerHour: z.natural().max(1000).default(6).description('Digests of board task results the engine asks ctx.digests for in any hour, one per attempt, after its result reached the board (INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why'),
+    dispatch: z.object({
+      enabled: z.boolean().default(true).description('System asks to start ready board tasks on free Workers chosen by quota (ADR-0064); false: nothing is asked or started'),
+      sweepSeconds: z.natural().min(10).max(3600).default(60).description('Seconds between dispatch passes; one runs at start too, after the runs are reconciled'),
+      maxPerPass: z.natural().min(1).max(16).default(2).description('Starts and new asks one pass makes at most, approved asks it starts included'),
+      maxRunning: z.natural().min(1).max(10_000).description('Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less)'),
+      maxRunningPerProject: z.natural().min(1).max(16).default(2).description('The same, per project'),
+      maxRunningPerAccount: z.natural().min(1).max(16).default(1).description('The same, per account of the chosen Worker; and the most its account\'s load may be for it to be free'),
+      maxRunningPerRepository: z.natural().min(1).max(16).default(4).description('The same, per repository (the chosen writing Worker\'s workspace): tasks without a write subject on one repository run in parallel up to this (D64)'),
+      leaveRunsFree: z.natural().max(10_000).description('Active runs dispatch leaves for the lead\'s and your own starts (at most maxActiveRuns less 1; default 4, or that when less)'),
+      maxOpenAsks: z.natural().min(1).max(32).default(4).description('Dispatch requests open at once, waiting for your go'),
+      approvedHoldMinutes: z.natural().min(1).max(240).default(30).description('Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again'),
+      maxPerHour: z.natural().max(120).default(6).description('Starts dispatch makes in any rolling hour, counted from its rows (PROP-0014 D2); 0 starts nothing'),
+      maxPerHourPerProject: z.natural().max(120).description('The same, per project (at most maxPerHour; default 3, or maxPerHour when less)'),
+    }).description('Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself)'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
       maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),
@@ -122,9 +175,14 @@ export class Workflow extends Service {
         engine.recover()
         void sweepDeferrals(engine)
         void engine.tasks.landings.sweep()
+        // A restart is a pass (INV-4): dispatch looks once its runs are reconciled.
+        void engine.dispatch.sweep()
       })
       const daily = setInterval(() => purge(engine), 24 * 60 * 60_000)
       daily.unref()
+      // Dispatch (ADR-0064): every dispatch.sweepSeconds; with dispatch.enabled false, no timer runs.
+      const dispatching = engine.dispatch.settings.enabled ? setInterval(() => void engine.dispatch.sweep(), engine.dispatch.settings.sweepSeconds * 1000) : undefined
+      dispatching?.unref()
       // The requests deferred tool calls wait on: an approved one continues its session, once. Then
       // the sessions whose mail waited because they took no input are looked at again, and the
       // landings of accepted results move on (ADR-0060).
@@ -136,6 +194,7 @@ export class Workflow extends Service {
       return async () => {
         clearInterval(daily)
         clearInterval(deferrals)
+        clearInterval(dispatching)
         await engine.close()
       }
     })
@@ -236,6 +295,60 @@ export class Workflow extends Service {
     return row ? this.engine.tasks.landings.view(row) : undefined
   }
 
+  /**
+   * Where dispatch stands (ADR-0064; contract 1.9): its settings, the operator's pause, the last pass
+   * with its reason for each ready task it looked at, each bound and how much of it is used, and the
+   * starts waiting for the operator's go or for their Worker. A read of the engine's rows only.
+   */
+  dispatchStatus(): DispatchStatus {
+    return this.engine.dispatch.status()
+  }
+
+  /**
+   * The operator pauses dispatch entirely (contract 1.9; INV-6: from the operator's channel only): a
+   * `gate` decision (rule `dispatch.pause`) kept on a durable row across restarts. Nothing more is
+   * asked or started by dispatch, and a pass, run at once, withdraws its open asks; the lead's and the
+   * operator's own starts go on. Pausing a paused dispatch changes nothing. With `projectId` (contract
+   * 1.10, PROP-0014 D2), only that project's: its tasks are neither asked about nor started by dispatch.
+   */
+  pauseDispatch(reason?: string, projectId?: string): DispatchStatus {
+    const status = this.engine.dispatch.pause(reason, projectId)
+    void this.engine.dispatch.sweep()
+    return status
+  }
+
+  /** The operator resumes dispatch (contract 1.9), or with `projectId` one project's (1.10): a `gate` decision; the next pass runs at once. */
+  resumeDispatch(projectId?: string): DispatchStatus {
+    const status = this.engine.dispatch.resume(projectId)
+    void this.engine.dispatch.sweep()
+    return status
+  }
+
+  /**
+   * One dispatch pass now (contract 1.9), at `at`: a test seam, as the board's `sweep(at)` is; the
+   * engine's own timer passes the wall clock every `dispatch.sweepSeconds`. A pass already running is
+   * returned, not doubled.
+   */
+  sweepDispatch(at?: Date): Promise<DispatchPass> {
+    return this.engine.dispatch.sweep(at)
+  }
+
+  /**
+   * The Workers the operator keeps out of teams (`teams.excludeWorkers`, D58), as a surface shows
+   * them: the entries configured, and every Worker they leave out now, each with its account's
+   * other Workers, as a team member's routing leaves them out (`leftOutOfTeams`). A read only: it
+   * routes and decides nothing. With no entry, it lists no Worker.
+   */
+  async teamExclusion(): Promise<{ entries: string[]; workers: string[] }> {
+    const entries = [...(this.engine.config.teams?.excludeWorkers ?? [])]
+    if (!entries.length) return { entries, workers: [] }
+    const workers = this.ctx.workers
+    const listed = await workers.list()
+    const ids = new Set(listed.map((w) => w.worker))
+    // An entry is an id to compare, not a Worker: one that names no Worker listed now is not listed as one.
+    return { entries, workers: [...leftOutOfTeams(entries, listed, (w) => workers.siblings(w)).out].filter((w) => ids.has(w) || !entries.includes(w)).sort() }
+  }
+
   /** The durable node records of a run, in dependency order. */
   records(runId: string): NodeRecord[] {
     return this.engine.records(runId)
@@ -253,6 +366,14 @@ export class Workflow extends Service {
    */
   usage(limit = 50, filter: UsageFilter = {}): RunView[] {
     return usage(this.engine, limit, filter)
+  }
+
+  /**
+   * What agent runs drew from their accounts' windows, per kind and window and per template step
+   * (`quota.draw`, PROP-0015 E2; ./views.ts): the usage report's draws. Undefined when none is recorded.
+   */
+  draws(): UsageDraws | undefined {
+    return draws(this.engine)
   }
 
   /** The decision chain of a run, per node: egress, tier, route (or admission), acceptance (REQ-ART-3). */

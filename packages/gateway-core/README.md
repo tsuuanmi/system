@@ -89,8 +89,26 @@ Tests: `tests/guard.spec.ts`.
   liveness (`workers.liveness`, PROP-0013) it is read once, and each Worker with
   a run stalled, looked at, or held for want of a verdict gets `liveness`, each
   run in one sentence (`unknown` on every Worker without one listed when a
-  source could not tell). The record is checked against `mcp-roster@1.5`
+  source could not tell). With an engine that tells its `teams.excludeWorkers`
+  (`workflow.teamExclusion`, D58) it is read once, and each Worker it leaves out
+  gets `teams`, in one sentence (`unknown` on every Worker when it could not
+  tell). It then makes `now`, capacity now (below), reading the board's ready
+  tasks (`projects`, `tasks`) and their templates' steps (`workflow.templateSteps`)
+  when it has them. The record is checked against `mcp-roster@1.7`
   before it is returned; one its schema refuses throws (a defect).
+- **`readCapacity(services, { scope, now? })`**: the roster's `now`, capacity now
+  ([capacity now](../../docs/design/roster.md#capacity-now), `capacity.ts`):
+  each account's windows and whether it takes new work now; the free Workers,
+  in `libs`' one headroom order (`headroomOrderOf`, the quota score's: an account
+  over its reserve last while another has headroom, then the window that resets
+  soonest with headroom, then the most headroom; ties by id), each with its
+  binding window's headroom; those
+  whose quota cannot be read, never counted free (`quotaUnknown`); the stalled
+  runs; the accounts with no quota left; the Workers that cannot work; and the
+  ready tasks with the Worker a start would most likely go to (`canTakeStep`,
+  the start preview's own test). Each list at most 16 (`CAPACITY_BOUNDS`).
+  `projectCapacity` is its pure projection, `formatCapacity` its *Right now*
+  block for a terminal, the last of `formatRoster`'s.
 - **`projectRoster(input, { scope, now })`** is the pure projection of what was
   read: Workers in id order, each with its description (or `unknown`), a
   `derived` line, and its display `name` (`<runtime> · <account> · <role or
@@ -108,7 +126,8 @@ Tests: `tests/guard.spec.ts`.
 
 The services are typed by shape (`RosterServices`), so this package still
 depends on `system-libs` alone; each surface passes the services it has
-mounted, and its manifest names them. Tests: `tests/roster.spec.ts`.
+mounted, and its manifest names them. Tests: `tests/roster.spec.ts`,
+`tests/capacity.spec.ts`.
 
 ## Dependency direction
 

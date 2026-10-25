@@ -140,7 +140,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   checked-out branch on the operator's `merge` approval
   ([landing a worktree](../design/agent-runtimes.md#landing-a-worktree)); and it starts a board
   task's next attempt's worktree from the tree the previous attempt left, committed on that
-  attempt's branch ([carrying an earlier run's work](../design/agent-runtimes.md#carrying-an-earlier-runs-work)).
+  attempt's branch ([carrying an earlier run's work](../design/agent-runtimes.md#carrying-an-earlier-runs-work));
+  and it runs a run's required checks on its result's exact tree, with the commands the operator
+  configured for the repository, confined as its setup is ([a run's checks](../design/agent-runtimes.md#a-runs-checks)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), ACP agents, and the Antigravity CLI (its installed `agy`, only on a version verified
   live, every tool call held by its PreToolUse hook, bridged to the run)
@@ -206,6 +208,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   → AdmittedWorker` (with `tier` and `route` decisions) or `AdmissionFailure` (with an `admission`
   decision; `limitUntil`, the earliest known reset, when every Worker refused only for its limit is
   on an assigned account);
+  `workers.candidates(requirement, options)` (optional) → every Worker with the checks it fails, the
+  same checks under the same lock, nothing reserved and no decision recorded
+  ([candidates](../design/routing.md#candidates-without-a-reservation));
   `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
@@ -222,7 +227,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   and deduplicated usage after it, with the MCP tools `resources_pools` and `resources_usage`
   ([resources](../design/resources.md)). Contracts: `approvals.check / request / batch / decide /
   withdraw / sweep`, and from contract 1.1 `proposePolicy / policyChanges`; `resources.pools /
-  observe / reserve / release / record / usage`, and from contract 1.1 `declare`.
+  observe / reserve / release / record / usage`, from contract 1.1 `declare`, and from contract
+  1.2 `quota` (the operator's quota settings, [quota settings](../design/resources.md#quota-settings)).
 - **Policy inputs:** proven capabilities, data locality, Worker state, tier, session
   affinity, and provider family, compared only for inequality. This is where the three [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
@@ -264,6 +270,14 @@ runs the work the router admitted to them. Callers never reach a source directly
   task's next attempt starts from the work its previous attempt left when that one failed only
   after its writing step, through the optional `carry`, decided and recorded by the engine
   ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
+  Before a written result's acceptance, the checks the policy requires of it that are commands run
+  on its exact tree through the optional `check`, and the acceptance reports them
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks)).
+  Its dispatch pass starts ready board tasks by itself under the action class `dispatch`: the Worker
+  of a task's writing step chosen by the quota score among those `candidates` admits, one request
+  per start bound to the task, its attempt, and the Worker, bounded per account, project,
+  repository, and in total, the operator's pause kept across restarts
+  ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself)).
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).

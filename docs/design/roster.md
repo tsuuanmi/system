@@ -3,7 +3,7 @@
 > Target state. Boundary: [gateways](../architecture/components.md#gateways), plugin family
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Requirement: [REQ-HOST-8](../requirements/SRS.md#host-req-host). Payload:
-> [`mcp-roster@1.5`](../reference/schemas.md#mcp-tool-roster).
+> [`mcp-roster@1.8`](../reference/schemas.md#mcp-tool-roster).
 >
 > Implemented in [`gateway-core`](../../packages/gateway-core/README.md#the-roster) (the
 > projection), served by [`mcp-server`](../../packages/plugins/mcp-server/README.md) (MCP `roster`),
@@ -35,8 +35,9 @@ that change what runs).
 | website accounts | `ctx.accounts`: `list()`, `duplicateIdentities()` | each catalog account's secret-free view: label and status; the accounts signed in as one person |
 | resource ledger | `ctx.resources`: `pools()`, `usage({ runId, pool })` | each pool of an account, its windows and their latest readings, whether it is available and until when; whether a run's usage was counted since |
 | event log | `ctx.eventLog.query({ type: 'usage.unknown' })`; `ctx.eventLog.query({ type: 'workflow.node.started', runId, nodeId })` | the runs whose usage the ledger could not count ([D25](resources.md#usage-the-ledger-cannot-count)); when a running step's current attempt started |
-| workflow engine | `ctx.workflow.usage(500)` | the newest runs, each step's Worker and state, and the board task a run serves |
-| board | `ctx.board.task(taskId)` | the title, project, and state of a task a listed step serves |
+| workflow engine | `ctx.workflow.usage(500)`; `teamExclusion()`, when it has it | the newest runs, each step's Worker and state, and the board task a run serves; the Workers the operator keeps out of teams (`teams.excludeWorkers`, [Workers left out of teams](teams.md#workers-left-out-of-teams)) |
+| board | `ctx.board.task(taskId)`; `projects({ state: 'active' })` and `tasks({ projectId, states: ['ready'] })`, when it has them | the title, project, and state of a task a listed step serves; the ready tasks of the active projects, for [capacity now](#capacity-now) |
+| workflow engine's start preview | `ctx.workflow.templateSteps(template)`, when it has it | a ready task's template's steps, to tell the Worker its start would most likely go to |
 
 Each source is read once per roster. A surface passes the services it has mounted, so its plugin
 manifest names each one it consumes (optional): the roster works with any subset.
@@ -58,8 +59,9 @@ manifest names each one it consumes (optional): the roster works with any subset
 | `load` | its descriptor's `load` (`@1.3`): running, queued, pending, slots; Workers of one account report the account's | its source reports none |
 | `limits` | its descriptor's `cooldowns`: capabilities held off by a usage limit until a time (the rest of the Worker still takes work) | — |
 | `siblings` | `ctx.workers.siblings(worker)`, itself left out | the call throws, or there are more than 64 |
-| `work` | the steps of running runs (`status: running`) whose node is `RUNNING` on this Worker, by run and node id; for each, the board task its run serves, with its title, project, and state; `since`, when its current attempt started (the latest `workflow.node.started` of that attempt); and `summary`, the step in one sentence: *Working on "\<title\>" (task \<id\>, project \<id\>): \<template\> run \<id\>, step \<id\>, for 4 min*, or *Running \<template\> run …* for a run that serves no task | the engine is not mounted or its read fails; a task's detail when the board is not mounted, fails, or is past the bound; `since` when the event log is not mounted, no longer holds the start (its retention), or past the bound |
+| `work` | the steps of running runs (`status: running`) whose node is `RUNNING` on this Worker, by run and node id; for each, the board task its run serves, with its title, project, and state; `since`, when its current attempt started (the latest `workflow.node.started` of that attempt); and `summary`, the step in one sentence: *Working on "\<title\>" (task \<id\>, project \<id\>): \<template\> run \<id\>, step \<id\>, for 4 min*, or *Running \<template\> run …* for a run that serves no task; `startedBy` (`@1.8`, PROP-0014 D2), who started the task's run: `dispatch` (System by itself; the summary then ends *, started by itself*, and the Workers tab shows a chip), `lead`, or `operator`, absent when the engine does not tell | the engine is not mounted or its read fails; a task's detail when the board is not mounted, fails, or is past the bound; `since` when the event log is not mounted, no longer holds the start (its retention), or past the bound |
 | `liveness` | `@1.2`, present only when the router tells liveness and the Worker has such a run: its runs that are `stalled`, being looked at (`looking`), or ended without being known to be gone (`unknown`), of the latest 64 the router tells, each with `execution`, `state`, `since`, `runId`, and `summary` in one sentence: *Stalled: agent run … has shown no activity for 10 min or more; nothing is sent to it, and its own deadline ends it*, *Not known to be gone: agent run … lost its holder 2 min ago and is looked at again (1 of 3 verdicts)*, or *Held for 2 h: agent run … ended without being known to be gone, holding session … and worktree …; free it once its agent is gone (system free … --agent-gone)* | the router's read fails, or a source could not tell (then on every Worker without a run listed, never read as none) |
+| `teams` | `@1.6`, present only when the engine tells its `teams.excludeWorkers` and leaves this Worker out: `excluded` and a `summary` in one sentence, *Kept out of teams by the operator: its account is named in teams.excludeWorkers, so it is never a team member; it takes every other step* (named itself, by its account, or as another Worker of a named one's account) | the engine's read fails (then on every Worker, never read as none left out) |
 | `pools` | the ledger's pools whose `account` is the Worker's account id, by pool id; each window with its state, `used` (the latest reading's used share), `resets` (the later of its `resetsAt` and `cooldownUntil`), `observedAt`, `source`; and `unknownUsage`, the runs in the pool's current window whose usage the ledger could not count and has not counted since, by kind | the ledger is not mounted or fails; the Worker names no account; per window, no reading yet (for the operator, with why its agent account's last usage report could not be read, and when, while no later one was: `agentAccounts.unreadReport`), or a reading without the figure; `unknownUsage` when the event log is not mounted, or the entries passed their bound |
 
 A fact a source could not give is `{ "unknown": "<why>" }`, never a default
@@ -136,22 +138,74 @@ Every read and every list is bounded
 | `usage.unknown` entries | 10,000, a page at a time (the count health shares, `countUnknownUsage` in [`libs`](../../packages/libs/README.md)) | each pool's `unknownUsage` is `unknown`, never a partial number |
 | pools of one account, windows of one pool | 64 and 16 (the ledger's own are 64 and 8) | its `pools` are `unknown` |
 | Worker sources | 64 | `sources` is `unknown` |
+| each list of `now` (`CAPACITY_BOUNDS`) | 16 | the rest are counted in its `more` |
+| windows of one account in `now` | 16 | its `windows` are `unknown` |
+| active projects whose ready tasks `now` reads | 32, by project id | `ready.unread` says a ready task of another is not listed |
 
 The schema bounds every string and list as well
-([`mcp-roster@1.5`](../reference/schemas.md#mcp-tool-roster)).
+([`mcp-roster@1.8`](../reference/schemas.md#mcp-tool-roster)).
+
+## Capacity now
+
+The Workers page's *Right now* (T141) is also data, `now` on every roster (`mcp-roster@1.7`,
+`readCapacity` beside `readRoster` in `gateway-core`), so the lead, in any session, reads it
+through MCP `roster` or `system capacity` and gives work where capacity is free. It is made once,
+on the server, from the roster just projected, the descriptors it was projected from, and the
+board's ready tasks; the page renders it as it is and computes none of it. Like the roster, it
+decides nothing and stores nothing.
+
+| List | What | Order |
+|---|---|---|
+| `accounts` | each account: its pools' windows (`used`, `resets`, `state`), whether it takes new work now (`canWork`), and why in one line | by account id |
+| `free` | the Workers that take work now: `ready`, their account not at a limit, and its quota known; each with its id, name, account, role, kinds, tier, load, and `quota`, its account's binding window (the one with the least headroom) with its used share, what is left, its `headroom` above the reserve, and its reset when the reading names one (`null`: no account quota applies to it, it names no account or its account has no pool) | below |
+| `quotaUnknown` | the Workers ready as their source says whose account's quota cannot be read now, with why | by id |
+| `stalled` | each stalled agent run: the Worker, the run, since when; `unread` when a Worker's liveness could not be told | the longest stalled first |
+| `noQuota` | each account at a limit (its `limitUntil`, a closed pool, or a window at its limit), and until when: its `limitUntil`, else its closed pools' latest `until` when each names one, else its limited windows' latest reset, else `unknown` | by account id |
+| `cannotWork` | each `unavailable` or `quarantined` Worker, with its availability's summary | by id |
+| `ready` | the ready tasks of the active board projects (a paused project's cannot start), each with `likely`, the Worker a start would most likely go to | by project id, each project's oldest first |
+
+**Use it or lose it.** `free` lists the Workers in the quota score's one headroom order
+([quota in every route](routing.md#quota-in-every-route), `headroomOrderOf` in `libs`, T185): the
+same function routing and dispatch call, never a second computation. An account over its reserve
+(used above 80 % of a window with the default 20 % reserve) comes last while another has headroom;
+then the window that resets soonest with headroom first; then the most headroom; then the id. Of two
+free accounts, one at 10 % used resetting in 40 min and one at 85 % used resetting in 4 h, the
+first comes first. A Worker no account quota applies to comes after every one that has a quota, by
+id: it loses nothing by waiting. The reserve is the ledger's `quota()` (the defaults when it gives
+none).
+
+**Unknown is never free** ([INV-2](../architecture/invariants.md#inv-2-fail-closed)). A window
+with no reading, a stale reading, no used share, or a reading from before its reset is never read
+as room. A Worker whose account has a window not read now, or whose pools cannot be read, is listed
+in `quotaUnknown`, never in `free`, and its account's `canWork` is `unknown`. An account is `canWork: false` when it is at a limit or none of
+its Workers takes work (ready, or busy with a slot its source says is free). With no Workers read,
+every list is `unknown`, never empty; with no board, `ready` is.
+
+**The likely Worker** is told as the board's start preview tells it (T124, the same test,
+`canTakeStep`): the first Worker, in the order of `free` and then `quotaUnknown`, whose descriptor
+offers every capability the template's first step a Worker runs needs (an offer of no scope), at
+the step's tier or above, and that takes its kind of work. `null` when none that takes work now
+could; `unknown` when the task names no template (the lead chooses one), its template is not
+served, or the engine does not preview steps. Routing decides at the start; this is a forecast.
+
+The text rendering (`formatCapacity`) is the roster text's last block, *Right now (as of …)*, one
+line per list; `system capacity` prints that block, `system capacity --json` the record.
 
 ## Surfaces
 
 - **MCP `roster`** ([MCP tools](../reference/mcp-tools.md#roster)): client scope, as `status` is, so
   the lead plans with it; the operator's call also carries the account labels. Its structured
-  content is the record, validated against `mcp-roster@1.5` before it is sent (a record its schema
-  refuses is a defect, reported as an error); its text content is the rendering for a terminal.
+  content is the record, validated against `mcp-roster@1.8` before it is sent (a record its schema
+  refuses is a defect, reported as an error), with `now` ([capacity now](#capacity-now)); its text
+  content is the rendering for a terminal, ending with *Right now*.
 - **`system roster [--json]`** ([CLI](../reference/cli.md#operations)): that rendering, or the
-  record.
+  record. **`system capacity [--json]`**: its *Right now* block, or its `now`.
 - **The Workers page** (`/ui/?view=workers`, the **Workers** tab, [web UI API](../reference/web-ui.md#roster)):
-  the counts (working, free, resting and until when the first is, unavailable), then the Workers by
+  the counts (working, free, resting and until when the first is, unavailable), *Right now*
+  rendered from the roster's `now` ([capacity now](#capacity-now)), then the Workers by
   account: each account once under a header with its roles, what stops it, and its quota; then its
-  Workers' cards, each calm (what it is for, its status and why, what it does now), every unknown,
+  Workers' cards, each calm (what it is for, its status and why, what it does now, and *Kept out of
+  teams by you* when the operator keeps it out of teams), every unknown,
   derived, or technical fact folded under its details and a reason that blocks work never folded
   ([web UI API](../reference/web-ui.md#roster)); under the page's security headers and the operator
   token, built with DOM methods and text only. What it does now lists its steps, then its runs

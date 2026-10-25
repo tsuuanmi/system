@@ -20,6 +20,19 @@ describe('failure taxonomy (docs/design/workflow-engine.md#recovery)', () => {
   it('carries kind and disposition on the error', () => {
     const error = new ProviderError('challenge', 'Cloudflare challenge during turn')
     expect(error).toMatchObject({ name: 'ProviderError', kind: 'challenge', disposition: 'USER_ACTION' })
+    expect('siteError' in error).toBe(false)
+  })
+
+  it('marks a site\'s own error after the send only when its driver says so, as an optional field set only when true (ADR-0062, ADR-0036)', () => {
+    expect(new ProviderError('overloaded', 'the site answered with its own error', { siteError: true })).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF', siteError: true })
+    for (const options of [undefined, {}, { siteError: false }]) {
+      const error = new ProviderError('overloaded', 'busy', options)
+      expect(error.siteError).toBeUndefined()
+      expect(Object.hasOwn(error, 'siteError')).toBe(false)
+    }
+    // A structural stand-in typed as a ProviderError need not name it.
+    const fake: Pick<ProviderError, 'kind' | 'disposition' | 'feature' | 'siteError'> = { kind: 'network', disposition: 'BACKOFF', feature: undefined }
+    expect(fake.siteError).toBeUndefined()
   })
 })
 

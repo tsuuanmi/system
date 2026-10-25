@@ -13,7 +13,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import { DESCRIPTION, LABEL, MAX_DESCRIPTION, MAX_LABEL } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import { type CatalogEntry, DEFAULT_IDLE_TIMEOUT_MS, LlmModels } from './llm.ts'
-import { DEFAULT_CALL_TIMEOUT_MS, ModelWorkers } from './workers.ts'
+import { DEFAULT_CALL_TIMEOUT_MS, ModelWorkers, UNPROCESSED_MAX_DELAY_MS, UNPROCESSED_RETRIES } from './workers.ts'
 
 export { LlmModels, type CatalogEntry } from './llm.ts'
 export { ModelWorkers } from './workers.ts'
@@ -37,6 +37,10 @@ export interface Config {
   maxSessionTurns?: number
   /** Characters of history a session turn replays, at most, unless an entry sets its own (default 320,000). */
   maxHistoryChars?: number
+  /** Retries of a request the provider said it did not process (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED; default 4). */
+  unprocessedRetries?: number
+  /** The longest back-off before one of those retries (default 60 s). */
+  unprocessedMaxDelayMs?: number
 }
 
 /** The schema bounds a model id to 64 characters, so the catalog does too: a longer one would fail after the call was billed. */
@@ -65,6 +69,8 @@ export const Config: z<Config> = z.object({
   retainDays: z.natural().min(1).default(30).description('Days a finished call and its prompt are kept'),
   maxSessionTurns: z.natural().min(1).max(10_000).default(100).description('A session\'s turns, at most, unless an entry sets its own (ADR-0031; default: the session layer\'s turn budget)'),
   maxHistoryChars: z.natural().min(1).max(2_000_000).default(320_000).description('Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer\'s compaction point)'),
+  unprocessedRetries: z.natural().min(UNPROCESSED_RETRIES.min).max(UNPROCESSED_RETRIES.max).default(UNPROCESSED_RETRIES.default).description('Retries of a request the provider said it did not process, before any output (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED), each after a back-off and recorded as a recovery decision; any other failure after the send is not resent'),
+  unprocessedMaxDelayMs: z.natural().min(UNPROCESSED_MAX_DELAY_MS.min).max(UNPROCESSED_MAX_DELAY_MS.max).default(UNPROCESSED_MAX_DELAY_MS.default).description('The longest back-off before one of those retries: it doubles from 1 s up to this, or waits what the provider asked, within callTimeoutMs'),
 }) as unknown as z<Config>
 
 export function apply(ctx: Context, config: Config): void {
@@ -87,6 +93,8 @@ export function apply(ctx: Context, config: Config): void {
     ...(config.retainDays !== undefined ? { retainDays: config.retainDays } : {}),
     ...(config.maxSessionTurns !== undefined ? { maxSessionTurns: config.maxSessionTurns } : {}),
     ...(config.maxHistoryChars !== undefined ? { maxHistoryChars: config.maxHistoryChars } : {}),
+    ...(config.unprocessedRetries !== undefined ? { unprocessedRetries: config.unprocessedRetries } : {}),
+    ...(config.unprocessedMaxDelayMs !== undefined ? { unprocessedMaxDelayMs: config.unprocessedMaxDelayMs } : {}),
   })
   ctx.inject(['mcp', 'credentials'], (c) => {
     c.mcp.tool('model_key', {

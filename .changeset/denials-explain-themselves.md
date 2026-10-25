@@ -1,0 +1,9 @@
+---
+"@tsuuanmi/system-agent-workers": minor
+"@tsuuanmi/system-mcp-server": minor
+---
+
+Tool denials explain themselves (T207, from the efficiency audit T203): 221 denials on 2026-10-25 carried no reason.
+- Every `agent-workers.tool.denied` event now carries a stable `reason` code (`metacharacter`, `empty-word`, `outside-workspace`, `git-data`, `unclassified-tool`, `unsupported-field`, `invalid-input`, `invalid-patch`, `policy-forbid`, `not-listed`, `request-rejected`, `request-expired`, `request-withdrawn`, `workflow-denied`, and the gate's own failures), the code's fixed plain `explanation` (at most 300 characters, never the call's input), the `workerKind` (the Worker's runtime), the `actionClass` once the call was classified, and the `decision` behind it. Additive to the event's data (ADR-0036); a `gate` decision's outcome detail names the code too, and `classify` returns it with each refusal.
+- Health's new `tool-denials` check counts the denials of its window by reason code per Worker kind per UTC day (an older event as `unrecorded`), bounded to 10,000 entries; a notice, never degraded.
+- The note a Worker gets after its prompt (T199) is now one Tools section: its workspace path, the calls that run unasked, that shell metacharacters and empty words are refused and a relative path makes no command a read, and whether an approval resumes the step or, with no session, a call that would ask is denied at once; at most 4,000 characters. It names the Bash read-only inspection commands only under a runtime that enforces clean shells, where the gate takes them for reads; elsewhere it says no Bash command is a read. It is given even when nothing runs unasked, and to every Worker but a review member, fit to its sandbox: a read-only Worker is told it writes nothing and given no writing tool, but the exact commands the gate runs unasked whatever the sandbox (a writing one fails in it).

@@ -102,20 +102,23 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
   - `usage` (with `resources` and `eventLog`) is degraded while a configured pool has a run whose
     usage the ledger could not count (a valid `usage.unknown` entry,
     [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)) in its current
-    window that the ledger has not counted a record of since (`resources.usage` by run and pool),
-    naming each pool, its count, and the kinds: each run once, by its first entry; an entry that is
+    window that the ledger has not counted a record of since (`resources.usage` by run and pool;
+    the `partial` record of a lower bound a fact names never counts as one), naming each pool, its
+    count, the kinds, and its latest three runs, each with its Worker, its kind, whether a lower
+    bound was counted, and its reason in plain words (how the run ended, what its runtime
+    reported), the rest counted: each run once, by its first entry; an entry that is
     not a valid `usage-unknown@1.0` record, or that names a pool the ledger does not configure (an
     `unconfigured pool` line), is counted and said, never skipped. A pool's current
     window is its longest one, back from now; a pool with a window of no length (a credit
     balance) reads every entry the log keeps. It reads the entries a page at a time, at most
-    10,000, and past them it is degraded, saying so, never `ok`. A cap still counts such a run as
-    0 (D25).
+    10,000, and past them it is degraded, saying so, never `ok`. A cap of such a run's task or
+    project in its pool is refused until it is reconciled, never counting it as 0 (ADR-0065).
   - `roster` (REQ-HOST-8) is the roster of every Worker
     ([roster](../../../docs/design/roster.md)), read through `readRoster` in
     [`gateway-core`](../../gateway-core/README.md#the-roster) from the mounted
     `workers`, `accounts`, `agentWorkers`, `resources`, `eventLog`, `workflow`,
     and `board`, each one absent or failing read as unknown with why. Its
-    structured content is the `mcp-roster@1.5` record, checked before it is
+    structured content is the `mcp-roster@1.6` record, checked before it is
     sent; its text content is the rendering `system roster` prints. A client
     (the lead) gets it without account labels, in its records and in each
     Worker's display name.

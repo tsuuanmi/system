@@ -92,7 +92,8 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const artifactsSuite = defineSuite<Boot>({
   seam: 'artifacts',
-  contract: '1.1',
+  // 1.1: `list` takes `newest`. 1.2: `list` takes `outcome`, the option a listed decision decided.
+  contract: '1.2',
   scenarios: [
     scenario('id-from-content', 'computes the id from the canonical content alone, never trusting the producer\'s id or time (REQ-ART-2)', async (ctx) => {
       const forged = `sha256:${'f'.repeat(64)}`
@@ -281,6 +282,25 @@ export const artifactsSuite = defineSuite<Boot>({
       expect(ctx.artifacts.list({ runId: 'run-1', newest: true, limit: 2 }).map((e) => e.id)).toEqual([stored[2], stored[1]])
       expect(ctx.artifacts.list({ kind: 'report', newest: false, limit: 1 }).map((e) => e.id)).toEqual([stored[0]])
     }, '1.1'),
+    scenario('list-outcome', 'lists only the decisions whose outcome is the option asked for, by run and node, in stored order within the limit (INV-9, INV-13)', async (ctx) => {
+      const routed = ctx.artifacts.recordDecision(route('route?'), { producer: policy, runId: 'run-1', nodeId: 'n1' })
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      const tier = (question: string, option: string) => ({ ...route(question), decisionType: 'tier', candidates: [{ option, selected: true, reasons: ['lowest admitted tier'] }], outcome: { option } })
+      const frontier = ctx.artifacts.recordDecision(tier('tier?', 'frontier'), { producer: policy, runId: 'run-1', nodeId: 'n1' })
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      const again = ctx.artifacts.recordDecision(tier('tier again?', 'frontier'), { producer: policy, runId: 'run-1', nodeId: 'n1' })
+      const elsewhere = ctx.artifacts.recordDecision(tier('tier elsewhere?', 'frontier'), { producer: policy, runId: 'run-1', nodeId: 'n2' })
+      ctx.artifacts.recordDecision(tier('economy?', 'economy'), { producer: policy, runId: 'run-1', nodeId: 'n1' })
+      // A report is never a decision, whatever its body.
+      ctx.artifacts.put(answer('frontier', { runId: 'run-1', nodeId: 'n1' }))
+      const ids = (filter: Parameters<Context['artifacts']['list']>[0]) => ctx.artifacts.list(filter).map((e) => e.id)
+      expect(ids({ runId: 'run-1', nodeId: 'n1', outcome: 'frontier' })).toEqual([frontier.id, again.id])
+      expect(ids({ runId: 'run-1', nodeId: 'n1', outcome: 'frontier', limit: 1 })).toEqual([frontier.id])
+      expect(ids({ runId: 'run-1', outcome: 'frontier' }).sort()).toEqual([frontier.id, again.id, elsewhere.id].sort())
+      expect(ids({ decisionType: 'route', outcome: 'worker:a' })).toEqual([routed.id])
+      expect(ids({ decisionType: 'tier', outcome: 'worker:a' })).toEqual([])
+      expect(ids({ outcome: 'nothing' })).toEqual([])
+    }, '1.2'),
     scenario('read-window', 'reads an artifact\'s header and a window of its text, else its JSON, in whole characters within bounds, and refuses anything but a content id (INV-9, INV-12)', async (ctx) => {
       const stored = ctx.artifacts.put(answer('a😀b😀c', { classification: 'local-private', runId: 'run-1', nodeId: 'review:1' }))
       expect(ctx.artifacts.read(stored.id)).toMatchObject({

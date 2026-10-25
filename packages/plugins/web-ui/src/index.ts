@@ -19,13 +19,13 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
-import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
+import { assertSafeBind, canTakeStep, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
+import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, applyingPolicies, type AutonomyPolicy, type Check, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import type { TaskLanding, TemplateStep } from '@tsuuanmi/system-workflow'
-import { type CapabilityDescriptor, takesKind, TIERS } from '@tsuuanmi/system-workers-core'
+import type { CapabilityDescriptor } from '@tsuuanmi/system-workers-core'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
 export interface Config {
@@ -127,6 +127,80 @@ export function reviewOf(task: BoardTask, project: { projectId: string; title: s
     ...(task.waiting ? { since: task.waiting.since, expiresAt: task.waiting.expiresAt } : task.holder ? { expiresAt: task.holder.leaseExpiresAt } : {}),
     ...(task.lastDecision ? { lastDecision: task.lastDecision } : {}),
   }
+}
+
+/**
+ * A required check as a review card shows it (ADR-0063, T160): `passed` or `failed` (with its exit
+ * code when a command ran) only on a record of it in the run's acceptance; `not-run` when the run asked
+ * for it and it did not run to an exit code, with why; `pending` when nothing recorded it.
+ */
+export interface CheckState { check: Check; state: 'passed' | 'failed' | 'pending' | 'not-run'; exitCode?: number; why?: string }
+
+/** The checks in the order a card lists them. */
+const CHECK_ORDER: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+
+type DecisionBody = { decisionType?: unknown; inputs?: unknown; outcome?: { detail?: unknown } }
+
+/**
+ * The `outcome.detail` of the acceptance decision a task in review was judged on: its last decision
+ * when that is the acceptance, else the acceptance its last decision names among its inputs (the
+ * board's hold for the operator names it first). Undefined when none can be read.
+ */
+export function acceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (ref: ArtifactRef) => unknown): Record<string, unknown> | undefined {
+  const body = (ref: unknown): DecisionBody | undefined => {
+    if (typeof ref !== 'string') return undefined
+    const value = read(ref as ArtifactRef)
+    return isObject(value) ? value as DecisionBody : undefined
+  }
+  const last = body(task.lastDecision)
+  const found = [last, ...(Array.isArray(last?.inputs) ? last.inputs.map(body) : [])].find((b) => b?.decisionType === 'acceptance')
+  if (!found) return undefined
+  const detail = found.outcome?.detail
+  return isObject(detail) ? detail : {}
+}
+
+/**
+ * Each required check of a task in review with its state (ADR-0063, T160): the checks the policy
+ * requires of its class (`required`), with those the board still holds pending, from what its
+ * acceptance recorded (`checks`, and the run's own `checkRun`: what it asked, each result with its
+ * exit code, or why none ran). A check is never `passed` without a record that it passed, nor while the
+ * board holds it pending (INV-2).
+ */
+export function checkStates(required: readonly Check[], pending: readonly Check[], acceptance: Record<string, unknown> | undefined): CheckState[] {
+  const checks = acceptance?.['checks']
+  const recorded: Record<string, unknown> = isObject(checks) ? checks : {}
+  const ran = acceptance?.['checkRun']
+  const run: Record<string, unknown> | undefined = isObject(ran) ? ran : undefined
+  const askedList = run?.['asked']
+  const asked: unknown[] = Array.isArray(askedList) ? askedList : []
+  const resultList = run?.['results']
+  const results: Array<Record<string, unknown>> = Array.isArray(resultList) ? resultList.filter(isObject) : []
+  return CHECK_ORDER.filter((c) => required.includes(c) || pending.includes(c)).map((check): CheckState => {
+    const result = results.find((r) => r['check'] === check)
+    const code = result?.['exitCode']
+    const exit = typeof code === 'number' ? { exitCode: code } : {}
+    if (recorded[check] === false) return { check, state: 'failed', ...exit }
+    if (recorded[check] === true && !pending.includes(check)) return { check, state: 'passed', ...exit }
+    if (asked.includes(check)) {
+      const outcome = run?.['outcome']
+      const source = run?.['source']
+      const cause = run?.['cause']
+      const reason = run?.['reason']
+      const why = result?.['outcome'] === 'error' ? 'it did not run to an exit code on the result'
+        : outcome === 'refused' ? `the Worker source ${typeof source === 'string' ? source : 'that holds the worktree'} refused to run it${typeof cause === 'string' ? ` (${cause})` : ''}`
+          : outcome === 'not-run' && typeof reason === 'string' ? reason
+            : 'the run recorded no result of it'
+      return { check, state: 'not-run', why }
+    }
+    return { check, state: 'pending', why: acceptance === undefined ? 'no acceptance of the run that records it could be read' : 'the run recorded no result of it' }
+  })
+}
+
+/** The checks the policy requires of `actionClass`: those of every rule for it in the policies that apply (the studio's and the project's). */
+export function requiredChecks(policies: readonly AutonomyPolicy[], actionClass: string): Check[] {
+  const named = applyingPolicies(policies, actionClass as AutonomyPolicy['rules'][number]['actionClass'])
+    .flatMap((p) => p.rules.filter((r) => r.actionClass === actionClass).flatMap((r) => r.requires ?? []))
+  return CHECK_ORDER.filter((c) => named.includes(c))
 }
 
 /**
@@ -322,8 +396,26 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'reviews') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
       const listed: Array<Record<string, unknown>> = []
+      // Each required check with its state (ADR-0063, T160): the policy's required checks, read once a project.
+      const approvals = ctx.get('approvals')
+      const policies = new Map<string, Promise<AutonomyPolicy[] | string>>()
+      const policiesOf = (projectId: string): Promise<AutonomyPolicy[] | string> => {
+        if (!approvals) return Promise.resolve('the approval queue is not running')
+        if (!policies.has(projectId)) policies.set(projectId, approvals.policy(projectId).then((p) => p.policies, (error: unknown) => `the policy could not be read: ${(error as Error).message.slice(0, 200)}`))
+        return policies.get(projectId)!
+      }
       for (const project of await board.projects()) {
-        for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) listed.push(reviewOf(task, { projectId: project.projectId, title: project.title }))
+        for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
+          const read = await policiesOf(project.projectId)
+          const pending = task.waiting?.pendingChecks ?? []
+          const acceptance = acceptanceOf(task, (ref) => artifacts.get(ref)?.body)
+          listed.push({
+            ...reviewOf(task, { projectId: project.projectId, title: project.title }),
+            checks: typeof read === 'string'
+              ? { value: checkStates(pending, pending, acceptance), requiredUnknown: read }
+              : { value: checkStates(requiredChecks(read, task.actionClass), pending, acceptance) },
+          })
+        }
       }
       listed.sort((a, b) => (a.heldFor === b.heldFor ? String(a.expiresAt ?? '').localeCompare(String(b.expiresAt ?? '')) : a.heldFor === 'operator' ? -1 : 1))
       // The results accepted and still on their way into the repository (ADR-0060), the latest first: a verdict's consequence stays in sight.
@@ -461,7 +553,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (task.revision !== body.revision) return json(res, 409, { error: `task ${taskId} changed since the page showed it (revision ${task.revision}, not ${String(body.revision)}); nothing was started` })
       if (task.template !== body.template) return json(res, 409, { error: `task ${taskId} runs template ${task.template}, not ${String(body.template)}; nothing was started` })
       // The task's own words are the run's input, as the requested change; a repeated press starts no second run.
-      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId, revision: task.revision }, clientRequestId: `web-ui:start:${taskId}:${task.revision}` })
+      const run = await ctx.workflow.start({ template: task.template, input: `${task.title}\n\n${task.goal}`.slice(0, 32_000), task: { taskId, revision: task.revision }, clientRequestId: `web-ui:start:${taskId}:${task.revision}`, startedBy: 'operator' })
       return json(res, 200, { run })
     } catch (error) {
       // Admitted all the same: it starts once the board shows it recorded, so never said as nothing started.
@@ -489,8 +581,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     return steps.map((step) => {
       if (typeof listed === 'string') return { ...step, workers: { unknown: listed } }
       if (step.source) return { ...step, workers: { free: [], busy: [] } }
-      const able = listed.filter((d) => step.capabilities.every((c) => d.capabilities.some((o) => o.capability === c && o.scope === undefined))
-        && TIERS.indexOf(d.tier) >= TIERS.indexOf(step.tier) && takesKind(d, step.kind !== undefined ? { kind: step.kind } : {}))
+      // The same test capacity now tells a ready task's likely Worker by (gateway-core `canTakeStep`).
+      const able = listed.filter((d) => canTakeStep(d, step))
       const free = (d: CapabilityDescriptor): boolean => d.state === 'ready' || (d.state === 'busy' && !!d.load && d.load.running < d.load.slots)
       const ids = (list: CapabilityDescriptor[]): string[] => list.map((d) => d.worker).sort().slice(0, LIKELY_WORKERS)
       return { ...step, workers: { free: ids(able.filter(free)), busy: ids(able.filter((d) => !free(d) && (d.state === 'busy' || d.state === 'quota-exhausted'))) } }
@@ -517,7 +609,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     try {
       // By state and when it changed, not among the latest started: a long run that ended since is found.
       runs = shown(ctx.workflow.usage(ACTIVITY_SHOWN + 1, { status: ['completed', 'failed'], changedSince: at }).map((r) => ({
-        runId: r.runId, template: r.template, status: r.status, at: r.updatedAt, ...(r.task ? { taskId: r.task.taskId } : {}), ...(r.error ? { error: r.error.message.slice(0, 300) } : {}),
+        runId: r.runId, template: r.template, status: r.status, at: r.updatedAt, ...(r.task ? { taskId: r.task.taskId } : {}),
+        // The raw message, and its kind and disposition, from which Home leads with the run page's plain-words reason (T160).
+        ...(r.error ? { error: r.error.message.slice(0, 300), failure: { kind: r.error.kind, disposition: r.error.disposition } } : {}),
       })))
     } catch (error) {
       runs = { unknown: `the runs could not be read: ${(error as Error).message.slice(0, 200)}` }
@@ -691,8 +785,9 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   /**
    * The roster (docs/design/roster.md): `GET roster` gives every Worker in one read model, projected
-   * on read from the services mounted, each one absent read as unknown with why. The page is the
-   * operator's, so it shows account labels.
+   * on read from the services mounted, each one absent read as unknown with why, and its `now`,
+   * capacity now (docs/design/roster.md#capacity-now), which the Workers page's "Right now" renders
+   * as it is. The page is the operator's, so it shows account labels.
    */
   const roster = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
@@ -778,6 +873,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'activity') return activity(req, res)
     if (path === 'waiting') return waiting(req, res)
     if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
+    // Dispatch (ADR-0064): the starts System proposes, for Home's "Starts awaiting approval"; their verdicts go
+    // through the approval queue (approvals/decide), each on its request's exact subject.
+    if (path === 'dispatch') return req.method === 'GET' ? json(res, 200, ctx.workflow.dispatchStatus()) : json(res, 405, { error: 'method not allowed' })
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue|review))?$/.exec(path)

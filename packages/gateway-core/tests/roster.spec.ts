@@ -1,6 +1,6 @@
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { describe, expect, it } from 'vitest'
-import { formatRoster, type Known, readRoster, type Roster, ROSTER_BOUNDS, type RosterDescriptor, type RosterEntry, type RosterPool, type RosterRun, type RosterServices } from '../src/index.ts'
+import { formatRoster, type Known, readRoster, type Roster, ROSTER_BOUNDS, ROSTER_SCHEMA, type RosterDescriptor, type RosterEntry, type RosterPool, type RosterRun, type RosterServices } from '../src/index.ts'
 
 const NOW = new Date('2026-10-24T09:30:00.000Z')
 const AT = '2026-10-24T09:29:58.000Z'
@@ -57,7 +57,7 @@ const value = <T>(k: Known<T>): T => {
 }
 const entries = (roster: Roster): RosterEntry[] => value(roster.workers)
 const entry = (roster: Roster, worker: string): RosterEntry => entries(roster).find((e) => e.worker === worker)!
-const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.5', 'roster-output', roster)
+const valid = (roster: Roster): void => schemas.assertDef('mcp-roster@1.7', 'roster-output', roster)
 
 describe('the roster: every Worker in one read model, projected on read (REQ-HOST-8)', () => {
   it('lists each Worker with its account, role, tier, quota class, load, work, and its account\'s pools and windows', async () => {
@@ -87,6 +87,22 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, 'worker:plus/standard')).toMatchObject({ role: { value: null }, account: { value: { record: { value: { kind: 'website', label: { value: 'Studio Plus' }, status: 'ready' } } } }, pools: { value: [] } })
     expect(roster.counts).toEqual({ ready: 0, busy: 2, resting: 1, unavailable: 0, quarantined: 1 })
     expect(value(roster.sources).map((s) => s.source)).toEqual(['agents', 'website'])
+  })
+
+  it('says who started each step\'s run, and a run dispatch started by itself says so in its sentence (mcp-roster@1.8, PROP-0014 D2)', async () => {
+    const runOf = (startedBy?: 'dispatch' | 'lead' | 'operator'): RosterRun[] => [{ runId: 'run_2', template: 'agent-review', status: 'running', task: { taskId: 'task-42', ...(startedBy ? { startedBy } : {}) }, nodes: [{ nodeId: 'review:1', state: 'RUNNING', attempt: 1, worker: `agent:${CLAUDE}/review` }] }]
+    const workOf = async (startedBy?: 'dispatch' | 'lead' | 'operator') => {
+      const roster = await readRoster(services({ workflow: { usage: () => runOf(startedBy) } }), { scope: 'operator', now: NOW })
+      schemas.assertDef('mcp-roster@1.8', 'roster-output', roster)
+      return value(entry(roster, `agent:${CLAUDE}/review`).work).items[0]!
+    }
+    const dispatched = await workOf('dispatch')
+    expect(dispatched).toMatchObject({ startedBy: 'dispatch', summary: 'Working on "Review the parser change" (task task-42, project studio): agent-review run run_2, step review:1, for 4 min, started by itself' })
+    expect(await workOf('lead')).toMatchObject({ startedBy: 'lead', summary: 'Working on "Review the parser change" (task task-42, project studio): agent-review run run_2, step review:1, for 4 min' })
+    expect((await workOf('operator')).startedBy).toBe('operator')
+    // An engine below workflow 1.10 tells none: absent, never a guess.
+    expect(await workOf()).not.toHaveProperty('startedBy')
+    expect(ROSTER_SCHEMA).toBe('mcp-roster@1.9')
   })
 
   it('says, for the operator, why a window has no reading yet when its account\'s last usage report could not be read (T111)', async () => {
@@ -454,11 +470,35 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     expect(entry(roster, `agent:${CLAUDE}/review`).account).toMatchObject({ value: { record: { value: { quarantine: { reason: 'unverified', detail } } } } })
   })
 
-  it('the example validates against mcp-roster@1.5, and a record that is not one is refused', async () => {
+  it('says which Workers the operator keeps out of teams, as the engine tells it, and unknown on every Worker when it cannot tell (mcp-roster@1.6, D58, T141)', async () => {
+    const runs = services().workflow!.usage(500)
+    // No teamExclusion: no Worker carries the fact.
+    const none = await readRoster(services(), { scope: 'operator', now: NOW })
+    expect(entries(none).some((e) => 'teams' in e)).toBe(false)
+    // The engine leaves out the Claude account's Workers (one named, its sibling with it) and the website account by its id.
+    const told = await readRoster(services({ workflow: { usage: () => runs, teamExclusion: async () => ({ entries: [`agent:${CLAUDE}/review`, 'plus'], workers: [`agent:${CLAUDE}/develop`, `agent:${CLAUDE}/review`, 'worker:plus/standard'] }) } }), { scope: 'operator', now: NOW })
+    valid(told)
+    expect(entry(told, `agent:${CLAUDE}/review`).teams).toEqual({ value: { excluded: true, summary: 'Kept out of teams by the operator: it is named in teams.excludeWorkers, so it is never a team member; it takes every other step' } })
+    expect(value(entry(told, `agent:${CLAUDE}/develop`).teams!).summary).toContain('another Worker of its account is named')
+    expect(value(entry(told, 'worker:plus/standard').teams!).summary).toContain('its account is named')
+    expect(entry(told, `agent:${CODEX}/review`)).not.toHaveProperty('teams')
+    expect(formatRoster(told)).toContain('  teams      Kept out of teams by the operator: it is named in teams.excludeWorkers')
+    // An engine that cannot tell: unknown on every Worker, never read as none left out (INV-2).
+    const failed = await readRoster(services({ workflow: { usage: () => runs, teamExclusion: async () => { throw new Error('the router is busy') } } }), { scope: 'operator', now: NOW })
+    valid(failed)
+    for (const e of entries(failed)) expect(e.teams, e.worker).toEqual({ unknown: 'it could not be read: the router is busy' })
+  })
+
+  it('the example validates against mcp-roster@1.7, its now included, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }
     valid(example.output)
     expect(() => valid({ ...example.output, workers: { value: [{ ...value(example.output.workers)[0]!, availability: { state: 'ready' } }] } } as Roster)).toThrow()
     expect(() => valid({ ...example.output, workers: { unknown: '' } })).toThrow()
+    // A free list past its bound, or a free Worker with no quota field, is not one either.
+    expect(example.output.now).toBeDefined()
+    const now = example.output.now!
+    expect(() => valid({ ...example.output, now: { ...now, free: { value: { items: Array(17).fill({ worker: 'agent:a/develop', name: 'a', tier: 'standard', load: { unknown: 'no load' }, quota: null }), more: 0 } } } })).toThrow()
+    expect(() => valid({ ...example.output, now: { ...now, free: { value: { items: [{ worker: 'agent:a/develop', name: 'a', tier: 'standard', load: { unknown: 'no load' } }], more: 0 } } } } as unknown as Roster)).toThrow()
   })
 })

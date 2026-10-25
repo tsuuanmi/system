@@ -11,8 +11,10 @@
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)), its bundle row on over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
-> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts, and the operator
-> starts a ready task's run (as the lead does with MCP `run` and `task`), accepts or rejects a
+> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts, and its dispatch pass
+> asks the operator to start a ready task on a free Worker chosen by quota
+> ([dispatch](workflow-engine.md#dispatch-starting-ready-work-by-itself); the board reads nothing
+> new); the operator starts a ready task's run (as the lead does with MCP `run` and `task`), accepts or rejects a
 > review, and pauses, resumes, or closes a project, on `/ui`
 > ([`web-ui`](../../packages/plugins/web-ui/README.md)); differs from target: a budget is
 > enforced before each step of a run, never inside one, so a step in flight can overdraw its last
@@ -351,6 +353,13 @@ when the result is accepted:
   request only on an `ask` verdict; the operator decides on `/ui`, the human channel (INV-6).
 - A `reject` applies with or without checks: a failed check goes back to the lead as another
   attempt ([approvals](approvals.md#the-autonomy-policy)).
+- The workflow engine's acceptance reports, beside `schema` and `review`, the required checks that
+  are commands (`tests`, `typecheck`, `lint`) its run ran on the result's exact tree, by their exit
+  codes ([a run's required checks](workflow-engine.md#a-runs-required-checks)); one that could not
+  run is not reported, so it stays pending here. A task with no write subject (rule 6 lets the
+  lead run several on one repository at once) gets them too: when they ran on its run's git
+  working tree, its result is on that tree (`git-head` at its version, a commit's subject in
+  `submit`), so the acceptance that reports them binds to it; nothing about the board changes.
 - A class the policy asks about needs no check here: the operator approved the attempt before it
   started.
 

@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { captureGitSubject, subjectId } from '../src/index.ts'
+import { captureGitSubject, ignoredPath, subjectId } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -50,6 +50,61 @@ describe('exact git subjects (REQ-WF-5)', () => {
     symlinkSync(join(outside, 'fifo'), join(dir, 'pipe'))
     const captured = captureGitSubject(dir, { maxFileBytes: 10 })!
     expect(captured.diff).toBe('new file big.bin (20 bytes, not shown)')
+  })
+
+  it('binds every untracked file\'s whole content, over the display bound too: the same size with its mtime restored is another subject (INV-5)', () => {
+    const dir = repo()
+    const big = join(dir, 'big.bin')
+    // Over the bound shown, read in more than one chunk of the hash.
+    const size = 3 * 1024 * 1024 + 17
+    writeFileSync(big, Buffer.alloc(size, 'a'))
+    // A whole second, so restoring it is exact.
+    utimesSync(big, 1_700_000_000, 1_700_000_000)
+    const stamp = statSync(big)
+    const before = captureGitSubject(dir, { maxFileBytes: 10 })!
+    expect(before.diff).toBe(`new file big.bin (${size} bytes, not shown)`)
+    // The default bound shows nothing of it either, and binds the same content to the same subject.
+    expect(captureGitSubject(dir)!.subject).toEqual(before.subject)
+    const changed = Buffer.alloc(size, 'a')
+    changed[size - 1] = 0x62
+    writeFileSync(big, changed)
+    utimesSync(big, 1_700_000_000, 1_700_000_000)
+    expect(statSync(big)).toMatchObject({ size, mtimeMs: stamp.mtimeMs })
+    const after = captureGitSubject(dir, { maxFileBytes: 10 })!
+    expect(after.subject.ref).toBe(before.subject.ref)
+    expect(after.subject.version).not.toBe(before.subject.version)
+    expect(captureGitSubject(dir)!.subject.version).toBe(after.subject.version)
+    // Restored byte for byte, it is the first subject again: content, not time, decides.
+    writeFileSync(big, Buffer.alloc(size, 'a'))
+    expect(captureGitSubject(dir)!.subject).toEqual(before.subject)
+  })
+
+  it('throws when the untracked files pass what a subject hashes: a tree it cannot bind exactly has no subject it can name (INV-2, INV-5)', () => {
+    const dir = repo()
+    writeFileSync(join(dir, 'big.bin'), 'x'.repeat(64))
+    expect(() => captureGitSubject(dir, { maxHashBytes: 63 })).toThrow(/passes the bound on what a subject hashes, so the tree cannot be bound exactly/)
+    expect(captureGitSubject(dir, { maxHashBytes: 64 })!.subject.version).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('names a path git leaves out of every subject: ignored, holding nothing tracked, taken literally', () => {
+    const dir = repo()
+    writeFileSync(join(dir, '.gitignore'), 'node_modules/\n*.log\n')
+    expect(ignoredPath(dir, 'node_modules')).toBe(true)
+    expect(ignoredPath(dir, 'node_modules/.vite')).toBe(true)
+    expect(ignoredPath(dir, 'build')).toBe(false)
+    // Tracked, though its name is ignored now.
+    expect(ignoredPath(dir, 'calc.py')).toBe(false)
+    writeFileSync(join(dir, 'kept.log'), 'x')
+    execFileSync('git', ['-C', dir, 'add', '-f', 'kept.log'])
+    expect(ignoredPath(dir, 'kept.log')).toBe(false)
+    expect(ignoredPath(dir, 'other.log')).toBe(true)
+    // An ignored file is out of every subject as it is.
+    writeFileSync(join(dir, 'other.log'), 'x')
+    expect(ignoredPath(dir, 'other.log')).toBe(true)
+    // Neither a pattern nor pathspec magic is read: such a name is never judged ignored.
+    expect(ignoredPath(dir, '*')).toBe(false)
+    expect(ignoredPath(dir, 'node_*')).toBe(false)
+    expect(ignoredPath(dir, ':/node_modules')).toBe(false)
   })
 
   it('is undefined outside a repository', () => {

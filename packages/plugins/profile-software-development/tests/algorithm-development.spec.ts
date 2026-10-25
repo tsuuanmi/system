@@ -78,6 +78,12 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     const asked = (prompt: string): string => prompt.split('\n\n## The exact subject of this review')[0]!
     expect(asked(reviews[1]!.prompt)).toBe(asked(reviews[0]!.prompt))
     expect(asked(reviews[1]!.prompt)).toContain('Review this change as an independent reviewer')
+    // The review and its re-review read and judge, and run no test or build: an environment limit is at most info.
+    for (const review of reviews) {
+      expect(asked(review.prompt)).toContain('you never run the project\'s tests or builds')
+      expect(asked(review.prompt)).toContain('A command you could not run is not a finding about the change; an environment limit is at most an info finding.')
+      expect(review.prompt).toContain('never run the project\'s tests or builds, which the validation and the run\'s required checks run.')
+    }
 
     // Validation came last, on the fixed change: its listed command ran as the workspace write the policy judges it, asking no one.
     expect(agent.calls.filter((c) => c.role === 'validate')).toEqual([{ role: 'validate', tool: 'Bash', verdict: { decision: 'allow' } }])
@@ -133,8 +139,14 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     untouched(pilot)
   })
 
-  it('routes by kind of work when the operator gives the writers kinds: code and its fix on the code writer, the tests on the other, the review on the reviewer given none; the docs variant writes on the docs writer (REQ-WRK-11, ADR-0057)', async () => {
-    const pilot = await boot({ changes: 1, kinds: true })
+  /** The candidates of a step's route decision: who was refused it, and why. */
+  const routed = (ctx: Pilot['ctx'], runId: string, nodeId: string): Array<{ option: string; selected: boolean; reasons: string[] }> => {
+    const routeId = ctx.workflow.explain(runId)!.nodes.find((n) => n.nodeId === nodeId)!.decisions.find((d) => d.type === 'route')!.id
+    return (ctx.artifacts.get(routeId as ArtifactRef)!.body as { candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }).candidates
+  }
+
+  it('routes by kind of work when the operator gives Workers kinds: every writing step and its fix on the writer given code, docs, and tests, the review on the reviewer given none, and validate:1 alone on the Worker given validation; the tests variant writes on the same writer (REQ-WRK-11, ADR-0057)', async () => {
+    const pilot = await boot({ changes: 1, writers: { developer: ['code', 'docs', 'tests'], tester: ['validation'] } })
     const { ctx } = pilot
     await charter(ctx, 'p1')
     const task = await propose(pilot, 'p1', 'make add() add')
@@ -146,18 +158,43 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
       ['develop:1', 'agent:developer'], ['review:1', 'agent:reviewer'], ['review:1:approve:1', undefined], ['review:1:fix:1', 'agent:developer'],
       ['review:1:review:2', 'agent:reviewer'], ['validate:1', 'agent:tester'],
     ])
-    // The route decision of the code step says why the other writer lost it.
-    const routeId = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'develop:1')!.decisions.find((d) => d.type === 'route')!.id
-    const candidates = (ctx.artifacts.get(routeId as ArtifactRef)!.body as { candidates: Array<{ option: string; reasons: string[] }> }).candidates
-    expect(candidates.find((c) => c.option === 'agent:tester')!.reasons).toEqual(['takes docs, tests work only; this work is code work'])
-    // The docs variant of the same template: its develop step is docs work, on the docs writer (once
-    // the first task is done, as one subject has one writer, INV-15).
+    // Each route decision says why the other Worker lost the step.
+    expect(routed(ctx, run.runId, 'develop:1').find((c) => c.option === 'agent:tester')!.reasons).toEqual(['takes validation work only; this work is code work'])
+    expect(routed(ctx, run.runId, 'validate:1').find((c) => c.option === 'agent:developer')!.reasons).toEqual(['takes code, docs, tests work only; this work is validation work'])
+    // The tests variant of the same template: its develop step is tests work, still on the writer, and
+    // its validation still on the Worker given validation (once the first task is done, as one
+    // subject has one writer, INV-15).
     expect((await operatorAccepts(ctx, task.taskId)).state).toBe('done')
-    const docs = await propose(pilot, 'p1', 'document add()')
-    const written = await ctx.workflow.start({ template: 'algorithm-development', variant: 'docs', input: 'Document what add() returns', classification: 'operator-shared', task: { taskId: docs.taskId } })
+    const tests = await propose(pilot, 'p1', 'test add()')
+    const written = await ctx.workflow.start({ template: 'algorithm-development', variant: 'tests', input: 'Test what add() returns', classification: 'operator-shared', task: { taskId: tests.taskId } })
     const finished = await reported(ctx, written.runId)
-    expect(finished.nodes.find((n) => n.nodeId === 'develop:1')!.worker).toBe('agent:tester')
+    expect(finished.nodes.find((n) => n.nodeId === 'develop:1')!.worker).toBe('agent:developer')
     expect(finished.nodes.find((n) => n.nodeId === 'validate:1')!.worker).toBe('agent:tester')
+  })
+
+  it('fails validate:1 closed, saying no Worker takes validation work, when the Workers given kinds name none of it: the writers given code and docs, tests never take it (ADR-0057, INV-2)', async () => {
+    const pilot = await boot({ writers: { developer: ['code'], tester: ['docs', 'tests'] } })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    const failed = await reported(ctx, run.runId)
+    expect(failed.status).toBe('failed')
+    expect(failed.nodes.find((n) => n.nodeId === 'validate:1')).toMatchObject({ state: 'FAILED' })
+    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'review'])
+    expect(JSON.stringify(ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'validate:1'))).toContain('no Worker that proves validate, local-data takes validation work')
+  })
+
+  it('routes a step by the kind the row configures: validate:1 configured as tests work runs on the writer given docs, tests (ADR-0057)', async () => {
+    const pilot = await boot({ writers: { developer: ['code'], tester: ['docs', 'tests'] }, profile: { kinds: { validate: 'tests' } } })
+    const { ctx } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    expect(done.nodes.map((n) => [n.nodeId, n.worker])).toEqual([['develop:1', 'agent:developer'], ['review:1', 'agent:reviewer'], ['validate:1', 'agent:tester']])
+    expect(routed(ctx, run.runId, 'validate:1').find((c) => c.selected)!.reasons).toContain('takes tests work, one of its kinds')
   })
 
   it('denies a validation command the policy does not list, asking no one: the validation reports it not run, and the result goes to the operator so (approvals: a Worker\'s tool calls)', async () => {

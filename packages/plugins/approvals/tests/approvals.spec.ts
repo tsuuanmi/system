@@ -164,7 +164,7 @@ describe('configuration', () => {
     const { ctx } = await boot()
     const { policies, effective } = await ctx.approvals.policy('p1')
     expect(policies.map((p) => p.id)).toEqual(['studio', 'p1.policy'])
-    expect(effective.map((e) => e.actionClass)).toEqual(['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion'])
+    expect(effective.map((e) => e.actionClass)).toEqual(['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion', 'dispatch'])
     policies[0]!.rules.length = 0
     expect((await ctx.approvals.policy()).policies[0]!.rules).toHaveLength(STUDIO.rules.length)
     // No project policy: the studio's alone.

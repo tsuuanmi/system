@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import { type Confinement, meteringOf, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
+import { type Confinement, meteringOf, type ToolCall, type ToolGate, WORKSPACE_READS_SCRIPT } from '@tsuuanmi/system-agent-runtime-core'
 import { childTimeZone, CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
 import { hookOverrides } from '../src/gate.ts'
 import { type ProbeBehaviour, type Step, probeExec, scripted } from './fake-codex.ts'
@@ -16,6 +16,9 @@ afterAll(() => rmSync(root, { recursive: true, force: true }))
 const runDir = join(root, 'run')
 const workspace = mkdtempSync(join(root, 'w-'))
 
+/** A path's real path on this host, as the confinement resolves it; undefined when it does not exist. */
+const real = (path: string): string | undefined => existsSync(path) ? realpathSync(path) : undefined
+
 const binds: Array<{ readOnly?: readonly string[]; writable?: readonly string[] }> = []
 const confinement = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => {
   binds.push(bind)
@@ -25,6 +28,8 @@ const confined = {
   confine: confinement, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), nested: async () => undefined, status: async () => undefined,
   launcher: (c: { command: string; args: string[] }) => `launcher:${[c.command, ...c.args].join(' ')}`,
 }
+/** A run's private shell home (T198): made in the run directory. */
+const SHELL_HOME = expect.stringMatching(new RegExp(`^${runDir}/agent-home-`))
 const runtime = (s = scripted(), extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) =>
   new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', runDir, hook: HOOK, client: s.client, version: async () => '0.164.0', mcpServers: async () => [], exec: probeExec(), ...confined, ...extra })
 
@@ -39,8 +44,8 @@ const command = (id: string, cmd: string): Step => ({ call: { tool: 'Bash', inpu
 describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
   it('probes the installed codex: both sandboxes, resumable, able to run confined commands, and gating every tool call', async () => {
     expect(await runtime().probe()).toMatchObject({
-      available: true, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true,
-      detail: 'Codex 0.164.0; host state hidden by /usr/bin/bwrap; tool calls gated: a PreToolUse hook answered before each tool call, its deny held, and no terminal session started',
+      available: true, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, cleanShells: false, workspaceReads: true,
+      detail: 'Codex 0.164.0; host state hidden by /usr/bin/bwrap; the workspace reads server starts inside it; tool calls gated: a PreToolUse hook answered before each tool call, its deny held, and no terminal session started',
     })
     expect(await new CodexRuntime({ findExecutable: () => undefined }).probe()).toMatchObject({ available: false, sandboxes: [] })
   })
@@ -55,6 +60,8 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(s.lastClient.overrides).toEqual([
       'model_provider="system"', 'model_providers.system.base_url="http://127.0.0.1:47317/openai/v1"', 'model_providers.system.env_key="SYSTEM_MCP_TOKEN"',
       ...FEATURES_OFF.map((f) => `features.${f}=false`), 'features.hooks=true', 'shell_environment_policy.exclude=["SYSTEM_CODEX_GATE_SOCKET", "SYSTEM_CODEX_GATE_KEY"]',
+      // The workspace reads server, confined by its own bubblewrap (T200b).
+      expect.stringMatching(/^mcp_servers\.workspace=\{command = "\/usr\/bin\/bwrap", args = \[/),
     ])
     expect(s.lastClient.env).toMatchObject({ SYSTEM_MCP_TOKEN: 't', PATH: process.env.PATH })
   })
@@ -97,17 +104,70 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(() => new CodexRuntime({ home: 'relative' })).toThrow(/absolute/)
   })
 
+  it('gives each run\'s shells a fresh, empty, private HOME outside the workspace, removed with the run, and no variable a shell runs code from (T198)', async () => {
+    const config = process.env.XDG_CONFIG_HOME
+    Object.assign(process.env, { BASH_ENV: join(workspace, '.bashrc'), ENV: join(workspace, '.profile'), 'BASH_FUNC_cat%%': '() { id; }', XDG_CONFIG_HOME: workspace })
+    try {
+      const seen: Array<{ env: Record<string, string>; entries: string[] }> = []
+      for (const sandbox of ['read-only', 'workspace-write'] as const) {
+        const s = scripted()
+        const client = s.client
+        // What Codex is started with, as it starts: its environment, and what its HOME holds then.
+        await runtime(s, {
+          env: { ZDOTDIR: workspace }, client: (options) => (seen.push({ env: options.env as Record<string, string>, entries: readdirSync((options.env as Record<string, string>).HOME!) }), client(options)),
+        }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
+      }
+      expect(seen).toHaveLength(2)
+      for (const { env, entries } of seen) {
+        for (const name of ['BASH_ENV', 'ENV', 'ZDOTDIR', 'BASH_FUNC_cat%%', 'XDG_CONFIG_HOME']) expect(env, name).not.toHaveProperty(name)
+        expect(env.HOME).toEqual(SHELL_HOME)
+        expect(env.HOME!.startsWith(workspace)).toBe(false)
+        expect(entries).toEqual([])
+        expect(existsSync(env.HOME!)).toBe(false)
+      }
+      expect(seen[0]!.env.HOME).not.toBe(seen[1]!.env.HOME)
+    } finally {
+      delete process.env.BASH_ENV
+      delete process.env.ENV
+      delete process.env['BASH_FUNC_cat%%']
+      if (config === undefined) delete process.env.XDG_CONFIG_HOME
+      else process.env.XDG_CONFIG_HOME = config
+    }
+    // Nor does the operator's configuration set one for its commands, nor replace their HOME (the worktree's startup files would be read there).
+    for (const name of ['BASH_ENV', 'ENV', 'BASH_FUNC_ls%%', 'HOME', 'XDG_CONFIG_HOME', 'XDG_CONFIG_DIRS']) {
+      expect(() => new CodexRuntime({ config: { shell_environment_policy: { set: { [name]: workspace } } } }), name).toThrow(`shell_environment_policy.set.${name}`)
+    }
+    expect(() => new CodexRuntime({ config: { shell_environment_policy: { set: { LANG: 'C.UTF-8' } } } })).not.toThrow()
+    // The effective command environment: Codex's own HOME is the private one, and no override Codex is given sets HOME or a startup variable.
+    const s = scripted()
+    await runtime(s, { config: { shell_environment_policy: { inherit: 'all', set: { LANG: 'C.UTF-8' } } } }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
+    expect(s.lastClient.env!.HOME).toEqual(SHELL_HOME)
+    expect(s.lastClient.overrides).toContain('shell_environment_policy.set.LANG="C.UTF-8"')
+    expect(s.lastClient.overrides!.filter((o) => /^shell_environment_policy\.set\.(HOME|BASH_ENV|ENV|BASH_FUNC_)/.test(o))).toEqual([])
+  })
+
+  it('never reports cleanShells: each call picks its own shell and login mode, which its hook does not show, so no gate takes its shell command for a read (T198)', async () => {
+    expect(await runtime().probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false })
+    expect(await runtime(scripted(), { prove: async () => ({ confined: false, detail: 'no' }) }).probe()).not.toMatchObject({ cleanShells: true })
+  })
+
   it('starts Codex through bubblewrap with the host state and the terminal devices hidden, and only its own home writable (ADR-0024)', async () => {
     const s = scripted()
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
     // Paths that do not exist on this host are skipped; no session gets a terminal, none reaches the operator's.
     expect(s.lastClient.program).toMatch(/^launcher:\/usr\/bin\/bwrap --die-with-parent --unshare-pid --new-session --dev-bind \/ \/ --proc \/proc .*-- \/usr\/bin\/codex$/)
-    if (existsSync('/dev/ptmx')) expect(s.lastClient.program).toContain('--ro-bind /dev/null /dev/ptmx')
-    if (existsSync('/dev/pts')) expect(s.lastClient.program).toContain('--tmpfs /dev/pts')
-    // Its home is bound back writable; a read-only Worker's workspace read-only.
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w'] })
+    // Where /dev/ptmx leads decides the mounts: the device itself is masked by the null device; a link into /dev/pts (as under
+    // bubblewrap's own /dev, inside a run's check) is hidden with /dev/pts, which is masked whole.
+    const pts = real('/dev/pts')
+    const ptmx = real('/dev/ptmx')
+    if (pts) expect(s.lastClient.program).toContain(`--tmpfs ${pts}`)
+    if (ptmx && !(pts && (ptmx === pts || ptmx.startsWith(`${pts}/`)))) expect(s.lastClient.program).toContain(`--ro-bind /dev/null ${ptmx}`)
+    else expect(s.lastClient.program).not.toContain('--ro-bind /dev/null /dev/')
+    // Its home is bound back writable; its shells' private home read-only (T198), so no startup file can be written there; a read-only Worker's workspace read-only.
+    // The workspace reads server's script and node are bound back read-only, for Codex to start it (T200b).
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w', SHELL_HOME, WORKSPACE_READS_SCRIPT, process.execPath] })
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'workspace-write' }, new AbortController().signal)
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'], readOnly: [SHELL_HOME, WORKSPACE_READS_SCRIPT, process.execPath] })
   })
 
   it('offers no Worker, and runs nothing, when reads cannot be confined (ADR-0024, REQ-WRK-6)', async () => {
@@ -149,6 +209,59 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(s.calls).toEqual([])
   })
 
+  it('registers the workspace reads server for every run, read-only ones included: node and its script under a bubblewrap of their own, the workspace read-only, no network, its root fixed (T200b)', async () => {
+    for (const sandbox of ['read-only', 'workspace-write'] as const) {
+      const s = scripted()
+      await runtime(s).run({ prompt: 'x', workspace, sandbox, workspaceReads: { maxEntries: 7 } }, new AbortController().signal)
+      const servers = s.lastClient.overrides!.filter((o) => o.startsWith('mcp_servers.'))
+      expect(servers, sandbox).toHaveLength(1)
+      const [, table] = /^mcp_servers\.workspace=(\{.*\})$/.exec(servers[0]!)!
+      const args = JSON.parse(/args = (\[.*\]), startup_timeout_sec/.exec(table!)![1]!) as string[]
+      expect(table).toMatch(/^\{command = "\/usr\/bin\/bwrap", /)
+      expect(table).toMatch(/startup_timeout_sec = 30, tool_timeout_sec = 40\}$/)
+      // Its own confinement: the host read-only, the workspace bound back read-only, no network, started in the workspace.
+      expect(args.slice(0, 8)).toEqual(['--die-with-parent', '--unshare-pid', '--unshare-net', '--new-session', '--ro-bind', '/', '/', '--dev'])
+      expect(args.join(' ')).toContain(`--ro-bind ${real(workspace)} ${real(workspace)}`)
+      expect(args.join(' ')).not.toContain(`--bind ${real(workspace)}`)
+      expect(args.join(' ')).toContain(`--chdir ${real(workspace)}`)
+      const program = args.slice(args.indexOf('--') + 1)
+      expect(program.slice(0, 4)).toEqual([process.execPath, WORKSPACE_READS_SCRIPT, '--root', real(workspace)])
+      expect(program.join(' ')).toContain('--max-entries 7')
+    }
+  })
+
+  it('gives the workspace reads server the workspace\'s real path as its root, the path bubblewrap binds back, when the run names it through a symlink (T200b)', async () => {
+    const link = join(root, 'w-link')
+    symlinkSync(workspace, link)
+    try {
+      const s = scripted()
+      await runtime(s).run({ prompt: 'x', workspace: link, sandbox: 'read-only' }, new AbortController().signal)
+      const [server] = s.lastClient.overrides!.filter((o) => o.startsWith('mcp_servers.'))
+      const args = JSON.parse(/args = (\[.*\]), startup_timeout_sec/.exec(server!)![1]!) as string[]
+      const program = args.slice(args.indexOf('--') + 1)
+      expect(program.slice(2, 4)).toEqual(['--root', real(workspace)])
+      expect(args.join(' ')).toContain(`--ro-bind ${real(workspace)} ${real(workspace)}`)
+      expect(args.join(' ')).toContain(`--chdir ${real(workspace)}`)
+      expect(args).not.toContain(link)
+    } finally {
+      rmSync(link)
+    }
+  })
+
+  it('refuses workspace reads bounds out of their ranges, before running (INV-9)', async () => {
+    const s = scripted()
+    await expect(runtime(s).run({ prompt: 'x', workspace, sandbox: 'read-only', workspaceReads: { maxEntries: 0 } }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('maxEntries') })
+    expect(s.calls).toEqual([])
+  })
+
+  it('offers no Worker when the workspace reads server does not start inside the confinement (T200b)', async () => {
+    let n = 0
+    const refused = runtime(scripted(), { nested: async () => { n += 1; if (n === 2) throw new Error('bwrap: setting up uid map: Permission denied') } })
+    expect(await refused.probe()).toMatchObject({ readsConfined: false, gatesToolCalls: false, detail: expect.stringContaining('the workspace reads server does not start inside the confinement') })
+    expect(readdirSync(runDir).filter((f) => f.startsWith('reads-probe-'))).toEqual([])
+  })
+
   it('resumes a thread by its native handle, and classifies a failed turn', async () => {
     const s = scripted()
     expect(await runtime(s).run({ prompt: 'again', workspace: '/w', sandbox: 'read-only', resume: 'thread-9' }, new AbortController().signal)).toMatchObject({ text: 'echo: again', nativeHandle: 'h-1' })
@@ -177,7 +290,7 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     expect(hookOverrides(process.execPath, HOOK)).toEqual(hooks)
     // The channel reaches the hook through Codex's environment, kept from its commands; its directory, the hook, and node are bound back read-only.
     expect(Object.keys(s.lastClient.env!)).toEqual(expect.arrayContaining(['SYSTEM_CODEX_GATE_SOCKET', 'SYSTEM_CODEX_GATE_KEY']))
-    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath] })
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', workspace], readOnly: [SHELL_HOME, expect.stringContaining(join(runDir, 'codex-gate-')), HOOK, process.execPath, WORKSPACE_READS_SCRIPT] })
     // Closed with the run: nothing of the channel is left.
     expect(readdirSync(runDir).filter((f) => f.startsWith('codex-gate-'))).toEqual([])
     const ungated = scripted()
@@ -228,6 +341,62 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     expect(asked).toEqual(['ls', 'npm publish'])
     expect(s.calls[0]!.hooks.map((h) => h.blocked)).toEqual([false, true])
     expect(s.calls[0]!.hooks[1]!.reason).toMatch(/apr-1.*the run stops here/)
+    // It stopped inside its first turn: no number is reported, and it says why in words.
+    expect(meteringOf(error)).toEqual({ partial: 'Codex stopped at a deferred tool call before it completed a turn' })
+  })
+
+  it('reports the turns a stopped run completed, marked partial: a stop, a timeout and a drain all stop the run\'s signal', async () => {
+    const steps: Step[] = [
+      { type: 'thread.started', thread_id: 'h-1' }, { type: 'turn.started' }, answer('first'),
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+      // The next turn is under way when the run is stopped (the fake names its thread again, which stops it here).
+      { type: 'thread.started', thread_id: 'h-1' }, { type: 'turn.started' }, answer('second'),
+    ]
+    const stop = new AbortController()
+    let handles = 0
+    const error = await runtime(scripted(() => steps)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, stop.signal, () => { if (++handles === 2) stop.abort() })
+      .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
+    expect(error).toMatchObject({ kind: 'aborted' })
+    expect(meteringOf(error)).toEqual({ turns: 1, usage: { inputTokens: 1, outputTokens: 1 }, partial: 'Codex was stopped; counted the 1 turn and the tokens it completed before then, which leaves out a turn in flight' })
+    expectConsistentMetering(meteringOf(error)!)
+    // Stopped before any turn completed: no number, never a turn count of 0.
+    const early = new AbortController()
+    const none = await runtime(scripted(() => steps)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, early.signal, () => early.abort())
+      .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
+    expect(meteringOf(none)).toEqual({ partial: 'Codex was stopped before it completed a turn' })
+  })
+
+  it('sums the tokens of the turns a run completed, never adding a cached or reasoning part to its whole, and reports no cost (T208)', async () => {
+    const usage = (input: number, cached: number, written: number, output: number, reasoning: number) => ({
+      type: 'turn.completed' as const, usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: written, output_tokens: output, reasoning_output_tokens: reasoning },
+    })
+    const two: Step[] = [
+      { type: 'thread.started', thread_id: 'h-1' }, { type: 'turn.started' }, answer('first'), usage(1000, 600, 100, 200, 150),
+      { type: 'turn.started' }, answer('second'), usage(1500, 1200, 0, 300, 50),
+    ]
+    const result = await runtime(scripted(() => two)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    // Input includes its cached and written parts; output includes its reasoning part: each is summed once.
+    expect(result).toEqual({ text: 'second', nativeHandle: 'h-1', turns: 2, usage: { inputTokens: 2500, outputTokens: 500, cacheReadInputTokens: 1800, cacheCreationInputTokens: 100 } })
+    expect(result).not.toHaveProperty('costUsd')
+    expectConsistentMetering(result)
+
+    // Stopped after its first turn: that turn's tokens, a lower bound, marked partial; still no cost.
+    const stop = new AbortController()
+    let handles = 0
+    const stopped = [...two.slice(0, 4), { type: 'thread.started', thread_id: 'h-1' } as Step, { type: 'turn.started' } as Step, answer('second'), usage(1500, 1200, 0, 300, 50)]
+    const error = await runtime(scripted(() => stopped)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, stop.signal, () => { if (++handles === 2) stop.abort() })
+      .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
+    expect(error).toMatchObject({ kind: 'aborted' })
+    expect(meteringOf(error)).toEqual({
+      turns: 1, usage: { inputTokens: 1000, outputTokens: 200, cacheReadInputTokens: 600, cacheCreationInputTokens: 100 },
+      partial: 'Codex was stopped; counted the 1 turn and the tokens it completed before then, which leaves out a turn in flight',
+    })
+    expect(meteringOf(error)).not.toHaveProperty('costUsd')
+    expectConsistentMetering(meteringOf(error)!)
+
+    // A turn whose parts exceed their whole is not read: no tokens are reported, never a sum that leaves it out.
+    const broken = await runtime(scripted(() => [two[0]!, two[1]!, answer('x'), usage(10, 20, 0, 5, 0), usage(10, 0, 0, 5, 0)])).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    expect(broken).toEqual({ text: 'x', nativeHandle: 'h-1', turns: 2 })
   })
 
   it('stops a run in which Codex reports a tool item its gate never allowed: a hook that failed or did not run', async () => {
@@ -241,6 +410,21 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     // A web search is a tool no hook sees.
     const web = scripted(() => turn({ type: 'item.completed', item: { id: 'w1', type: 'web_search', query: 'x' } }, answer('done')))
     await expect(runtime(web).run(gated(async () => ({ decision: 'allow' })), new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+  })
+
+  it('asks the gate about a workspace reads server call by its MCP name, and an allowed one accounts for its MCP item; one never allowed stops the run (T200b)', async () => {
+    const read = { id: 'm1', type: 'mcp_tool_call', server: 'workspace', tool: 'read_file', arguments: { path: 'a.ts' }, status: 'completed' } as never
+    const asked: ToolCall[] = []
+    const s = scripted(() => turn({ call: { tool: 'mcp__workspace__read_file', input: { path: 'a.ts' } }, item: read }, answer('done')))
+    const allow: ToolGate = async (call) => {
+      asked.push(call)
+      return { decision: 'allow' }
+    }
+    await expect(runtime(s).run(gated(allow), new AbortController().signal)).resolves.toMatchObject({ text: 'done' })
+    expect(asked).toEqual([{ tool: 'mcp__workspace__read_file', input: { path: 'a.ts' }, callId: 'call_1' }])
+    const unasked = scripted(() => turn({ type: 'item.completed', item: read }, answer('done')))
+    await expect(runtime(unasked).run(gated(async () => ({ decision: 'allow' })), new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('mcp_tool_call item that the run\'s tool gate never allowed') })
   })
 
   it('refuses a gated run whose hook cannot be read, before anything runs', async () => {

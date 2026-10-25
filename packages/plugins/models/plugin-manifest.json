@@ -24,7 +24,7 @@
     },
     {
       "seam": "artifacts",
-      "range": "^1.1.0"
+      "range": "^1.2.0"
     },
     {
       "seam": "leases",
@@ -89,6 +89,14 @@
     },
     {
       "key": "maxHistoryChars",
+      "sensitive": false
+    },
+    {
+      "key": "unprocessedRetries",
+      "sensitive": false
+    },
+    {
+      "key": "unprocessedMaxDelayMs",
       "sensitive": false
     }
   ],

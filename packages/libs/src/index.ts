@@ -10,9 +10,22 @@ export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileD
 export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runtime.ts'
 export { registerSecretPath, secretPaths } from './secrets.ts'
 export { GIT_FLOOR, GLOB_BUDGET, type GlobBudget, globMatches, isPrivateAddress, pinnedTo, type RepositorySnapshot, selectFiles, type SnapshotBounds, SnapshotError, type SnapshotFile, type SnapshotRequest, snapshotRepository, type UnreadReason } from './repositories.ts'
-export { captureGitSubject, type CapturedSubject, type CaptureOptions, type GitSubject, subjectId } from './subjects.ts'
+export { captureGitSubject, type CapturedSubject, type CaptureOptions, type GitSubject, ignoredPath, subjectId } from './subjects.ts'
 export {
   currentProcess, hostOf, type LeaseProbe, type Liveness, type LivenessBounds, LIVENESS_RULE, LIVENESS_VERDICTS, livenessOf, type LivenessSignals, type LivenessVerdict,
   type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, probeProcess, type ReadText,
 } from './liveness.ts'
-export { countUnknownUsage, MAX_UNKNOWN_ENTRIES, MAX_UNKNOWN_REASON, type UnknownUsageCount, type UnknownUsageSources, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf } from './usage.ts'
+export {
+  type AccountQuota, accountQuotaOf, compareHeadroom, HEADROOM_KEYS, type HeadroomKeys, headroomKeysOf, headroomLine, headroomOrderOf, headroomReason, QUOTA_DEFAULTS, QUOTA_RANGES, QUOTA_SCORE, type QuotaCandidate, type QuotaKeys, type QuotaPool, type QuotaReading, type QuotaScore, quotaScoreOf, type QuotaSettings,
+  quotaSettingsProblems, type QuotaWindow, type ScoredCandidate, type WindowQuota, windowName,
+} from './quota.ts'
+export {
+  countedWhole, countUnknownUsage, MAX_UNKNOWN_ENTRIES, MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, reconciledBy, type ScopeUnknownSources, type UnknownEntries, type UnknownRun, type UnknownUsageCount, type UnknownUsageSources,
+  unknownUsageOf, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf,
+} from './usage.ts'
+export {
+  AGENT_TOOL_EVENT_SCHEMA, AGENT_TOOL_EVENTS, AGENT_TOOL_EXPLANATION_MAX, type AgentToolCall, type AgentToolDenial, agentToolDenialOf, agentToolDenialReasons, agentToolEventOf, type AgentToolEventType,
+} from './tool-events.ts'
+export {
+  DRAW_STATES, type DrawEntry, drawEntries, type DrawFigure, drawFigures, drawFigureText, type DrawReading, type DrawState, MAX_DRAW_WINDOWS, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, quotaDrawOf,
+} from './draws.ts'

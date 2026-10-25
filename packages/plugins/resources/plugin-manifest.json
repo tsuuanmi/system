@@ -10,7 +10,7 @@
   "provides": [
     {
       "seam": "resources",
-      "version": "1.1.0"
+      "version": "1.3.0"
     }
   ],
   "consumes": [
@@ -20,7 +20,7 @@
     },
     {
       "seam": "artifacts",
-      "range": "^1.1.0"
+      "range": "^1.2.0"
     },
     {
       "seam": "eventLog",
@@ -52,6 +52,10 @@
     },
     {
       "key": "holdSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "quota",
       "sensitive": false
     }
   ],

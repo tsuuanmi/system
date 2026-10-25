@@ -99,6 +99,24 @@
 | `worktreeSetup[].views[].copy` | string[] | `[]` | Files of it (names) copied into the private directory first, for example a package store's index |
 | `worktreeSetup[].views[].readOnly` | string[] | `[]` | Paths inside it (relative) bound back read-only into the private directory, for example a package store's files |
 | `worktreeSetup[].timeoutSeconds` | number (1…3600) | `600` | The whole setup's deadline |
+| `worktreeSetup[].checks` | object | `{}` | The command of each check a policy can require, run by a workflow run on its result's exact tree in this setup's confinement, only when the autonomy policy allows it unasked (T151) |
+| `worktreeSetup[].checks.tests` | string |  | The command of the tests check, its words split on single spaces (no shell) |
+| `worktreeSetup[].checks.typecheck` | string |  | The command of the typecheck check |
+| `worktreeSetup[].checks.lint` | string |  | The command of the lint check |
+| `worktreeSetup[].checkTimeoutSeconds` | number (1…3600) | `1800` | Each check's deadline |
+| `worktreeSetup[].checkScratch` | string[] | `[]` | Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner's cache (node_modules/.vite); the checks see the rest of the worktree read-only |
+| `worktreeSetup[].generated` | object | `{}` | The repository's generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run's worktree in this setup's confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166) |
+| `worktreeSetup[].generated.paths` | string[] | `[]` | 1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json |
+| `worktreeSetup[].generated.commands` | string[] | `[]` | 1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked |
+| `workspaceReads` | object | `{}` | The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range |
+| `workspaceReads.maxReadBytes` | number (1024…8388608) | `262144` | The most bytes read_file returns, line numbers included (1024 to 8388608) |
+| `workspaceReads.maxScanBytes` | number (65536…268435456) | `8388608` | The most bytes of one file read through: for a line range, and per file searched (a larger file is not searched) (65536 to 268435456) |
+| `workspaceReads.maxEntries` | number (1…10000) | `1000` | The most entries list_dir returns (1 to 10000) |
+| `workspaceReads.maxMatches` | number (1…5000) | `200` | The most matching lines search returns (1 to 5000) |
+| `workspaceReads.maxSearchFiles` | number (1…200000) | `20000` | The most files one search opens (1 to 200000) |
+| `workspaceReads.maxLineChars` | number (80…10000) | `500` | The most characters of one matching line search shows (80 to 10000) |
+| `workspaceReads.maxPatternChars` | number (1…10000) | `1000` | The longest pattern search takes (1 to 10000) |
+| `workspaceReads.searchTimeoutMs` | number (100…120000) | `10000` | How long one search may take, in milliseconds; past it, it is stopped (100 to 120000) |
 
 ## `approvals`
 
@@ -307,6 +325,8 @@
 | `retainDays` | number (1…) | `30` | Days a finished call and its prompt are kept |
 | `maxSessionTurns` | number (1…10000) | `100` | A session's turns, at most, unless an entry sets its own (ADR-0031; default: the session layer's turn budget) |
 | `maxHistoryChars` | number (1…2000000) | `320000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer's compaction point) |
+| `unprocessedRetries` | number (0…10) | `4` | Retries of a request the provider said it did not process, before any output (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED), each after a back-off and recorded as a recovery decision; any other failure after the send is not resent |
+| `unprocessedMaxDelayMs` | number (100…600000) | `60000` | The longest back-off before one of those retries: it doubles from 1 s up to this, or waits what the provider asked, within callTimeoutMs |
 
 ## `notify`
 
@@ -314,7 +334,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring |
+| `kinds` | ("approval.opened" \| "approval.expiring" \| "run.user-action" \| "run.escalated" \| "run.waiting" \| "pool.limited" \| "worker.quarantined" \| "review.expiring" \| "dispatch.started")[] | `["approval.opened","approval.expiring","run.user-action","run.escalated","run.waiting","pool.limited","worker.quarantined","review.expiring","dispatch.started"]` | The kinds of notice sent: approval.opened, approval.expiring, run.user-action, run.escalated, run.waiting, pool.limited, worker.quarantined, review.expiring, dispatch.started |
 | `expiryLeadMinutes` | number (1…1440) | `60` | How long before an open approval request expires (and is denied), or a review held for the operator expires, it is notified again, in minutes |
 | `dedupMinutes` | number (1…1440) | `10` | At most one notice per subject and kind in this many minutes |
 | `maxQueue` | number (1…1000) | `50` | Notices waiting to be sent, at most; one more is dropped, logged, and shown in health |
@@ -345,7 +365,13 @@ No options.
 
 [@tsuuanmi/system-profile-software-development](../../packages/plugins/profile-software-development/README.md)
 
-No options.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `kinds` | object | `{}` | The kind of work (ADR-0057) each algorithm-development step names, by step, so which Worker takes which step is the Workers' kinds: a Worker given kinds takes a step only when it lists that step's kind. The review names none |
+| `kinds.develop` | string | `"code"` | The kind of work develop:1 is, and the fix a review grows from it (default code) |
+| `kinds.docs` | string | `"docs"` | The kind of work develop:1 is in the docs variant (default docs) |
+| `kinds.tests` | string | `"tests"` | The kind of work develop:1 is in the tests variant (default tests) |
+| `kinds.validate` | string | `"validation"` | The kind of work validate:1 is: it runs the checks and tests and changes nothing (default validation). A Worker given kinds takes it only when it lists this one, so a writer given tests does not run it |
 
 ## `provider-chatgpt-web`
 
@@ -358,6 +384,7 @@ No options.
 | `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"}}` | Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift |
 | `defaultMode` | string | `"instant"` | Preset when a caller names none |
 | `pageGapMs` | number (0…600000) | `10000` | Minimum gap between the opens of the account's pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced |
+| `stableMs` | number (100…60000) | `1500` | How long an answer's text must stay unchanged, with generation stopped, before it counts as complete, in milliseconds, from 100 ms to 1 min; test stacks on the fake site use 300 |
 
 ## `provider-gemini-web`
 
@@ -371,6 +398,7 @@ No options.
 | `researchMode` | string |  | Preset Deep research selects, whatever its turn names; unset, the picker is left as the site has it. A thinking level not shown with Deep research chosen is skipped |
 | `maxPromptChars` | number (1…) | `30000` | The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error) |
 | `pageGapMs` | number (0…600000) | `10000` | Minimum gap between the opens of the account's pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced |
+| `stableMs` | number (100…60000) | `1500` | How long an answer's text must stay unchanged, with generation stopped, before it counts as complete, in milliseconds, from 100 ms to 1 min; test stacks on the fake site use 300 |
 
 ## `providers`
 
@@ -411,6 +439,12 @@ No options.
 | `pageSize` | number (1…100) | `20` | Records per resources_usage page when the caller names no limit |
 | `maxRecords` | number (1…1000000) | `10000` | Records usage() returns at most; more matching is refused (narrow the filter or page) |
 | `holdSeconds` | number (60…604800) | `14400` | How long a reservation nobody releases (a crashed run) keeps counting against its caps |
+| `quota` | object | `{}` | Quota settings the quota score reads (ADR-0064): the reserve kept free of dispatched work, and how windows are read |
+| `quota.reservePercent` | number (0…90) | `20` | Share of every window, in percent, kept for your own use: work System starts by itself never starts into it (D63); a run already going keeps going |
+| `quota.useSoonMinutes` | number (0…1440) | `90` | A window that resets within this many minutes is used first, before its unused share is lost (0: never) |
+| `quota.minHeadroomPercent` | number (1…100) | `10` | The least headroom above the reserve a window about to reset needs to be used first |
+| `quota.headroomBucketPercent` | number (1…25) | `5` | Headroom is compared in buckets this many points wide, so readings a few points apart do not reorder Workers |
+| `quota.staleReadingSeconds` | number (60…86400) | `1800` | A reading older than this is stale: its window is not known, so it is never read as capacity (keep it above the agent providers' limitReadSeconds) |
 
 ## `runtime-acp`
 
@@ -541,6 +575,8 @@ No options.
 | `maxWaitingRuns` | number (0…) | `16` | Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused |
 | `retainDays` | number (1…) | `30` | Days a finished run keeps its input text and prompts |
 | `allowSameFamily` | boolean | `false` | When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035) |
+| `teams` | object | `{}` | Team membership (docs/design/teams.md#workers-left-out-of-teams) |
+| `teams.excludeWorkers` | string[] (…64) | `[]` | Worker ids and accounts (as system roster lists them: an account as group/id, or its bare id when only one group has it) that no team member joins on, the first member included: a Worker id leaves out that Worker, an account every Worker naming it, each with every other Worker on its account. They still take every other node. A team they leave fewer provider families than members fails config_error before anything is sent, allowSameFamily or not; a member already in its team's conversation in that run keeps it, recorded; an entry that matches nothing is recorded as a workflow.team.unmatched-exclusions event |
 | `retainRunsDays` | number (0…) | `30` | Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session's latest run always stays |
 | `maxLimitWaitHours` | number (0…720) | `24` | Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
@@ -548,11 +584,25 @@ No options.
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |
 | `gateTimeoutHours` | number (0.0001…720) | `24` | Hours a plan's gate waits for the operator's approval, then closes and fails the run, by rule (INV-9); continue the run to wait again |
 | `approvalPollSeconds` | number (1…300) | `15` | Seconds between the engine's reads of the approval queue: a remediation fix's request while its run waits on it, and the requests a Worker's deferred tool calls wait on (INV-9) |
+| `deferredCommandMinutes` | number (0…1440) | `10` | Minutes a board task's step waits on the operator for a Worker's deferred tool call of class command (from its request's creation), then treats that call as denied, for it alone: the request is withdrawn, recorded as a recovery decision deny, and the session continues once, told the call was denied (INV-9); 0 waits until the request expires |
 | `maxSessionRuns` | number (1…50) | `5` | Runs one session may serve when a board task's next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief |
 | `tasksFile` | object | `{}` | The board's TASKS.md projection a board task's run is given in its own worktree (INV-9) |
 | `tasksFile.maxTasks` | number (0…10000) | `200` | Tasks it lists at most, open ones first, the rest counted; 0 writes no file |
 | `tasksFile.maxChars` | number (1024…1048576) | `65536` | Characters it holds at most; past it, it is cut at a line with a note |
 | `digestsPerHour` | number (0…1000) | `6` | Digests of board task results the engine asks ctx.digests for in any hour, one per attempt, after its result reached the board (INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why |
+| `dispatch` | object | `{}` | Dispatch: System starts ready board tasks on free Workers chosen by quota, under the action class dispatch (docs/design/workflow-engine.md#dispatch-starting-ready-work-by-itself) |
+| `dispatch.enabled` | boolean | `true` | System asks to start ready board tasks on free Workers chosen by quota (ADR-0064); false: nothing is asked or started |
+| `dispatch.sweepSeconds` | number (10…3600) | `60` | Seconds between dispatch passes; one runs at start too, after the runs are reconciled |
+| `dispatch.maxPerPass` | number (1…16) | `2` | Starts and new asks one pass makes at most, approved asks it starts included |
+| `dispatch.maxRunning` | number (1…10000) |  | Dispatched runs not finished, with the asks open or approved, at most (at most maxActiveRuns less leaveRunsFree; default 8, or that when less) |
+| `dispatch.maxRunningPerProject` | number (1…16) | `2` | The same, per project |
+| `dispatch.maxRunningPerAccount` | number (1…16) | `1` | The same, per account of the chosen Worker; and the most its account's load may be for it to be free |
+| `dispatch.maxRunningPerRepository` | number (1…16) | `4` | The same, per repository (the chosen writing Worker's workspace): tasks without a write subject on one repository run in parallel up to this (D64) |
+| `dispatch.leaveRunsFree` | number (0…10000) |  | Active runs dispatch leaves for the lead's and your own starts (at most maxActiveRuns less 1; default 4, or that when less) |
+| `dispatch.maxOpenAsks` | number (1…32) | `4` | Dispatch requests open at once, waiting for your go |
+| `dispatch.approvedHoldMinutes` | number (1…240) | `30` | Minutes an approved start waits for its Worker to be free; past it the approval is used for nothing and dispatch chooses again |
+| `dispatch.maxPerHour` | number (0…120) | `6` | Starts dispatch makes in any rolling hour, counted from its rows (PROP-0014 D2); 0 starts nothing |
+| `dispatch.maxPerHourPerProject` | number (0…120) |  | The same, per project (at most maxPerHour; default 3, or maxPerHour when less) |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |

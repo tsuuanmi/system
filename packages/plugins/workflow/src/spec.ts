@@ -716,11 +716,21 @@ export interface Assessment {
   findings: Array<{ severity: 'blocking' | 'warning' | 'info'; title: string; detail?: string; file?: string }>
 }
 
+/**
+ * What every review bound to an exact subject is told about commands: it reads and judges the change,
+ * and never runs the project's tests or builds, which the validation and the run's required checks at
+ * acceptance run (ADR-0063). A reviewer often runs read-only, so a command it could not run says
+ * nothing about the change: such an environment limit is at most an `info` finding, never a blocking
+ * one that would grow a remediation cycle no fix can satisfy.
+ */
+export const REVIEW_RUNS_NOTHING = 'Read and judge the change: never run the project\'s tests or builds, which the validation and the run\'s required checks run. A command you could not run is no finding about the change; an environment limit (a read-only sandbox, a denied or failing command) is at most an "info" finding, never a "blocking" one.'
+
 /** The subject block appended to a review bound to an exact subject (REQ-TEAM-5, REQ-WF-5). */
 export function subjectBlock(id: string, workspace: string, head: string, diff: string, request: string): string {
   return [
     '## The exact subject of this review',
     'Review exactly this change against the request. You see none of the producer\'s conversation.',
+    REVIEW_RUNS_NOTHING,
     `Subject: ${id}`,
     `Workspace: ${workspace}`,
     `Requested change: ${request}`,

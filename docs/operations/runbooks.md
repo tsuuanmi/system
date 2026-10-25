@@ -265,6 +265,31 @@ queue as a Claude Code Worker's does. To use one:
    - "tool calls cannot be gated: …": the probe's turn showed Codex would run a tool without
      asking the gate (a hook that did not run, a terminal session, a hosted tool). Usually a
      Codex release that changed its hooks: keep the Workers off and report the reason.
+   - "the workspace reads server does not start inside the confinement": the host refuses a
+     bubblewrap nested in the read confinement, or `node` or System's install is hidden from it
+     (as for step 1, bind it back read-only in the `agent-runtimes` row).
+
+**How a Codex Worker reads.** Every Codex run, a reviewer's in the read-only sandbox included, has
+System's own [workspace reads server](../design/agent-runtimes.md#the-workspace-reads-server):
+`read_file`, `list_dir`, and `search` over its workspace, under a confinement of their own with the
+workspace read-only. Under the bundle's policy (`read: auto`) they run without asking you; every
+shell command, `cat` and `rg` included, is a `command` and waits for your approval, and each run's
+brief tells the Worker to read with the tools instead. Git's data and secret-named files (`.env`,
+keys, credentials) are never read through them. Their bounds are the `agent-workers` row's
+`workspaceReads` (defaults shown; each has a range, and a value outside it refuses the row):
+
+```yaml
+- id: agent-workers
+  config:
+    workspaceReads: { maxReadBytes: 262144, maxScanBytes: 8388608, maxEntries: 1000, maxMatches: 200, maxSearchFiles: 20000, maxLineChars: 500, maxPatternChars: 1000, searchTimeoutMs: 10000 }
+```
+
+A Worker whose reads stall anyway: look for `agent-workers.tool.denied` events on a
+`mcp__workspace__…` tool in the event log (MCP `events` by type), whose `reason` says why
+(`outside-workspace`: outside the workspace or `..`; `git-data`; `unclassified-tool`: a tool the
+server does not have, or a runtime that reports no such server); a run stopped with "an mcp_tool_call item that the
+run's tool gate never allowed" is a Codex release that does not ask its hook before an MCP tool:
+keep the Workers off and report it.
 
 ## Antigravity CLI Workers
 
@@ -402,8 +427,8 @@ characters) fails the same way, and so does an Antigravity turn over its
 
 ## Route work by kind
 
-Give each writing agent Worker the **kinds of work** it takes, and each step goes to a Worker of its
-kind ([work kinds](../design/routing.md#work-kinds),
+Give each agent Worker that writes or validates the **kinds of work** it takes, and each step goes
+to a Worker of its kind ([work kinds](../design/routing.md#work-kinds),
 [ADR-0057](../decisions/adr/0057-route-work-by-kind.md), accepted). This is configuration: which
 runtime takes which kind is the Worker list's, never a template's.
 
@@ -412,17 +437,50 @@ What names a kind today ([templates](../reference/workflow-templates.md#algorith
 | Step | Kind |
 |---|---|
 | `algorithm-development` `develop:1`, and the fix a review grows from it | `code`; `docs` in the `docs` variant, `tests` in the `tests` variant |
-| `algorithm-development` `validate:1` | `tests` |
+| `algorithm-development` `validate:1`: it runs the checks and tests and changes nothing | `validation` |
 | every review (`algorithm-development` `review:1` and its re-reviews, `agent-review`), a planner's steps, every website step (`ask`, `brainstorm`, `review` teams, `research`), digests | none |
 
 A Worker given kinds takes only steps of those kinds, and never a step that names none; a Worker
 given none takes any step it proves the capabilities for. With no Worker given kinds, everything
 routes as before.
 
-**The live install's split** (operator decisions D35 and D36, 2026-10-24): source-code changes on
-Claude Code, docs and test work on Codex, reviews on any reviewer, a writing Claude Code Worker on
+These are the shipped kinds. The `profile-software-development` row's `kinds` sets the kind a step
+names, by step (`develop`, `docs`, `tests`, `validate`), so moving a step to other Workers is a
+configuration change, never a code change; the review names none, whatever is set
+([configuration](../reference/configuration.md#profile-software-development)). For example,
+`kinds: { validate: tests }` makes the validation test work again, taken by the Workers given
+`tests`. `system check` refuses a key that is not a step and a kind that is not a kind of work.
+
+**Workers given kinds take validation only when they list `validation`** (since 2026-10-25;
+before, `validate:1` was `tests` work). A writer given `[docs, tests]` no longer runs the
+validation. Once every Worker that proves `validate` is given kinds, give one of them `validation`,
+or `validate:1` fails admission, nothing sent, and `system explain <runId>` says
+`no Worker that proves validate, local-data takes validation work`. Before a start, the start
+form on `/ui` already says of the step (`… for validation work`) `No Worker can take it now`. A
+Worker given no kinds takes it as before.
+
+**The live install's split** (operator decisions D35 and D36, 2026-10-24, and the operator's
+request of 2026-10-25): Claude Code changes the codebase (source code, docs, and tests), Codex runs
+the checks and tests and changes nothing, reviews on any reviewer, a writing Claude Code Worker on
 the system repository with a worktree per run. The rows are in
-[`examples/work-kinds.patch.yml`](examples/work-kinds.patch.yml).
+[`examples/work-kinds.patch.yml`](examples/work-kinds.patch.yml). On accounts × roles
+([below](#migrate-agent-workers-to-accounts--roles)) the same split is on the roles:
+
+```yaml
+- id: agent-workers
+  config:
+    roles:
+      - { id: develop, workspace: /home/tan/workspaces/system, sandbox: workspace-write, tier: standard, worktreePerRun: true, kinds: [code, docs, tests] }
+      - { id: develop-2, workspace: /home/tan/workspaces/system, sandbox: workspace-write, tier: standard, worktreePerRun: true, kinds: [validation] }
+      - { id: review, workspace: /home/tan/workspaces/system, sandbox: read-only, tier: standard, worktreePerRun: true }   # no kinds: every review
+    assignments:
+      - { account: <the Claude Code account>, roles: [develop, review] }
+      - { account: <the Codex account>, roles: [develop-2, review] }
+```
+
+Keep each role's other settings as they are; only `kinds` changes. `develop-2` keeps
+`workspace-write`: `validate:1` needs a Worker that proves `validate`, which a read-only one never
+does.
 
 1. **Before:** Claude Code's commands are proven confined on this host
    ([confined commands](#agent-workers): `bubblewrap` and `socat`); otherwise the writing Claude
@@ -432,12 +490,13 @@ the system repository with a worktree per run. The rows are in
 2. **Merge the example's rows** into `~/.dsh/profiles/system/cordis.patch.yml` by row id
    (`runtime-codex-sdk`, `runtime-antigravity-cli`, `agent-workers`,
    `profile-software-development`). What it sets:
-   - `claude-code`: `sandbox: workspace-write`, `worktreePerRun: true`, `kinds: [code]`, on
-     `/home/tan/workspaces/system` (D36). Each workflow run writes in its own worktree on the branch
+   - `claude-code`: `sandbox: workspace-write`, `worktreePerRun: true`, `kinds: [code, docs, tests]`,
+     on `/home/tan/workspaces/system` (D36): it writes every change, with no variant and in the
+     `docs` and `tests` variants. Each workflow run writes in its own worktree on the branch
      `system/run/<runId>`, never in the checkout ([a run's worktree](#a-runs-worktree)); an accepted
      task's branch is merged on your approval ([land an accepted result](#land-an-accepted-result)).
-   - `codex-writer`: the same on Codex, `kinds: [docs, tests]`: it writes in the `docs` and `tests`
-     variants and runs `validate:1`.
+   - `codex-writer`: the same on Codex, `kinds: [validation]`: it runs `validate:1`, the checks and
+     tests, and takes no writing step.
    - The reviewers (`claude-research`, `codex-review`, `agy-review`) are given no kinds, so they take
      every review. Each now sets `worktreePerRun: true`: every Worker on a workspace must
      agree, so a reviewer reads the writer's worktree, and the load refuses a row that disagrees.
@@ -451,7 +510,9 @@ the system repository with a worktree per run. The rows are in
    - `claude-member` keeps its empty directory, never a worktree.
 3. **The approval policy that gates the writers' commands** (ADR-0038) is the bundle's studio
    policy, unchanged: reads and edits run (`workspace-write` is `auto`, with `tests` and `lint`
-   required at acceptance, so every result waits for your review), and every command asks. In a
+   required at acceptance, so a result waits for your review unless the run passed them
+   ([let a run pass the required checks](#let-a-run-pass-the-required-checks))), and every command
+   asks. In a
    step with a session (`develop:1`) a command waits on the approval queue
    ([a deferred tool call](#a-workers-tool-call-is-deferred-on-an-approval)); in `validate:1`, which
    has none, it is denied and reported not run. Listing a command
@@ -468,7 +529,7 @@ the system repository with a worktree per run. The rows are in
    `task`: source-code work with no variant, docs work with `variant: docs`, test work with
    `variant: tests` (CLI: `system run algorithm-development --variant docs …`). `system explain
    <runId>` names each step's Worker; its route decision says `takes code work, one of its kinds`,
-   and a writer that lost says `takes docs, tests work only; this work is code work`.
+   and a Worker that lost says `takes validation work only; this work is code work`.
 
 What this split does not reach, and why:
 
@@ -484,12 +545,13 @@ What this split does not reach, and why:
   step that names none (a planner's `develop` step, where a template's growth policy allows one, or
   a configured template's) finds no writer and fails admission, saying `no Worker that proves
   develop … takes work that names no kind`; give one writer no kinds to take such steps.
-- **`validate:1` is test work.** With Codex unable to confine its commands on this host, it fails
-  admission; giving `claude-code` `tests` too moves both the validation and test writing to Claude
-  Code.
+- **`validate:1` is validation work, apart from test writing.** With Codex unable to confine its
+  commands on this host, it fails admission; giving `claude-code` `validation` too moves the
+  validation to Claude Code, and test writing stays where it is.
 - **After the move to accounts × roles** ([below](#migrate-agent-workers-to-accounts--roles)), the
-  kinds go on the roles (`roles: [{ id: code, …, kinds: [code] }]`), and the assignments decide which
-  accounts take them; `system account migrate` keeps each row's kinds on its role.
+  kinds go on the roles (`roles: [{ id: develop, …, kinds: [code, docs, tests] }]`, as above), and
+  the assignments decide which accounts take them; `system account migrate` keeps each row's kinds on
+  its role.
 
 To undo, remove `kinds` from the Workers (and the writers, if you no longer want them) and restart:
 every Worker then takes every step it proves the capabilities for.
@@ -781,6 +843,74 @@ Two team members then share one account, each in its own conversation. The team'
 two families, turn the row back on and sign the account in; `allowSameFamily` can stay on, since
 a second family is used whenever one is admitted.
 
+## Keep a Worker out of teams
+
+To keep a website account (or any Worker) out of brainstorm and review teams while it still
+takes single asks and research, for example while the site is unstable
+([Workers left out of teams](../design/teams.md#workers-left-out-of-teams)):
+
+1. `system roster` lists every Worker id and, for a Worker on an account, its account's group and
+   id. Pick the Worker ids or accounts to leave out. A Worker id leaves out every other Worker of
+   its account too (a website account's other tiers, an agent account's other roles); an account,
+   written `<group>/<id>`, leaves out every Worker on it; a bare account id does the same when only
+   one group has an account by that id, and is refused when several do (two providers' `default`
+   accounts, say); a model Worker is left out by its own id.
+2. Add them on the `workflow` row of `cordis.patch.yml` (a targeted patch replaces the row's whole
+   config: keep its other settings):
+
+   ```yaml
+   - id: workflow
+     config:
+       allowSameFamily: true
+       teams:
+         excludeWorkers: [gemini-main]
+   ```
+
+3. `system check`, then restart (`system shutdown`, then `system start`). It refuses an option
+   under `teams` it does not know, a `teams` that is not an object, an `excludeWorkers` that is not
+   a list, an entry with whitespace or over 200 characters, more than 64 entries, and an entry
+   listed twice. It cannot tell a typo from a Worker that is not configured: see step 4.
+4. Check: start a `system brainstorm "…"`, then `system explain <runId>`: each member's `route`
+   line names another Worker, and the route decision gives each Worker left out the reason `left
+   out of teams by the operator's teams.excludeWorkers`. An entry that matches no Worker or account
+   listed when a member routes leaves nothing out, and each member's routing records it as a
+   `workflow.team.unmatched-exclusions` event with the entries (`system events --type
+   workflow.team.unmatched-exclusions`): fix the spelling, or remove it.
+
+- **What the team runs on instead.** Members still differ by provider family, so another family
+  must be admitted for each member: with a website left out, another provider's website, an API
+  model Worker of the same family as the one left out (a model entry's `family`), or for a review
+  an agent Worker under the review-member profile.
+- **When your exclusion leaves too few families**, the team fails at its first member, before
+  anything is sent, as `config_error`: `team T needs N provider families, one per member; M is
+  ready outside the operator's teams.excludeWorkers, which leaves K more out of teams …`, or, with
+  every Worker left out, `… leaves out every Worker listed now …`. `allowSameFamily` does not run
+  the team on one family instead: that would be a team your exclusion made single-provider. Add a
+  Worker of another family, or leave out less. `allowSameFamily` still applies when the roster has
+  too few families without the exclusion; its re-routes keep the exclusion.
+- **Which one it gets** is routing's order among the Workers admitted: the lowest tier, then the
+  quota class in `quotaPreference` order (default `subscription-chat`, `local`, `agent-plan`,
+  `metered`), then the least busy, then `priority` ([routing](../design/routing.md#algorithm)). So
+  by default a review member's step goes to an agent Worker under the review-member profile
+  (`agent-plan`) before an API model Worker (`metered`). For reviews on the API model, set
+  `quotaPreference: [subscription-chat, local, metered, agent-plan]` on the `workers` row: it
+  reorders every step where a `metered` and an `agent-plan` Worker are both admitted, and the
+  agent Worker stays the next choice when the model is not admitted.
+- **An API model Worker as a member.** Its `maxTokens` (default 4096) bounds the whole answer,
+  thinking included. A review member writes its findings after reading the material, and on
+  2026-10-23 a Gemini API member's review answer stopped mid-reasoning at about 14,000 characters,
+  with no findings JSON, so its step was rejected. Raise that catalog entry's `maxTokens` (for
+  example to 16384) before teams use it ([API and local models](#api-and-local-models)); a longer
+  answer also takes longer, within `callTimeoutMs`.
+- **Teams in flight** keep the members they formed with: a member already in its team's
+  conversation in that run stays on its Worker, also when you `system continue` the run, and the
+  route decision says `… which the operator's teams.excludeWorkers leaves out of teams, is kept as
+  team T's own conversation in this run (Model A)`. A member that would resume a conversation not
+  started for its team in that run (a later run resuming an earlier one's session) on a Worker
+  left out fails as `config_error`, nothing sent. Start the run again to form the team under the
+  option.
+- **Undo:** remove the entries (or the `teams` key), `system check`, restart.
+
 ## A review member fails on a website
 
 A team member's step (`review:m<k>:propose`, `brainstorm:m<k>:propose`, a ballot, or a debate) fails on a website Worker, or
@@ -820,21 +950,32 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
     bound ([a provider UI change](playbooks.md#a-provider-ui-change)).
 - **The site's own error** (`overloaded`: `the site answered with its own error instead of an
   answer ("Sorry, something went wrong. Please try your request again."); the prompt was sent, so
-  it is not resent`). The site took the prompt and answered with an error of its own, so `system`
-  never sends it again on its own (INV-4), and the run fails `USER_ACTION`. When it was seen live,
-  nothing came later to be read: on 2026-10-24 (Gemini, within 6 s of the conversation getting its
-  id) the conversation, reopened 30 minutes later, showed an empty new chat, neither the prompt nor
-  the error. The site's own way to retry (its Redo, or trying again as it asks) sends the prompt
-  again.
+  it is not resent`). The site took the prompt and answered with an error of its own. When it was
+  seen live, nothing came later to be read: on 2026-10-24 (Gemini, within 6 s of the conversation
+  getting its id) the conversation, reopened 30 minutes later, showed an empty new chat, neither
+  the prompt nor the error. The site's own way to retry (its Redo, or trying again as it asks)
+  sends the prompt again.
+  - **A member's first step is resent once, on its own** (D60,
+    [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)):
+    nothing to do. After the `overloaded` back-off the member's proposal runs again on the same
+    account, in a new conversation, and the team goes on there. `system explain <runId>` shows the
+    `recovery` decision `resend` on the member's `propose` node: why, the failed turn, and the key
+    of the new one; `system events --type workflow.node.resent` lists them. The abandoned
+    conversation is deleted with the member's others when the run is released.
+  - **Anything else fails for you** (`USER_ACTION`): the same step erring a second time (never
+    resent twice), a member's ballot or debate (they rely on their conversation), or any other
+    step. The `recovery` decision's `resend` candidate says why it was not resent. `system` never
+    sends the prompt again on its own (INV-4).
   - Look at what the site kept, sending nothing: `system conversations` names the member's
     conversation (the failed turn's binding), and `system conversation inspect <account>
     <binding>` outlines it. To read an answer it shows, open it in the login profile (`system
     account login <id>`, then Cancel). If it holds a finished answer to the prompt, take it with
     `system supersede <runId> <nodeId> -` (the answer on stdin).
   - If it holds nothing, `continue` cannot help a team member: its conversation has nothing to
-    continue, and a member is never given a fresh one, so its step fails again, unsent
-    (`conversation_lost` when the site sends the page elsewhere). Start the run again. For a one-shot `ask`, `system continue <runId>` sends
-    the prompt again in a new Temporary chat: that resend is your decision.
+    continue, and a member is given a new one only for that one resend of its first step, so its
+    step fails again, unsent (`conversation_lost` when the site sends the page elsewhere). Start
+    the run again. For a one-shot `ask`, `system continue <runId>` sends the prompt again in a new
+    Temporary chat: that resend is your decision.
 - **The page showed neither the account nor a sign-in page** (`ui_drift`: `the app rendered, but
   neither the signed-in account nor a sign-in page showed within 15 s …`, or `the page showed
   neither the app, …`, each `(outlined as a ui.drift of auth.account)`). Nothing was sent. The
@@ -863,7 +1004,10 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
 - **`team review needs N provider families, one per member; M is ready`**: fewer families are ready
   than the team has members (Workers ready or busy that prove the step): see
   [one provider family](#one-provider-family). With enough of them the message does not say this,
-  and the admission's own reasons are why.
+  and the admission's own reasons are why. `M is ready outside the operator's
+  teams.excludeWorkers, which leaves K more out of teams`: your own exclusion leaves too few, and
+  the team failed before anything was sent, `allowSameFamily` or not
+  ([keep a Worker out of teams](#keep-a-worker-out-of-teams)).
 
 ## Pool a provider's accounts
 
@@ -1091,7 +1235,7 @@ Before you start: back up (`system backup`), and read the Antigravity note in st
    their `description` when they all give the same one (rule version 3). For the live patch: one
    role `review` (the checkout, read-only, standard; `maxTurns: 4` on Claude Code, the model on the
    Antigravity CLI), assigned to the Claude Code and Codex accounts by their ids; with the work
-   kinds patch, also `develop` (`kinds: [code]`) and `develop-2` (`kinds: [docs, tests]`).
+   kinds patch, also `develop` (`kinds: [code, docs, tests]`) and `develop-2` (`kinds: [validation]`).
    - **The Antigravity CLI** cannot be verified (no reader): no account of it can be enrolled
      (one enrolled before is `unverified`), and a derived Worker takes work only on a `ready`
      account. The move waits for its reader (PROP-0012 open question 1). To move now anyway, stop
@@ -1153,8 +1297,8 @@ read.
    periodic read covers derived Workers' accounts only. A hand-named Worker's account is read only
    once after a run that hit a limit, for its reset.
 2. **Give the runtime a pool template and map its window names** (the `resources` row's
-   `templates`, the provider entry's `pool` and `windows`). For Claude Code, the five-hour and
-   seven-day windows (D55):
+   `templates`, the provider entry's `pool` and `windows`). For Claude Code, the five-hour window
+   only (D70, 2026-10-25):
 
    ```yaml
    - id: resources
@@ -1165,18 +1309,22 @@ read.
            kind: interactive
            windows:
              - { id: five-hour, kind: rolling, seconds: 18000 }
-             - { id: seven-day, kind: rolling, seconds: 604800 }
    - id: agent-workers
      config:
        providers:
-         - { provider: claude-agent-sdk, slots: 2, pool: claude-plan, windows: { five_hour: five-hour, seven_day: seven-day }, limitReadSeconds: 600 }
+         - { provider: claude-agent-sdk, slots: 2, pool: claude-plan, windows: { five_hour: five-hour }, limitReadSeconds: 600 }
    ```
+
+   Do not declare or map a seven-day window for Claude Code. Its usage report gives no seven-day
+   reading (null server-side), and a spent seven-day quota already shows as an unusable five-hour
+   window. A declared window that is never read is never headroom: every Claude pool stays closed,
+   and dispatch never picks a Claude account. The live patch declared one until 2026-10-25.
 
    The runtimes' window names, which `windows` maps:
 
    | Runtime | Its windows |
    |---|---|
-   | Claude Code | `five_hour`, `seven_day`, `seven_day_oauth_apps`, and a weekly window per model family, `seven_day_<family>` (the names its `rate_limit_event` uses too; the daemon's log names each window a report gives that `windows` does not map) |
+   | Claude Code | `five_hour`, the only one to map (D70). Its report also names `seven_day`, `seven_day_oauth_apps`, and a weekly window per model family, `seven_day_<family>` (the names its `rate_limit_event` uses too), but gives no seven-day reading; the daemon's log names each window a report gives that `windows` does not map |
    | Codex | each window by its length in minutes: `300m` (five hours), `10080m` (a week), as the account reports them |
    | Antigravity CLI | each bucket's `id`, as `HOME=<home> agy --print=/usage --output-format json` lists them under `command.data.groups[].buckets[]` |
 
@@ -1376,7 +1524,9 @@ OnFailure=<your notifier>.service
 Type=oneshot
 # gh and git; the script puts Node 24 and pnpm on PATH itself.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-# Options after the script: --settle <minutes>, --hours <HH-HH> (its section).
+# Options after the script: --branch <name> (default main), --settle <minutes>, --hours <HH-HH>
+# (its section). To follow dev:
+#   ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh --branch dev
 ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh
 # A pass with a drain and two builds takes its time. The daemon it stops and starts is
 # system.service's (systemctl), so nothing of it is in this unit: no KillMode= is needed.
@@ -1595,40 +1745,46 @@ there, so each reported), completed, the seven old runs explaining as before.
 
 ## Update the live install automatically
 
-[`scripts/live-auto-update.sh`](../../scripts/live-auto-update.sh) keeps the live install on `main`:
+[`scripts/live-auto-update.sh`](../../scripts/live-auto-update.sh) keeps the live install on a branch
+of origin, `--branch <name>`, `main` by default (`--branch dev` follows dev: **Follow dev** below):
 each pass decides whether to start an update, and the update itself is [`live-update.sh`'s](#update-the-live-install-from-e218ae7-to-the-base-release),
 with its backup, upgrade checks, and rollback. A systemd user timer runs a pass every 15 minutes
-([units](#run-as-a-service)). One pass:
+([units](#run-as-a-service)). The branch name must be a plain one (letters, digits, `.`, `_`, `-`
+in components joined by `/`, such as `dev` or `release/1`); any other is refused before any git
+command, with exit 2 and the usage. Below, `<branch>` is the branch it follows. One pass:
 
 1. Does nothing while `~/.dsh/system/auto-update.paused` exists, while another pass or a live update
    runs (their locks under `~/system-backups`), or while an update that stopped the daemon is
    unfinished (it pauses itself then: take that update up by hand, with the command its notes name).
-2. `git fetch origin main` in the check checkout. Nothing to do when it is the live checkout's HEAD.
-3. Refuses, and pauses itself, unless `main` descends from the live commit (a fast-forward).
+2. `git fetch origin refs/heads/<branch>` in the check checkout; no other branch is read. Nothing to
+   do when it is the live checkout's HEAD.
+3. Refuses, and pauses itself, unless `<branch>` descends from the live commit (a fast-forward).
 4. Waits `--settle` minutes (default 30) after the pass first saw the commit, so a quick revert can
    land first; and, with `--hours 02-06`, for 02:00 to 05:59 local time (`22-04` wraps midnight;
    default any time).
 5. Asks GitHub (`gh api`, signed in as `gh auth status` shows) for the commit's check runs and
    statuses. Every one must have completed with success. One still running, none yet, or no usable
-   `gh` is a wait; a failed one is a refusal until `main` moves on. Neither pauses.
+   `gh` is a wait; a failed one is a refusal until `<branch>` moves on. Neither pauses.
 6. Builds the target in the check checkout (`~/workspaces/system-live-check`, a worktree of the
    live repository, never `system-live`): `git checkout --detach`, `pnpm install
    --frozen-lockfile`, `pnpm build`.
-7. Runs that checkout's `scripts/live-update.sh <main> --from <live HEAD> --check-with
+7. Runs that checkout's `scripts/live-update.sh <branch's head> --from <live HEAD> --check-with
    ~/workspaces/system-live-check`: the dry run, then `--apply`. The [build
    stamp](../../packages/cli/README.md) tells the builds apart. A dry run that refuses (the live
    patch fails the target's `system check`, say), an update that stops or rolls back, or a target
    that does not build, pauses the timer.
 
-Each pass appends one line to `~/system-backups/auto-update/log`: `current`, `wait`, `refused`,
-`busy`, `paused`, `stopped` (it paused itself), or `updated`. A pass that built and ran the update
+Each pass appends one line to `~/system-backups/auto-update/log`, `<time> origin/<branch> <kind>:
+<detail>`, the kind one of `current`, `wait`, `refused`, `busy`, `paused`, `stopped` (it paused
+itself), or `updated`. The pause file's notes name the branch too. A pass that built and ran the update
 writes its output next to it (`<time>-<sha>.out`); the update's own notes are in its
 `~/system-backups/<date>-before-base*/` directory.
 
 **What it never does.** It never changes the profile's patch (`--patch` is never passed: a target
 that needs a new patch stops at the dry run, and you update to it [by
 hand](#update-the-live-install-from-e218ae7-to-the-base-release)). It never updates to a commit
-that is not a fast-forward of the live one, on a red or pending CI, or while paused. It never stops
+that is not a fast-forward of the live one, to a branch other than `--branch`'s, on a red or
+pending CI, or while paused. It never stops
 the daemon but by `systemctl --user stop system.service`, whose `ExecStop` drains, and never kills
 it.
 
@@ -1642,6 +1798,18 @@ until then every dry run refuses, and the first pass pauses itself):
    && systemctl --user enable --now system-auto-update.timer` (and `loginctl enable-linger`).
 4. Run a pass now and read its line: `systemctl --user start system-auto-update.service; tail -n 1
    ~/system-backups/auto-update/log`.
+
+**Follow dev.** To keep the live install on `dev` (the operator integrates
+there, 2026-10-25), give the timer's service `--branch dev`, with the steps above:
+
+1. In step 1, `git -C ~/workspaces/system-live fetch origin dev` (and add the check worktree at
+   `origin/dev` if it is new). The live commit must be an ancestor of `dev`, or the first pass
+   refuses and pauses itself (not a fast-forward): update to `dev` [by
+   hand](#update-the-live-install-from-e218ae7-to-the-base-release) first if it is not.
+2. In `system-auto-update.service`: `ExecStart=%h/workspaces/system-live-check/scripts/live-auto-update.sh --branch dev`.
+3. `systemctl --user daemon-reload`, run a pass, and read its line: it names `origin/dev`.
+
+Back to `main` the same way, without `--branch` (once `main` descends from the live commit).
 
 The daemon an update restarts is `system.service`'s, with the unit's environment file, whatever
 this timer's environment is. The dry run checks that file against the target's profile (`system
@@ -1984,9 +2152,12 @@ ever starts work ([board](../design/board.md#what-ends-an-input-wait)).
 ## Accept or reject a review
 
 A board task reaches review when the run that served an attempt submits its result. Under the
-bundle's studio policy every `workspace-write` task stops here for you: the policy requires `tests`
-and `lint`, the engine reports only the checks it ran itself (`schema`, `review`), so the board
-holds the review for the operator ([board](../design/board.md#required-checks-bind-at-acceptance)).
+bundle's studio policy a `workspace-write` task stops here for you unless its run passed `tests`
+and `lint` itself: the policy requires them, and the engine reports only the checks it ran itself
+(`schema`, `review`, and the required checks it ran on the result's tree with the commands you
+configured: [let a run pass the required checks](#let-a-run-pass-the-required-checks)), so the
+board holds the review for the operator while one is pending
+([board](../design/board.md#required-checks-bind-at-acceptance)).
 A task of a class that needs no check (`read`) or that the policy asked about before its attempt
 is accepted by the engine's own decision and never shows here. A run whose own check failed is
 rejected by the engine as another attempt, also without you.
@@ -2000,8 +2171,8 @@ rejected by the engine as another attempt, also without you.
 2. Read the result: the run's page, `system artifact <artifact id>` for an answer, and for a
    `git-head` subject the run's worktree, which is that exact tree
    ([worktree](#a-runs-worktree)). Run the pending checks there yourself: **your Accept applies
-   whatever is pending**, since nothing else has run them.
-3. Add a note if you like, then press **Accept** or **Reject**. The page sends the exact subject it
+   whatever is pending**, since nothing else has run them on that tree.
+3. Add a note if you like, then press **Accept** or **Send back**. The page sends the exact subject it
    showed. A result that changed since, or a task no longer in review, is refused (`409`), nothing
    is decided, and an alert at the top of the page says why; it stays until you dismiss it.
 4. What happens:
@@ -2110,7 +2281,8 @@ about is denied, nothing is queued, and the agent goes on without it
 Where it shows:
 
 - A run for a board task waits: its step is `BLOCKED` on the request, the run's view says
-  `blocked: tool-call` with the request and until when, and the task stays `running`, its
+  `blocked: tool-call` with the request and until when (for a `command` call at most
+  `deferredCommandMinutes`, 10 by default, after it was asked; otherwise the request's expiry), and the task stays `running`, its
   attempt not spent (`system result <runId>` returns at once and says so; the run's page on `/ui`
   links the request; `system explain <runId>` shows the step's `recovery` decision `wait`, rule
   `workflow.deferred-call`). It counts against `maxWaitingRuns`, not `maxActiveRuns`.
@@ -2137,12 +2309,27 @@ To approve:
      approval the waiting step runs again as a new attempt in its session, with a line saying the
      call was approved, and the call runs once (a `recovery` decision `continue`, rule
      `workflow.approved-call`, and a `workflow.run.continued` event naming the request). The task's
-     attempt goes on to its result. A deny, or no verdict by the request's expiry, ends the step as
-     `call_rejected` or `call_expired` (`USER_ACTION`, which notify tells as `run.user-action`): the
-     run fails, its report is an attempt the board counts, and the task goes through the gate for
-     its next attempt (or waits for input, `retries-spent`, with none left). Stopping the run, or
-     any other end of the attempt, withdraws every request its Workers left open, so an approval
-     given later runs nothing;
+     attempt goes on to its result. A deny, no verdict by the request's expiry, or, for a
+     `command` call, no verdict within `deferredCommandMinutes` (10; the engine then withdraws the
+     request) denies that call alone: within `approvalPollSeconds` the step runs again in its
+     session, told the call was denied and why, the gate denies that exact call there (the agent's
+     tool result is the denial), and the Worker goes on without it (a `recovery` decision `deny`,
+     rule `workflow.deferred-call`, cause `rejected`, `expired`, `withdrawn`, `bound`, or `late`
+     for an approval you gave after that deadline while the engine was down, and a
+     `workflow.run.continued` event with `denied: true`). Nothing of the call runs, then or later
+     in that session, even once you list its command or a later attempt continues the session:
+     the gate reads that denial from its own row of the request (`agent_tool_requests.denied_at`),
+     not from the event, which event-log retention may drop. The attempt
+     ends only when the policy now forbids the call's class, or on an approval that is not for
+     exactly that call: the step fails `call_rejected` or
+     `call_expired` (`USER_ACTION`, which notify tells as `run.user-action`), the run's report is
+     an attempt the board counts, and the task goes through the gate for its next attempt (or
+     waits for input, `retries-spent`, with none left). Stopping the run, or any other end of the
+     attempt, withdraws every request its Workers left open, so an approval given later runs
+     nothing. To wait for your verdict as long as the request lives, set the workflow's
+     `deferredCommandMinutes` to 0. To let a command run unasked, add its exact argv to the studio
+     policy's commands list ([change the autonomy policy](#change-the-autonomy-policy)); each
+     Worker that may run commands is told the list's lines with every turn's prompt;
    - a run outside a board task continues by itself: within `approvalPollSeconds` (15 s) of your
      approval the engine reopens the failed step as a new attempt in its session, with a line
      saying the call was approved, and the call runs once. It is a `recovery` decision (rule
@@ -2303,8 +2490,8 @@ It only proposes: nothing changes until you approve its request, like any
 
 Only a Worker with a `pool` is metered ([agent Workers](../../packages/plugins/agent-workers/README.md)).
 The bundle's `resources` row configures no pool, so until you configure one a Worker that names a
-pool is unavailable, and one that names none is never limited. A pool with two rolling windows,
-and a Worker that draws on it:
+pool is unavailable, and one that names none is never limited. A pool with a rolling window, and a
+Worker that draws on it (a Claude Code account is judged by its five-hour window only, D70):
 
 ```yaml
 - id: resources
@@ -2316,12 +2503,11 @@ and a Worker that draws on it:
         unknown: available        # a window with no reading yet leaves the pool open
         windows:
           - { id: five-hour, kind: rolling, seconds: 18000 }
-          - { id: seven-day, kind: rolling, seconds: 604800 }
 - id: agent-workers
   config:
     workers:
       - { id: claude-dev, runtime: claude-agent-sdk, workspace: /home/me/project, sandbox: workspace-write, tier: standard,
-          pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          pool: max.agents, account: max, windows: { five_hour: five-hour } }
 ```
 
 Without `unknown: available`, a window nobody has read yet fails the pool closed, and a closed pool
@@ -2383,22 +2569,36 @@ that reported no numbers has no record, and a crashed run has none until a trans
 ## Usage the ledger could not count
 
 Seen as `system health` showing `usage  degraded  max.agents: 2 run(s) in its current window (the
-last 7d) whose usage the ledger could not count (1 not-reported, 1 refused)…`, as `usage unknown
-(<why>)` on a step in `system usage`, or in the report's resources and `Not counted` lines.
+last 7d) whose usage the ledger could not count (1 not-reported, 1 refused) — arun_… on agent:…
+(refused): <why> | arun_… on agent:… (not-reported, a lower bound counted): <why>…`, as `usage unknown
+(<why>)` on a step in `system usage`, in the report's resources and `Not counted` lines, or as a
+refused `budget` decision whose reason starts `cap of <pool> cannot be held: run <run> … has usage
+the ledger could not count`. Health names the latest three runs of each pool, each with its Worker
+and why in plain words: how it ended (completed, stopped by you, past its timeout, stopped by the
+host's stop or a drain at restart, at a call that waits for an approval request) and what its
+runtime reported.
 
-The ledger counted no usage record for those runs, so every cap (a board task's budget lines)
-counts them as 0, and the tokens and cost the report gives are lower bounds. They are not refused:
-you chose to count them as 0 and see them (D25); failing closed for metered pools waits for
-transcript reconciliation ([resources](../design/resources.md#usage-the-ledger-cannot-count)). A
-pool's availability is unaffected: it comes from limit readings, not records.
+The ledger counted no usage record for those runs, or only a lower bound of one (`a lower bound
+counted`), so the tokens and cost the report gives are lower bounds. A cap never counts them as 0
+(INV-2, [ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md)):
+any reservation whose budget lines cap that pool for the run's board task, or its project, is
+refused, for every pool kind, so the task's next step does not start and the task is blocked. Funding
+the task does not help: the cap is refused for what it cannot count, not for what it holds. A pool's
+availability is unaffected: it comes from limit readings, not records.
 
 1. **Read them.** `system events --type usage.unknown`: each entry's `data` names the run
    (`runId`), Worker, pool, account, board task, how it ended, `kind`, and `reason`; the entry's own
    `runId` is the workflow run (`system explain <it>`).
 2. **Act on the kind:**
-   - `not-reported`: the runtime gave neither tokens nor turns. A runtime that reports none (the
-     Codex and ACP runtimes today, [metering](../design/agent-runtimes.md#metering)) makes every run
-     of its Worker one: give its tasks `runs` budget lines rather than `tokens` or `usd`.
+   - `not-reported`: the run ended without its runtime's final count. Its `reason` says how: most
+     often it was stopped (by you, its timeout, or the host's stop) or stopped at a deferred call
+     before Claude Code sent its result message, or before Codex completed a turn. With `partial`,
+     the ledger counted what the runtime reported while it ran (`system artifact <data.partial>`
+     shows that record): a lower bound, the response or turn in flight left out. Without it, the
+     runtime gave no number above 0. A runtime that reports no usage on a run that completes (the
+     Codex and ACP runtimes today, [metering](../design/agent-runtimes.md#metering)) makes every
+     completed run of its Worker one: give its tasks no `tokens` or `usd` lines for that pool. A
+     run that keeps ending at its timeout needs a larger `runTimeoutMs` or a smaller task.
    - `interrupted`: the host stopped while the run ran. Its usage comes from its transcript once
      transcript reconciliation exists.
    - `refused` with `failure: unknown-pool`: the Worker's `account` is not the account the
@@ -2413,11 +2613,17 @@ pool's availability is unaffected: it comes from limit readings, not records.
      `pool` and restart. The line stays until the ledger counts a record of those runs, or their
      entries are older than every configured pool's longest window (kept until retention removes
      them while a pool has a window of no length).
-3. **Until it clears,** read the provider's own usage for that account (its status line or usage
-   page) before funding a task of that pool, since its budget counted those runs as nothing.
+3. **A task its cap now refuses** has two ways out: wait until the ledger counts a record of the
+   run (transcript reconciliation, once it exists; the run's own lower bound never counts), or
+   cancel the task and file it again without a budget line on that pool (read the provider's own
+   usage for that account first, its status line or usage page, to decide the new task's lines).
+   A refusal that says no event log is loaded, or that an entry is not a valid record, or that
+   more than 10,000 entries are kept, is about the host: load the `eventLog` row, or report the
+   entry.
 
-The check clears once the runs fall out of the pool's longest window, or once the ledger counts a
-record of each. A pool with a window of no length (a credit balance) keeps them until the event
+The health check clears once the runs fall out of the pool's longest window, or once the ledger
+counts a record of each other than the lower bound its fact names (that one never clears it). A
+cap's refusal does not clear with the window: it lasts until the run is reconciled. A pool with a window of no length (a credit balance) keeps them until the event
 log's retention removes the entries. A fact that could not be recorded at all is only in the
 daemon's log (`the usage of <run> on <Worker> (pool <pool>) is unknown (…), and that could not be
 recorded`).
@@ -2522,7 +2728,7 @@ engine did), the system lands it in the repository the Workers work in
    task under **Waiting for you** as **Accepted — waiting to merge into main: approve**, linked to
    the request (`/ui/?request=<id>`). It waits the policy's wait for `merge` (a day in the studio
    policy); unanswered, it counts as denied.
-3. **Approve: merge it.** Within `approvalPollSeconds` the branch is merged into the checked-out
+3. **Approve** merges it. Within `approvalPollSeconds` the branch is merged into the checked-out
    branch of the repository as one merge commit by the system (`git -C <repository> log -1`), and
    the card says **Accepted and merged into main as <commit>**. Nothing is pushed: push it yourself
    when you want it on the remote (`git -C <repository> push origin main`). **Deny** merges nothing:
@@ -2536,7 +2742,10 @@ has the `workflow.landing` decisions under the run's last step):
   branch as it is now. Commit or stash your changes, then approve the new request.
 - **A conflict:** the merge is aborted and the repository is as it was. Merge by hand:
   `git -C <repository> merge system/run/<runId>`, resolve, commit. Or reject the work and run the
-  task again on the new base.
+  task again on the new base. A conflict only in files the repository declares generated is
+  regenerated and merged instead ([regenerate generated files on a landing](#regenerate-generated-files-on-a-landing));
+  the message then says why it was not (another file conflicts, or a command failed or changed
+  another file).
 - **The repository has no branch checked out** (a detached HEAD), or another branch than the one
   asked about: check out the branch to merge into, and merge by hand.
 - **A run of it may still write the worktree** (it ended without being known to be gone): the commit
@@ -2546,6 +2755,92 @@ has the `workflow.landing` decisions under the run's last step):
 
 The repository's checkout is written only here, by a merge you approved at the exact SHAs shown.
 Never a force, a reset, a branch deletion, or a push.
+
+## Let System start ready work
+
+System asks to start ready board tasks by itself, each on a free Worker chosen by quota, and starts
+one only on your **Approve**
+([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
+[ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)). It is
+on by default (`dispatch.enabled`), and the studio policy asks for `dispatch` (its `default: ask`).
+Where you let it, it starts with no button at all:
+[set dispatch to auto for a project](#set-dispatch-to-auto-for-a-project).
+A Worker is free only when its account's quota is read and has room above your reserve, so it
+chooses none until:
+
+1. **Each account's windows are read**: pool templates for the agent runtimes and their window
+   names, as in [read each account's quota](#read-each-accounts-quota). A Worker whose account has
+   no pool, no reading, or a reading older than `quota.staleReadingSeconds` (30 min) is never free.
+2. **The quota settings suit you** (the `resources` row's `quota`): `reservePercent` (default 20) of
+   every window stays yours: System starts nothing that would draw into it, though a run that
+   crosses into it keeps going. A value out of its range refuses the row with its path.
+3. **The bounds suit you** (the `workflow` row's `dispatch`): at most `maxPerPass` (2) asks or
+   starts a pass (every `sweepSeconds`, 60), `maxOpenAsks` (4) waiting for you, one run per account
+   (`maxRunningPerAccount`), two per project, four per repository, eight in all, four of
+   `maxActiveRuns` kept for you and the lead (`leaveRunsFree`), and at most `maxPerHour` (6) starts in
+   any rolling hour, `maxPerHourPerProject` (3) in one project. `system check` names a value out of
+   its range.
+
+Then, on Home, **Starts awaiting approval** lists each start: the task, its attempt, the Worker, each
+window of its account (`5 h · used 12 % · reserve 20 % · resets 14:20`), and, folded, why that Worker.
+**Approve** starts it at the next pass (within a minute), on that Worker, while the task is
+still ready and the Worker free; past `approvedHoldMinutes` (30) waiting for the Worker, the
+approval is used for nothing and System asks again. **Deny**, or no answer by its expiry, and System
+does not ask again for that attempt: start it from the Board when you want it. A task the board's
+gate asked you about already (its class asks, and you approved the attempt) starts without a second
+button.
+
+- **Why did it not start my task?** `system dispatch` (or Home's *Why the ready tasks did not start
+  at the last look*) gives each ready task's reason at the last pass: a bound reached, the policy, no
+  free Worker (each Worker with why: busy, no reading, stale, at your reserve, metered), an ask
+  already open, a denied attempt. A task that names no template is never dispatched: start it with
+  a template.
+- **Why that Worker?** `system explain <runId>` on the run lists `dispatch.select`,
+  `dispatch.choice` (every Worker with its quota keys or why it lost), and the policy's verdict
+  first; the request's summary and `system dispatch` say it in one line.
+- **Not at all, or not in one project**: `dispatch.enabled: false` (a restart), a policy rule
+  `dispatch: forbid` (the studio's, or a project's, through [a policy change](#change-the-autonomy-policy)),
+  or [a pause](#pause-and-resume-dispatch), entirely or of one project.
+- **Metered pools** (an API key) are never chosen.
+
+### Set dispatch to auto for a project
+
+Under `auto`, System starts a chosen ready task's attempt **with no request**: nothing enters the
+queue, and the start is recorded (the `dispatch.select` and `dispatch.choice` decisions, every Worker
+with why, and the policy's `autonomy` decision) and listed on Home under **Started by itself**, one
+line each with its run's state as a chip. Under `notify` it does the same and also tells you (a
+`dispatch.started` notice, when [notifications](#get-notified) are on). Every bound above still
+holds, the hourly ones included, and nothing it starts lands without your `merge` approval.
+
+The effective mode is the strictest of the studio policy and the project's, so `auto` for project
+`p1` only takes two rules, each through [a policy change](#change-the-autonomy-policy):
+
+1. **Keep the other projects asking first.** For each other active project, a project policy (or its
+   existing one, its `version` raised) with the rule `{ actionClass: dispatch, mode: ask }` (or
+   `forbid`), `narrows` the studio policy's `id`. Approve each `policy-change` request.
+2. **Let the studio allow it.** The studio policy's rules gain `{ actionClass: dispatch, mode: auto }`
+   (or `notify`), its `version` raised. A project with no rule of its own for `dispatch` now takes
+   `auto`; one that says `ask` still asks.
+3. **Verify:** the **Autonomy policy** page (or MCP `approvals_policy` with `projectId`) shows
+   `dispatch` effective `auto` for `p1` and `ask` for the others. At the next pass (within
+   `sweepSeconds`), `system dispatch` lists what it started (`started by itself (auto)`) and the
+   hour's starts in its bounds line.
+4. **Start small:** `maxPerHour: 2` on the `workflow` row's `dispatch` for the first day (a restart),
+   as the proposal's live plan says. `system dispatch pause --project p1` stops it at once.
+
+To go back, a policy change returning the studio rule to `ask` (or removing it): open asks are kept,
+and nothing more starts without your button. A run already started is a run like any other:
+`system stop <runId>` ends it.
+
+### Pause and resume dispatch
+
+`system dispatch pause [--project <id>] [reason…]` (MCP `dispatch_pause`, with `projectId`) stops
+dispatch at once, entirely or in that project only: its open asks there are withdrawn from the
+queue, approved ones not yet started are used for nothing, and nothing more is asked or started by
+itself there; your own and the lead's starts go on. It holds across restarts.
+`system dispatch resume [--project <id>]` (MCP `dispatch_resume`) lets the next pass run at once.
+Each is recorded as your decision (`gate`, rule `dispatch.pause`); `system dispatch` and Home say
+since when and why, and a paused project's ready tasks say it is paused.
 
 ## A task's next attempt starts from the previous attempt's work
 
@@ -2557,7 +2852,7 @@ before failed only after its writing step completed, for a reason that says noth
 timeout), no review judged the change, and the task writes a commit the change is on
 ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work),
 [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md),
-proposed: the carry is on by default, pending the operator's acceptance (D59)).
+accepted 2026-10-25, D59).
 Nothing is asked of you: the board decides and counts the attempt as always.
 
 1. **Read why.** `system explain <runId>` lists, among the run's own decisions, the
@@ -2706,3 +3001,137 @@ When a run fails at start (`config_error`, nothing sent to the agent), its messa
 
 A setup that ran is not run again in that worktree while its definition is unchanged; change the
 setup and every worktree is set up again before its next run (and asked about again).
+
+## Let a run pass the required checks
+
+The studio policy requires `tests` and `lint` of a `workspace-write` result. A run passes them only
+by running them itself, on the exact tree its result is on, with the commands you configure for the
+repository; a Worker that says it ran them does not count. Then a result whose checks pass and
+whose review approved is accepted without you (its landing still asks you to merge it), and one
+whose check fails goes back as another attempt
+([a run's required checks](../design/workflow-engine.md#a-runs-required-checks),
+[ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)). Without this,
+every such result waits for you in **Reviews** with `tests, lint` pending.
+
+1. **The setup first.** The checks run in the environment the repository's setup prepares, in its
+   confinement (no network) and views: [set up a run's worktree](#set-up-a-runs-worktree).
+2. **The commands**, beside the setup in the `agent-workers` row of your profile patch. For the
+   `system` repository:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       worktreeSetup:
+         - repository: /home/me/src/system
+           commands: [ ... ]            # the setup, unchanged
+           views: [ ... ]
+           checks:
+             tests: corepack pnpm test:affected
+             lint: corepack pnpm lint
+           checkTimeoutSeconds: 1800    # each check's deadline; at most 3600
+           checkScratch: [node_modules/.vite]   # vitest's cache: the rest of the worktree is read-only to a check
+   ```
+
+   Each is a command line as the policy matches it: words split on single spaces, no shell
+   metacharacter, at most 200 characters. Only `tests`, `typecheck`, and `lint` can be named. The
+   checks are not part of the setup's hash: adding them sets no worktree up again. A check sees the
+   worktree read-only; `checkScratch` names the git-ignored paths it writes (a cache), each a fresh
+   private directory for it, discarded after it.
+3. **The policy.** A check runs only when the policy lets its exact argv run unasked: list each
+   line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy));
+   a line already listed for the validation step is enough. A check whose command would ask is not
+   run, and stays pending: nothing is put to you for it.
+4. `system check`, then restart. After the next run's last step, `system explain <runId>` shows
+   its acceptance with `the checks it ran: review passed, tests passed, lint passed` (or which
+   failed), and `system artifact <evidence id>` (among the decision's inputs) shows each check's
+   command, exit code, duration, and the end of its output.
+
+What a check that did not pass means:
+
+| The acceptance says | Do |
+|---|---|
+| `the run's own lint check failed on git-head …` | nothing: the task goes back as another attempt, as for a rejecting review. The evidence shows what the command printed |
+| `its tests check did not run to an exit code on the result (no command for the tests check is configured …)` | add the command (step 2); until then the check stays pending and the result waits for you |
+| `… (the autonomy policy asks the operator about its command …)` | list the command (step 3) |
+| `… (the worktree … was not set up under … setup as loaded now …)` | the setup changed after the worktree was made, or never ran there: the next attempt's worktree is set up again |
+| `… did not finish within 1800 s` | raise `checkTimeoutSeconds`, or find what hangs |
+| `the run's own tests check failed …`, its output naming `EROFS` (a read-only file system) | the command writes into the worktree, which a check sees read-only: name the git-ignored path it writes (a cache under `node_modules/`) in `checkScratch` |
+| `… its check scratch … is not ignored by git, or holds a tracked file` | a scratch path must be ignored by git: add it to `.gitignore`, or name another |
+| `… was not started by the confinement (an infrastructure failure …)` | bubblewrap refused, or the command is not installed for the daemon: the result waits for you; fix the host, then accept by hand |
+| `… and reported a nested bubblewrap refused (…)` | the check's own suite reported (on `SYSTEM_CHECK_REPORT_FD`) that the checks' confinement refused the nested bubblewrap it needed: the result waits for you. A suite that does not report it has the refusal judged a failed check |
+| `… recorded no end (the daemon stopped meanwhile) …` or `… was stopped before its end (a stop or a lost lease of the run) …` | a restart or a stop interrupted that check; it is not run again on this tree: decide by hand, or the next attempt runs it on its own tree |
+| `… left the worktree as git:…, no longer git:…` | the tree changed while the check ran, though it is read-only to the check: something else wrote it; check the worktree |
+| `… did not run: source agents refused (busy) …` or `(moved)` | an agent run of the workflow run had not ended, or the tree changed after the last step: the result waits for you; check its worktree |
+
+A pending check is never failed: the review waits for you as before, and your Accept applies it.
+
+## Regenerate generated files on a landing
+
+With several tasks running on one repository at once, an accepted result's merge often conflicts
+only in files the repository generates (`system`: the traceability matrix, the configuration
+reference, the packages list, the plugin manifests), which every change regenerates. Declare them,
+and such a landing makes them again instead of refusing
+([landing a worktree](../design/agent-runtimes.md#landing-a-worktree), T166). The merge still
+happens only on your approval of its `merge` request.
+
+1. **The setup first.** The commands run in the run's worktree, in the environment the repository's
+   setup prepares and in its confinement (no network): [set up a run's worktree](#set-up-a-runs-worktree).
+2. **The generated files and their commands**, beside the setup in the `agent-workers` row of your
+   profile patch. For the `system` repository:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       worktreeSetup:
+         - repository: /home/me/src/system
+           commands: [ ... ]            # the setup, unchanged
+           views: [ ... ]
+           generated:
+             paths:
+               - docs/validation/traceability.md
+               - docs/reference/configuration.md
+               - docs/architecture/packages.md
+               - packages/*/plugin-manifest.json
+               - packages/plugins/*/plugin-manifest.json
+             commands:
+               - corepack pnpm gen:manifests
+               - corepack pnpm gen:reference
+               - corepack pnpm gen:packages
+               - corepack pnpm gen:traceability
+   ```
+
+   `paths`: 1 to 32 paths relative to the repository; a `*` stands for any characters within one
+   path segment (never a `/`), so `packages/*/plugin-manifest.json` is each package's manifest and
+   not a deeper one. `commands`: 1 to 16 command lines as the policy matches them (words split on
+   single spaces, no shell metacharacter, at most 200 characters), run in the order given. Neither
+   is part of the setup's hash: declaring them sets no worktree up again.
+3. **The policy.** A command runs only when the policy lets its exact argv run unasked: list each
+   line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy)).
+   One that would ask is not run, and the landing is refused, nothing put to you for it.
+4. `system check`, then restart.
+
+What a landing then does with a conflict: the repository's merge is aborted, as always, so its
+checkout is as it was. When every conflicted file is one of `paths`, the merge is made again in the
+run's worktree (detached at the approved base, the run's branch merged without a commit), each
+conflicted file taken from either side, and the commands run there. Only when they all exit 0 and
+change no file but the declared ones is the merge committed (one merge commit of the base and the
+run's head, by the system, with the landing's message), and only when the commands, run again on it,
+change nothing (the same tree on a repeat) is your branch fast-forwarded to it, still at the approved
+base and clean. The worktree is put back on its branch either way. `system explain <runId>` shows
+the merge decision naming the regenerated files and the commands, with their autonomy decisions
+among its inputs.
+
+When it is refused (the card says **Accepted — not merged:**, the reason ending "…and they were not
+regenerated: <why>; the repository is as it was", or naming the files that are not declared):
+
+| The reason says | Do |
+|---|---|
+| `of which <file> is not declared generated` | a real conflict: merge by hand, or reject and run the task again on the new base |
+| `the generated files' command n (…) exited with code c. Its output ended: …` | read the output: the merged sources may not build. Merge by hand and fix |
+| `the commands (…) changed <file>, which is not declared generated` | a command writes a file outside `paths`: declare it, or make the command write only the declared ones. A file it made is left untracked in the run's worktree |
+| `the commands (…) changed <file>, which git ignores` | a command writes an ignored file (a cache, a local configuration): make it write only the declared ones, or run it without that side effect |
+| `is not on <branch>, and it is left as it is: …` | the run's worktree was moved off its branch or holds uncommitted work; nothing of it was touched. Look at it, commit or remove what is yours, put it back on its branch, and approve the merge again, or merge by hand |
+| `a repeat of the commands changed <file> again` | a command is not deterministic (a date, an order): fix it so the same sources give the same file |
+| `the autonomy policy asks the operator about the generated files' command n` | list the command (step 3), then merge by hand or run the task again |
+| `was not set up under …'s setup as loaded now` | the setup changed after the run's worktree was made: merge by hand |
+| `the worktree … was removed` | the retention removed the run's worktree, where the commands run: merge by hand |

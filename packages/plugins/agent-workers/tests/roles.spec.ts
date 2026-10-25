@@ -15,6 +15,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
 import type { PoolTemplate } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
@@ -205,18 +206,22 @@ describe('Workers = account × role: derivation (ADR-0051)', () => {
   })
 
   it('checks a row as its load does, before a host starts on it (system check): the operations examples pass, a disagreement on worktreePerRun, a bad kind, or a setup no worktree runs does not (D36, ADR-0057, ADR-0058)', () => {
-    const rowOf = (file: string): Record<string, unknown> => {
+    const rowOf = (file: string, id = 'agent-workers'): Record<string, unknown> => {
       const rows = parseYaml(readFileSync(fileURLToPath(new URL(`../../../../docs/operations/examples/${file}`, import.meta.url)), 'utf8')) as Array<{ id: string; config: Record<string, unknown> }>
-      return rows.find((r) => r.id === 'agent-workers')!.config
+      return rows.find((r) => r.id === id)!.config
     }
     for (const file of ['live-base.patch.yml', 'work-kinds.patch.yml']) {
       expect(checkConfig(rowOf(file)), file).toEqual([])
       expect(() => AgentWorkers.Config(rowOf(file) as never), file).not.toThrow()
     }
-    // D36: one writing Claude Code Worker on the system repository, given source-code work, and every
-    // Worker on that workspace in a worktree per run.
+    // D36: one writing Claude Code Worker on the system repository, given every change to it (the
+    // operator's request of 2026-10-25), one Codex Worker given the validation alone, and every
+    // Worker on that workspace in a worktree per run; the profile row writes out the shipped kinds.
     const workers = rowOf('work-kinds.patch.yml').workers as AgentWorkerConfig[]
-    expect(workers.filter((w) => w.sandbox === 'workspace-write').map((w) => [w.id, w.runtime, w.kinds])).toEqual([['claude-code', 'claude-agent-sdk', ['code']], ['codex-writer', 'codex-sdk', ['docs', 'tests']]])
+    expect(workers.filter((w) => w.sandbox === 'workspace-write').map((w) => [w.id, w.runtime, w.kinds])).toEqual([['claude-code', 'claude-agent-sdk', ['code', 'docs', 'tests']], ['codex-writer', 'codex-sdk', ['validation']]])
+    const profile = rowOf('work-kinds.patch.yml', 'profile-software-development')
+    expect(SoftwareDevelopment.checkConfig(profile)).toEqual([])
+    expect(SoftwareDevelopment.Config(profile as never)).toEqual({ kinds: SoftwareDevelopment.DEFAULT_KINDS })
     const system = workers.filter((w) => w.workspace === '/home/tan/workspaces/system')
     expect(system.every((w) => w.worktreePerRun === true)).toBe(true)
     // T99 D5: a digest asks for a read-only Worker on the economy tier only, never one of the

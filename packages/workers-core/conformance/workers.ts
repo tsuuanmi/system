@@ -324,6 +324,32 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('runs a run\'s checks through the source that holds its worktree, with its name; none holding it is undefined, and a source that throws is a refusal, never a check passed (T151, INV-2)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional on the seam; a provider that offers it holds to the rule.
+        if (typeof ctx.workers.check !== 'function') return
+        const step = (workspace: string) => ({ runId: 'run_1', workspace, subject: { ref: 'a'.repeat(40), version: 'b'.repeat(64) }, checks: ['tests' as const, 'lint' as const], classification: 'local-private' as const })
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b')], {
+          check: async (s) => s.workspace === '/wt/two'
+            ? { outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0, reason: 'exited 0' }, { check: 'lint', outcome: 'failed', exitCode: 1, reason: 'exited 1' }], evidence: `sha256:${'c'.repeat(64)}` }
+            : undefined,
+        }))
+        ctx.workers.register(source('broken', [worker('w:c')], {
+          check: async (s) => {
+            if (s.workspace === '/wt/broken') throw new Error('the store failed')
+            return undefined
+          },
+        }))
+        expect(await ctx.workers.check(step('/wt/two'))).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed' }, { check: 'lint', outcome: 'failed' }], source: 'two' })
+        expect(await ctx.workers.check(step('/wt/nobody'))).toBeUndefined()
+        expect(await ctx.workers.check(step('/wt/broken'))).toMatchObject({ outcome: 'refused', cause: 'failed', source: 'broken', reason: expect.stringMatching(/could not run the checks of run run_1 in \/wt\/broken: the store failed/) })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('lists the runs whose liveness needs a look from every source that tells it, and never reads a source that cannot tell as having none (PROP-0013, INV-2)', async () => {
       const { ctx, dispose } = await boot()
       try {
@@ -612,6 +638,56 @@ export function workersConformance(name: string, boot: Boot): void {
       }
       // The same Worker, the same decision artifacts (their content ids), and the same refusals.
       expect(await chosen(accounted)).toEqual(await chosen(plain))
+    })
+
+    it('lists every Worker with the checks route would fail it on, the assigned-account hold included, reserving nothing and deciding nothing (PROP-0014, REQ-WRK-12)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        // Optional: a provider without it leaves a caller unable to look before it routes.
+        if (!ctx.workers.candidates) return
+        const later = new Date(Date.now() + 3_600_000).toISOString()
+        const proves = ['reason', 'develop']
+        const pending = new Map<string, number>()
+        const listed = [
+          worker('w:g-a', { ...account('a', 'g'), proves, cooldowns: [{ capability: 'develop', until: later }] }),
+          worker('w:g-b', { ...account('b', 'g'), proves }),
+          worker('w:h-c', { ...account('c', 'h'), proves, load: { running: 0, queued: 0, pending: 0, slots: 1 } }),
+          worker('w:plain', { proves: ['reason'] }),
+        ]
+        ctx.workers.register(source('pool', async () => listed.map((w) => (w.load ? { ...w, load: { ...w.load, pending: pending.get(w.worker) ?? 0 } } : w)), {
+          reserve: (id) => {
+            pending.set(id, (pending.get(id) ?? 0) + 1)
+            return () => pending.set(id, pending.get(id)! - 1)
+          },
+        }))
+        const develop = requirement({ capabilities: proves })
+        const decisions = ctx.artifacts.list({ kind: 'decision', limit: 1000 }).length
+        const looked = await ctx.workers.candidates(develop)
+        expect(looked.workers.map((c) => [c.worker.worker, c.source, c.failed.map((f) => f.check)])).toEqual([
+          ['w:g-a', 'pool', ['cooldown']], ['w:g-b', 'pool', ['assignment']], ['w:h-c', 'pool', []], ['w:plain', 'pool', ['capability']],
+        ])
+        expect(looked.workers.find((c) => c.worker.worker === 'w:g-b')!.failed[0]!.reason).toBe(`w:g-a is at its limit until ${later}; assigned accounts do not take another account's work at its limit`)
+        expect(looked.unheard).toEqual([])
+        // Routing's own order after tier: every quota class once, the requirement's preference first.
+        expect(new Set(looked.order.quota)).toEqual(new Set(['subscription-chat', 'local', 'agent-plan', 'metered']))
+        expect((await ctx.workers.candidates(requirement({ budget: { preferQuota: ['metered'] } }))).order.quota[0]).toBe('metered')
+        expect(looked.order.priority).toEqual([])
+        // The stored requirement, no decision, and no pending admission on any Worker.
+        expect(ctx.artifacts.get(looked.requirement)?.body).toEqual(develop)
+        expect(ctx.artifacts.list({ kind: 'decision', limit: 1000 })).toHaveLength(decisions)
+        expect([...pending.values()].filter((n) => n !== 0)).toEqual([])
+        // Route admits what it listed as admitted, with the same reasons for the others.
+        const admitted = await ctx.workers.route(develop)
+        expect(admitted.worker.worker).toBe('w:h-c')
+        const route = body(ctx, admitted.decisions.route)
+        for (const c of looked.workers.filter((x) => x.failed.length)) expect(route.candidates.find((r) => r.option === c.worker.worker)!.reasons).toEqual(c.failed.map((f) => f.reason))
+        admitted.release()
+        // Route options apply as they do to a route: a restriction refuses the others.
+        const restricted = await ctx.workers.candidates(develop, { restrict: { workers: ['w:g-b'], reason: 'only this one' } })
+        expect(restricted.workers.find((c) => c.worker.worker === 'w:h-c')!.failed).toEqual([{ check: 'restricted', reason: 'only this one' }])
+      } finally {
+        await dispose()
+      }
     })
 
     it('refuses an account below the schema version that carries it (capability-descriptor@1.5)', async () => {

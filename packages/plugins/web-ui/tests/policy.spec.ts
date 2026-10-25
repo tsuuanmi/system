@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
 import { type Booted, boot, bundlePolicies, OPERATOR } from './store-backed.ts'
+import { decisionsIn, descriptionOf } from './wording.ts'
 
 // A policy change end to end, through the web UI's API, over the store-backed approval queue and
 // board under the bundle's own default studio policy (docs/design/approvals.md#a-policy-change).
@@ -207,7 +208,7 @@ describe('web UI: the policy page in a real browser', () => {
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
     await expect.poll(() => page.getByRole('heading', { name: 'Autonomy policy' }).count()).toBe(1)
-    expect(await page.locator('main').innerText()).toContain('the configuration')
+    expect(await page.locator('main').innerText()).toContain('Active policy · Configuration')
     expect(await page.locator('main').innerText()).not.toContain('null')
     // The editor, folded under Advanced, holds the studio policy at the next version; the diff shows what changes.
     await page.getByText('Advanced: the record as JSON').click()
@@ -215,12 +216,18 @@ describe('web UI: the policy page in a real browser', () => {
     const draft = JSON.parse(await editor.inputValue()) as AutonomyPolicy
     expect(draft).toMatchObject({ id: 'studio-default', version: 2 })
     await editor.fill(JSON.stringify(merging('forbid'), null, 2))
-    // The form shows the record edited as JSON: merge, which always asks, is forbidden there, said so.
-    await expect.poll(() => page.getByRole('region', { name: 'Propose a change' }).getByRole('row', { name: /^merge/ }).innerText()).toContain('forbidden here (change it under Advanced)')
+    // The form shows the record edited as JSON: merge, which always asks, is Blocked there, said so.
+    const merge = page.getByRole('region', { name: 'Propose a change' }).getByRole('row', { name: /^merge/ })
+    await expect.poll(() => merge.innerText()).toContain('Blocked here; change it under Advanced')
+    expect(await merge.innerText()).toMatch(/^merge\s+Blocked\s/)
     await page.getByRole('button', { name: 'Show change' }).click()
     await expect.poll(() => page.locator('pre.diff .add').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "forbid"')]))
     expect(await page.locator('pre.diff .del').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "ask"')]))
     await page.getByRole('textbox', { name: 'Note for the proposed change' }).fill('no merges for now')
+    // Show change and Propose name what they do in their accessible description (T191).
+    expect(await decisionsIn(page.getByRole('region', { name: 'Propose a change' }))).toEqual([
+      { label: 'Show change', description: 'shows what your edit changes, below; proposes nothing' },
+      { label: 'Propose', description: 'asks for your approval; nothing changes until you approve it' }])
     await page.getByRole('button', { name: 'Propose', exact: true }).click()
     await expect.poll(() => page.locator('#status').innerText()).toContain('proposed pch-')
     const [request] = await booted.ctx.approvals.list()
@@ -229,16 +236,27 @@ describe('web UI: the policy page in a real browser', () => {
     // The queue entry shows the change it asks for, then the operator approves it there.
     await page.getByRole('link', { name: 'system' }).click()
     const queue = page.getByRole('region', { name: 'Approval queue' })
+    const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
+    // What a verdict does is under the card's Details (T186); Show change is beside the two verdicts, never folded.
+    await expect.poll(() => entry.locator('details.card-details > summary').count()).toBe(1)
+    await entry.locator('details.card-details > summary').click()
     await queue.getByRole('button', { name: `Show the change of ${request!.requestId}` }).click()
     await expect.poll(() => queue.getByText('studio: merge').count()).toBeGreaterThan(0)
     expect(await queue.innerText()).toContain('ask → forbid')
-    const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
     expect(await entry.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
-    await entry.getByRole('button', { name: 'Approve: put the change in force' }).click()
+    // Show change names what it does too, by itself: decisionsIn lists only described buttons (T191).
+    expect(await descriptionOf(entry.getByRole('button', { name: `Show the change of ${request!.requestId}` }))).toBe('shows what this request changes, below; decides nothing')
+    expect(await decisionsIn(entry)).toEqual([
+      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' },
+      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' }])
+    await entry.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
-    await expect.poll(() => page.locator('#outcome').innerText()).toContain('Recorded as your verdict on request ' + request!.requestId)
-    await page.getByRole('link', { name: 'Autonomy policy' }).click()
-    await expect.poll(() => page.locator('main').innerText()).toContain('In force: the change pch-')
+    await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request!.requestId)
+    expect(await page.locator('#outcome').innerText()).toContain('Approved: ')
+    await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: 'Autonomy policy' }).click()
+    await expect.poll(() => page.locator('main').innerText()).toContain('Active policy · Approved change')
+    // Which change, folded with the set's hash (T171).
+    expect(await page.locator('details', { hasText: 'Exact set' }).textContent()).toMatch(/The change pch-\S+ you approved, kept while the configuration it came from is unchanged\./)
   }, 60_000)
 
   it.runIf(canRunBrowser)('decides an asked change on the policy page itself: its card, with Approve and Deny, above the policy, and its history row linking to it (T95, T97)', async () => {
@@ -249,28 +267,45 @@ describe('web UI: the policy page in a real browser', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
-    const waiting = page.getByRole('region', { name: 'Changes waiting for your verdict' })
-    await expect.poll(() => waiting.innerText()).toContain('A change waits for your verdict')
-    // The state in words first, each mode explained; the set's hash folded.
-    expect(await page.locator('main').innerText()).toContain('In force: the configuration.')
-    expect(await page.locator('main').innerText()).toContain('ask: it waits for your approval on Home')
+    const waiting = page.getByRole('region', { name: 'Changes awaiting approval' })
+    await expect.poll(() => waiting.innerText()).toContain('Changes awaiting approval · 1')
+    // The state in two words first, each mode a chip, what each mode means folded; the set's hash folded (T171).
+    const main = await page.locator('main').innerText()
+    expect(main).toContain('Active policy · Configuration')
+    for (const mode of ['Automatic', 'Notify', 'Ask approval', 'Blocked']) expect(main, mode).toContain(mode)
+    expect(main).not.toContain('it waits for your approval on Home')
+    expect(await page.locator('details', { hasText: 'About modes' }).textContent()).toContain('Ask approval: it waits for your approval on Home')
     expect(await page.locator('details', { hasText: 'Exact set' }).getAttribute('open')).toBeNull()
     const card = waiting.locator('article', { hasText: `request ${request.requestId}` })
-    expect(await card.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
-    // The set's hashes are folded behind details and Exact subject: the card reads in words (T116).
+    // One line and two buttons (T186); what a verdict does, what it is about, and the set's hashes under its closed Details.
+    // A policy change's card keeps its diff one press away, beside the two verdicts (T186).
+    expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny', 'Show change'])
+    expect(await card.innerText()).not.toContain('If approved')
     expect(await card.innerText()).not.toContain(change.hash)
+    await card.locator('details.card-details > summary').click()
+    expect(await card.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
+    // The set's hashes are folded behind details: the card reads in words (T116).
     expect(await card.innerText()).toContain('the policy set this change would put in force')
     await card.getByText('details', { exact: true }).click()
     expect(await card.innerText()).toContain(change.hash)
-    // The history row says it waits, and its link takes the focus to that card.
-    await page.getByRole('link', { name: 'waiting for your verdict' }).click()
+    // The history row says it waits, its id behind a copy button, and its link takes the focus to that card.
+    const row = page.getByRole('row', { name: /^studio-default 1 → 2/ })
+    expect(await row.locator('button.copy').getAttribute('data-copy')).toBe(change.changeId)
+    expect(await row.innerText()).not.toContain(change.changeId)
+    await row.getByRole('link', { name: 'Approval needed' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
-    await card.getByRole('button', { name: 'Approve: put the change in force' }).click()
+    // The same Approve / Deny as on Home, each described by its effect (T191).
+    expect(await descriptionOf(card.getByRole('button', { name: `Show the change of ${request.requestId}` }))).toBe('shows what this request changes, below; decides nothing')
+    expect(await decisionsIn(card)).toEqual([
+      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' },
+      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' }])
+    await card.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     expect((await booted.ctx.approvals.policy()).set?.changeId).toBe(change.changeId)
-    await expect.poll(() => page.locator('#outcome').innerText()).toContain('Recorded as your verdict on request ' + request.requestId)
+    await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
     // Re-rendered: nothing waits any more, and the change is in force.
-    await expect.poll(() => page.locator('main').innerText()).toContain('In force: the change pch-')
+    await expect.poll(() => page.locator('main').innerText()).toContain('Active policy · Approved change')
+    expect(await page.locator('details', { hasText: 'Exact set' }).textContent()).toContain(`The change ${change.changeId} you approved`)
     expect(await waiting.count()).toBe(0)
   }, 60_000)
 
@@ -283,20 +318,29 @@ describe('web UI: the policy page in a real browser', () => {
     await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
     const form = page.getByRole('region', { name: 'Propose a change' })
     await expect.poll(() => form.getByRole('combobox', { name: 'Mode of command' }).count()).toBe(1)
-    expect(await form.innerText()).toContain('studio-default · version 1 → 2 (the next version, raised for you)')
-    // Every class that always asks is fixed at ask, with why; no select for it.
+    expect(await form.innerText()).toContain('studio-default · Version 1 → 2')
+    // Every class that always asks is fixed at Approval required, why on demand; no select for it (T171).
     for (const fixed of ['merge', 'deploy', 'charter', 'policy-change']) {
       expect(await form.getByRole('combobox', { name: `Mode of ${fixed}` }).count(), fixed).toBe(0)
-      expect(await form.getByRole('row', { name: new RegExp(`^${fixed}\\b`) }).innerText(), fixed).toMatch(/ask\s+always asks, whatever a rule says: /)
+      const row = form.getByRole('row', { name: new RegExp(`^${fixed}\\b`) })
+      expect(await row.innerText(), fixed).toMatch(/Approval required\s+Why always/)
+      expect(await row.textContent(), fixed).toContain('It always asks, whatever a rule says: ')
     }
-    expect(await form.getByRole('row', { name: /^merge/ }).innerText()).toContain('an accepted result lands only on your approval')
+    expect(await form.getByRole('row', { name: /^merge/ }).innerText()).not.toContain('an accepted result lands only on your approval')
+    expect(await form.getByRole('row', { name: /^merge/ }).textContent()).toContain('an accepted result lands only on your approval')
     expect(await form.getByRole('combobox', { name: 'Mode of workspace-write' }).inputValue()).toBe('auto')
-    expect(await form.getByRole('row', { name: /^workspace-write/ }).innerText()).toContain('auto: it runs on its own, once tests, lint pass')
+    // A mode by its name (the stored value under it); a row says only what the select does not: its required checks.
+    expect(await form.getByRole('combobox', { name: 'Mode of workspace-write' }).locator('option:checked').textContent()).toBe('Automatic')
+    expect(await form.getByRole('row', { name: /^workspace-write/ }).innerText()).toContain('Requires: tests, lint')
+    const options = await form.getByRole('combobox', { name: 'Mode of command' }).locator('option').allTextContents()
+    expect(options[0]).toMatch(/^Use default \((Ask approval|Blocked)\)$/)
+    expect(options.slice(1)).toEqual(['Automatic', 'Notify', 'Ask approval', 'Blocked'])
     await form.getByRole('combobox', { name: 'Mode of command' }).selectOption('forbid')
-    await form.getByRole('textbox', { name: 'Commands judged as workspace writes, one per line' }).fill('pnpm lint\n\n  pnpm test  \n')
-    await form.getByLabel('Requests wait (hours)').fill('12')
-    await form.getByLabel('Batch: at most (requests)').fill('5')
-    await form.getByLabel('Batch: shown after (minutes)').fill('30')
+    await form.getByRole('textbox', { name: 'Workspace-write commands, one per line' }).fill('pnpm lint\n\n  pnpm test  \n')
+    expect(await form.locator('details', { hasText: 'How commands match' }).textContent()).toContain('matches a line word for word')
+    await form.getByLabel('Request expiry (h)').fill('12')
+    await form.getByLabel('Batch size (requests)').fill('5')
+    await form.getByLabel('Batch delay (min)').fill('30')
     await form.getByText('Advanced: the record as JSON').click()
     const draft = JSON.parse(await form.getByRole('textbox', { name: 'Proposed policy record (JSON)' }).inputValue()) as AutonomyPolicy
     expect(draft).toMatchObject({ id: 'studio-default', version: 2, commands: ['pnpm lint', 'pnpm test'], expiry: { defaultSeconds: 43_200, maxSeconds: 1_209_600 }, batch: { maxSize: 5, maxWaitSeconds: 1800 } })
@@ -305,16 +349,19 @@ describe('web UI: the policy page in a real browser', () => {
     await form.getByRole('button', { name: 'Show change' }).click()
     await expect.poll(() => form.locator('pre.diff .add').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "forbid"'), expect.stringContaining('"pnpm lint"')]))
     // The queue validates as it always did: an expiry past its maximum is refused, and nothing is asked.
-    await form.getByLabel('Requests wait (hours)').fill('9000')
+    await form.getByLabel('Request expiry (h)').fill('9000')
     await form.getByRole('button', { name: 'Propose', exact: true }).click()
     await expect.poll(() => form.getByRole('alert').innerText()).toMatch(/^Not proposed: invalid: /)
     expect(await booted.ctx.approvals.list()).toEqual([])
-    await form.getByLabel('Requests wait (hours)').fill('12')
+    await form.getByLabel('Request expiry (h)').fill('12')
     await form.getByRole('button', { name: 'Propose', exact: true }).click()
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('Proposed: studio-default version 2')
     const [request] = await booted.ctx.approvals.list()
     expect(request).toMatchObject({ action: { class: 'policy-change' } })
     const change = ((await booted.call('policy')).value.changes as PolicyChange[])[0]!
+    // What is next in sight; the change and request ids under Record IDs.
+    expect(await page.locator('#outcome').innerText()).toContain('Approval needed — nothing changes until you approve it')
+    expect(await page.locator('#outcome').textContent()).toContain(`Recorded as change ${change.changeId}; request ${request!.requestId}.`)
     expect(change.policy).toMatchObject({ version: 2, commands: ['pnpm lint', 'pnpm test'], expiry: { defaultSeconds: 43_200 }, batch: { maxSize: 5, maxWaitSeconds: 1800 } })
   }, 60_000)
 })

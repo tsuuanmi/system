@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import LlmRuntime, { type RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import * as PiAi from '@deepseek-ai/dsh-llm-pi-ai'
@@ -606,5 +606,191 @@ describe('the models row', () => {
     await expect.poll(async () => ctx.get('models') !== undefined).toBe(true)
     server.script.push({ holdMs: 5_000 })
     await expect(ctx.models.complete({ model: 'fast', prompt: 'x' })).rejects.toThrow(/no progress for 100 ms \(idleTimeoutMs\)/)
+  })
+})
+
+describe('a metered API that says it did not process the request (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED) is retried with bounded back-off (T209, INV-4, INV-9)', () => {
+  // The provider's own error bodies, as a Gemini API route reports them.
+  const UNAVAILABLE = '{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}'
+  const EXHAUSTED = '{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}'
+
+  /** The models row over the fake API, with no re-attempt by the route's own policy: only the not-processed rule retries. */
+  const row = async (config: Partial<Models.Config> = {}) => {
+    const server = await fakeOpenAi()
+    const { ctx, fibers } = await llmRows(server)
+    const dir = temp('system-models-unprocessed-')
+    fibers.push(
+      ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}), ctx.plugin(WorkerRouter, {}),
+      ctx.plugin(Models, { models: [{ id: 'fast', route: 'fake', model: 'm1', tier: 'economy', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }], maxRetries: 0, unprocessedMaxDelayMs: 100, ...config }),
+    )
+    await Promise.all(fibers)
+    onTestFinished(async () => {
+      for (const fiber of [...fibers].reverse()) await fiber.dispose()
+      await server.close()
+    })
+    await expect.poll(async () => ctx.get('models') !== undefined && ctx.workers.source('models') !== undefined).toBe(true)
+    const call = async (key: string) => {
+      const source = ctx.workers.source('models')!
+      const done = await source.wait(source.start({ key, worker: 'model:fast', prompt: 'evidence', requirement: requirement(), decisions: DECISIONS }).id, 10_000)
+      const recoveries = done.decisions.map((id) => ctx.artifacts.get(id)!.body as { decisionType: string; outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; reasons: string[] }> })
+        .filter((d) => d.decisionType === 'recovery')
+      return { done, recoveries }
+    }
+    return { ctx, server, call }
+  }
+
+  it('503 UNAVAILABLE before any output, then 200: retried after a back-off, recorded as a decision, and the call completes', async () => {
+    const { ctx, server, call } = await row()
+    server.script.push({ status: 503, message: UNAVAILABLE })
+    const { done, recoveries } = await call('u-1')
+    expect(done).toMatchObject({ status: 'completed' })
+    expect(server.requests).toHaveLength(2)
+    expect(recoveries.map((d) => [d.outcome.option, d.outcome.detail.retry])).toEqual([['retry', 1]])
+    expect(recoveries[0]!.candidates.find((c) => c.option === 'retry')!.reasons.join(' ')).toMatch(/503 UNAVAILABLE.*not processed.*retry 1 of 4/)
+    // The answer counts every provider request the call made: each may be billed.
+    expect(ctx.artifacts.get(done.result!)!.body).toMatchObject({ sends: 1, attempts: 2 })
+  })
+
+  it('429 RESOURCE_EXHAUSTED before any output is retried the same way', async () => {
+    const { server, call } = await row()
+    server.script.push({ status: 429, message: EXHAUSTED }, { status: 429, message: EXHAUSTED })
+    const { done, recoveries } = await call('u-2')
+    expect(done).toMatchObject({ status: 'completed' })
+    expect(server.requests).toHaveLength(3)
+    expect(recoveries.map((d) => d.outcome.option)).toEqual(['retry', 'retry'])
+  })
+
+  it('503 past the bound: unprocessedRetries retries, then the call fails, its last decision saying the bound was reached', async () => {
+    const { server, call } = await row({ unprocessedRetries: 2 })
+    server.script.push(...Array.from({ length: 5 }, () => ({ status: 503, message: UNAVAILABLE })))
+    const { done, recoveries } = await call('u-3')
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'network' } })
+    // The first request and two retries, never more.
+    expect(server.requests).toHaveLength(3)
+    expect(recoveries.map((d) => d.outcome.option)).toEqual(['retry', 'retry', 'fail'])
+    expect(recoveries.at(-1)!.candidates.find((c) => c.option === 'fail')!.reasons.join(' ')).toMatch(/2 of 2 retries were used \(unprocessedRetries\)/)
+  })
+
+  it('at the configured maximum (10 retries), ten 503s then 200 complete: the answer records all 11 requests (model-answer@1.1)', async () => {
+    const { ctx, server, call } = await row({ unprocessedRetries: 10 })
+    server.script.push(...Array.from({ length: 10 }, () => ({ status: 503, message: UNAVAILABLE })))
+    const { done, recoveries } = await call('u-max')
+    expect(done).toMatchObject({ status: 'completed' })
+    expect(server.requests).toHaveLength(11)
+    expect(recoveries.map((d) => d.outcome.option)).toEqual(Array.from({ length: 10 }, () => 'retry'))
+    expect(ctx.artifacts.get(done.result!)).toMatchObject({ bodySchema: 'model-answer@1.1', body: { schema: 'model-answer@1.1', sends: 1, attempts: 11 } })
+  })
+
+  it('model-answer@1.1 holds every request the combined bounds allow per send, (unprocessedRetries + 1) × (maxRetries + 1) = 66; @1.0 stays at 10', async () => {
+    const { ctx } = await row()
+    // The largest valid bounds: 10 not-processed retries, each try with up to 5 route re-attempts.
+    expect(Models.Config({ models: [], unprocessedRetries: 10, maxRetries: 5 })).toMatchObject({ unprocessedRetries: 10, maxRetries: 5 })
+    expect(() => Models.Config({ models: [], maxRetries: 6 })).toThrow()
+    const answer = (schema: string, attempts: number) => ctx.artifacts.put({
+      kind: 'report', bodySchema: schema, producer: { type: 'worker', ref: 'model:fast' }, classification: 'public',
+      body: { schema, worker: 'model:fast', model: 'fast', callId: 'mcall_0000000000000001', promptHash: `sha256:${'a'.repeat(64)}`, quotaClass: 'metered', locality: 'remote', finish: 'stop', maxTokens: 64, sends: 1, attempts, usage: { inputTokens: 1, outputTokens: 1 }, text: 'x' },
+    })
+    expect(() => answer('model-answer@1.1', 66)).not.toThrow()
+    expect(() => answer('model-answer@1.1', 67)).toThrow()
+    expect(() => answer('model-answer@1.0', 10)).not.toThrow()
+    expect(() => answer('model-answer@1.0', 11)).toThrow()
+  })
+
+  it('any other failure after the prompt was sent is not resent by this rule: a 500, or a 503 that does not say UNAVAILABLE', async () => {
+    const { server, call } = await row()
+    server.script.push({ status: 500 })
+    const first = await call('u-4')
+    expect(first.done).toMatchObject({ status: 'failed' })
+    expect(first.recoveries).toEqual([])
+    server.script.push({ status: 503 })
+    const second = await call('u-5')
+    expect(second.done).toMatchObject({ status: 'failed' })
+    expect(second.recoveries).toEqual([])
+    expect(server.requests).toHaveLength(2)
+  })
+
+  it.each([false, true])('any output before the failure, not only text, means it is not resent: reasoning, a tool call, a block, or output tokens (the route retries SERVER: %s)', async (retrying) => {
+    /** An `llm` row whose one route streams the scripted chunks, then the provider's 503 UNAVAILABLE. */
+    const failure = { code: 'SERVER', status: 503, message: UNAVAILABLE }
+    const streamed: unknown[][] = [
+      [],
+      [{ type: 'block-start', index: 0, blockType: 'reasoning' }],
+      [{ type: 'reasoning-delta', index: 0, text: 'thinking' }],
+      [{ type: 'tool-call-delta', index: 0, id: 'call_1', name: 'search', argumentsDelta: '{' }],
+      [{ type: 'usage', usage: { inputTokens: 7, outputTokens: 5 } }],
+    ]
+    const sends: number[] = []
+    class FakeLlm extends Service {
+      constructor(ctx: Context) {
+        super(ctx, 'llm')
+      }
+
+      listProviders() {
+        return [{ id: 'fake', name: 'fake' }]
+      }
+
+      async resolveModelInfo() {
+        return { id: 'm1' }
+      }
+
+      providerRetryPolicy() {
+        // With the route's own quick re-attempt on SERVER too, output still means the prompt is never resent.
+        return retrying ? { mode: 'normal', maxRetries: 2, initialDelayMs: 1, maxDelayMs: 5, retryableCodes: ['SERVER'] } : { mode: 'normal', maxRetries: 0, initialDelayMs: 1, maxDelayMs: 5, retryableCodes: [] }
+      }
+
+      stream() {
+        const at = sends.length
+        sends.push(at)
+        // The first request of each call follows its script; a resend would answer.
+        const script = streamed[Math.floor(at / 2)] ?? []
+        return (async function* () {
+          if (at % 2 === 1) {
+            yield { type: 'block-end', index: 0, block: { type: 'text', text: 'answer' } }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+            return
+          }
+          for (const chunk of script) yield chunk
+          yield { type: 'finish', reason: { kind: 'error', failure } }
+        })()
+      }
+    }
+    const ctx = new Context()
+    const dir = temp('system-models-output-')
+    const fibers = [
+      ctx.plugin(FakeLlm), ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}), ctx.plugin(WorkerRouter, {}),
+      ctx.plugin(Models, { models: [{ id: 'fast', route: 'fake', model: 'm1', tier: 'economy', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }], maxRetries: retrying ? 2 : 0, unprocessedMaxDelayMs: 100 }),
+    ]
+    await Promise.all(fibers)
+    onTestFinished(async () => {
+      for (const fiber of [...fibers].reverse()) await fiber.dispose()
+    })
+    await expect.poll(async () => ctx.get('models') !== undefined && ctx.workers.source('models') !== undefined).toBe(true)
+    const source = ctx.workers.source('models')!
+    for (const [i, chunks] of streamed.entries()) {
+      // Each call's first request is the even send; keep the pairing whether or not it was resent.
+      while (sends.length < i * 2) sends.push(-1)
+      const done = await source.wait(source.start({ key: `o-${i}`, worker: 'model:fast', prompt: 'evidence', requirement: requirement(), decisions: DECISIONS }).id, 10_000)
+      const recoveries = done.decisions.map((id) => ctx.artifacts.get(id)!.body as { decisionType: string }).filter((d) => d.decisionType === 'recovery')
+      if (chunks.length === 0) {
+        // The control: no output at all, so the provider's word holds and the request is retried.
+        expect(done, 'no output').toMatchObject({ status: 'completed' })
+        expect(sends).toHaveLength(2)
+        expect(recoveries).toHaveLength(1)
+      } else {
+        expect(done, JSON.stringify(chunks)).toMatchObject({ status: 'failed' })
+        expect(recoveries, JSON.stringify(chunks)).toEqual([])
+        // Sent once, never resent.
+        expect(sends, JSON.stringify(chunks)).toHaveLength(i * 2 + 1)
+      }
+    }
+  })
+
+  it('its bounds are configuration within validated ranges (INV-9)', () => {
+    expect(Models.Config({ models: [] })).toMatchObject({ unprocessedRetries: 4, unprocessedMaxDelayMs: 60_000 })
+    for (const bad of [{ unprocessedRetries: -1 }, { unprocessedRetries: 11 }, { unprocessedMaxDelayMs: 99 }, { unprocessedMaxDelayMs: 600_001 }]) {
+      expect(() => Models.Config({ models: [], ...bad }), JSON.stringify(bad)).toThrow()
+    }
+    expect(() => new ModelWorkers(new Context(), { unprocessedRetries: 11 })).toThrow(/unprocessedRetries must be an integer from 0 to 10/)
+    expect(() => new ModelWorkers(new Context(), { unprocessedMaxDelayMs: 50 })).toThrow(/unprocessedMaxDelayMs must be an integer from 100 to 600000/)
   })
 })

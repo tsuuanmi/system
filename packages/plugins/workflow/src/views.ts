@@ -1,13 +1,13 @@
 /** What callers see of runs: views (never the input text), the usage report, and the decision chain. */
 import type { Decision } from '@tsuuanmi/system-artifacts'
-import { type ContentId, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknownOf } from '@tsuuanmi/system-libs'
+import { type ContentId, drawFigures, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDrawOf, USAGE_UNKNOWN_EVENT, type UsageUnknownKind, usageUnknownOf } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { waitsOnCall } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
 import { isSameFamily, waitingUntil } from './recovery.ts'
 import { tieOf, type TeamRound } from './teams.ts'
-import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
   const rows = e.nodeRows(run.run_id)
@@ -113,6 +113,31 @@ export function usageView(run: RunView): UsageRunView {
   }
 }
 
+/** The `quota.draw` records the usage report reads at most, the latest first (INV-9): the event log's most per query. */
+export const MAX_USAGE_DRAWS = 1000
+
+/**
+ * What agent runs drew from their accounts' windows (`quota.draw`, PROP-0015 E2): over the latest
+ * {@link MAX_USAGE_DRAWS} records the log keeps, per kind and window and per kind, template step, and
+ * window, the clean draws counted with their median and p90, and the entries left out by why
+ * (`drawFigures`). An entry that is not a valid `quota-draw@1.0` record is counted apart, never
+ * guessed (INV-14). Undefined when the log holds none.
+ */
+export function draws(e: Engine): UsageDraws | undefined {
+  const entries = e.ctx.eventLog.query({ type: QUOTA_DRAW_EVENT, order: 'desc', limit: MAX_USAGE_DRAWS })
+  if (!entries.length) return undefined
+  const records: QuotaDraw[] = []
+  let unreadable = 0
+  for (const entry of entries) {
+    const record = quotaDrawOf(entry.data)
+    if (record) records.push(record)
+    else unreadable += 1
+  }
+  // The latest first: a run's latest record is the one a figure counts.
+  const unread = entries.length === MAX_USAGE_DRAWS && e.ctx.eventLog.query({ type: QUOTA_DRAW_EVENT, order: 'desc', beforeSeq: entries.at(-1)!.seq, limit: 1 }).length > 0
+  return { byKind: drawFigures(records, 'kind'), byStep: drawFigures(records, 'step'), records: records.length, unreadable, unread }
+}
+
 /**
  * Each node whose execution's usage the resource ledger could not count when it ended, with the kind
  * its Worker source recorded first (`usage.unknown`, docs/design/resources.md#usage-the-ledger-cannot-count).
@@ -129,14 +154,17 @@ function withUnknownUsage(e: Engine, run: RunView): RunView {
 }
 
 /**
- * The decision chain of a run (REQ-ART-3): the engine's decisions on the run as a whole (a board
- * task's admission and session, its holder, the result's subject and acceptance, the report, the
- * funding gate, the digest), then per node: egress, tier, route (or admission), acceptance.
+ * The decision chain of a run (REQ-ART-3): the engine's decisions on the run as a whole (for a run
+ * dispatch started, its dispatch decisions first; a board task's admission and session, its holder,
+ * the result's subject and acceptance, the report, the funding gate, the digest), then per node:
+ * egress, tier, route (or admission), acceptance.
  */
 export function explain(e: Engine, runId: string): Explanation | undefined {
   const run = e.runRow(runId)
   if (!run) return undefined
-  const own = runDecisions(e, runId)
+  // A run dispatch started: why it started and on what come first (ADR-0064).
+  const chosen = (e.tasks.dispatchOf(runId)?.decisions ?? []).map((id) => decision(e, id)).filter((d): d is ExplainedDecision => !!d)
+  const own = [...chosen, ...runDecisions(e, runId)]
   return {
     runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(own.length ? { decisions: own } : {}),

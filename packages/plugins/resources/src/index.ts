@@ -15,9 +15,9 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { outline, reply } from '@tsuuanmi/system-gateway-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { MAX_UNKNOWN_ENTRIES, QUOTA_DEFAULTS, QUOTA_RANGES, quotaSettingsProblems, SchemaRegistry, unknownUsageOf, USAGE_UNKNOWN_EVENT } from '@tsuuanmi/system-libs'
 import {
-  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type Reservation, type ReservationRequest, Resources, ResourcesError,
+  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type QuotaSettings, type Reservation, type ReservationRequest, Resources, ResourcesError,
   templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
 } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
@@ -52,6 +52,12 @@ export interface Config {
   maxRecords?: number
   /** How long a reservation nobody releases keeps counting against its caps, in seconds (default 4 hours, INV-9). */
   holdSeconds?: number
+  /**
+   * The operator's quota settings (contract 1.2, ADR-0064): the reserve of every window that work
+   * System starts by itself never starts into (default 20 %, D63), and how the quota score reads
+   * windows. Each a whole number in its range (`QUOTA_RANGES` in libs), refused at load otherwise.
+   */
+  quota?: Partial<QuotaSettings>
 }
 
 /** A usage page: the records after a cursor, the totals over every match, and the next cursor. */
@@ -112,7 +118,23 @@ export function validateTemplates(templates: readonly PoolTemplate[]): PoolTempl
   })
 }
 
+/**
+ * The quota settings in force (ADR-0064): the defaults, under what the operator configured, each a
+ * whole number in its range. Throws naming every setting out of its range, with its path, so the row
+ * is refused and no reserve is kept on a value nobody chose (INV-2).
+ */
+export function validateQuota(quota: Partial<QuotaSettings> | undefined): Readonly<QuotaSettings> {
+  const settings = { ...QUOTA_DEFAULTS, ...quota }
+  const problems = quotaSettingsProblems(settings)
+  if (problems.length) throw new Error(`resources: ${problems.join('; ')}`)
+  return Object.freeze(settings)
+}
+
 const invalid = (message: string): ResourcesError => new ResourcesError('invalid', message)
+/** SQL: the stored record (of the table `alias`, with its dot) is a whole count, not a lower bound (`usage-record@1.1`'s `partial`, ADR-0065). */
+const whole = (alias = ''): string => `json_extract(${alias}record, '$.partial') IS NULL`
+/** Runs with only a lower bound counted a refused reservation names at most (INV-9); past it, it says so. */
+export const MAX_LOWER_BOUND_RUNS = 100
 /** Milliseconds since the epoch of an RFC 3339 timestamp; refused (`invalid`) when it does not parse. */
 const epochMs = (value: string, name: string): number => {
   const ms = Date.parse(value)
@@ -182,6 +204,13 @@ export class StoreResources extends Resources {
     pageSize: z.natural().min(1).max(100).default(20).description('Records per resources_usage page when the caller names no limit'),
     maxRecords: z.natural().min(1).max(1_000_000).default(10_000).description('Records usage() returns at most; more matching is refused (narrow the filter or page)'),
     holdSeconds: z.natural().min(60).max(604_800).default(14_400).description('How long a reservation nobody releases (a crashed run) keeps counting against its caps'),
+    quota: z.object({
+      reservePercent: z.natural().max(QUOTA_RANGES.reservePercent[1]).default(QUOTA_DEFAULTS.reservePercent).description('Share of every window, in percent, kept for your own use: work System starts by itself never starts into it (D63); a run already going keeps going'),
+      useSoonMinutes: z.natural().max(QUOTA_RANGES.useSoonMinutes[1]).default(QUOTA_DEFAULTS.useSoonMinutes).description('A window that resets within this many minutes is used first, before its unused share is lost (0: never)'),
+      minHeadroomPercent: z.natural().min(QUOTA_RANGES.minHeadroomPercent[0]).max(QUOTA_RANGES.minHeadroomPercent[1]).default(QUOTA_DEFAULTS.minHeadroomPercent).description('The least headroom above the reserve a window about to reset needs to be used first'),
+      headroomBucketPercent: z.natural().min(QUOTA_RANGES.headroomBucketPercent[0]).max(QUOTA_RANGES.headroomBucketPercent[1]).default(QUOTA_DEFAULTS.headroomBucketPercent).description('Headroom is compared in buckets this many points wide, so readings a few points apart do not reorder Workers'),
+      staleReadingSeconds: z.natural().min(QUOTA_RANGES.staleReadingSeconds[0]).max(QUOTA_RANGES.staleReadingSeconds[1]).default(QUOTA_DEFAULTS.staleReadingSeconds).description('A reading older than this is stale: its window is not known, so it is never read as capacity (keep it above the agent providers\' limitReadSeconds)'),
+    }).description('Quota settings the quota score reads (ADR-0064): the reserve kept free of dispatched work, and how windows are read'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
@@ -192,6 +221,7 @@ export class StoreResources extends Resources {
   private readonly pageSize: number
   private readonly maxRecords: number
   private readonly holdSeconds: number
+  private readonly settings: Readonly<QuotaSettings>
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx)
@@ -201,6 +231,7 @@ export class StoreResources extends Resources {
     this.pageSize = config.pageSize ?? 20
     this.maxRecords = config.maxRecords ?? 10_000
     this.holdSeconds = config.holdSeconds ?? 14_400
+    this.settings = validateQuota(config.quota)
     ctx.store.migrate('resources', [{
       version: 1,
       sql: `CREATE TABLE resource_usage (
@@ -277,6 +308,10 @@ export class StoreResources extends Resources {
 
   async pools(filter: { account?: string } = {}, at: Date = new Date()): Promise<PoolState[]> {
     return this.poolStates(filter, at)
+  }
+
+  quota(): QuotaSettings {
+    return { ...this.settings }
   }
 
   async declare(source: string, accounts: readonly DeclaredAccount[]): Promise<string[]> {
@@ -372,6 +407,8 @@ export class StoreResources extends Resources {
         if (total > cap.amount) faults.push(`cap ${cap.amount} ${cap.unit} of ${cap.pool} would be exceeded: ${sum}`)
         else fine.push(`cap ${cap.amount} ${cap.unit} of ${cap.pool} holds: ${sum}`)
       }
+      // A cap never counts usage it cannot see as 0 (INV-2, ADR-0065).
+      faults.push(...this.uncountable(db, request))
       const state = faults.length ? 'refused' : 'reserved'
       const reservationId = `res-${randomUUID()}`
       const inputs = [...new Set(request.lines.flatMap((l) => pools.some((p) => p.pool === l.pool) ? this.readingArtifacts(db, l.pool) : []))]
@@ -422,7 +459,8 @@ export class StoreResources extends Resources {
     return this.ctx.store.transaction((db) => {
       // A duplicate is stored as an artifact too, but not counted.
       const ref = this.ctx.artifacts.put({
-        kind: 'receipt', bodySchema: 'usage-record@1.0', body: usage, classification: 'operator-shared', producer: PRODUCER,
+        // A lower bound (`usage-record@1.1`, `partial`) says so on the record itself, in the one transaction that counts it (ADR-0065).
+        kind: 'receipt', bodySchema: usage.schema, body: usage, classification: 'operator-shared', producer: PRODUCER,
         ...(usage.runId !== undefined ? { runId: usage.runId } : {}), ...(usage.runId !== undefined && usage.nodeId !== undefined ? { nodeId: usage.nodeId } : {}),
       }).id as ArtifactRef
       const duplicate = !!db.prepare('SELECT 1 FROM resource_usage WHERE source = ? AND request_id = ?').get(usage.source, usage.requestId)
@@ -543,6 +581,68 @@ export class StoreResources extends Resources {
     }[cap.unit]
     const row = db.prepare(`SELECT ${amount} AS n FROM resource_usage WHERE ${scope.column} = ? AND pool = ?`).get(scope.value, cap.pool) as { n: number | null }
     return round6(row.n ?? 0)
+  }
+
+  /**
+   * Why the request's caps cannot be held, for usage the ledger could not count (INV-2, ADR-0065): a
+   * run of the caps' scope (its task, else its project) whose usage the ledger could not count in a
+   * capped pool, and has not counted since (its own lower bound never counts as counted), is unknown
+   * usage, which a cap never reads as 0; so is a run of the scope whose only records in a capped
+   * pool are lower bounds (`partial`), with or without a fact: the record says it itself, so a
+   * crash or a failed append between the record and its fact leaves no gap. Each such run is
+   * named, with its Worker and why. With no
+   * event log, or more `usage.unknown` entries than are read, or entries no reader can place, whether
+   * there is one is unknown, and the caps are refused as well. A request without caps, or without a
+   * scope (its caps bound its own lines only), is not concerned.
+   */
+  private uncountable(db: DatabaseSync, request: ReservationRequest): string[] {
+    const scope = this.scope(request)
+    if (!scope || !request.caps?.length) return []
+    const pools = new Set(request.caps.map((c) => c.pool))
+    const named = [...pools].sort().join(', ')
+    const eventLog = this.ctx.get('eventLog')
+    if (!eventLog) return [`the caps of ${named} cannot be held: no event log (ctx.eventLog) is loaded, so whether a run of ${scope.value} has usage the ledger could not count is unknown, and a cap never counts unknown usage as 0 (INV-2)`]
+    const reservedFor = db.prepare('SELECT project_id, task_id FROM resource_reservations WHERE run_id = ? ORDER BY reserved_at DESC LIMIT 1')
+    // Counted means a whole record: a lower bound (`partial`) never reconciles a run (INV-2).
+    const counted = db.prepare(`SELECT 1 FROM resource_usage WHERE run_id = ? AND pool = ? AND ${whole()} LIMIT 1`)
+    const found = unknownUsageOf({
+      entries: ({ afterSeq, limit }) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, afterSeq, limit }),
+      counted: (runId, pool) => counted.get(runId, pool) !== undefined,
+      reservedFor: (runId) => {
+        const row = reservedFor.get(runId) as { project_id: string | null; task_id: string | null } | undefined
+        return row ? { ...(row.project_id !== null ? { projectId: row.project_id } : {}), ...(row.task_id !== null ? { taskId: row.task_id } : {}) } : undefined
+      },
+    }, scope.column === 'task_id' ? { taskId: scope.value } : { projectId: scope.value }, pools)
+    const faults = found.runs.map((r) => `cap of ${r.pool} cannot be held: run ${r.runId}${r.worker ? ` on ${r.worker}` : ''} of ${scope.value} has usage the ledger could not count (${r.kind}${r.lowerBound ? ', only a lower bound counted' : ''}: ${r.reason})`)
+    if (found.unread) faults.push(`the caps of ${named} cannot be held: more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries are kept, and only the first were read, so a run of ${scope.value} may have usage the ledger could not count`)
+    if (found.unreadable) faults.push(`the caps of ${named} cannot be held: ${found.unreadable} usage.unknown entr${found.unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1 record, so its run and scope are unknown`)
+    // A run of the scope whose only records in a capped pool are lower bounds, whether or not a fact
+    // names it (a crash, or a failed append, between its record and its fact): the record says it.
+    const facts = new Set(found.runs.map((r) => `${r.pool}\0${r.runId}`))
+    const lower = this.lowerBounds(db, scope, [...pools])
+    for (const r of lower.runs) {
+      if (facts.has(`${r.pool}\0${r.runId}`)) continue
+      faults.push(`cap of ${r.pool} cannot be held: run ${r.runId}${r.worker ? ` on ${r.worker}` : ''} of ${scope.value} has usage the ledger could not count (only a lower bound counted: ${r.partial})`)
+    }
+    if (lower.more) faults.push(`the caps of ${named} cannot be held: more than ${MAX_LOWER_BOUND_RUNS} runs of ${scope.value} have only a lower bound counted; the first are named`)
+    return faults
+  }
+
+  /**
+   * The runs of a scope with a lower bound (`usage-record@1.1`, `partial`) counted in one of `pools`
+   * and no whole record there, the first {@link MAX_LOWER_BOUND_RUNS} by when they were recorded
+   * (INV-9); `more` when there were more.
+   */
+  private lowerBounds(db: DatabaseSync, scope: { column: 'task_id' | 'project_id'; value: string }, pools: string[]): { runs: Array<{ pool: string; runId: string; worker?: string; partial: string }>; more: boolean } {
+    if (!pools.length) return { runs: [], more: false }
+    const rows = db.prepare(`SELECT u.pool AS pool, u.run_id AS run_id, MIN(u.seq) AS first, json_extract(u.record, '$.worker') AS worker, json_extract(u.record, '$.partial') AS partial
+      FROM resource_usage u WHERE u.${scope.column} = ? AND u.pool IN (${pools.map(() => '?').join(', ')}) AND u.run_id IS NOT NULL AND NOT ${whole('u.')}
+        AND NOT EXISTS (SELECT 1 FROM resource_usage w WHERE w.run_id = u.run_id AND w.pool = u.pool AND ${whole('w.')})
+      GROUP BY u.pool, u.run_id ORDER BY first LIMIT ${MAX_LOWER_BOUND_RUNS + 1}`).all(scope.value, ...pools) as Array<{ pool: string; run_id: string; worker: string | null; partial: string }>
+    return {
+      runs: rows.slice(0, MAX_LOWER_BOUND_RUNS).map((r) => ({ pool: r.pool, runId: r.run_id, ...(r.worker !== null ? { worker: r.worker } : {}), partial: r.partial })),
+      more: rows.length > MAX_LOWER_BOUND_RUNS,
+    }
   }
 
   /** What unexpired holds of the request's scope keep of a cap: a hold nobody released stops counting when it expires (INV-9). */

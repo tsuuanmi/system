@@ -13,6 +13,7 @@ import Vault from '@tsuuanmi/system-credentials-vault'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
+import { QUOTA_DRAW_EVENT, type QuotaDraw, quotaDrawOf } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { LimitState, PoolTemplate } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
@@ -40,12 +41,15 @@ class ReportingRuntime extends FakeAgentRuntime {
   most = 0
   quota = false
   holdReads = false
+  /** While set, a run waits for it before it returns (two runs on one account in flight at once). */
+  hold: Promise<void> | undefined
   /** What happened, in order, across the runtime and the ledger. */
   readonly events: string[] = []
 
   override async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
     this.runs.push(spec)
     const result = await super.run(spec, signal, onHandle, observer)
+    if (this.hold) await this.hold
     this.events.push('run')
     if (this.quota) throw new ProviderError('quota_exhausted', `${this.kind}: You have exhausted your quota.`)
     return { ...result, turns: 1 }
@@ -308,6 +312,124 @@ describe('an account\'s usage report every limitReadSeconds (ADR-0059)', () => {
     expect(Date.now() - started).toBeLessThan(5000)
     await pass
     expect(b.runtime.inFlight).toBe(0)
+  })
+})
+
+describe('what each run drew, per window (quota-draw@1.0, PROP-0015 E2)', () => {
+  /** A reading of one window of an account's pool, observed a few seconds ago, with its used share and reset. */
+  const reading = (b: Booted, account: string, window: string, usedPercentage: number, resetsAt: string): Promise<unknown> => b.ctx.resources.observe({
+    schema: 'limit-state@1.0', pool: `plan/${account}`, account, window: TEMPLATE.windows.find((w) => w.id === window)!, state: 'ok', usedPercentage, resetsAt,
+    source: 'runtime-result', observedAt: new Date(Date.now() - 5000).toISOString(),
+  })
+  /** A run of a code step of a template, as the engine starts one: its kind and its template step. */
+  const step = async (b: Booted, worker: string, key: string): Promise<WorkerExecution> => {
+    const source = b.ctx.workers.source('agents')!
+    const started = source.start({
+      key, worker, prompt: key, runId: 'run_draws', step: { template: 'algorithm-development', node: 'develop' },
+      requirement: { ...requirement(), schema: 'work-requirement@1.2', kind: 'code' }, decisions: { tier: 'sha256:0', route: 'sha256:0' } as never,
+    })
+    return source.wait(started.id, 10_000)
+  }
+  const draws = (b: Booted): QuotaDraw[] => b.ctx.eventLog.query({ type: QUOTA_DRAW_EVENT }).map((e) => quotaDrawOf(e.data)!)
+  const FIVE = IN(3_600_000)
+  const SEVEN = IN(5 * 86_400_000)
+
+  it('records a plain draw: each window\'s rise in percentage points from its reading before the run to the report after it, with the run, account, kind, and template step, as an evidence artifact and a quota.draw event', async () => {
+    const b = await twoAccounts(metered({ limitReadSeconds: 0 }))
+    await described(b)
+    await reading(b, b.b.id, 'five-hour', 30, FIVE)
+    await reading(b, b.b.id, 'seven-day', 10, SEVEN)
+    FakeAgentRuntime.report(b.b.home, [{ window: 'five_hour', status: 'allowed', usedPercentage: 39, resetsAt: FIVE }, { window: 'seven_day', status: 'allowed', usedPercentage: 12.5, resetsAt: SEVEN }])
+    const done = await step(b, `agent:${b.b.id}/review`, 'k1')
+    expect(done.status).toBe('completed')
+    const [draw, ...more] = draws(b)
+    expect(more).toEqual([])
+    expect(draw).toMatchObject({
+      schema: 'quota-draw@1.0', runId: done.id, worker: `agent:${b.b.id}/review`, account: b.b.id, pool: `plan/${b.b.id}`,
+      workflowRunId: 'run_draws', template: 'algorithm-development', step: 'develop', kind: 'code', outcome: 'completed', overlapping: 0,
+      windows: [
+        { window: 'five-hour', seconds: 18_000, before: { usedPercentage: 30, resets: FIVE }, after: { usedPercentage: 39, resets: FIVE }, draw: 9, state: 'clean' },
+        { window: 'seven-day', seconds: 604_800, before: { usedPercentage: 10, resets: SEVEN }, after: { usedPercentage: 12.5, resets: SEVEN }, draw: 2.5, state: 'clean' },
+      ],
+    })
+    expect(Date.parse(draw!.windows[0]!.before!.observedAt)).toBeLessThanOrEqual(Date.parse(draw!.startedAt))
+    expect(Date.parse(draw!.windows[0]!.after!.observedAt)).toBeGreaterThanOrEqual(Date.parse(draw!.endedAt))
+    // The same record is kept as an evidence artifact under its workflow run and step.
+    expect(b.ctx.artifacts.list({ kind: 'evidence', runId: 'run_draws', nodeId: 'develop' }).filter((a) => a.bodySchema === 'quota-draw@1.0').map((a) => a.body)).toEqual([draw])
+  })
+
+  it('gives a window that reset between its readings, or whose used share went down, no draw: reset-crossing, never a negative draw', async () => {
+    const b = await twoAccounts(metered({ limitReadSeconds: 0 }))
+    await described(b)
+    await reading(b, b.b.id, 'five-hour', 72, FIVE)
+    await reading(b, b.b.id, 'seven-day', 40, SEVEN)
+    // The five-hour window reset during the run (a later reset, a lower share); the seven-day share went down in the same epoch.
+    const next = IN(6 * 3_600_000)
+    FakeAgentRuntime.report(b.b.home, [{ window: 'five_hour', status: 'allowed', usedPercentage: 4, resetsAt: next }, { window: 'seven_day', status: 'allowed', usedPercentage: 38, resetsAt: SEVEN }])
+    expect((await step(b, `agent:${b.b.id}/review`, 'k1')).status).toBe('completed')
+    const [draw] = draws(b)
+    expect(draw!.windows).toEqual([
+      expect.objectContaining({ window: 'five-hour', state: 'reset-crossing', why: expect.stringContaining('reset between the readings') }),
+      expect.objectContaining({ window: 'seven-day', state: 'reset-crossing', why: expect.stringContaining('went down') }),
+    ])
+    for (const w of draw!.windows) expect(w).not.toHaveProperty('draw')
+  })
+
+  it('marks a draw confounded when another run on the same account overlapped it, for both runs; a run alone on its account is clean', async () => {
+    const b = await twoAccounts((a, bb, ws) => ({
+      providers: [{ provider: A, slots: 2, pool: 'plan', windows: WINDOWS, limitReadSeconds: 0, maxConcurrentRunsPerAccount: 2 }],
+      roles: [{ id: 'review', workspace: ws, sandbox: 'read-only', tier: 'standard' }, { id: 'check', workspace: ws, sandbox: 'read-only', tier: 'standard' }],
+      assignments: [{ account: a, roles: ['review'] }, { account: bb, roles: ['review', 'check'] }],
+    }))
+    await described(b)
+    for (const account of [b.a.id, b.b.id]) {
+      await reading(b, account, 'five-hour', 20, FIVE)
+      await reading(b, account, 'seven-day', 5, SEVEN)
+    }
+    FakeAgentRuntime.report(b.b.home, [{ window: 'five_hour', status: 'allowed', usedPercentage: 31, resetsAt: FIVE }, { window: 'seven_day', status: 'allowed', usedPercentage: 7, resetsAt: SEVEN }])
+    FakeAgentRuntime.report(b.a.home, [{ window: 'five_hour', status: 'allowed', usedPercentage: 24, resetsAt: FIVE }, { window: 'seven_day', status: 'allowed', usedPercentage: 6, resetsAt: SEVEN }])
+    let release!: () => void
+    b.runtime.hold = new Promise<void>((resolve) => { release = resolve })
+    const both = [step(b, `agent:${b.b.id}/review`, 'k1'), step(b, `agent:${b.b.id}/check`, 'k2'), step(b, `agent:${b.a.id}/review`, 'k3')]
+    await expect.poll(() => b.runtime.runs.length).toBe(3)
+    release()
+    expect((await Promise.all(both)).map((r) => r.status)).toEqual(['completed', 'completed', 'completed'])
+    const byWorker = new Map(draws(b).map((d) => [d.worker, d]))
+    for (const worker of [`agent:${b.b.id}/review`, `agent:${b.b.id}/check`]) {
+      expect(byWorker.get(worker)).toMatchObject({ overlapping: 1 })
+      expect(byWorker.get(worker)!.windows).toEqual([
+        expect.objectContaining({ window: 'five-hour', draw: 11, state: 'confounded', why: '1 other run on the account overlapped it' }),
+        expect.objectContaining({ window: 'seven-day', draw: 2, state: 'confounded' }),
+      ])
+    }
+    // The other account's run overlapped them in time, on its own account: its draw is clean.
+    expect(byWorker.get(`agent:${b.a.id}/review`)).toMatchObject({ overlapping: 0, windows: [{ draw: 4, state: 'clean' }, { draw: 1, state: 'clean' }] })
+  })
+
+  it('records no draw for a window with no reading after the run (its report unreadable) or none with a share before it: no-reading, nothing estimated', async () => {
+    const b = await twoAccounts(metered({ limitReadSeconds: 0 }))
+    // Open, with no used share before the run; the report after it cannot be read.
+    await open(b, b.b.id)
+    FakeAgentRuntime.report(b.b.home, 'garbled')
+    expect((await step(b, `agent:${b.b.id}/review`, 'k1')).status).toBe('completed')
+    const [first] = draws(b)
+    expect(first!.windows).toEqual([
+      expect.objectContaining({ window: 'five-hour', state: 'no-reading', why: expect.stringMatching(/^no reading after the run: the latest, observed .+, is from before it ended$/) }),
+      expect.objectContaining({ window: 'seven-day', state: 'no-reading' }),
+    ])
+    // A report read after it, but no share before it.
+    FakeAgentRuntime.report(b.b.home, [{ window: 'five_hour', status: 'allowed', usedPercentage: 9, resetsAt: FIVE }])
+    expect((await step(b, `agent:${b.b.id}/review`, 'k2')).status).toBe('completed')
+    const second = draws(b)[1]!
+    expect(second.windows[0]).toMatchObject({ window: 'five-hour', state: 'no-reading', why: 'the reading before the run gives no used share', after: { usedPercentage: 9 } })
+    expect(second.windows[1]).toMatchObject({ window: 'seven-day', state: 'no-reading', why: expect.stringMatching(/^no reading after the run/) })
+    for (const w of [...first!.windows, ...second.windows]) expect(w).not.toHaveProperty('draw')
+  })
+
+  it('records nothing for a derived Worker with no declared pool', async () => {
+    const unpooled = await twoAccounts((a, bb, ws) => ({ providers: [{ provider: A, slots: 2 }], roles: [{ id: 'review', workspace: ws, sandbox: 'read-only', tier: 'standard' }], assignments: [{ account: a, roles: ['review'] }, { account: bb, roles: ['review'] }] }))
+    expect((await step(unpooled, `agent:${unpooled.b.id}/review`, 'k1')).status).toBe('completed')
+    expect(draws(unpooled)).toEqual([])
   })
 })
 

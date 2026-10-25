@@ -7,10 +7,11 @@
     "node": "^24.18.1 || >=26.5.1"
   },
   "scripts": {
-    "check": "\"$npm_execpath\" run check:docs && \"$npm_execpath\" run check:secrets && \"$npm_execpath\" run check:schemas && \"$npm_execpath\" run check:reference && \"$npm_execpath\" run check:packages && \"$npm_execpath\" run check:manifests && \"$npm_execpath\" run check:traceability && \"$npm_execpath\" run lint && \"$npm_execpath\" run typecheck",
+    "check": "\"$npm_execpath\" run check:docs && \"$npm_execpath\" run check:secrets && \"$npm_execpath\" run check:schemas && \"$npm_execpath\" run check:migrations && \"$npm_execpath\" run check:reference && \"$npm_execpath\" run check:packages && \"$npm_execpath\" run check:manifests && \"$npm_execpath\" run check:traceability && \"$npm_execpath\" run lint && \"$npm_execpath\" run typecheck",
     "check:docs": "node --import tsx scripts/check-docs.ts",
     "check:secrets": "node --import tsx scripts/check-secrets.ts",
     "check:schemas": "node --import tsx scripts/check-schemas.ts",
+    "check:migrations": "node --import tsx scripts/check-migrations.ts",
     "audit:deps": "\"$npm_execpath\" audit --prod --audit-level high",
     "lint": "oxlint scripts spikes packages",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -27,7 +28,8 @@
     "check:manifests": "node --import tsx scripts/gen-manifests.ts --check",
     "gen:traceability": "node --import tsx scripts/gen-traceability.ts",
     "check:traceability": "node --import tsx scripts/gen-traceability.ts --check",
-    "gen:upgrade-fixture": "node --import tsx packages/cli/tests/upgrade/generate.ts",
+    "gen:test-durations": "node --import tsx scripts/gen-test-durations.ts",
+    "gen:upgrade-fixture":"node --import tsx packages/cli/tests/upgrade/generate.ts",
     "test:crash": "\"$npm_execpath\" run build && vitest run -c vitest.crash.config.ts",
     "changeset": "changeset",
     "version-packages": "node --import tsx scripts/version-packages.ts",

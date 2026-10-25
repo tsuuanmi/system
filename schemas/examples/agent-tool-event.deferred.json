@@ -1,0 +1,11 @@
+{
+  "type": "agent-workers.tool.deferred",
+  "data": {
+    "agentRun": "arun_7d21a84f36c0",
+    "worker": "agent:dev",
+    "workerKind": "codex-sdk",
+    "tool": "Bash",
+    "actionClass": "command",
+    "requestId": "apr-0039"
+  }
+}

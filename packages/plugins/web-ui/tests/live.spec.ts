@@ -41,6 +41,9 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     const runs = (read.value.runs as { value: Array<Record<string, unknown>> }).value
     expect(runs.map((r) => r.status).sort()).toEqual(['completed', 'failed'])
     expect(runs.find((r) => r.status === 'failed')).toMatchObject({ runId: failed.runId, template: 'solo', error: expect.stringContaining('reauth_required') })
+    // Its kind and disposition beside the raw text, so Home leads with the run page's plain words (T160).
+    const error = ctx.workflow.get(failed.runId)!.error!
+    expect(runs.find((r) => r.status === 'failed')!.failure).toEqual({ kind: error.kind, disposition: error.disposition })
     expect(runs.find((r) => r.status === 'completed')).toMatchObject({ taskId: task.taskId })
     expect(read.value.tasks).toEqual({ value: [expect.objectContaining({ taskId: task.taskId, title: 'Fix the slow image build', state: 'review', project: { projectId: 'p1', title: 'project p1' } })] })
     expect(read.value.expired).toEqual({ value: [{ requestId: asked.requestId, at: expect.any(String), summary: 'Deploy the site' }] })
@@ -166,6 +169,41 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     expect(seen.count).toBe(3)
   })
 
+  it.runIf(canRunBrowser)('leads a failed run on Home\'s Since you last looked with the run page\'s plain-words reason, the system\'s own text folded under it (T160)', async () => {
+    const { ctx, workers } = await boot()
+    workers.reply = () => ({ fail: 'reauth_required', disposition: 'USER_ACTION', sent: false })
+    const failed = ctx.workflow.start({ template: 'solo', input: 'Compare the CDN offers', classification: 'public' })
+    await vi.waitFor(() => expect(ctx.workflow.get(failed.runId)?.status).toBe('failed'), { timeout: 30_000 })
+    const error = ctx.workflow.get(failed.runId)!.error!
+    expect(error).toMatchObject({ kind: 'reauth_required', message: expect.stringContaining('scripted reauth_required') })
+    // What the failure asks of the operator, in the run page's words for its disposition.
+    const next = ({ USER_ACTION: 'it needs you', BACKOFF: 'it is tried again later', CODE_FIX: 'it needs a fix in the code or configuration', NONE: 'nothing more happens' } as Record<string, string>)[error.disposition]
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    await page.evaluate((at) => localStorage.setItem('system.seen', JSON.stringify({ at, workers: {} })), new Date(Date.now() - 3_600_000).toISOString())
+    await page.reload()
+    const since = page.getByRole('region', { name: 'Since you last looked' })
+    const item = since.locator('li', { hasText: 'Failed: a solo run' })
+    await expect.poll(() => item.count(), { timeout: 15_000 }).toBe(1)
+    // The reason in words first, as the run page says it (failureReason); the raw text only once opened.
+    expect(await item.innerText()).toMatch(new RegExp(`^Failed: a solo run — its account must sign in again${next ? ` \\(${next}\\)` : ''} open the run`))
+    expect(await item.locator('details').getAttribute('open')).toBeNull()
+    expect(await item.getByText('scripted reauth_required').isVisible()).toBe(false)
+    await item.getByText('What the system said').click()
+    expect(await item.getByText('scripted reauth_required').isVisible()).toBe(true)
+    // Home and the run page agree: the run page leads its failure with the very reason Home showed, then the raw text.
+    const reason = /^Failed: a solo run — (.+?) open the run/.exec(await item.innerText())![1]!
+    await page.goto(`${origin}/ui/?run=${encodeURIComponent(failed.runId)}#token=${OPERATOR}`)
+    // Its status line (T172): the Failed chip, where it failed, then that reason and the raw text.
+    const status = page.locator('p.status-line')
+    await expect.poll(() => status.count(), { timeout: 15_000 }).toBe(1)
+    expect(await status.innerText()).toMatch(/^■ Failed at solo: /)
+    expect(await status.innerText()).toContain(`: ${reason} — ${error.message}`)
+  }, 90_000)
+
   it.runIf(canRunBrowser)('shows on Home what happened since the operator last looked, until marked as seen; names the waiting count in the window\'s title; the start names who would likely take it; a running run\'s page and card say where it is, and a stall (T124)', async () => {
     const booted = await boot()
     const { ctx, workers } = booted
@@ -197,9 +235,11 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     await expect.poll(() => page.title()).toBe('(1) system — Home')
     await since.getByRole('button', { name: 'Mark as seen' }).click()
     await expect.poll(() => since.innerText()).toContain('Nothing happened that needs you.')
-    // Recent runs: by the task's title, each step with its Worker's display name.
+    // Recent runs: by the task's title, its state as a chip, its progress and current Worker in sight; each step with its Worker's display name folded (T171).
     const recent = page.locator('table tr', { hasText: 'Research the hosting options' })
-    expect(await recent.innerText()).toMatch(/solo: Conformance · \w+ · \w+/)
+    expect(await recent.innerText()).toMatch(/Running/)
+    expect(await recent.innerText()).toMatch(/0\/1 steps · running: solo · Conformance · \w+ · \w+/)
+    expect(await recent.textContent()).toMatch(/solo: Conformance · \w+ · \w+/)
 
     // The Board: the start names who would likely take it; the running card its last event, then a stall.
     await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: 'Board' }).click()

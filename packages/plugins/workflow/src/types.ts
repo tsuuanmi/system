@@ -4,7 +4,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
-import type { ContentId } from '@tsuuanmi/system-libs'
+import type { ContentId, DrawFigure } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Classification, RunLiveness, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
 
@@ -59,8 +59,8 @@ export interface NodeView {
   waitingUntil?: string
   /**
    * In the usage report only: the resource ledger could not count its execution's usage when it
-   * ended (`usage.unknown`), for this reason; a cap counts it as 0. The report and health say
-   * whether a record of it was counted since.
+   * ended (`usage.unknown`), for this reason; a cap of its task or project in its pool is refused
+   * until it is reconciled (ADR-0065). The report and health say whether a record of it was counted since.
    */
   usageUnknown?: 'not-reported' | 'interrupted' | 'refused' | 'failed'
   error?: WorkflowError
@@ -112,6 +112,23 @@ export interface UsageRunView extends Pick<RunView, 'runId' | 'template' | 'stat
   nodes: Array<Omit<NodeView, 'result' | 'brief' | 'error'>>
 }
 
+/**
+ * What agent runs drew from their accounts' windows (`quota.draw`, PROP-0015 E2), as the MCP `usage`
+ * report shows it: over the latest records the log keeps, per kind and window and per kind, template
+ * step, and window, the clean draws counted with their median and 90th percentile in percentage
+ * points, and the entries left out by why (docs/design/resources.md#quota-drawn-per-run).
+ */
+export interface UsageDraws {
+  byKind: DrawFigure[]
+  byStep: DrawFigure[]
+  /** The records read, the latest first, at most `MAX_USAGE_DRAWS`. */
+  records: number
+  /** Entries that are not a valid `quota-draw@1.0` record, so no figure counts them. */
+  unreadable: number
+  /** Older records were in the log than were read. */
+  unread: boolean
+}
+
 export interface StartInput extends CallerOptions {
   template: string
   /** The caller's text: the prompt or the research question. */
@@ -155,6 +172,8 @@ export interface TemplateStep {
 /** A start for a board task: admission is asynchronous, since the board takes the task first. */
 export interface TaskStartInput extends StartInput {
   task: TaskClaim
+  /** Who asks for the start (contract 1.10): `operator` from the operator's own surface (Start on `/ui`), else `lead` (the default). */
+  startedBy?: 'lead' | 'operator' | undefined
 }
 
 /** The board task a run serves, as its view shows it. */
@@ -180,7 +199,15 @@ export interface TaskView {
   landing?: TaskLanding
   /** Whether the run started from the work its task's previous attempt left (docs/design/workflow-engine.md#starting-from-the-previous-attempts-work). */
   carry?: TaskCarry
+  /**
+   * Who started the run (contract 1.10, PROP-0014 D2): `dispatch` when the dispatch pass did (its row
+   * names the ask), `operator` for Start on `/ui`, `lead` for any other start (MCP `run` or `task`, the CLI).
+   */
+  startedBy: StartedBy
 }
+
+/** Who started a board task's run, read from the engine's own rows. */
+export type StartedBy = 'dispatch' | 'lead' | 'operator'
 
 /**
  * Whether a task's run starts from the work its previous attempt left (ADR-0061), decided when the
@@ -410,6 +437,13 @@ export interface Config {
    */
   allowSameFamily?: boolean
   /**
+   * Team membership: `excludeWorkers` names Workers (by Worker id) and accounts (`<group>/<id>`,
+   * or the bare id when one group has it) that no team member joins on, with every other Worker on
+   * their accounts; they stay available for every other node
+   * (docs/design/teams.md#workers-left-out-of-teams).
+   */
+  teams?: { excludeWorkers?: string[] }
+  /**
    * Hours a node refused only for assigned accounts' limits may wait for their reset, in all from
    * its first wait (default 24; 0 never waits); past it, it fails `quota_exhausted` (ADR-0052, INV-9).
    */
@@ -428,6 +462,13 @@ export interface Config {
    */
   approvalPollSeconds?: number
   /**
+   * Minutes a board task's step waits on the operator for its Worker's deferred tool call of class
+   * `command`, from its request's creation (default 10; INV-9); past it the call is treated as
+   * denied, for it alone: the request is withdrawn and the session continues once, told so. 0 waits
+   * until the request expires.
+   */
+  deferredCommandMinutes?: number
+  /**
    * Runs one session may serve when a board task's next attempt, or the next task of a chain,
    * resumes the session of the work before it (default 5; INV-9): past it, the run starts fresh.
    */
@@ -445,6 +486,52 @@ export interface Config {
   tasksFile?: { maxTasks?: number; maxChars?: number }
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
+  /** Dispatch (ADR-0064): System starts ready board tasks on free Workers chosen by quota, within these bounds (./dispatch.ts). */
+  dispatch?: DispatchConfig
+}
+
+/**
+ * The dispatch pass's settings (ADR-0064, PROP-0014 D1), each validated when the row loads; a value
+ * out of its range refuses the row with its path. `maxRunning` and `leaveRunsFree` default to what
+ * `maxActiveRuns` leaves room for (8 and 4 of the default 16).
+ */
+export interface DispatchConfig {
+  /** Whether the pass runs at all (default true; off: nothing is asked or started). */
+  enabled?: boolean
+  /** Seconds between passes (10 to 3600, default 60); one runs at start too, after the runs are reconciled. */
+  sweepSeconds?: number
+  /** Starts or asks one pass makes at most (1 to 16, default 2). */
+  maxPerPass?: number
+  /** Dispatched runs not finished, with the asks open or approved (1 to maxActiveRuns − leaveRunsFree, default 8). */
+  maxRunning?: number
+  /** The same, per project (1 to 16, default 2). */
+  maxRunningPerProject?: number
+  /** The same, per account of the chosen Worker; also the most an account's load may be for it to be free (1 to 16, default 1). */
+  maxRunningPerAccount?: number
+  /** The same, per repository: the chosen writing Worker's workspace (1 to 16, default 4; D64). */
+  maxRunningPerRepository?: number
+  /** Active runs kept for the lead's and the operator's own starts (0 to maxActiveRuns − 1, default 4). */
+  leaveRunsFree?: number
+  /** Dispatch requests open at once, waiting for the operator's go (1 to 32, default 4). */
+  maxOpenAsks?: number
+  /** Minutes an approved start waits for its Worker to be free, then is used for nothing (1 to 240, default 30). */
+  approvedHoldMinutes?: number
+  /** Starts dispatch makes in any rolling hour, counted from its rows (0 to 120, default 6; 0 starts nothing; PROP-0014 D2). */
+  maxPerHour?: number
+  /** The same, per project (0 to maxPerHour, default 3 or maxPerHour when lower). */
+  maxPerHourPerProject?: number
+}
+
+/**
+ * What a run started by dispatch keeps on its `workflow_tasks` row (`dispatch`): the ask it served,
+ * the decisions that chose it (named by its `workflow.task-admission` decision), and the Worker its
+ * writing step routes to first.
+ */
+export interface TaskDispatch {
+  askId: string
+  /** The `dispatch.select`, `dispatch.choice`, and `autonomy` decisions, then the `approval` or the board approval's `gate` decision (none under `auto` or `notify`). */
+  decisions: ArtifactRef[]
+  prefer: { node: string; worker: string; decision: ArtifactRef }
 }
 
 export interface RunRow {
@@ -530,6 +617,10 @@ export interface TaskRow {
   landing?: string | null
   /** JSON {@link TaskCarry}: whether the run starts from the work its task's previous attempt left. */
   carry?: string | null
+  /** JSON {@link TaskDispatch}: set when dispatch started the run (ADR-0064). */
+  dispatch?: string | null
+  /** Who started the run ({@link StartedBy}); null only on a row the migration that added it could not read. */
+  started_by?: StartedBy | null
   created_at: string
   updated_at: string
 }

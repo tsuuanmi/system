@@ -125,10 +125,29 @@ locality is what admits `local-private` work to it
    most `maxRetries` times (default 2), whatever the route policy allows; a refused credential, a
    spent quota, or an invalid request is never re-attempted, whatever the policy. Each request may
    be billed.
+   **A request the provider did not process** (T209) is apart from those: an answer of `503` with
+   `UNAVAILABLE` (overloaded) or `429` with `RESOURCE_EXHAUSTED`, as a Gemini API route reports
+   them, before any output, both the status and its name said (a bare `503` or `429` is not taken
+   as that promise). `ctx.models` does not re-attempt it; it fails it as `transient` (`503`) or
+   `rate-limit` (`429`), marked not processed, and the `models` Worker source sends it again after
+   a back-off that doubles from 1 s (or waits what the provider asked), at most
+   `unprocessedMaxDelayMs` (default 60 s, 100 ms to 10 min), at most `unprocessedRetries` times
+   (default 4, 0 to 10), within `callTimeoutMs`. Each retry is a `recovery` decision `retry` on the
+   call (rule `models.unprocessed-retry`) and a `models.call.retried` event; once they are used, a
+   `recovery` decision `fail` says so, and the call fails as before. It is the same send: the
+   restart bound below is apart. A `429` for a spent quota says `RESOURCE_EXHAUSTED` too, so it is
+   retried up to the bound before it fails. Any other failure after the prompt was sent is not
+   sent again by this rule: the workflow engine fails the step for the operator, as before ("the
+   prompt was sent, so it is not resent automatically").
 5. **Result:** a `report` artifact `model-answer@1.0` with the catalog id, the prompt's hash, the
-   finish (`max-tokens` when cut at the bound), the bound, the sends and attempts, and the token
-   usage of the request that answered. At worst a call is billed `sends × attempts` times: six
-   with the defaults (two sends of up to three requests each). The usage report
+   finish (`max-tokens` when cut at the bound), the bound, the sends and attempts (every provider
+   request of the send, those the provider did not process included), and the token usage of the
+   request that answered. At worst a call is billed `sends × attempts` times: six with the defaults
+   (two sends of up to three requests each) when no request is refused as not processed. Each
+   not-processed retry is a new try of up to `maxRetries + 1` requests, so a send takes at most
+   `(unprocessedRetries + 1) × (maxRetries + 1)` requests: 15 with the defaults, 66 at the largest
+   valid bounds. An answer of more than 10 attempts is written as `model-answer@1.1`, which allows
+   66. The usage report
    (`system usage`) shows the step's tokens beside its quota class.
 
 | Seam failure | Engine failure class | Disposition |

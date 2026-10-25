@@ -17,7 +17,10 @@ Capability **seam definition** for agent runtimes
   observations: the runtime's own window name, kept opaque (INV-11), `allowed`, `warning`, or
   `rejected`, `resetsAt` and `observedAt` in ISO time, `usedPercentage`). Every field is
   optional: a missing number stays missing. A run that fails attaches what it consumed to its
-  error (`withMetering`), read back with `meteringOf`. Names are provider-neutral; the
+  error (`withMetering`), read back with `meteringOf`. A run that ended before the runtime's
+  final count (a stop, a timeout, a deferred call) reports what the agent reported while it ran
+  and says so in `partial` (plain words, at most `MAX_PARTIAL` = 300 characters, no `resultId`):
+  a lower bound, never an invented figure. Names are provider-neutral; the
   [`agent-workers`](../plugins/agent-workers/README.md) source maps them into the ledger.
 - **An account's usage report**
   ([ADR-0059](../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
@@ -134,9 +137,51 @@ Capability **seam definition** for agent runtimes
     exactly that content;
   - `childEnvironment` also drops the variables that lead to the operator's
     session: `DBUS_SESSION_BUS_ADDRESS`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`,
-    `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`;
+    `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`; and every variable a shell runs
+    code from (`SHELL_STARTUP_VARIABLES`: `BASH_ENV`, `ENV`, `ZDOTDIR`,
+    `PROMPT_COMMAND`, `PS0`, `PS4`, `SHELLOPTS`, `BASHOPTS`, `INPUTRC`, and every
+    exported `BASH_FUNC_*` function; `isShellStartupVariable`), forwarded or
+    explicit alike (T198);
   - `conformance/passthrough-bwrap.sh`: a test double that drops the options and
     execs the command.
+- **Shells that read no startup code** (T198,
+  [agent runtimes](../../docs/design/agent-runtimes.md#an-agents-shells-read-no-startup-code)):
+  `RuntimeEvidence.cleanShells`, which a runtime reports only when it itself
+  starts every call's shell non-login and non-interactive with no startup file
+  or variable, in a shell the agent cannot choose; without it a gate takes no
+  shell command for a read. Neither Codex nor Claude Code reports it, since
+  each lets the shell program be chosen its own way. What every runtime
+  enforces, whatever shell and mode a call runs in, is that no startup code the
+  agent wrote, nor the worktree's or the operator's, runs before a command:
+  - `agentHome(parent, workspace?)`: a fresh, empty, owner-only `HOME` for one
+    run, made in `parent` (the runtime's run directory), refused inside the
+    workspace (or the workspace inside it), bound back into the confinement
+    **read-only** (a `readOnly` bind), so no tool call can write a startup file
+    there for a later call's shell, and removed whole with the run;
+  - `agentShellEnvironment(env, home)`: `env` with `HOME` that home, no startup
+    variable, none that moves a shell's startup files
+    (`SHELL_CONFIG_DIRECTORIES`: `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`), and
+    `XDG_CACHE_HOME` still the operator's cache;
+  - `tests/shells.spec.ts` plants a function named `echo` and `cat` in every
+    startup file a call can reach, under the real confinement, and the next
+    call's `echo` and `cat`, plain, login, and interactive, are the real ones.
+- **The workspace reads server** (T200b, `src/workspace-reads.ts`,
+  [agent runtimes](../../docs/design/agent-runtimes.md#the-workspace-reads-server)):
+  System's own minimal MCP server over stdio, Node built-ins only, so a runtime
+  binds its one file (`WORKSPACE_READS_SCRIPT`) into a confinement and runs it
+  with `node`. Three read-only tools over one workspace fixed at start
+  (`WORKSPACE_READS_SERVER` `workspace`, `WORKSPACE_READ_TOOLS`): `read_file`,
+  `list_dir`, `search` (a worker thread, ended at its deadline). Every path is
+  resolved with `realpath` inside the workspace (no `..`, no absolute path
+  outside, no symlink out), git's data and secret-named files (`SECRET_NAMES`)
+  are unreadable, and each open is checked again through `/proc/self/fd`; MCP
+  Roots are ignored. Its bounds (`WorkspaceReadBounds`, `WORKSPACE_READ_BOUNDS`
+  with ranges, `workspaceReadBounds`, `workspaceReadBoundsProblem`) are its
+  arguments (`workspaceReadArgs`, `parseWorkspaceReadArgs`) and travel as
+  `RunSpec.workspaceReads`; a runtime that gives its agent the server reports
+  `RuntimeEvidence.workspaceReads`. `tests/workspace-reads.spec.ts` covers each
+  bound, every refusal, the protocol, its own process, and the server under real
+  bubblewrap with the workspace read-only.
 - Conformance:
   - `conformance/agent-runtimes.ts` has `agentRuntimesConformance` for the
     registry;

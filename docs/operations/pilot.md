@@ -2,9 +2,9 @@
 
 How the operator runs Base's pilot ([PROP-0010](../proposals/0010-base-version.md) B8): one
 algorithm-development project, chosen by the operator, run from its charter over at least five
-working days, through at least one restart, on Claude Code Workers only, and measured against the
-baseline ([Base exit criteria](../requirements/release-scope.md#base-exit-criteria) 3, 4, 5, and
-7). The code it uses: the [`algorithm-development`](../reference/workflow-templates.md#algorithm-development)
+working days, through at least one restart, with Claude Code Workers writing every change (other
+agent Workers may validate and review), and measured against the baseline
+([Base exit criteria](../requirements/release-scope.md#base-exit-criteria) 3, 4, 5, and 7). The code it uses: the [`algorithm-development`](../reference/workflow-templates.md#algorithm-development)
 template, the board, the approval queue, the resource ledger, digests, and the
 [baseline report](../design/reports.md). Routine procedures it leans on are in the
 [runbooks](runbooks.md).
@@ -12,7 +12,19 @@ template, the board, the approval queue, the resource ledger, digests, and the
 Roles: you are the investor (the operator): you approve the charter, answer the queue, accept or
 reject results, merge them, and pause or close the project. The lead is your own Claude Code session connected to `system`
 over MCP (`system mcp-config claude`): it proposes tasks and starts their runs with the client
-tools. The Workers are Claude Code Workers that `system` runs, each in a run's own worktree.
+tools. The Workers are agent Workers that `system` runs, each in a run's own worktree: Claude Code
+Workers write every change; a Codex Worker may run the validation and review.
+
+## The pilot: project `system`
+
+From 2026-10-25 the pilot is the project `system`, on the system repository itself. Its charter is
+version 2 of the project (proposed 2026-10-25); the board holds it, so read it there. The roles
+are the live install's split ([route work by kind](runbooks.md#route-work-by-kind)): a Claude Code
+Worker develops, with `kinds: [code, docs, tests]`; a Codex Worker takes the validation
+(`kinds: [validation]`) and reviews. Read its progress on `/ui`'s **Board** (the project's header and its
+tasks by state, [web UI](../reference/web-ui.md)) and **Home** (what waits for you), and in `system report --project <its id>`
+([a working day](#a-working-day)). The sections below are the procedure for any pilot, with an
+example repository.
 
 ## Before you start
 
@@ -56,21 +68,20 @@ repository at `/home/me/src/align`:
         kind: programmatic
         unknown: available
         windows:
-          - { id: five-hour, kind: rolling, seconds: 18000 }
-          - { id: seven-day, kind: rolling, seconds: 604800 }
+          - { id: five-hour, kind: rolling, seconds: 18000 }   # Claude: five-hour only (D70)
 # Three Workers on the repository, each run of a workflow run in that run's own worktree.
 - id: agent-workers
   config:
     workers:
       # Writes and runs the confined commands: develop, and validate.
       - { id: developer, runtime: claude-agent-sdk, workspace: /home/me/src/align, sandbox: workspace-write, tier: standard,
-          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour } }
       # Reads only: the exact-subject review.
       - { id: reviewer, runtime: claude-agent-sdk, workspace: /home/me/src/align, sandbox: read-only, tier: standard,
-          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour } }
       # Reads only, on the economy tier: the digests of the results.
       - { id: digester, runtime: claude-agent-sdk, workspace: /home/me/src/align, sandbox: read-only, tier: economy,
-          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          worktreePerRun: true, pool: max.agents, account: max, windows: { five_hour: five-hour } }
 # The bundle's studio policy, with the validation commands listed: a listed command runs as the
 # workspace write it is judged as; any other command asks, and a validation step cannot wait, so
 # it is denied and reported not run.
@@ -102,12 +113,16 @@ repository at `/home/me/src/align`:
 
 Then `system check` until it says `ok`, `system shutdown`, `system start`, and `system health`:
 the three Workers `ready`. The developer proves `develop` and `validate`, the reviewer and the
-digester `review`. Keep `workspace-write`'s required checks: the engine never reports `tests`
-from a model's account of a command, so with them every result waits for your acceptance, which
-is where the checks bind ([accept or reject a review](runbooks.md#accept-or-reject-a-review)).
+digester `review`. Keep `workspace-write`'s required checks: the engine never takes `tests` from a
+model's account of a command. It runs them itself on the result's exact tree when the
+repository's checks are configured, and a result whose checks pass no longer waits for you to run
+them ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md),
+[let a run pass the required checks](runbooks.md#let-a-run-pass-the-required-checks)); otherwise
+every result waits for your acceptance, which is where the checks bind
+([accept or reject a review](runbooks.md#accept-or-reject-a-review)).
 
 On an install where other Workers are on too, such as the live install with its website and
-reviewer Workers, also put the pilot's Claude Code Workers first in the `workers` row's
+reviewer Workers, also put the pilot's Workers first in the `workers` row's
 `priority`, keeping the row's other options (the patch replaces the whole row). Routing reads that
 list after tier, quota, and load, so it decides between Workers those leave equal
 ([routing](../design/routing.md)).
@@ -167,10 +182,13 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
      and the fix and a re-review run once you approve it
      ([remediation](runbooks.md#a-remediation-fix-waits-on-the-queue));
    - the validation runs the criteria's commands, confined, and reports each command, its exit
-     code, and what it measured (`validate:1`). That report is the attempt's result.
-2. **The result waits for you** in `review` (`tests` and `lint` pending), and its digest is set on
-   the task within minutes: the lead reads the digest, not the transcript (`board_task`,
-   `board_brief`).
+     code, and what it measured (`validate:1`). That report is the attempt's result;
+   - when the repository's checks are configured, the run then runs `tests` and `lint` itself on
+     the result's exact tree, confined ([let a run pass the required checks](runbooks.md#let-a-run-pass-the-required-checks)).
+2. **The result waits for you** in `review` (`tests` and `lint` pending) unless the run passed both
+   (then it is accepted, and only its merge waits for you; a failed one is another attempt), and its
+   digest is set on the task within minutes: the lead reads the digest, not the transcript
+   (`board_task`, `board_brief`).
 3. **You decide, in batches**, on `/ui`: the queue's requests (charters, remediation fixes), and the
    reviews held for you. For a review: read the digest and the validation's report, run the pending
    checks in the run's worktree yourself ([worktree](runbooks.md#a-runs-worktree)), then Accept or

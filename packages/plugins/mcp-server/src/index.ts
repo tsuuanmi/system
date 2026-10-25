@@ -19,7 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
+import { countedWhole, dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
 import { type HealthReport, healthReport, type LivenessRead } from './health.ts'
@@ -280,7 +280,8 @@ export class McpEndpoint extends McpTools {
         unknownUsage: {
           pools: async () => (await resources.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
           entries: ({ since, afterSeq, limit }) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, since, afterSeq, limit }),
-          counted: async (runId: string, pool: string) => (await resources.usage({ runId, pool })).records.length > 0,
+          // A lower bound (`partial`) is no count of its run (INV-2).
+          counted: async (runId: string, pool: string) => countedWhole((await resources.usage({ runId, pool })).records),
         },
       } : {}),
       ...(turns?.conversations ? { undeleted: () => turns.conversations!({ state: 'failed' }) } : {}),
@@ -304,6 +305,8 @@ export class McpEndpoint extends McpTools {
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       // The notifier's outcomes, recorded as events: the surface reads them, never the plugin (docs/design/notifications.md#health).
       ...(eventLog ? { deliveries: ({ since, afterSeq, limit }: { since: string; afterSeq: number; limit: number }) => eventLog.query({ type: 'notify.delivery', since, afterSeq, limit }) } : {}),
+      // The agent Workers' tool denials, counted by reason code per Worker kind per day (T207).
+      ...(eventLog ? { denials: ({ since, afterSeq, limit }: { since: string; afterSeq: number; limit: number }) => eventLog.query({ type: 'agent-workers.tool.denied', since, afterSeq, limit }) } : {}),
       minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,
       driftWindowMs: (this.config.driftWindowHours ?? 24) * 60 * 60_000,
     })
@@ -470,7 +473,7 @@ export class McpEndpoint extends McpTools {
     // services that hold each fact; a client (the lead) sees it without account labels.
     this.tools.set('roster', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit\'s reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account\'s pools (each window\'s used share and reset, runs the ledger could not count). A fact no source gave reads unknown, with why.', inputSchema: {} },
+      spec: { scope: 'client', description: 'Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit\'s reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account\'s pools (each window\'s used share and reset, runs the ledger could not count). `now`: the Workers free, the quota lost soonest first; stalled runs; accounts out of quota; ready tasks, each with its likely Worker. A fact no source gave reads unknown, with why.', inputSchema: {} },
       handler: async (_args, { scope }) => {
         try {
           const roster = await readRoster(this.rosterServices(), { scope })

@@ -85,7 +85,9 @@ It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
     next turn finds it. A commit that fails takes it back.
   - The page follows the turn's abort only until the answer is in.
   - A failed turn discards its page.
-  - Releasing or resetting a session closes its tab.
+  - Releasing or resetting a session closes its tab, once the caller's store
+    transaction commits (at once outside one): a rolled-back reset or release
+    closes nothing.
 - **Write-back:** before completing, the turn captures the browser state for the
   driver's origins and stores it with `accounts.refreshState`. A session-bound
   account has no copy to refresh. This happens only
@@ -223,6 +225,12 @@ It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
 - **Submitted:** a view's `submitted` flag says whether the prompt reached the
   provider. It is set in the same transaction as the receipt, so a caller never
   resends.
+- **A site's own error after the send** (ADR-0062,
+  [design](../../../docs/design/provider-turns.md#a-sites-own-error-after-the-send)): a driver
+  failure marked `siteError` (Gemini's "Sorry, something went wrong" in place of an answer) keeps
+  the mark on the turn's error, and its execution's (`error.siteError`), only when the turn's
+  receipt was written. The runtime never resends it; the caller's rule may start the session's
+  next work in a new conversation through `reset`, on the same account.
 - **Fail closed on drift:** a turn routed before a restart whose tier the
   operator has since unmapped fails with `config_error`. It is never served by
   another mode.

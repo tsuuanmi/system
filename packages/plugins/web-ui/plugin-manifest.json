@@ -15,7 +15,7 @@
     },
     {
       "seam": "workflow",
-      "range": "^1.7.0"
+      "range": "^1.10.0"
     },
     {
       "seam": "accounts",
@@ -34,7 +34,7 @@
     },
     {
       "seam": "artifacts",
-      "range": "^1.1.0",
+      "range": "^1.2.0",
       "optional": true
     },
     {
@@ -49,7 +49,7 @@
     },
     {
       "seam": "resources",
-      "range": "^1.1.0",
+      "range": "^1.3.0",
       "optional": true
     },
     {

@@ -19,6 +19,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { CONFIG, type Rendered, ScriptedWorkers } from '../conformance/workflow.ts'
 import Workflow, { type NodeTemplate, type RunView } from '../src/index.ts'
+import { REVIEW_RUNS_NOTHING } from '../src/spec.ts'
 
 // Remediation on the approval queue (docs/design/workflow-engine.md#remediation-on-the-approval-queue),
 // and a re-review's instructions, composed as its review's were, end to end over the store-backed
@@ -471,6 +472,8 @@ describe('a re-review\'s instructions (docs/design/workflow-engine.md#graph-grow
     const reviews = reviewsOf(workers)
     expect(reviews.map((r) => asked(r.prompt))).toEqual(['Review: Fix add()\n<change>changed add()</change>', 'Review: Fix add()\n<change>added a test</change>'])
     for (const review of reviews) expect(review.prompt).not.toContain('{{')
+    // The review and the re-review are each told, in their subject block, to read and judge and run nothing.
+    for (const review of reviews) expect(review.prompt).toContain(`\n## The exact subject of this review\nReview exactly this change against the request. You see none of the producer's conversation.\n${REVIEW_RUNS_NOTHING}\n`)
     // Bound to the subject the fix left, not the one the first review read.
     expect(/^Subject: (\S+)$/m.exec(reviews[1]!.prompt)![1]).not.toBe(/^Subject: (\S+)$/m.exec(reviews[0]!.prompt)![1])
     // It points at the fix's result by content id, named as the fix's, never carrying it, and binds it in its input receipt.

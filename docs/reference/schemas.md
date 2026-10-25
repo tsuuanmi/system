@@ -61,7 +61,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.8.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.9.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -194,6 +194,30 @@ guesses.
     the node first waited, kept across waits), and `maxLimitWaitHours`. A recovery decision with any
     other outcome keeps its version. Example:
     [`decision.recovery-wait.json`](../../schemas/examples/decision.recovery-wait.json).
+- `decision@1.9` adds the `recovery` outcome `resend`: a read-only team member's first step
+  (`propose`) that a site answered with its own error after the prompt was sent runs once more, in
+  a new conversation of its session ([ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md),
+  operator decision D60). Such a decision must be `@1.9`; every other decision keeps its version.
+  Its candidates are `resend`, `retry`, `failover`, and `fail`; the decider is the rule
+  `workflow.recovery` version 2. `detail` names the `kind` and `disposition`, the failed `attempt`,
+  the `sessionId` whose conversation was reset, the failed execution (`failed.execution`, the
+  failed turn), and the new attempt (`next.attempt`, the `key` its execution starts under, the new
+  turn, and `conversation: new`). A site's own error that is not resent fails as before, at its own
+  version, with a candidate `resend` saying why not. Example:
+  [`decision.recovery-resend.json`](../../schemas/examples/decision.recovery-resend.json).
+- The dispatch pass's decisions ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md))
+  are existing types at their own versions, their rule ids new values: an `admission` (decider rule
+  `dispatch.select` version 1) whose candidates are the ready tasks a pass looked at, the one it
+  takes selected and every other with why, `detail` naming the `taskId`, `projectId`, `attempt` (the
+  attempts made), and the `order` (`age`); a `route` (rule `dispatch.choice` version 1, its `hash`
+  the sha256 of the quota settings it read) whose candidates are every Worker with its quota keys,
+  why it is not free, or routing's refusal, and the sources that did not answer, at most 255 (the
+  last counting the rest), its inputs the select decision, the stored requirement, and the policy's
+  `autonomy` decision, `detail` naming the `taskId`, `attempt`, `nodeId`, `score`
+  (`quota-score@2`), the `settings`, the request's `version`, the chosen Worker's `account`,
+  `repository`, and `windows`; a `gate` (rule `dispatch.approval`) whose outcome `board-approval`
+  names the board's approved request for the attempt (D62); and a `gate` (decider `operator`,
+  `dispatch.pause`) whose outcome `pause` or `run` is the operator's pause or resume.
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -418,8 +442,15 @@ guesses.
   usage report shows it per step; it is not priced.
 - `sends` is how many times the call was sent (2 when a restart sent it once
   more, a recorded `reconciliation` decision), and `attempts` how many provider
-  requests the last send took. Each request may be billed: at worst
-  `sends × attempts`, six with the defaults.
+  requests the last send took, its route re-attempts and the retries of
+  requests the provider said it did not process included. Each request may be
+  billed: at worst `sends × attempts`, six with the defaults when no request is
+  refused as not processed.
+- `model-answer@1.1` raises `attempts`' maximum from 10 to 66, the combined
+  bounds' worst case per send: `(unprocessedRetries + 1) × (maxRetries + 1)`,
+  11 × 6 at their largest valid values. An answer with more than 10 attempts is
+  written as `@1.1`, and one below `@1.1` with more than 10 is refused; an
+  answer with 10 or fewer stays `@1.0`.
 
 ### `account`
 
@@ -601,18 +632,87 @@ guesses.
   appended by the Worker source that meters it (today the `agents` source). The event's own
   `runId` is the workflow run the unit belongs to, if any; the record's `runId` is the unit itself,
   as a usage record of it would name it.
-- `kind`: `not-reported` (the unit ended, and its runtime reported neither tokens nor turns, so no
-  record can be written), `interrupted` (the host stopped while it ran, so no result came),
+- `kind`: `not-reported` (the unit ended without its runtime's final count: its runtime reported
+  neither tokens nor turns, so no record can be written, or, with `partial`, only what it reported
+  while it ran), `interrupted` (the host stopped while it ran, so no result came),
   `refused` (the ledger refused its record: `failure` is the ledger's, and `record` the refused
   record kept as an `evidence` artifact when it is a valid `usage-record@1.0`), or `failed`
   (recording it failed otherwise). `failure` and `record` belong to `refused` only.
-- It never carries a number for the unit's usage, and nothing estimates one. A cap counts the unit
-  as 0. The unit is **reconciled** once the ledger counts a usage record of the same `runId` in
-  the same `pool` (later a `transcript` record): from then on the report counts it as reconciled,
-  and health no longer counts it. A reader validates the data and skips an entry that is not a
-  valid record. Examples:
+- `reason`: why, in plain words: how the unit ended (completed, stopped by the operator, past its
+  timeout, stopped by the host's stop or a drain at restart, at a call that waits for an approval
+  request, failed) and what its runtime reported.
+- `partial` (1.1, `not-reported` only, and only under `usage-unknown@1.1`): the usage record
+  (`receipt`) the ledger counted of what the runtime reported before the unit ended without its
+  final count. A lower bound, never the unit's usage.
+- It never carries a number for the unit's usage, and nothing estimates one. Until the unit is
+  **reconciled** (the ledger counts a usage record of the same `runId` in the same `pool` other
+  than its `partial` one, later a `transcript` record), a cap of its task or project in its pool is
+  refused ([ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md));
+  from then on the report counts it as reconciled, and health no longer counts it. A reader
+  validates the data and skips an entry that is not a valid record. Examples:
   [`usage-unknown.not-reported.json`](../../schemas/examples/usage-unknown.not-reported.json),
-  [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json).
+  [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json),
+  [`usage-unknown.partial.json`](../../schemas/examples/usage-unknown.partial.json).
+
+### `quota-draw`
+
+- What one agent run of a derived Worker on a declared pool drew from each window of its account's
+  pool ([quota drawn per run](../design/resources.md#quota-drawn-per-run), PROP-0015 E2): the body
+  of an `evidence` artifact filed under the run's workflow run and step, and the data of the
+  `quota.draw` event that names them (the event's `runId` and `nodeId`). The record's `runId` is the
+  agent run, as its usage record names it; `kind` is the kind of work it was admitted for
+  (`WorkRequirement.kind`) and `template` and `step` the template step the engine started it for
+  (`WorkerStart.step`), each absent when there was none.
+- `windows` holds one entry per configured window of the pool, never one figure for the account.
+  `before` is the window's latest reading when the run was submitted (`startedAt`); `after` its
+  latest once the account's usage report after the run was recorded, observed at or after
+  `endedAt`. Each keeps the used share, its epoch (`resets`: the later of `resetsAt` and
+  `cooldownUntil`, as `accountQuotaOf` reads it), and `observedAt`.
+- `draw` is `after − before` of the used share, in percentage points of the window's allowance,
+  and only for `clean` and `confounded`. `reset-crossing`: the epochs differ, either reading names
+  no reset, or the share went down, so no draw, never a negative one. `no-reading`: a reading
+  before or after is missing, or gives no share. `confounded`: `overlapping` other runs on the same
+  account ran while this one did (from the reading before to the reading after), so the rise is not
+  its alone. `why` says each. Only `clean` draws enter a median or a percentile. Authoritative
+  consumption in units (PROP-0015's `units-only`) is not recorded: no runtime reports it today.
+- A reader validates the data and counts an entry that is not a valid record apart. Examples:
+  [`quota-draw.clean.json`](../../schemas/examples/quota-draw.clean.json),
+  [`quota-draw.excluded.json`](../../schemas/examples/quota-draw.excluded.json).
+
+### `event`
+
+- One event-log entry (`event@1.0`): its `data` is a small object each event type defines, and
+  changes only additively ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)):
+  a reader ignores a key it does not know, and treats one an older entry lacks as unrecorded.
+- `agent-workers.tool.denied`: an agent Worker's tool call its gate denied
+  ([why a call was denied](../design/approvals.md#why-a-call-was-denied)). `data`: `agentRun`,
+  `worker`, `tool`; since T207 also `reason` (a stable code: `metacharacter`, `empty-word`,
+  `outside-workspace`, `git-data`, `unclassified-tool`, `unsupported-field`, `invalid-input`,
+  `invalid-patch`, `policy-forbid`, `not-listed`, `request-rejected`, `request-expired`,
+  `request-withdrawn`, `workflow-denied`, `request-mismatch`, `request-unreadable`, `no-session`,
+  `run-stopped`, `review-member`, `no-approvals`, `unknown-checks`, `unknown-mode`, `gate-error`;
+  a code is never renamed or reused), `explanation` (the code's fixed plain sentence, at most 300
+  characters, never the call's input), `workerKind` (the Worker's runtime), `actionClass` (once
+  the call was classified), `requestId` (a denial on a request), and `decision` (the decision
+  behind it, as on the entry). An entry from before T207 has none of them.
+- `agent-workers.tool.deferred`, `.notified`, and `.checks-pending` carry `agentRun`, `worker`,
+  `tool`, and `actionClass` (and `workerKind` since T207); `deferred` adds `requestId`, the others
+  `pendingChecks` when checks are pending (always for `checks-pending`).
+- The data of these four tool events is declared by
+  [`agent-tool-event.v1.json`](../../schemas/agent-tool-event.v1.json) (`agent-tool-event@1.0`,
+  T211), one definition per event type (`$defs/denied`, `deferred`, `notified`, `checks-pending`).
+  The data carries no schema tag: a reader names the definition by the entry's type. `reason` is
+  an enum of the codes above (a test derives the gate's own list, `DENIAL_REASONS`, and requires each
+  in it, so a new code is a minor version of the schema); `explanation` is 1 to 300 characters and
+  only with a `reason`; `workerKind` and `tool` at most 100; no other field. The fields T207 added are
+  optional, so an entry from before T207 stays valid. A reader (`agentToolEventOf`,
+  `agentToolDenialOf` in `@tsuuanmi/system-libs`; health's `tool-denials` check) validates each
+  entry and counts one that is not valid apart, never by reason. Examples:
+  [`agent-tool-event.denied.json`](../../schemas/examples/agent-tool-event.denied.json),
+  [`agent-tool-event.denied-request.json`](../../schemas/examples/agent-tool-event.denied-request.json),
+  [`agent-tool-event.denied-before-t207.json`](../../schemas/examples/agent-tool-event.denied-before-t207.json),
+  [`agent-tool-event.deferred.json`](../../schemas/examples/agent-tool-event.deferred.json),
+  [`agent-tool-event.checks-pending.json`](../../schemas/examples/agent-tool-event.checks-pending.json).
 
 ### `notification`
 
@@ -630,6 +730,12 @@ guesses.
   operator expires within the lead time ([board](../design/board.md#a-review-held-for-the-operator));
   a notice of it is `@1.1`, every other kind stays `@1.0`, and the kind is refused on `@1.0`.
   Example: [`notification.review-expiring.json`](../../schemas/examples/notification.review-expiring.json).
+- `notification@1.2` adds the kind `dispatch.started`: System started a ready board task's run by
+  itself where the project's policy gives `dispatch` `notify`
+  ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself), PROP-0014 D2);
+  its `subject` is the run id, its `event` the `workflow.dispatch.notice` entry. A notice of it is
+  `@1.2`, and the kind is refused on `@1.0` and `@1.1`; `review.expiring` is valid on `@1.1` and
+  `@1.2`. Example: [`notification.dispatch-started.json`](../../schemas/examples/notification.dispatch-started.json).
 - `title`, `text`, and `act` are made by code from ids, classes, kinds, and times the producer's
   event names; a value that is not an id or a word is left out, never quoted. It carries no
   secret, prompt, answer, request summary, consequences, or command a request would run, and no
@@ -678,6 +784,12 @@ guesses.
   ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). No record named it
   before, so the schema refuses it `auto` and `notify` from the start without tightening
   anything, and the record stays `@1.0`.
+- `dispatch` joined `common@1`'s action classes with PROP-0014's D1
+  ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)):
+  System starting a ready board task's attempt by itself. It may be any mode (it is not a class
+  that always asks); a policy written before it names no rule for it and takes its `default`, so
+  the record stays `@1.0` and every reader in a decision path knows the value (it is in
+  `ACTION_CLASSES` and the board tools' vocabulary).
 - A project policy constrains only the classes it names. The effective mode of a class is the
   strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
   looser project rule has no effect. For a class neither names, it is the stricter of the two
@@ -731,6 +843,10 @@ guesses.
   class `policy-change`; every other request stays `@1.0`. Only the queue writes one: `request`
   refuses the requester `approvals` (`invalid`). Its subject is
   `{type: content, ref: autonomy-policy-set, version: <the proposed set's hash>}`.
+- A `dispatch` request (ADR-0064) stays `@1.0`: requester `workflow` with the task and project, its
+  subject `{type: content, ref: dispatch:<taskId>:attempt:<n>, version: quota-score@2:<sha256 of
+  the Worker and the score's inputs>}` (`n`, the attempts the task had made), so an approval binds
+  the task, the attempt, and the Worker; its `refs` name the `dispatch.choice` decision.
   Examples: [`approval-request.batched.json`](../../schemas/examples/approval-request.batched.json),
   [`approval-request.expired.json`](../../schemas/examples/approval-request.expired.json),
   [`approval-request.policy-change.json`](../../schemas/examples/approval-request.policy-change.json).
@@ -889,6 +1005,25 @@ guesses.
   cut (a note at its end says so). Its classification is the run's. Example:
   [`board-projection.tasks-md.json`](../../schemas/examples/board-projection.tasks-md.json).
 
+### `check-run`
+
+- The body of an `evidence` artifact: a workflow run's required checks as the Worker source that
+  holds its worktree ran them on the exact tree its result is on (`subject`, INV-5), in the
+  confinement and views of the repository's setup (`setup`, its content id)
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks),
+  [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)). Its envelope's
+  inputs are the `autonomy` decisions that let each command run; its classification is the run's.
+- One entry per check asked, in order. `passed`: the command exited 0 and the tree was still the
+  subject after it; `failed`: it exited with another code, the tree unchanged; `error`: anything
+  else (no command configured, a policy that does not let it run unasked, a confinement that cannot
+  be proven, a command that cannot start, a timeout, a signal, or a tree the check changed), which
+  is neither passed nor failed: the check stays pending. After a check that changed the tree, the
+  later ones are `error` without running.
+- `output` keeps the last 4000 characters of what the command printed, stdout and stderr as they
+  came, with the length and SHA-256 of all of it. The engine's acceptance decision names the
+  artifact among its inputs and reports each `passed` or `failed` in `outcome.detail.checks`.
+  Example: [`check-run.lint-failed.json`](../../schemas/examples/check-run.lint-failed.json).
+
 ### `digest`
 
 - The body of a `report` artifact whose envelope inputs are its `sources`. Every
@@ -1041,6 +1176,12 @@ guesses.
   expire first (at most 64, `reviewsHeldOmitted` counting the rest), each by its task, project,
   title, `expiresAt`, and the pending checks its wait names. Unanswered by `expiresAt`, a review
   expires and its task waits for input (`review-expired`). A 1.2 report stays valid.
+- `mcp-report` 1.4 adds `usage.draws`, only when there is any: what the agent runs of the scope
+  recorded in the period drew from their accounts' windows ([`quota-draw`](#quota-draw)), per kind
+  and window (`byKind`) and per kind, template step, and window (`byStep`), each with the clean
+  draws counted, their `median` and `p90` in percentage points (absent with none), and the entries
+  left out by state (`excluded`), at most 256 of each list (`omitted` counting the rest). A 1.3
+  report stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:
@@ -1050,7 +1191,7 @@ guesses.
 
 | Tool | Scope | Does |
 |---|---|---|
-| `roster` | client | every Worker in one read model, projected on read: its account and the account's record, role, tier, quota class, availability, the work it serves now, its load, and its account's pools and windows ([roster](../design/roster.md)) |
+| `roster` | client | every Worker in one read model, projected on read: its account and the account's record, role, tier, quota class, availability, the work it serves now, its load, and its account's pools and windows ([roster](../design/roster.md)); and `now`, capacity now ([capacity now](../design/roster.md#capacity-now)) |
 
 - Input and output: [`mcp-roster.v1.json`](../../schemas/mcp-roster.v1.json) `$defs/roster-input`
   (no arguments) and `roster-output`. The record is computed on each call and never stored, so it
@@ -1097,12 +1238,54 @@ guesses.
   router reads and says the same
   ([sources that do not answer](../design/routing.md#sources-that-do-not-answer)). Readers accept
   1.0 to 1.5.
+- `mcp-roster@1.6` adds, per Worker, `teams`: `{value: {excluded: true, summary}}` when the
+  workflow engine's `teams.excludeWorkers` keeps it out of teams (named itself, by its account, or
+  as another Worker of a named one's account; [Workers left out of teams](../design/teams.md#workers-left-out-of-teams)),
+  read through the engine's `teamExclusion()`; absent when the engine tells none or leaves it in;
+  `unknown` on every Worker when the engine could not tell. A 1.5 record stays valid. Readers
+  accept 1.0 to 1.6.
+- `mcp-roster@1.7` adds `now` (`$defs/capacity`), capacity now
+  ([capacity now](../design/roster.md#capacity-now)): one summary made on the server from the
+  roster and the board, which `system capacity` and the Workers page's *Right now* render as it
+  is. `asOf`; `accounts`, each account (`account`, `name`) with its pools' `windows` (`used`,
+  `resets`, `state`), `canWork` (`{value: false}` at a limit or when none of its Workers takes work,
+  `{unknown}` when its quota cannot be read, never read as room), and a one-line `summary`; `free`,
+  the Workers that take work now (ready, the account not at a limit, its quota known), each with
+  `worker`, `name`, `account`, `role`, `kinds`, `tier`, `load`, and `quota` (the window with the
+  least left among those with a current reading: `pool`, `window`, `seconds`, `used`, `left`,
+  `resetsAt`; `null` when no account quota applies), ordered by what would be lost unused per
+  minute (`left` over the minutes to `resetsAt`), the highest first, then the most left, the
+  soonest reset, the id, those with `quota: null` last; `quotaUnknown`, the Workers ready as their
+  source says whose quota cannot be read, with `why` (never counted free, INV-2); `stalled`
+  (`worker`, `name`, `execution`, `runId`, `since`, and `unread` when a Worker's liveness could not
+  be told); `noQuota` (`account`, `name`, `until`, known or unknown); `cannotWork` (`worker`,
+  `name`, `state` `unavailable` or `quarantined`, `reason`); and `ready`, the ready tasks of the
+  active board projects (`projectId`, `taskId`, `title`, `template`), each with `likely`, the Worker
+  a start would most likely go to as the start preview tells it (the first, in the free order, that
+  could take its first step a Worker runs; `{value: null}` when none that takes work now could;
+  `{unknown}` when it names no template, its template is not served, or the steps cannot be read).
+  Each list is `{value: {items, more}}` with at most 16 items, or `{unknown}` with why (the Workers
+  or the board could not be read). Present on every record the roster makes; a 1.6 record, with no
+  `now`, stays valid. Readers accept 1.0 to 1.7.
+- `mcp-roster@1.8` adds, per step of `work`, `startedBy`: `dispatch` when the dispatch pass started
+  the board task's run by itself ([PROP-0014](../proposals/0014-dispatch-by-quota.md) D2), `lead` for
+  a start through MCP `run` or `task` or the CLI, `operator` for Start on `/ui`; absent when the
+  engine does not tell (workflow contract below 1.10). The step's `summary` then ends with
+  `started by itself`. A 1.7 record stays valid. Readers accept 1.0 to 1.8.
+- `mcp-roster@1.9` adds, per free Worker of capacity now (`capacityQuota`), `headroom`: what its
+  account's binding window has left above the operator's reserve (from -90 to 100), by the one headroom rule
+  dispatch and routing use ([PROP-0014](../proposals/0014-dispatch-by-quota.md) D3); the binding window is
+  the one with the least headroom, and its `resetsAt` is absent when its reading names no reset. A 1.8
+  record stays valid. Readers accept 1.0 to 1.9.
 - Bounds ([roster bounds](../design/roster.md#bounds)): at most 256 Workers (`unlisted` counts the
   rest), 32 steps per Worker (`more`), 64 siblings, 64 pools, 16 windows per pool, 64 sources, 64
   step starts;
   past a bound with no count, the field is `unknown` with why, never cut silently. `work.unread`
-  says the runs read were cut by their bound (500).
-- The call's text content is the record rendered for a terminal (what `system roster` prints); the
+  says the runs read were cut by their bound (500). In `now`, 16 entries per list (`more`), 16
+  windows per account (else its `windows` are `unknown`), and the ready tasks of at most 32 active
+  projects (`ready.unread` past them).
+- The call's text content is the record rendered for a terminal (what `system roster` prints, its
+  last block *Right now*, what `system capacity` prints); the
   structured content is the record, validated before it is sent: a record its schema refuses is a
   defect, and the call is an error. Example:
   [`mcp-roster.call.json`](../../schemas/examples/mcp-roster.call.json).

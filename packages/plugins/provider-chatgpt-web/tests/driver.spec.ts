@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt } from '../fixtures/fake-chatgpt.ts'
 import ChatGptWebPlugin, { ChatGptWebDriver, shippedMap } from '../src/index.ts'
+import { Config } from '../src/plugin.ts'
 
 // The driver against its fake site is tested by theme, one file each so they run side by side:
 // pages.spec.ts, answers.spec.ts, composer.spec.ts, conversations.spec.ts, deletion.spec.ts,
@@ -28,6 +29,27 @@ describe('the shipped ChatGPT UI map', () => {
 it('ships a map that loads with the generic loader too', () => {
   const text = readFileSync(new URL('../ui/chatgpt-web.ui.yaml', import.meta.url), 'utf8')
   expect(loadUiMap(text).hash).toMatch(/^sha256:/)
+})
+
+describe('the answer-stable window as configuration (T161)', () => {
+  const stableOf = async (config: Record<string, unknown>): Promise<number> => {
+    const ctx = new Context()
+    await ctx.plugin(Providers)
+    await ctx.plugin(ChatGptWebPlugin, { origin: 'http://127.0.0.1:9', overlayPath: '/nonexistent/none.yaml', ...config })
+    return (ctx.providers.get('chatgpt-web') as unknown as { timeouts: { stableMs: number } }).timeouts.stableMs
+  }
+
+  it('defaults to 1.5 s and refuses a window under 100 ms or over 1 min', () => {
+    expect(Config({})).toMatchObject({ stableMs: 1500 })
+    expect(Config({ stableMs: 300 })).toMatchObject({ stableMs: 300 })
+    expect(() => Config({ stableMs: 50 })).toThrow()
+    expect(() => Config({ stableMs: 60_001 })).toThrow()
+  })
+
+  it('hands the configured window to the driver, and keeps 1.5 s when none is configured', async () => {
+    expect(await stableOf({ stableMs: 300 })).toBe(300)
+    expect(await stableOf({})).toBe(1500)
+  })
 })
 
 describe.runIf(canRunBrowser)('the driver as a provider plugin', () => {

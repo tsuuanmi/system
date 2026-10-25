@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { BUDGET, bytesOf, tokens } from '../../mcp-server/tests/budget.ts'
 import type { Workflow } from '../src/index.ts'
 import { registerTools } from '../src/tools.ts'
-import type { NodeView, RunView } from '../src/types.ts'
+import type { NodeView, RunView, UsageDraws } from '../src/types.ts'
 
 const hex = (seed: string, length: number): string => seed.repeat(length).slice(0, length)
 const ref = (seed: string) => `sha256:${hex(seed, 64)}` as NonNullable<RunView['result']>
@@ -38,12 +38,13 @@ const FAILED: RunView = {
 type Handler = (args: Record<string, unknown>) => Promise<unknown>
 
 /** The engine's tool handlers over a workflow that holds the fixture runs. */
-function tools(runs: RunView[]): Map<string, Handler> {
+function tools(runs: RunView[], draws?: UsageDraws): Map<string, Handler> {
   const registered = new Map<string, Handler>()
   const c = { mcp: { tool: (name: string, _spec: unknown, handler: Handler) => registered.set(name, handler) } } as unknown as Context
   const w = {
     wait: async (runId: string) => runs.find((r) => r.runId === runId)!,
     usage: (limit: number) => runs.slice(0, limit),
+    draws: () => draws,
   } as unknown as Workflow
   registerTools(c, w, {} as Context)
   return registered
@@ -76,6 +77,16 @@ describe('replies say it once (QA-12)', () => {
     const failed = (await tools([FAILED]).get('usage')!({}) as typeof page).structuredContent.runs[0]!
     expect(failed).not.toHaveProperty('error')
     expect(failed.nodes).toEqual([{ nodeId: 'ask:1', state: 'FAILED', minTier: 'standard', attempt: 1 }])
+    // No draw recorded: no draws at all.
+    expect(page.structuredContent).not.toHaveProperty('draws')
+  })
+
+  it('reports what agent runs drew, by kind and window and by template step, once any draw is recorded (PROP-0015 E2)', async () => {
+    const figure = { kind: 'code', window: 'five-hour', draws: 12, median: 4, p90: 9, excluded: { confounded: 2, 'reset-crossing': 1, 'no-reading': 0 } }
+    const draws: UsageDraws = { byKind: [figure], byStep: [{ ...figure, template: 'algorithm-development', step: 'develop' }], records: 15, unreadable: 0, unread: false }
+    const page = await tools([ASK], draws).get('usage')!({}) as { content: Array<{ text: string }>; structuredContent: Record<string, unknown> }
+    expect(page.content).toEqual([{ type: 'text', text: '1 recent run, 1 step; 15 quota draws by kind and window' }])
+    expect(page.structuredContent.draws).toEqual(draws)
   })
 })
 

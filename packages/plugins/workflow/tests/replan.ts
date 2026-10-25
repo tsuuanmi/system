@@ -1,7 +1,7 @@
 /**
- * What the re-planning specs share (replan.spec.ts, replan-edits.spec.ts, replan-approved.spec.ts):
- * a gated planner with an input upstream of it and the answers its steps give. The specs are split
- * by theme so they run side by side.
+ * What the re-planning specs share (replan.spec.ts, replan-edits.spec.ts, replan-approved.spec.ts,
+ * replan-failed.spec.ts): a gated planner with an input upstream of it and the answers its steps
+ * give. The specs are split by theme so they run side by side.
  */
 import { TEST_TEMPLATES } from './templates.ts'
 

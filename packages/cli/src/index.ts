@@ -15,7 +15,7 @@ import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
+import { type DrawFigure, drawFigureText, dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 const require = createRequire(import.meta.url)
@@ -680,8 +680,27 @@ export function formatHealth(health: HealthView): string[] {
 }
 
 /**
+ * The running profile's capacity now (MCP `roster`'s `now`, docs/design/roster.md#capacity-now): the
+ * server's rendering of it for a terminal (the roster text's last block, from "Right now"), or with
+ * `json` the record itself (`mcp-roster@1.7` `#/$defs/capacity`). Nothing is computed here. A refused
+ * call, a host that does not answer, or a host whose roster has no `now` throws.
+ */
+export async function hostCapacity(json: boolean, call: typeof callTool = callTool): Promise<string> {
+  const outcome = await call('roster', {})
+  if (outcome.isError) throw new Error(outcome.text || 'the roster could not be read')
+  if (json) {
+    const now = outcome.structured?.now
+    if (!now) throw new Error('the running profile gave no capacity record (a roster below mcp-roster@1.7 has no now)')
+    return JSON.stringify(now, null, 2)
+  }
+  const at = outcome.text.lastIndexOf('\nRight now (as of ')
+  if (at < 0) throw new Error('the running profile gave no capacity (a roster below mcp-roster@1.7 has no now)')
+  return outcome.text.slice(at + 1)
+}
+
+/**
  * The running profile's roster (REQ-HOST-8, MCP `roster`): its rendering for a terminal, or with
- * `json` the record itself (`mcp-roster@1.5`). A refused call, or a host that does not answer, throws.
+ * `json` the record itself (`mcp-roster@1.7`, with `now`). A refused call, or a host that does not answer, throws.
  */
 export async function hostRoster(json: boolean, call: typeof callTool = callTool): Promise<string> {
   const outcome = await call('roster', {})
@@ -691,6 +710,72 @@ export async function hostRoster(json: boolean, call: typeof callTool = callTool
     return JSON.stringify(outcome.structured, null, 2)
   }
   return outcome.text
+}
+
+/** Dispatch as MCP `dispatch_status`, `dispatch_pause`, and `dispatch_resume` give it (ADR-0064), as much as `system dispatch` prints. */
+export interface DispatchView {
+  enabled: boolean
+  paused?: { since: string; reason?: string; decision: string }
+  /** PROP-0014 D2: each project's own pause. */
+  pausedProjects?: Array<{ projectId?: string; since: string; reason?: string; decision: string }>
+  lastPass?: { at: string; state: string; reason?: string; took: Array<{ taskId: string; worker: string; how: string }>; tasks: Array<{ taskId: string; title: string; reason: string }>; more: number }
+  bounds: { running: { used: number; max: number }; openAsks: { used: number; max: number }; engine: { active: number; max: number }; hour?: { used: number; max: number } }
+  asks: Array<{ taskId: string; title: string; attempt: number; state: string; worker: string; requestId?: string; why: string }>
+  /** PROP-0014 D2: what dispatch started in the last 24 h, newest first. */
+  started?: Array<{ taskId: string; title: string; attempt: number; worker: string; runId: string; runStatus: string; mode: string; startedAt: string }>
+}
+
+/**
+ * `system dispatch [status|pause [--project <id>] [reason…]|resume [--project <id>]] [--json]`: the
+ * tool to call and its arguments, or undefined when the words are not one of these.
+ */
+export function parseDispatch(rest: readonly string[]): { action: 'status' | 'pause' | 'resume'; json: boolean; args: Record<string, string> } | undefined {
+  const [action = 'status', ...more] = rest[0] === '--json' ? ['status', ...rest] : rest
+  if (action !== 'status' && action !== 'pause' && action !== 'resume') return undefined
+  const json = more.includes('--json')
+  const words = more.filter((a) => a !== '--json')
+  const args: Record<string, string> = {}
+  const at = words.indexOf('--project')
+  if (at >= 0) {
+    const projectId = words[at + 1]
+    if (action === 'status' || !projectId || projectId.startsWith('--')) return undefined
+    args['projectId'] = projectId
+    words.splice(at, 2)
+  }
+  if (action !== 'pause' && words.length) return undefined
+  if (words.length) args['reason'] = words.join(' ')
+  return { action, json, args }
+}
+
+/**
+ * `system dispatch` for a terminal: on, off, or paused (since when, why, how to resume), each project
+ * paused, the bounds in use, the starts waiting for the operator's go or for their Worker, what it
+ * started by itself, and the last pass with its reason for each ready task it looked at.
+ */
+export function formatDispatch(view: DispatchView): string[] {
+  const state = !view.enabled ? 'off (dispatch.enabled is false): nothing is asked or started by itself'
+    : view.paused ? `paused since ${view.paused.since}${view.paused.reason ? `: ${view.paused.reason}` : ''} (system dispatch resume; decision ${view.paused.decision})` : 'on'
+  const b = view.bounds
+  const lines = [`dispatch: ${state}`, `  bounds: ${b.running.used} of ${b.running.max} dispatched runs and asks, ${b.openAsks.used} of ${b.openAsks.max} asks open, ${b.engine.active} of ${b.engine.max} active runs it may fill${b.hour ? `, ${b.hour.used} of ${b.hour.max} starts this hour` : ''}`]
+  for (const p of view.pausedProjects ?? []) {
+    lines.push(`  project ${p.projectId} paused since ${p.since}${p.reason ? `: ${p.reason}` : ''} (system dispatch resume --project ${p.projectId}; decision ${p.decision})`)
+  }
+  for (const s of view.started ?? []) {
+    lines.push(`  started by itself (${s.mode}) ${s.startedAt}: "${s.title}" (task ${s.taskId}, attempt ${s.attempt}) on ${s.worker}, run ${s.runId} ${s.runStatus}`)
+  }
+  for (const ask of view.asks) {
+    lines.push(ask.state === 'asked'
+      ? `  waiting for your go: "${ask.title}" (task ${ask.taskId}, attempt ${ask.attempt}) on ${ask.worker}, request ${ask.requestId}: decide it in the queue (system ui, or MCP approvals_decide)`
+      : `  ${ask.state}: "${ask.title}" (task ${ask.taskId}, attempt ${ask.attempt}) on ${ask.worker}`)
+    lines.push(`    why ${ask.worker}: ${ask.why}`)
+  }
+  const last = view.lastPass
+  if (last) {
+    lines.push(`  last pass ${last.at}: ${last.state}${last.reason ? `: ${last.reason}` : ''}${last.took.length ? `; took ${last.took.map((t) => `${t.taskId} on ${t.worker} (${t.how})`).join(', ')}` : ''}`)
+    for (const task of last.tasks) lines.push(`    ${task.taskId} "${task.title}": ${task.reason}`)
+    if (last.more) lines.push(`    and ${last.more} more ready task(s)`)
+  }
+  return lines
 }
 
 /** A plugin of the composition as the running profile's `status` lists it to the operator (REQ-HOST-7). */
@@ -1019,11 +1104,38 @@ interface UsageRun { runId: string; template: string; status: string; createdAt:
  * `system usage`: per request and step, the Worker, tier, and quota class that served it, the tokens a
  * model Worker spent, and a step whose usage the resource ledger could not count, with why.
  */
-export function formatUsage(usage: { runs: UsageRun[] }): string[] {
-  return usage.runs.flatMap((run) => [
-    `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
-    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
-  ])
+export function formatUsage(usage: { runs: UsageRun[]; draws?: UsageDraws }): string[] {
+  return [
+    ...usage.runs.flatMap((run) => [
+      `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
+      ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
+    ]),
+    ...formatDraws(usage.draws),
+  ]
+}
+
+/** What agent runs drew, as `system usage` gives it (`quota.draw`, PROP-0015 E2): figures per kind and window, then per template step. */
+interface UsageDraws {
+  byKind: DrawFigure[]
+  byStep: DrawFigure[]
+  records: number
+  unreadable: number
+  unread: boolean
+}
+
+/**
+ * The quota draws section of `system usage`: per kind and window, then per kind, template step, and
+ * window, the clean draws counted, their median and p90 in percentage points, and the entries left
+ * out by why; none when no draw is recorded.
+ */
+function formatDraws(draws: UsageDraws | undefined): string[] {
+  if (!draws) return []
+  const over = `${draws.records} record${draws.records === 1 ? '' : 's'}${draws.unread ? ', the latest only' : ''}${draws.unreadable ? `; ${draws.unreadable} not valid, not counted` : ''}`
+  return [
+    `quota drawn per run, in percentage points of each window (${over}):`,
+    ...draws.byKind.map((f) => `  ${drawFigureText(f)}`),
+    ...(draws.byStep.some((f) => f.step !== undefined) ? ['by template step:', ...draws.byStep.filter((f) => f.step !== undefined).map((f) => `  ${drawFigureText(f)}`)] : []),
+  ]
 }
 
 /** An execution whose liveness needs a look, as `explain` gives it (`ctx.workers.liveness`, PROP-0013). */

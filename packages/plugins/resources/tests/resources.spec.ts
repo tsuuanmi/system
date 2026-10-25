@@ -14,7 +14,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type LimitState, type PoolConfig, type PoolTemplate, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools, validateTemplates } from '../src/index.ts'
+import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools, validateQuota, validateTemplates } from '../src/index.ts'
 
 /** A `ctx.mcp` that keeps contributed tools, so a test calls a handler as a scope would. */
 class RecordingMcp extends McpTools {
@@ -39,9 +39,10 @@ const tempDir = (): string => {
   return dir
 }
 
-async function boot(dir: string = tempDir(), config: Config = { pools: POOLS }) {
+async function boot(dir: string = tempDir(), config: Config = { pools: POOLS }, events = true) {
   const ctx = new Context()
-  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(StoreResources, structuredClone(config))]
+  // The event log the host loads: a scoped cap reads it for usage the ledger could not count (ADR-0065).
+  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ...(events ? [ctx.plugin(EventLog, {})] : []), ctx.plugin(StoreResources, structuredClone(config))]
   await Promise.all(fibers)
   let stopped = false
   const stop = async () => {
@@ -170,6 +171,29 @@ describe('configuration', () => {
       expect(ctx.get('resources')).toBeUndefined()
       await fiber.dispose()
     }
+  })
+
+  it('keeps the operator\'s quota settings over the defaults, and refuses one out of its range at load, naming its path (ADR-0064, D63)', async () => {
+    expect(validateQuota(undefined)).toEqual({ reservePercent: 20, useSoonMinutes: 90, minHeadroomPercent: 10, headroomBucketPercent: 5, staleReadingSeconds: 1800 })
+    expect(validateQuota({ reservePercent: 0, useSoonMinutes: 0 })).toMatchObject({ reservePercent: 0, useSoonMinutes: 0, staleReadingSeconds: 1800 })
+    expect(() => validateQuota({ reservePercent: 91 })).toThrow('resources: quota.reservePercent must be a whole number from 0 to 90, not 91')
+    expect(() => validateQuota({ staleReadingSeconds: 30, headroomBucketPercent: 26 })).toThrow(/quota\.headroomBucketPercent .*quota\.staleReadingSeconds/)
+    const ctx = await boot(tempDir(), { pools: POOLS, quota: { reservePercent: 35 } })
+    expect(ctx.resources.quota?.()).toMatchObject({ reservePercent: 35, useSoonMinutes: 90 })
+    // The plugin refuses to start on a setting out of its range: no `ctx.resources` is provided.
+    const refused = new Context()
+    const store = refused.plugin(Store, { path: join(tempDir(), 'system.db') })
+    await store
+    onTestFinished(() => store.dispose())
+    await refused.plugin(Artifacts, {})
+    const fiber = refused.plugin(StoreResources, { pools: POOLS, quota: { reservePercent: 95 } })
+    try {
+      await fiber
+    } catch {
+      // refused at load: the assertion below is what matters
+    }
+    expect(refused.get('resources')).toBeUndefined()
+    await fiber.dispose()
   })
 
   it('refuses a pool template whose id or group is not a name, a duplicate, or one with bad windows; a declaration past the pools the tool lists changes nothing; declared pools keep their readings across a restart once declared again (ADR-0052)', async () => {
@@ -364,5 +388,83 @@ describe('paging and the MCP tools', () => {
     expect(await failureOf(ctx.resources.usage())).toBe('invalid')
     expect((await ctx.resources.usage({ runId: 'r1' })).records.map((r) => r.requestId)).toEqual(['u0', 'u1'])
     expect(await failureOf(ctx.resources.usage({ since: 'yesterday' }))).toBe('invalid')
+  })
+})
+
+describe('a cap and usage the ledger could not count (ADR-0065)', () => {
+  /** A `usage.unknown` fact as the agents source appends it. */
+  const unknownFact = (ctx: Context, runId: string, extra: Record<string, unknown> = {}) => ctx.eventLog.append({
+    type: 'usage.unknown', runId: 'run_wf',
+    data: { schema: 'usage-unknown@1.0', runId, kind: 'not-reported', account: 'a', pool: 'a.programmatic', worker: 'agent:dev', taskId: 't1', projectId: 'p1', observedAt: T0.toISOString(), reason: 'it was stopped: cancelled by the operator; its runtime reported neither tokens nor turns', ...extra },
+  })
+
+  it('refuses a cap of a task while a run of it has usage the ledger could not count, naming the run and why; never counted as 0 (INV-2)', async () => {
+    const ctx = await boot()
+    await ready(ctx)
+    // Within the cap by what is counted: 0 used.
+    expect((await ctx.resources.reserve({ runId: 'r0', taskId: 't1', lines: line(0.1), caps: caps(1) }, at(1))).state).toBe('reserved')
+    unknownFact(ctx, 'arun_1')
+    const refused = await ctx.resources.reserve({ runId: 'r1', taskId: 't1', lines: line(0.1), caps: caps(1) }, at(1))
+    expect(refused.state).toBe('refused')
+    expect(refused.reasons).toEqual(['cap of a.programmatic cannot be held: run arun_1 on agent:dev of t1 has usage the ledger could not count (not-reported: it was stopped: cancelled by the operator; its runtime reported neither tokens nor turns)'])
+    expect(ctx.artifacts.get(refused.decision)!.body).toMatchObject({ decisionType: 'budget', outcome: { option: 'refused' } })
+    // The project's scope holds it too; another task, a cap of another pool, and a run without caps do not.
+    expect((await ctx.resources.reserve({ runId: 'r2', projectId: 'p1', lines: line(0.1), caps: caps(1) }, at(1))).state).toBe('refused')
+    expect((await ctx.resources.reserve({ runId: 'r3', taskId: 't2', lines: line(0.1), caps: caps(1) }, at(1))).state).toBe('reserved')
+    expect((await ctx.resources.reserve({ runId: 'r4', taskId: 't1', lines: [{ pool: 'local', unit: 'runs', amount: 1 }], caps: [{ pool: 'local', unit: 'runs', amount: 5 }] }, at(1))).state).toBe('reserved')
+    expect((await ctx.resources.reserve({ runId: 'r5', taskId: 't1', lines: line(0.1) }, at(1))).state).toBe('reserved')
+    // Counted since (a transcript record of the run): reconciled, and the cap holds again.
+    await ctx.resources.record(usage('transcript:arun_1', { source: 'transcript', runId: 'arun_1', taskId: 't1', cost: { amount: 0.2, currency: 'USD', basis: 'runtime-estimate' } }))
+    expect((await ctx.resources.reserve({ runId: 'r6', taskId: 't1', lines: line(0.1), caps: caps(1) }, at(1))).state).toBe('reserved')
+  })
+
+  it('keeps a cap refused on a run whose only record is its own lower bound, and places a fact that names no scope by its run\'s reservation', async () => {
+    const ctx = await boot()
+    await ready(ctx)
+    const reserved = await ctx.resources.reserve({ runId: 'arun_2', taskId: 't1', lines: line(0.1) }, at(1))
+    const lower = await ctx.resources.record(usage('runtime:arun_2', { runId: 'arun_2', outcome: 'aborted' }))
+    await ctx.resources.release(reserved.reservationId)
+    unknownFact(ctx, 'arun_2', { schema: 'usage-unknown@1.1', taskId: undefined, projectId: undefined, partial: lower.ref, reason: 'it ran past its timeout of 300 ms and was stopped; the ledger counted what its runtime reported while it ran (1,000 input and 100 output tokens), a lower bound' })
+    const refused = await ctx.resources.reserve({ runId: 'r1', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))
+    expect(refused.state).toBe('refused')
+    expect(refused.reasons[0]).toContain('run arun_2 on agent:dev of t1 has usage the ledger could not count (not-reported, only a lower bound counted: it ran past its timeout of 300 ms and was stopped')
+  })
+
+  it('keeps a cap refused on a lower bound whose fact was never appended (a crash between the writes), through a restart, naming the run and why from the record (INV-2)', async () => {
+    const first = await boot()
+    await ready(first)
+    const partial = 'Claude Code was stopped before its result message; counted from the usage its 2 assistant messages streamed'
+    const reserved = await first.resources.reserve({ runId: 'arun_3', taskId: 't1', lines: line(0.1) }, at(1))
+    await first.resources.record(usage('runtime:arun_3', { schema: 'usage-record@1.1', runId: 'arun_3', worker: 'agent:dev', outcome: 'aborted', partial }))
+    await first.resources.release(reserved.reservationId)
+    // The host stops here: no usage.unknown fact names the run.
+    expect(first.eventLog.query({ type: 'usage.unknown' })).toEqual([])
+    const expected = `cap of a.programmatic cannot be held: run arun_3 on agent:dev of t1 has usage the ledger could not count (only a lower bound counted: ${partial})`
+    expect((await first.resources.reserve({ runId: 'r1', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))).reasons).toEqual([expected])
+    await first.stop()
+    const second = await boot(first.dir)
+    await ready(second)
+    expect((await second.resources.usage({ runId: 'arun_3' })).records).toMatchObject([{ schema: 'usage-record@1.1', partial }])
+    const refused = await second.resources.reserve({ runId: 'r2', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))
+    expect(refused).toMatchObject({ state: 'refused', reasons: [expected] })
+    // The restart finds the run interrupted: its own lower bound does not reconcile that fact, and the run is named once.
+    unknownFact(second, 'arun_3', { kind: 'interrupted', outcome: 'failed', reason: 'the host stopped while it ran, so no result came' })
+    expect((await second.resources.reserve({ runId: 'r3', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))).reasons)
+      .toEqual(['cap of a.programmatic cannot be held: run arun_3 on agent:dev of t1 has usage the ledger could not count (interrupted: the host stopped while it ran, so no result came)'])
+    // Another task's cap is not concerned.
+    expect((await second.resources.reserve({ runId: 'r4', taskId: 't2', lines: line(0.1), caps: caps(5) }, at(1))).state).toBe('reserved')
+  })
+
+  it('refuses a scoped cap when no event log is loaded, or when an entry cannot be read: whether a run is unknown is itself unknown (INV-2)', async () => {
+    const bare = await boot(undefined, undefined, false)
+    await ready(bare)
+    const refused = await bare.resources.reserve({ runId: 'r1', taskId: 't1', lines: line(0.1), caps: caps(1) }, at(1))
+    expect(refused).toMatchObject({ state: 'refused', reasons: [expect.stringContaining('no event log (ctx.eventLog) is loaded')] })
+    // Without a scope its caps bound its own lines only, which it can count.
+    expect((await bare.resources.reserve({ runId: 'r2', lines: line(0.1), caps: caps(1) }, at(1))).state).toBe('reserved')
+    const ctx = await boot()
+    await ready(ctx)
+    ctx.eventLog.append({ type: 'usage.unknown', data: { kind: 'not-reported', pool: 'a.programmatic' } })
+    expect((await ctx.resources.reserve({ runId: 'r3', taskId: 't1', lines: line(0.1), caps: caps(1) }, at(1))).reasons).toEqual([expect.stringContaining('1 usage.unknown entry is not a valid usage-unknown@1 record')])
   })
 })

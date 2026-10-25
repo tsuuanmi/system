@@ -7,6 +7,7 @@ import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { type Booted, boot, OPERATOR, reviewed } from './store-backed.ts'
+import { decisionsIn, descriptionOf } from './wording.ts'
 
 // The operator's project moves end to end, through the web UI's API, over the store-backed board,
 // approval queue, and engine, under the bundle's own default studio policy
@@ -138,19 +139,35 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const card = page.getByRole('article', { name: 'Found project project p1 (charter version 1)' })
     await expect.poll(() => card.count()).toBe(1)
+    // In sight (T186): one line, for which project and until when with what no response does, an irreversible denial as a chip, and two
+    // short buttons, each with what it does said beside it (T191).
     const text = await card.innerText()
-    for (const said of ['Asked by the board of project project p1', 'request ' + approvalRequest, 'charter version 1 of project p1',
-      '2 proposed task(s) go through the autonomy policy', 'is closed as abandoned, and 2 open task(s) are cancelled', 'unanswered by then, it counts as denied']) expect(text, said).toContain(said)
-    await card.getByRole('textbox', { name: 'Note with your verdict on this request (optional)' }).fill('go')
-    await card.getByRole('button', { name: 'Approve: activate project p1' }).click()
+    for (const said of ['Found project project p1 (charter version 1)', 'for project project p1', 'Expires in', 'No response: denied', 'Deny cannot be undone',
+      'activates the project', 'abandons the project']) expect(text, said).toContain(said)
+    expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
+    // Who asked, what it is about, what each verdict does, the request's id, its exact expiry, and the board's sweep are under one closed Details, never dropped (T171, T186).
+    for (const folded of ['Asked by', 'charter version 1 of project p1', 'Cannot be undone.', 'request ' + approvalRequest]) expect(text, folded).not.toContain(folded)
+    expect(await card.locator('details.card-details').getAttribute('open')).toBeNull()
+    await card.getByText('Details', { exact: true }).click()
+    const opened = await card.innerText()
+    for (const said of ['Asked by the board of project project p1', 'charter version 1 of project p1',
+      '2 proposed task(s) go through the autonomy policy. No run starts by itself.', 'is closed as abandoned, and 2 open task(s) are cancelled. Cannot be undone.',
+      'request ' + approvalRequest, 'The board activates it on its next sweep, within a minute']) expect(opened, said).toContain(said)
+    expect(await card.locator('button.copy', { hasText: 'Copy request ID' }).getAttribute('data-copy')).toBe(approvalRequest)
+    await card.getByRole('textbox', { name: 'Note (optional)' }).fill('go')
+    // Approve / Deny, each described by what it does to the project (T191).
+    expect(await decisionsIn(card)).toEqual([{ label: 'Approve', description: 'activates the project' }, { label: 'Deny', description: 'abandons the project' }])
+    await card.getByRole('button', { name: 'Approve', exact: true }).click()
     const outcome = page.locator('#outcome')
     await expect.poll(() => outcome.innerText()).toContain('Approved: Found project project p1 (charter version 1)')
     const request = await ctx.approvals.get(approvalRequest)
     expect(request).toMatchObject({ state: 'approved', resolution: { cause: 'verdict' } })
-    expect(await outcome.innerText()).toContain(`Recorded as your verdict on request ${approvalRequest} (approval record ${request!.resolution!.approval})`)
+    // What happens next in sight; the request and approval record ids under Record IDs.
+    expect(await outcome.innerText()).toContain('The board activates project project p1 on its next sweep')
+    expect(await outcome.textContent()).toContain(`Recorded as your verdict on request ${approvalRequest} (approval record ${request!.resolution!.approval})`)
     expect(ctx.artifacts.get(request!.resolution!.approval!)!.body).toMatchObject({ verdict: 'approved', by: 'operator', note: 'go' })
     // The queue no longer lists it; the board's next sweep activates the project.
-    await expect.poll(() => page.locator('main').innerText()).toContain('No request waits for your verdict.')
+    await expect.poll(() => page.locator('main').innerText()).toContain('No approvals needed.')
     await ctx.board.sweep(new Date())
     expect((await ctx.board.project('p1'))?.state).toBe('active')
     await outcome.getByRole('button', { name: 'Dismiss' }).click()
@@ -168,8 +185,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
-    const waiting = page.getByRole('region', { name: 'Waiting for you' })
-    await expect.poll(() => waiting.innerText()).toMatch(/1 task waits for your review; the first held for you expires in \d+ (h|min|days)/)
+    const waiting = page.getByRole('region', { name: 'Needs your attention', exact: true })
+    await expect.poll(() => waiting.innerText()).toMatch(/Reviews · 1 · first expires in \d+ (h|min|days)/)
     expect(await page.getByRole('region', { name: 'Reviews' }).innerText()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
   }, 60_000)
 
@@ -200,18 +217,34 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await expect.poll(() => column('Ready').innerText()).toContain('Write the release notes')
     expect(await column('Ready').innerText()).toContain('Outline the chapters')
     expect(await column('Review').innerText()).toContain('Fix the slow image build')
-    expect(await column('Waiting for you').innerText()).toContain('Merge the login fix')
+    expect(await column('Needs your attention').innerText()).toContain('Merge the login fix')
     const card = column('Working').getByRole('article', { name: 'Research the hosting options' })
     // Which account and role took it, and for how long (T119).
     expect(await card.innerText()).toMatch(/Conformance · standard · standard, less than a minute/)
     await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
-    await expect.poll(() => page.getByRole('heading', { name: `Run ${run.runId}` }).count()).toBe(1)
+    // A task's run is headed by its task's title, its project below, its run id behind a copy button (T141, T171).
+    await expect.poll(() => page.getByRole('heading', { name: 'Research the hosting options', exact: true }).count()).toBe(1)
+    expect(await page.locator('main').innerText()).toContain('project p1')
+    expect(await page.locator('main').innerText()).not.toContain(run.runId)
+    expect(await page.getByRole('button', { name: 'Copy run ID' }).getAttribute('data-copy')).toBe(run.runId)
     await page.goBack()
     // Several projects: all by default, each card naming its project; the filter shows one.
     await expect.poll(() => column('Ready').innerText()).toContain('Handbook rewrite')
-    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? free · 2 tasks ready\. A ready task starts when you press Start on its card or the lead runs it/)
+    // Capacity in numbers; how a ready task starts is folded beside it (T171).
+    expect(await page.getByLabel('Capacity').innerText()).toMatch(/Workers? free · 2 tasks ready/)
+    expect(await page.getByLabel('Capacity').innerText()).not.toContain('A ready task starts')
+    expect(await page.locator('details', { hasText: 'How a ready task starts' }).textContent()).toContain('A ready task starts when you press Start on its card or the lead runs it')
+    // Each project's state as counts (T141, T171), what needs you by kind on demand.
+    expect(await page.getByLabel('State of project p1').innerText()).toBe('Needs you 2 · Working 1 · Ready 1 · Proposed 0')
+    expect(await page.getByLabel('State of Handbook rewrite').innerText()).toBe('Needs you 0 · Working 0 · Ready 1 · Proposed 0')
+    expect(await page.getByRole('article', { name: 'project p1', exact: true }).locator('details', { hasText: 'What needs you' }).textContent()).toContain('1 review, 1 approval')
     await page.getByLabel('Show').selectOption('p2')
     await expect.poll(() => column('Ready').innerText()).not.toContain('Write the release notes')
+    // The filter is in the address: a reload keeps it.
+    expect(new URL(page.url()).search).toBe('?view=board&project=p2')
+    await page.reload()
+    await expect.poll(() => column('Ready').innerText()).toContain('Outline the chapters')
+    expect(await column('Ready').innerText()).not.toContain('Write the release notes')
     expect(await column('Ready').innerText()).toContain('Outline the chapters')
     expect(await page.getByRole('button', { name: 'Pause p1' }).count()).toBe(0)
     expect(await page.getByRole('button', { name: 'Pause p2' }).count()).toBe(1)
@@ -232,20 +265,23 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
-    await expect.poll(() => page.locator('main').innerText()).toContain('Its charter waits for your verdict')
-    expect(await page.locator('main').innerText()).toContain('1 task(s) wait for your approval')
-    await page.getByRole('link', { name: 'decide it', exact: true }).click()
+    await expect.poll(() => page.locator('main').innerText()).toContain('Charter approval needed')
+    expect(await page.locator('main').innerText()).toContain('1 task approval')
+    await page.getByRole('link', { name: 'Review request', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${approvalRequest}`)
     expect(new URL(page.url()).search).toBe(`?request=${approvalRequest}`)
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
-    await expect.poll(() => page.locator('main').innerText()).toContain('wait for your approval')
+    await expect.poll(() => page.locator('main').innerText()).toContain('1 task approval')
     await page.getByRole('link', { name: 'Allow a merge step: Merge the login fix' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${waiting}`)
-    // The card names the task by its title, not its id.
-    expect(await page.locator(`#request-${waiting}`).innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
+    // The card names the task by its title, not its id: on its line, and who asked under its Details (T186).
+    const asked = page.locator(`#request-${waiting}`)
+    expect(await asked.locator('.line').innerText()).toContain('for the task "Merge the login fix"')
+    await asked.getByText('Details', { exact: true }).click()
+    expect(await asked.innerText()).toContain('Asked by the board, for the task "Merge the login fix" of project project p1')
   }, 60_000)
 
-  it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge as "Accepted — waiting to merge" with a link to its merge request, under Waiting for you (ADR-0060)', async () => {
+  it.runIf(canRunBrowser)('shows a done task whose accepted result waits to merge under Needs your attention, with its merge request\'s Approve and Deny on the card, and the request in words on Home (ADR-0060, T141)', async () => {
     const booted = await boot()
     const { ctx } = booted
     await activeProject(ctx)
@@ -273,15 +309,33 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     onTestFinished(() => browser.close())
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
     await page.goto(`${origin}/ui/?view=board#token=${OPERATOR}`)
-    const waiting = page.getByRole('region', { name: 'Waiting for you', exact: true }).getByRole('article', { name: 'Band the inner loop' })
+    const waiting = page.getByRole('region', { name: 'Needs your attention', exact: true }).getByRole('article', { name: 'Band the inner loop' })
     await expect.poll(() => waiting.count()).toBe(1)
-    expect(await waiting.innerText()).toContain('Accepted — waiting to merge into main: approve')
-    await waiting.getByRole('link', { name: 'approve', exact: true }).click()
+    expect(await waiting.innerText()).toContain('Merge approval needed · into main')
+    // Its request's card on Home says what it merges, and what each verdict does in words (T141); the branch and heads folded (T171).
+    await page.goto(`${origin}/ui/?request=${request.requestId}`)
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
-    expect(new URL(page.url()).search).toBe(`?request=${request.requestId}`)
     const asked = page.locator(`#request-${request.requestId}`)
-    expect(await asked.innerText()).toContain('branch ' + branch + ' at bbbbbbbbbbbb, onto the base at aaaaaaaaaaaa')
-    expect(await asked.getByRole('button', { name: 'Approve: merge it' }).count()).toBe(1)
+    // One line names the task it is for (T186); the rest is under its closed Details.
+    expect(await asked.locator('.line').innerText()).toContain('for the task "Band the inner loop"')
+    expect(await asked.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
+    expect(await asked.innerText()).not.toContain('bbbbbbbbbbbb')
+    expect(await asked.textContent()).toContain('branch ' + branch + ' at bbbbbbbbbbbb, onto the base at aaaaaaaaaaaa')
+    await asked.getByText('Details', { exact: true }).click()
+    expect(await asked.innerText()).toContain('the accepted change of "Band the inner loop" · not pushed')
+    expect(await asked.innerText()).toContain('Asked by the run of the task "Band the inner loop"')
+    expect(await asked.innerText()).toContain('The accepted change of the task "Band the inner loop" is merged as one merge commit. Not pushed.')
+    expect(await asked.innerText()).toContain('Not merged: the change stays on its branch; the task stays done.')
+    // Approve / Deny, each described by its effect, the same on Home's card and on the Board's (T191).
+    const merges = [{ label: 'Approve', description: 'merges the change' }, { label: 'Deny', description: 'keeps the branch only' }]
+    expect(await decisionsIn(asked)).toEqual(merges)
+    // Approved by button on the Board card itself, on the request's exact subject (INV-5).
+    await page.goto(`${origin}/ui/?view=board`)
+    await expect.poll(() => decisionsIn(waiting)).toEqual(merges)
+    await waiting.getByRole('button', { name: 'Approve', exact: true }).click()
+    await expect.poll(async () => (await ctx.approvals.get(request.requestId))?.state).toBe('approved')
+    await expect.poll(() => page.locator('#outcome').innerText()).toContain('Approved: ')
+    expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
   }, 60_000)
 
   it.runIf(canRunBrowser)('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {
@@ -299,11 +353,17 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.locator('main').innerText()).toContain('project p1')
     expect(await page.locator('main').innerText()).not.toContain('null')
 
-    await page.getByRole('button', { name: 'Pause p1' }).click()
+    // Each move names what it does in its accessible description (T191); its confirmation is Confirm / Cancel.
+    const pause = page.getByRole('button', { name: 'Pause p1' })
+    expect(await pause.innerText()).toBe('Pause…')
+    expect(await descriptionOf(pause)).toBe('asks you to confirm, then no task of it starts until you resume it')
+    expect(await descriptionOf(page.getByRole('button', { name: 'Close p1' }))).toBe('asks you to confirm, then ends the project and cancels its open tasks')
+    await pause.click()
     const pausing = page.getByRole('group', { name: 'Confirm pause of p1' })
     await expect.poll(() => pausing.innerText()).toContain('no task of it is claimed or started')
+    expect(await decisionsIn(pausing)).toEqual([{ label: 'Confirm', description: 'pauses project p1, as listed above' }, { label: 'Cancel', description: 'nothing moves' }])
     expect((await ctx.board.project('p1'))?.state).toBe('active')
-    await pausing.getByRole('button', { name: 'Confirm pause' }).click()
+    await pausing.getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect.poll(async () => (await ctx.board.project('p1'))?.state).toBe('paused')
     await expect.poll(() => page.getByRole('button', { name: 'Resume p1' }).count()).toBe(1)
 
@@ -315,7 +375,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect((await ctx.board.project('p1'))?.state).toBe('paused')
     await page.getByRole('button', { name: 'Close p1' }).click()
     await page.getByRole('combobox', { name: 'Outcome of p1' }).selectOption('stopped')
-    await page.getByRole('button', { name: 'Confirm close' }).click()
+    await page.getByRole('group', { name: 'Confirm close of p1' }).getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect.poll(async () => (await ctx.board.project('p1'))?.closure?.outcome).toBe('stopped')
     await expect.poll(() => page.locator('main').innerText()).toContain('closed (stopped)')
     expect(await page.getByRole('button', { name: 'Close p1' }).count()).toBe(0)
@@ -349,7 +409,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const started = await call(`tasks/${task.taskId}/start`, { revision: task.revision, template: 'solo' })
     expect(started.status, JSON.stringify(started.value)).toBe(200)
     const run = started.value.run as { runId: string; template: string; task: { taskId: string } }
-    expect(run).toMatchObject({ template: 'solo', task: { taskId: task.taskId } })
+    // Started on the operator's own surface: the run says so (workflow 1.10, PROP-0014 D2).
+    expect(run).toMatchObject({ template: 'solo', task: { taskId: task.taskId, startedBy: 'operator' } })
     expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'running', run: { runId: run.runId } })
     // The run's input is the task's own words; a second press finds the task no longer ready and starts nothing.
     expect(ctx.workflow.get(run.runId)!.nodes).toHaveLength(1)
@@ -420,11 +481,14 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const column = (name: string) => page.getByRole('region', { name, exact: true })
     const notes = column('Ready').getByRole('article', { name: 'Write the release notes' })
     await expect.poll(() => notes.count()).toBe(1)
-    expect(await notes.innerText()).toContain('Ready to start: a solo run')
+    expect(await notes.innerText()).toContain('solo template')
+    // The card names who its first step would likely go to, before any press (T141); the alternatives folded (T171).
+    await expect.poll(() => notes.innerText()).toMatch(/Likely Worker: Conformance · (frontier|standard) · (frontier|standard)\s*\+1 other/)
+    expect(await notes.locator('details', { hasText: '+1 other' }).textContent()).toMatch(/\+1 otherConformance · (frontier|standard) · (frontier|standard)/)
 
     // No template: refused with why, and nothing moves.
     const pricing = column('Ready').getByRole('article', { name: 'Draft the pricing page copy' })
-    expect(await pricing.innerText()).toContain('Ready; it names no template, so the lead starts it')
+    expect(await pricing.innerText()).toContain('No template: the lead starts it')
     await page.getByRole('button', { name: 'Start Draft the pricing page copy' }).click()
     const refused = page.getByRole('alert', { name: 'Cannot start Draft the pricing page copy' })
     await expect.poll(() => refused.count()).toBe(1)
@@ -435,18 +499,23 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const confirming = page.getByRole('group', { name: 'Confirm start of Write the release notes' })
     await expect.poll(() => confirming.count()).toBe(1)
     const said = await confirming.innerText()
-    expect(said).toContain('It runs the solo template for this task, its attempt 1 of')
-    expect(said).toContain('Do solo: a Worker of standard tier or above that can reason.')
-    expect(said).toContain('Nothing runs until you confirm')
+    expect(said).toMatch(/solo template · attempt 1 of \d+ · 1 step/)
+    expect(said).toContain('Do solo: standard+ · reason')
+    // What a start does, and that nothing runs until Confirm, folded under it (T171).
+    expect(said).not.toContain('Nothing runs until you confirm')
+    expect(await confirming.textContent()).toContain('Nothing runs until you confirm')
+    expect(await confirming.textContent()).toContain('The run claims the task, which moves to Working')
     expect((await ctx.board.tasks({ projectId: 'p1', states: ['ready'] })).length).toBe(2)
-    await confirming.getByRole('button', { name: 'Confirm start' }).click()
+    // Confirm / Cancel, as every confirmation's, each described by what it does (T191).
+    expect(await decisionsIn(confirming)).toEqual([{ label: 'Confirm', description: 'starts the run now' }, { label: 'Cancel', description: 'nothing starts' }])
+    await confirming.getByRole('button', { name: 'Confirm', exact: true }).click()
     const outcome = page.locator('#outcome')
     await expect.poll(() => outcome.innerText()).toContain('Started: Write the release notes')
     expect(await outcome.innerText()).toMatch(/Run run_\w+ of the solo template claimed the task/)
     await expect.poll(() => column('Working').getByRole('article', { name: 'Write the release notes' }).count()).toBe(1)
     expect(await column('Ready').getByRole('article', { name: 'Write the release notes' }).count()).toBe(0)
     await outcome.getByRole('link', { name: /^run_/ }).click()
-    await expect.poll(() => page.getByRole('heading', { name: /^Run run_/ }).count()).toBe(1)
+    await expect.poll(() => page.getByRole('heading', { name: 'Write the release notes', exact: true }).count()).toBe(1)
   }, 60_000)
 
   it.runIf(canRunBrowser)('lays every page out at 600 px in a real browser: no page wider than the screen, the Kanban columns stacked with readable cards, and the navigation wrapping whole links (T116)', async () => {
@@ -482,7 +551,10 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await page.goto(`${origin}/ui/?view=board`)
     const columns = page.locator('.kanban > .column')
     await expect.poll(() => columns.count()).toBe(5)
-    const boxes = await columns.evaluateAll((list) => list.map((c) => c.getBoundingClientRect()).map((r) => ({ x: r.x, y: r.y, width: r.width })))
+    // Stacked, one under another, Needs your attention first: what needs the operator is on top of a narrow screen (T141).
+    const boxes = (await columns.evaluateAll((list) => list.map((c) => ({ name: c.getAttribute('aria-label'), ...JSON.parse(JSON.stringify(c.getBoundingClientRect())) as { x: number; y: number; width: number } }))))
+      .sort((a, b) => a.y - b.y)
+    expect(boxes.map((b) => b.name)).toEqual(['Needs your attention', 'Proposed', 'Ready', 'Working', 'Review'])
     for (const [i, box] of boxes.entries()) {
       expect(box.x, `column ${i}`).toBe(boxes[0]!.x)
       expect(box.width, `column ${i}`).toBeGreaterThan(500)

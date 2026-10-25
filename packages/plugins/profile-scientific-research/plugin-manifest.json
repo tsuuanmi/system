@@ -11,7 +11,7 @@
   "consumes": [
     {
       "seam": "workflow",
-      "range": "^1.7.0"
+      "range": "^1.10.0"
     },
     {
       "seam": "workers",
@@ -19,7 +19,7 @@
     },
     {
       "seam": "artifacts",
-      "range": "^1.1.0"
+      "range": "^1.2.0"
     },
     {
       "seam": "eventLog",

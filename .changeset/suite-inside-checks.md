@@ -1,0 +1,4 @@
+---
+---
+
+The test suite gives the same verdict inside a run's check confinement as on the host (T174). One test helper (`packages/agent-runtime-core/tests/host.ts`) decides what the environment can do by doing it: whether real bubblewrap confines a command here (nested inside a check, a host can refuse it), whether a directory can be written, and what mode a created file gets under this process's umask. Tests that need real bubblewrap skip, with the reason, where it cannot confine (CI's `SYSTEM_REQUIRE_BWRAP=1` still fails them instead); tests whose expectation follows from the environment assert what the code does there: the Codex launcher hides `/dev/ptmx` through `/dev/pts` where it links there (bubblewrap's own `/dev`), and a brief's file, created 0o444, has the mode the umask leaves (0o400 under a daemon's umask 077). On a host where bubblewrap confines, every test runs and asserts as before. No product code changes.

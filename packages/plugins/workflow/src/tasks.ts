@@ -27,8 +27,10 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
+import type { Check } from '@tsuuanmi/system-approvals-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskCarries } from './carries.ts'
+import { type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
 import { TaskDigests } from './digests.ts'
 import { TaskLandings } from './landings.ts'
@@ -37,7 +39,7 @@ import { routedDecisions } from './recovery.ts'
 import { heldWhy } from './sessions.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
-  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
+  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskDispatch, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
 import { view } from './views.ts'
 
@@ -127,6 +129,7 @@ export class TaskRuns {
       ...(row.question ? { question: JSON.parse(row.question) as TaskQuestion } : {}),
       ...(row.landing ? { landing: this.landings.view(row)! } : {}),
       ...(row.carry ? { carry: this.carries.view(row)! } : {}),
+      startedBy: row.started_by ?? (row.dispatch ? 'dispatch' : 'lead'),
     }
   }
 
@@ -179,9 +182,10 @@ export class TaskRuns {
    * run), writes the run `starting`, and has the board record it before anything runs. A refusal
    * at any step leaves no run behind, and nothing is sent.
    */
-  async start(input: TaskStartInput): Promise<RunView> {
+  async start(input: TaskStartInput, options: { dispatch?: TaskDispatch } = {}): Promise<RunView> {
     const e = this.e
-    const { task: claim, ...plain } = input
+    const { task: claim, startedBy, ...plain } = input
+    if (startedBy !== undefined && startedBy !== 'lead' && startedBy !== 'operator') throw new WorkflowFailure('invalid_input', 'startedBy is lead or operator')
     const prepared = e.prepare(plain)
     const board = e.board
     if (!board) throw new WorkflowFailure('config_error', `no board is loaded: a run for board task ${claim.taskId} needs ctx.board (its bundle row on, over the approval queue); nothing was started`)
@@ -212,14 +216,16 @@ export class TaskRuns {
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
-    const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
+    // A start dispatch chose names its decisions in the run's admission (ADR-0064).
+    const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId, options.dispatch?.decisions ?? [])
     // Whether its worktree starts from the work the previous attempt left, carried at its first turn
     // (ADR-0061): decided once the run holds the task, so a refused claim decides nothing for a run
     // that never exists; a record of the earlier attempt it cannot read starts the run from HEAD, recorded.
     const carry = this.carries.plan(task, runId)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
-      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}),
+      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}), ...(options.dispatch ? { dispatch: options.dispatch } : {}),
+      ...(startedBy ? { startedBy } : {}),
     }
     // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
     // and the claim it took lapses back to ready on its own.
@@ -505,10 +511,10 @@ export class TaskRuns {
    * board fences by generation, or claim the ready task as the run. The choice is an `admission`
    * decision made before the board is asked; a refusal is one too, and refuses the start.
    */
-  private async take(board: Board, task: BoardTask, claim: TaskStartInput['task'], runId: string): Promise<{ option: 'adopt' | 'claim'; generation: number; expiresAt: string; decision: ArtifactRef }> {
+  private async take(board: Board, task: BoardTask, claim: TaskStartInput['task'], runId: string, chosen: readonly ArtifactRef[] = []): Promise<{ option: 'adopt' | 'claim'; generation: number; expiresAt: string; decision: ArtifactRef }> {
     const adopting = claim.holder !== undefined
     const refuse = (why: string, inputs: ArtifactRef[] = []): never => {
-      const refused = this.admission(task, undefined, 'refuse', claim, why, inputs)
+      const refused = this.admission(task, undefined, 'refuse', claim, why, [...chosen, ...inputs])
       throw new WorkflowFailure('invalid_input', `${why}; nothing was started (decision ${refused})`)
     }
     if (adopting) {
@@ -516,7 +522,7 @@ export class TaskRuns {
       if (task.holder?.owner !== claim.holder || task.holder?.generation !== claim.generation) {
         refuse(`a stale claim: task ${task.taskId} is held by ${task.holder?.owner ?? 'no one'} at generation ${task.holder?.generation ?? '(none)'}, not by ${claim.holder} at ${claim.generation}`)
       }
-      const decision = this.admission(task, runId, 'adopt', claim, `${claim.holder} hands its live claim (generation ${claim.generation}) to the run`)
+      const decision = this.admission(task, runId, 'adopt', claim, `${claim.holder} hands its live claim (generation ${claim.generation}) to the run`, [...chosen])
       try {
         const renewed = await board.renew(task.taskId, claim.generation!, TASK_LEASE_TTL_MS)
         return { option: 'adopt', generation: claim.generation!, expiresAt: renewed.leaseExpiresAt, decision }
@@ -526,7 +532,8 @@ export class TaskRuns {
       }
     }
     if (task.state !== 'ready') refuse(`task ${task.taskId} is ${task.state}, not ready to claim`)
-    const decision = this.admission(task, runId, 'claim', claim, `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`)
+    const how = chosen.length ? `dispatch chose its start (its decisions are this decision's inputs), and the run claims the ready task ${task.taskId} as ${ownerOf(runId)}` : `the caller holds no claim on task ${task.taskId}, which is ready: the run claims it as ${ownerOf(runId)}`
+    const decision = this.admission(task, runId, 'claim', claim, how, [...chosen])
     try {
       const taken = await board.claim(task.taskId, ownerOf(runId), TASK_LEASE_TTL_MS)
       return { option: 'claim', generation: taken.generation, expiresAt: taken.leaseExpiresAt, decision }
@@ -534,6 +541,22 @@ export class TaskRuns {
       if (!(error instanceof BoardError)) throw error
       return refuse(`the board refuses the claim (${refusal(error)})`, [decision])
     }
+  }
+
+  /**
+   * The Worker dispatch chose for this node (ADR-0064): only the run's writing step, on its first
+   * execution (no retry, escalation, or `continue` is pinned back to it); undefined for any other.
+   */
+  preferred(runId: string, node: Pick<NodeRow, 'node_id' | 'attempt' | 'escalations'>): TaskDispatch['prefer'] | undefined {
+    const dispatch = this.dispatchOf(runId)
+    if (!dispatch || dispatch.prefer.node !== node.node_id || node.attempt !== 0 || node.escalations) return undefined
+    return dispatch.prefer
+  }
+
+  /** What dispatch kept on a run it started (its ask, decisions, and preferred Worker); undefined for any other run. */
+  dispatchOf(runId: string): TaskDispatch | undefined {
+    const raw = this.row(runId)?.dispatch
+    return raw ? JSON.parse(raw) as TaskDispatch : undefined
   }
 
   /** The engine's choice of how a run takes its task: adopt the caller's claim, claim it, or refuse (INV-13). */
@@ -1183,10 +1206,12 @@ export class TaskRuns {
    * A task's run completed: bind its result to the exact subject the task leaves, and decide on it
    * (the `acceptance` decision the board applies). The subject is the task's written subject at
    * the version the run left it (the latest result on that type and ref, still current when it
-   * names a working tree), else the result artifact itself. Undefined when the run is not a task's,
+   * names a working tree); with no write subject, the git working tree the run's required checks
+   * ran on when one ran there to an exit code and the tree is still that version (T165), else the
+   * result artifact itself. Undefined when the run is not a task's,
    * or the result binds; else why it does not, and the run fails (INV-5).
    */
-  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef): WorkflowError | undefined {
+  complete(run: RunRow, nodes: NodeRow[], final: ArtifactRef, ran?: RanChecks): WorkflowError | undefined {
     const row = this.row(run.run_id)
     if (!row) return undefined
     const writes = row.writes ? JSON.parse(row.writes) as Subject : undefined
@@ -1209,26 +1234,54 @@ export class TaskRuns {
       subject = { type: body!.subject.type, ref: body!.subject.ref, ...(body!.subject.version !== undefined ? { version: body!.subject.version } : {}) }
       artifacts = [...new Set([source!, final])]
     }
-    const checks = this.checksOf(done, subject)
+    const notes = [...(ran?.notes ?? [])]
+    if (!writes && ran && Object.keys(ran.checks).length) {
+      // No write subject (T165): the result binds to the tree its checks ran on, through the agent
+      // result that names it, while the working tree is still that version; else to the result
+      // artifact, and the checks, bound to another subject, stay pending (INV-5).
+      const tree = this.treeResult(done, ran.subject)
+      if (tree) {
+        subject = { type: 'git-head', ref: ran.subject.ref, version: ran.subject.version }
+        artifacts = [...new Set([tree, final])]
+      } else notes.push(`the working tree its checks ran on is no longer ${describe(ran.subject)}, so they do not count for the result; they stay pending`)
+    }
+    // The required checks the run ran on this very subject (./checks.ts) count with its own; one bound elsewhere never does (INV-5).
+    const checks: Partial<Record<Check, boolean>> = { ...this.checksOf(done, subject), ...ranOn(ran, subject) }
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
     const option = failed.length ? 'reject' : 'accept'
-    const ran = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
+    const said = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
     const acceptance = this.e.ctx.artifacts.recordDecision({
       decisionType: 'acceptance',
       question: `Does run ${run.run_id}'s result complete its attempt of board task ${row.task_id}?`,
-      inputs: artifacts,
+      inputs: [...artifacts, ...(ran?.evidence ? [ran.evidence] : [])],
       candidates: [
-        { option: 'accept', selected: !failed.length, reasons: failed.length ? [`not accept: the run's own ${failed.join(', ')} check failed`] : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, ran] },
-        { option: 'reject', selected: !!failed.length, reasons: failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`] : ['not reject: no check the run ran failed'] },
+        { option: 'accept', selected: !failed.length, reasons: failed.length ? [`not accept: the run's own ${failed.join(', ')} check failed`] : [`every step of the run was accepted by its contract, and its result is on ${describe(subject)}`, said, ...notes] },
+        { option: 'reject', selected: !!failed.length, reasons: failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}: the work goes back as another attempt`, ...notes] : ['not reject: no check the run ran failed'] },
       ],
-      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '1' },
-      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks } },
+      decider: { type: 'rule', id: 'workflow.task-acceptance', version: '2' },
+      outcome: { option, detail: { taskId: row.task_id, runId: run.run_id, subject, checks, ...(ran ? { checkRun: ran.detail } : {}) } },
       deterministic: true,
     }, { ...PRODUCER, runId: run.run_id }).id as ArtifactRef
     const result: Result = { artifacts, subject }
     this.e.ctx.store.transaction((db) => {
       db.prepare('UPDATE workflow_tasks SET result = ?, acceptance = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(result), acceptance, now(), run.run_id)
     })
+    return undefined
+  }
+
+  /**
+   * The latest agent result of the run's completed steps on exactly `tree`, a git working tree
+   * still at that version: what a result with no write subject binds to when its checks ran there.
+   */
+  private treeResult(done: NodeRow[], tree: Subject & { version: string }): ArtifactRef | undefined {
+    for (const node of [...done].reverse()) {
+      const ref = (JSON.parse(node.record) as NodeRecord).outputReceipt?.result
+      const body = ref ? this.e.ctx.artifacts.get(ref)?.body as { schema?: string; subject?: Subject; workspace?: string } | undefined : undefined
+      if (!body?.schema?.startsWith('agent-result@') || !body.workspace || body.subject?.type !== 'git-head') continue
+      if (body.subject.ref !== tree.ref || body.subject.version !== tree.version) return undefined
+      const current = captureGitSubject(body.workspace)
+      return current && current.subject.ref === tree.ref && current.subject.version === tree.version ? ref : undefined
+    }
     return undefined
   }
 
@@ -1250,10 +1303,11 @@ export class TaskRuns {
   }
 
   /**
-   * The checks the run itself ran on its result, by the board's names: `schema`, when the final
+   * The checks the run judged itself on its result, by the board's names: `schema`, when the final
    * step's answer was checked against a result schema; `review`, when an exact-subject review of
-   * the very subject the result is on passed its gate (passed when it approved). Nothing else is
-   * reported: a check the run did not run is never claimed.
+   * the very subject the result is on passed its gate (passed when it approved). The required checks
+   * that are commands come from the run's checks (./checks.ts); a check the run did not run is never
+   * claimed.
    */
   checksOf(done: NodeRow[], subject: Subject): Partial<Record<'schema' | 'review', boolean>> {
     const checks: Partial<Record<'schema' | 'review', boolean>> = {}

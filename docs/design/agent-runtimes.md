@@ -35,7 +35,7 @@ turns them on.
 | Provider plugin | Kind | Backed by | Policy holder |
 |---|---|---|---|
 | [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, file tools pre-approved inside the workspace only; `Bash` in `workspace-write` runs only, inside the SDK's sandbox ([confined commands](#confined-commands)); its own home; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
-| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
+| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server of its own; System's [workspace reads server](#the-workspace-reads-server) on every run, confined again; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
 | [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) | `antigravity-cli` | the operator's installed `agy`, in print mode (stream-json); no SDK exists | its PreToolUse hook, bridged to the run: the runtime's own rules (the sandbox's reading and file-editing tools only, no command; every location inside the workspace), then the run's gate; its own home (`HOME`), with no MCP server, plugin, or other hook, in it or in the workspace; the run's tool gate after its rules, and a sandbox, only on an agy version verified live ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)) |
 
@@ -79,6 +79,8 @@ interface RuntimeEvidence {
   executes: boolean;                        // runs commands confined to the workspace
   readsConfined: boolean;                   // host state unreadable to the agent, proven now
   gatesToolCalls: boolean;                  // asks RunSpec.toolGate before every tool call
+  cleanShells?: boolean;                    // it starts every call's shell with no startup code (T198)
+  workspaceReads?: boolean;                 // its agent gets the workspace reads server, proven to start (T200b)
   homes?: boolean;                          // runs in the home a run or probe names (ADR-0051)
 }
 
@@ -92,6 +94,7 @@ interface RunSpec {
   resume?: string;                          // native handle of a conversation to continue
   toolGate?: ToolGate;                      // asked before every tool call (below)
   home?: string;                            // one account's home; refused unless `homes` (ADR-0051)
+  workspaceReads?: Partial<WorkspaceReadBounds>;  // the workspace reads server's bounds (T200b)
 }
 
 type ToolGate = (call: { tool: string; input: unknown; callId?: string }, signal: AbortSignal) =>
@@ -153,6 +156,16 @@ does, and how a deferred call resumes). The gate comes from the source, never fr
 passes the call on to that policy, `deny` refuses it with a reason the agent is told, and
 `defer` stops the run at the call until the operator answers. A run a gate deferred fails as
 `config_error`, naming the request, and a later run of its session makes the call once approved.
+For a board task's step, a call not approved (rejected, expired, or a `command` call unanswered
+within the workflow's `deferredCommandMinutes`, default 10) also gets a later run of its session:
+its gate denies that exact call there with the reason, which the runtime returns to the agent as
+the call's result like any `deny`, and the agent goes on without it; that call stays denied in
+its session, in any workflow run that continues it, even once a newer policy would let it run
+unasked: the engine keeps the denial on the gate's own row of the request, which the gate reads by
+session ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). Each run of a Worker whose
+sandbox writes its workspace is told, after its prompt, the calls its gate lets run unasked under
+the policy as it stands, the commands list's exact lines among them
+([asking less](approvals.md#a-deferred-call)), so it asks the operator less.
 
 A runtime that can ask the gate before every tool call reports `gatesToolCalls`; one that cannot
 refuses a run that carries a gate (`config_error`), and its Workers are not admitted. Each gating
@@ -196,6 +209,31 @@ What it does with a hook was established live on the host, and the bridge is bui
   PreToolUse call, a call from another directory than the run's workspace, and any call after a
   defer; it bounds the input (16 MiB), the connections at once (16), and each connection's time.
   The directory, the socket, and the run's launcher are removed when the run ends.
+- **Reading through its shell.** Codex has no file-reading tool of its own: it reads with
+  `exec_command` (`cat`, `sed -n`, `rg`), reported as `Bash`. The gate classifies a read-only
+  inspection command inside the workspace as `read`, as it does Claude Code's `Read` and `Grep`
+  ([approvals](approvals.md#how-a-call-is-classified)), so under a policy where reads run a Codex
+  Worker reads without asking; every other command stays `command`, by its exact argv. The forms
+  are fixed and matched word for word, after the metacharacter and empty-word refusals: `cat`,
+  `head`, `tail`, `wc`, `ls`, `stat`, `file` with a few options each; `sed -n <a>[,<b>]p <path>`;
+  `rg` and `grep` with allowed options (never `--pre`, `-f`, `-z`, `-L`); and `find` with only
+  `-name`, `-iname`, `-path`, `-type`, `-maxdepth`, `-mindepth` (no action, no `-L`). Every path
+  word is absolute, holds no `..`, and is inside the workspace on disk, symlinks followed; at
+  least one is named. The hook reports an `exec_command`'s `command` but not its `workdir` (the
+  bridge checks only the hook's own directory), so the gate cannot know where a relative path,
+  or a form with no path (`ls`, `rg foo`, `find`), would read: those stay `command`, and so does
+  `git`, which finds its repository and the configuration it runs (`core.fsmonitor`, a diff
+  driver) from the working directory. They are safe as reads because none of them writes or
+  runs anything: with no metacharacter the shell expands nothing, so the absolute words name the
+  same files from any directory, under the read confinement and Codex's own sandbox; and they
+  are reads only under a runtime that enforces shells which read no startup code
+  ([below](#an-agents-shells-read-no-startup-code), `cleanShells`), so each word runs the program
+  it names. Codex is not one: `exec_command` takes a `shell` and a `login` argument the hook does
+  not see, so a call may run its words in a login shell, or in any executable the Worker names (a
+  workspace script among them). Under Codex every `Bash` call is therefore a `command`, judged by
+  its exact argv; its Workers read through the [workspace reads server](#the-workspace-reads-server)
+  instead, whose three tools are reads. No tool that writes a file may write git's own data (`.git` anywhere in the path, as
+  written or on disk): it changes only by a command the operator approved, or by the operator.
 - **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
   change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
   the gate allowed; one that is not (a hook that failed and let the tool run) stops the run, which
@@ -292,7 +330,14 @@ worktreeSetup:
 - **Checked at load:** a setup for a repository no `worktreePerRun` Worker works in, two for one
   repository, a command a policy could not list (empty word, shell metacharacter, over 200
   characters), more than 16 commands, or a view with a relative path, a name that is not plain, or
-  a path that climbs is refused (`config_error`).
+  a path that climbs is refused (`config_error`). So is a `generated` declaration with no path or
+  more than 32, a path that is absolute, climbs, holds a glob character but a `*` within a segment,
+  or starts at `.git`, `.system`, or `*`, a path named twice, or 0 or more than 16 commands, or a
+  command a policy could not list.
+- **Generated files** (`generated: { paths, commands }`, optional, T166): the files the repository
+  generates and the commands that make them, which a landing whose merge conflicts only in them
+  runs in the run's worktree, in this confinement and views, instead of refusing
+  ([landing a worktree](#landing-a-worktree)). Like the checks, not part of the setup's hash.
 
 What the setup writes stays in the worktree. Files the repository ignores (`node_modules/`) are not
 in the run's subject, and go with the worktree at its retention. A worktree carried from an earlier
@@ -361,6 +406,37 @@ at a time per repository, as every worktree change:
   of the branch, the system its author, hooks off as for every git call. A base that already holds
   the head is found merged (a restart). A conflict is aborted (`git merge --abort`) and the
   repository checked to be as it was. Nothing is forced, reset, deleted, or pushed.
+- **A conflict only in generated files** (T166): when the repository's setup declares generated
+  files (`worktreeSetup[].generated`: path patterns, a `*` within one segment, and the commands that
+  make them) and every conflicted path is one of them, the merge, aborted in the repository as
+  above, is made again in the run's worktree, where the setup installed what the commands need:
+  only while it is intact, no agent run of its workflow run is unfinished or not known to be gone
+  (INV-15), and it is clean, on its branch, at the approved head. Detached at the approved base, the
+  branch is merged with `--no-commit`; a conflict outside the declared paths there refuses; each
+  conflicted file is taken from either side (the run's, else the base's) and staged. The commands
+  then run in order, each judged by the autonomy policy as a `command` with its exact argv and run
+  only when the policy allows it unasked, in the setup's confinement (the host read-only but the
+  worktree and the setup's private views, no network) within the setup's deadline, and only in a
+  worktree its setup prepared under the definition loaded now. They must exit 0, change no file
+  but declared ones (git's diff of the files against the index, and the untracked files git does
+  not ignore), and leave the index as it was; the changed files are staged and the merge committed
+  by the system with the engine's message, its parents checked to be the base and the head. The
+  commands then run again on that commit and must change nothing (the same tree on a repeat). The
+  base, checked again to be the approved branch at the approved commit with clean tracked files, is
+  fast-forwarded (`git merge --ff-only`) to that commit: one merge commit, as without a conflict.
+  The answer is `merged` with `regenerated` (the files, the commands, and the autonomy decisions
+  they ran on), and the engine's merge decision names them (INV-13). The worktree is put back on
+  its branch in every case (`git merge --abort`, then `git checkout --force <branch>`: its work is
+  committed there); a file a refused command made outside the declared paths stays there, untracked,
+  named in the refusal. A conflict elsewhere, a command not allowed, failing, or changing another
+  file (a file git ignores included: the ignored files are listed with their size, inode, and
+  times before the commands, and any made, removed, or changed refuses), a repeat that changes
+  anything, or a base that moved refuses as a conflict does, the repository as it was (INV-2). A
+  restart that finds the worktree off its branch puts it back first only when it is this landing's
+  own merge (detached at the approved base, merging the approved head or not yet, or at the
+  system's merge commit of the two) and nothing outside the declared paths is uncommitted there but
+  files the merge took whole from the head; anything else refuses, the worktree left as it is. The
+  base not yet moved, the merge is made again.
 
 So the repository's main working tree is written only by a merge the operator approved, or the
 policy allowed, at the exact SHAs it was asked on. The worktree itself stays until the retention
@@ -397,7 +473,7 @@ its source as unread, never as no change (INV-2).
 ### Carrying an earlier run's work
 
 > Decision: [ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)
-> (proposed: the carry is on by default, pending the operator's acceptance (D59)). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (accepted 2026-10-25, D59). Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > (`src/worktrees.ts`); the engine decides and asks
 > ([starting from the previous attempt's work](workflow-engine.md#starting-from-the-previous-attempts-work)).
 
@@ -438,6 +514,83 @@ the tree the previous attempt's writing step left. One change at a time per repo
 Never a force, a reset of a branch, a deletion, or a push. The earlier worktree is clean afterwards,
 and the retention removes it as any other; its branch keeps the carry commit, which is never merged.
 
+### A run's checks
+
+> Decision: [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)
+> (accepted 2026-10-25, D67), T151. Implemented in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
+> (`src/checks.ts`); the engine asks ([a run's required checks](workflow-engine.md#a-runs-required-checks)).
+
+The `agents` source answers `check(step, signal)` on the `workers` seam for the worktrees it holds:
+before a written result's acceptance, the engine asks it to run the checks the policy requires of
+the result on that run's worktree. The operator names each check's command beside the repository's
+setup:
+
+```yaml
+worktreeSetup:
+  - repository: /home/me/src/project
+    commands: [...]                       # the setup, as above
+    checks:                               # tests, typecheck, lint; words split on single spaces
+      tests: corepack pnpm test:affected
+      lint: corepack pnpm lint
+    checkTimeoutSeconds: 1800             # each check's deadline (1 to 3600)
+    checkScratch: [node_modules/.vite]    # git-ignored paths a check may write: fresh, private, discarded
+```
+
+- **Only on the result's tree:** the worktree is still there (`gone`), no agent run of its
+  workflow run is unfinished or not known to be gone (`busy`, INV-15), it is intact and on its
+  branch (`failed`), and it is exactly the subject the result is on (`moved`); else nothing runs.
+- **Each check is an `error`, never run,** when the repository names no command for it, the
+  worktree was not set up under the setup loaded now (the checks run in the environment the setup
+  prepared), no queue is loaded, or the policy does not let its exact argv run unasked: `auto` or
+  `notify`, as for a line on the studio commands list. An `ask` opens no request.
+- **Confined as the setup is, but on a read-only result** (the same `confineIn`, in its `check`
+  mode): the host read-only, **the worktree too**, the setup's private views, no network, a private
+  `/tmp`, the daemon's scrubbed environment, the confinement proven first; each check within
+  `checkTimeoutSeconds` (default 1800), in order. A check cannot change what it checks, not even for
+  a while (swap a file in, test it, put it back): a write to the worktree fails it. Its only writable
+  places there are the setup's `checkScratch` paths, each a fresh private directory mounted over its
+  path, of that check alone (each check gets a confinement of its own), discarded when the check
+  ends, so the next check never sees what it wrote there; each must be ignored by git and hold
+  nothing tracked (else the check is an `error`, not run), so it is never part of the subject.
+- **Executed, positively:** each command starts through a fixed launcher, System's own Node (its
+  binary bound back read-only), which spawns the command with its argv as given (never parsed by a
+  shell) and says on its own channel (fd 3) `started` once the exec succeeded, or `exec-failed
+  <code>` when it failed; the command gets fd 3 as `/dev/null`. The exec tells (libuv's
+  close-on-exec handshake), never a lookup on `PATH`: an executable whose `#!` interpreter is
+  missing is not started, while a command that runs and exits 127 by itself is `failed`. One whose
+  launcher said nothing (bubblewrap refused, the launcher not run) or `exec-failed` is an `error`,
+  an infrastructure failure, never a failed check; nothing is kept of it, so the next ask runs it.
+- **A nested confinement refused, as the command reports it:** a check's command is given a second
+  channel, the descriptor `SYSTEM_CHECK_REPORT_FD` names (fd 4). A test suite that tests
+  confinement and finds its nested bubblewrap refused fails for the host, not for the code: it
+  writes a line `nested-confinement-refused: <detail>` there, and its nonzero exit is an `error`
+  naming the refusal (exit 0 is still `passed`), so a result is held for the operator instead of
+  sent back as another attempt. Nothing else makes a nonzero exit an `error`: no probe of the host
+  stands for a command's own cause, so a lint or test that fails on defective code is `failed`
+  wherever it ran. A false report can hold a failure, never pass it.
+- **What counts:** exit 0 is `passed` and any other code `failed`, only when the command said it
+  started and the tree, captured again after the command, is still the subject (the read-only view
+  makes this the proof, not the guard); a tree that changed anyway is an `error`, and the later
+  checks are not run. A timeout or a signal is an `error`.
+- **Stored per check, reused, never re-run** (INV-4): each check that ran is kept in
+  `agent_check_runs`, keyed by the workflow run, the worktree, the subject, the check, its argv, and
+  the setup's hash, `started` before its command starts and `done` with its record after. Asked
+  again on that key (a restart before the run finished, or the engine's next turn), the stored
+  record is the answer, byte for byte; one left `started` (the daemon stopped meanwhile) becomes an
+  `error` stored in its place, never run again to replace what it came to. A stop of the run (an
+  operator's stop, a lost lease) loses nothing: a command that ended before it is judged and stored
+  as it ended, before the stop is honoured; one the stop killed before its end is stored as an
+  `error`. Only a command the confinement never started is forgotten (nothing of it ran).
+- **Recorded:** one `check-run@1.0` `evidence` artifact at the run's classification, its inputs the
+  commands' `autonomy` decisions; per check the argv, exit code or signal, duration, and the last
+  4000 characters of its output with the length and SHA-256 of all of it. The answer carries it.
+- The checks and their scratch paths are not part of the setup's hash: changing them neither sets
+  the worktrees up again nor asks again about the setup's commands.
+- The subject they are judged on binds every untracked file's whole content, hashed in chunks
+  whatever its size (the display bound decides only what a reviewer is shown); a file that changes
+  while it is read, or untracked files past 8 GiB in all, leave the subject unknown, and nothing is
+  accepted on it (INV-2, INV-5).
+
 ## Credentials and egress
 
 - **Environment** ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)).
@@ -451,7 +604,8 @@ and the retention removes it as any other; its branch keeps the carry commit, wh
   own client configuration holds the `system` MCP server (operator tools such as `approve`).
   So a Worker attaches none: Claude Code takes no settings files and a strict, empty MCP
   configuration; Codex runs in its own Codex home and fails closed if that home configures
-  any, with plugins and apps off; the Antigravity CLI runs in its own home and fails closed if
+  any, with plugins and apps off, and attaches only System's own
+  [workspace reads server](#the-workspace-reads-server), which confines itself; the Antigravity CLI runs in its own home and fails closed if
   that home, or the workspace's customization roots, configure any, or a plugin or hook of their
   own.
 - **Reads** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). The host
@@ -803,6 +957,130 @@ Claude Code runs them under two confinements
   forbidden, and with the default studio policy any other command asks the operator unless a
   rule lists it.
 
+### An agent's shells read no startup code
+
+The gate takes a few `Bash` calls for reads (the probes `echo`, `pwd`, `true`, `false`, and the
+fixed inspection commands, [Codex's gate](#codexs-gate)) on the word that names their program. A
+shell's startup code can make that word name something else: a function or an alias called `echo`
+or `cat` in `~/.bashrc`, `~/.bash_profile`, `~/.profile`, the file `BASH_ENV` or `ENV` names, or an
+exported function (`BASH_FUNC_echo%%`), would run instead on a later call the gate passed as a read
+(T197, T198).
+
+A read is a read only where startup code is kept out in the shell that actually runs the call: a
+non-login, non-interactive shell that reads no startup file and no startup variable (`bash --norc
+--noprofile`, no `BASH_ENV` or `ENV`), started by the runtime itself on every call, in a shell the
+agent cannot choose or change. A runtime that enforces that reports `cleanShells`, and only for its
+runs does the gate take a `Bash` call for a read; every other runtime's call is the `command` it
+is, judged by its exact argv (INV-2). A check run once beside the agent proves nothing about the
+shells the agent starts later, its own way, so none is taken as a substitute. Neither runtime here
+pins its shell program:
+
+- **Codex** runs `exec_command` in the user's shell, as a login shell by default, and each call may
+  name its own `shell` and `login`, which its hook does not show. A call can run in a login shell,
+  or in any executable the Worker names, a workspace script it just changed among them.
+- **Claude Code** starts its Bash tool's shells its own way and runs each command after sourcing a
+  shell snapshot it keeps in its home (`CLAUDE_CONFIG_DIR`).
+
+So neither reports `cleanShells`, and under both every `Bash` call is a `command`. What both
+enforce, whatever shell and mode a call runs in, is that no startup code the agent wrote, nor the
+worktree's or the operator's, ever runs before a command (agent-runtime-core; the regression in
+`agent-runtime-core/tests/shells.spec.ts` plants a function named `echo` and `cat` in every startup
+file a call can reach, under the real confinement, and the next call's `echo` and `cat`, plain,
+login, and interactive, are the real ones):
+
+- **No startup variable.** `childEnvironment` drops every variable a shell runs code from
+  (`SHELL_STARTUP_VARIABLES`: `BASH_ENV`, `ENV`, `ZDOTDIR`, `PROMPT_COMMAND`, `PS0`, `PS4`,
+  `SHELLOPTS`, `BASHOPTS`, `INPUTRC`; and every exported function), from the daemon's environment,
+  a forwarded name, and an explicit value alike; `agentShellEnvironment` also drops the variables
+  that move a shell's startup files out of its home (`SHELL_CONFIG_DIRECTORIES`:
+  `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, where fish reads its). Codex refuses a
+  `shell_environment_policy.set` that names one, or that sets `HOME`, which would replace the
+  private home for its commands.
+- **A private, read-only home.** Each run's `HOME` is a fresh, empty, owner-only directory
+  (`agentHome`) in the runtime's run directory (`<DSH_HOME>/system/run`, hidden by the read
+  confinement), bound back **read-only**, never in the worktree, so git never sees it. It stays
+  empty for the whole run: a login or interactive shell finds no `~/.bash_profile`, `~/.profile`,
+  `~/.bashrc`, `~/.zshenv`, or `~/.config/fish/config.fish` there, and no tool call can write one
+  for a later call's shell (`EROFS`). The only startup files left are the system's (`/etc/profile`,
+  `/etc/bash.bashrc`), which no agent writes. It is removed with the run. `XDG_CACHE_HOME` keeps
+  naming the operator's cache, where tools find what they already downloaded and no shell reads
+  startup code; Claude Code's and Codex's own state stay in their homes (`CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`).
+- **No write where a shell reads startup code.** Claude Code's command sandbox
+  (`commandSandbox`) denies writes to its home, which holds the shell snapshot it sources before
+  each command, and to the shells' `HOME` (`filesystem.denyWrite`, which wins over `allowWrite`);
+  its file tools reach the workspace only. Codex's commands and patches write the workspace only
+  (its `workspace-write` sandbox), and its home holds no shell startup code.
+
+### The workspace reads server
+
+> T200b (operator 2026-10-25, option A, on research T204). Implemented in
+> [`agent-runtime-core`](../../packages/agent-runtime-core/README.md) (`src/workspace-reads.ts`) and
+> [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md).
+
+Since no `Bash` call is a read under Codex or Claude Code ([above](#an-agents-shells-read-no-startup-code)),
+a Codex Worker, which has no file-reading tool of its own, would read only through commands the
+operator approves. So it reads through a tool that runs no program instead: System's own MCP server,
+minimal and in Node, with no third-party server (the reference filesystem server always registers
+write tools and lets MCP Roots widen its directories; the others run language servers, caches, or
+repository plugins).
+
+| Tool | Input | Returns, bounded |
+|---|---|---|
+| `read_file` | `path`; `startLine`, `endLine` (1-based, inclusive) | the lines numbered (`<n>\t<line>`), at most `maxReadBytes`, reading through at most `maxScanBytes`; where it stopped and the line to read on from; a binary file (a NUL in its first 8000 bytes) named, not shown |
+| `list_dir` | `path` (default the workspace) | entries by name, at most `maxEntries`: a directory `name/`, a symlink `name@` (not followed), a file with its size; the count of all |
+| `search` | `pattern`; `regex` (default a fixed string); `ignoreCase`; `path` (default the workspace) | `<path>:<line>: <text>`, at most `maxMatches`, each line cut at `maxLineChars`; opening at most `maxSearchFiles` files, none over `maxScanBytes`, within `searchTimeoutMs`; a pattern of at most `maxPatternChars`; never a symlink, a binary file, or a `node_modules` directory below the path |
+
+- **Bound to one workspace.** The server takes its root as an argument when it starts and keeps it:
+  it declares no capability but tools, asks the client nothing (no `roots/list`), and ignores
+  every notification, MCP Roots' among them. It answers `initialize`, `ping`, `tools/list`, and
+  `tools/call` over newline-delimited JSON-RPC on stdio, one request at a time; a message over
+  1 MiB is refused, and so is a request past 32 waiting.
+- **Every path inside it, really.** A path is relative to the workspace or absolute inside it.
+  Refused: a `..` segment anywhere, an absolute path outside, and any path whose `realpath` is
+  outside the workspace's (a symlink out, a file or a directory); git's own data (`.git` in any
+  letter case, as written or resolved) and files named as secrets, by name whether or not the
+  repository ignores them (`SECRET_NAMES`: `.env` and `.env.*` but `.example`, `.sample`,
+  `.template`, `.dist`; `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`; SSH
+  private keys; `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `.htpasswd`; `credentials` and
+  `secrets` files), which `list_dir` leaves out and counts. Each file or directory is opened without
+  following a link at its end and without blocking (a FIFO), and checked again by the path its
+  descriptor names (`/proc/self/fd`): one swapped after the check is refused.
+- **No program.** Node built-ins only; a search runs in a worker thread of the server, terminated a
+  second past its deadline whatever its regular expression does. No shell, git, or subprocess.
+- **Bounded by configuration** (INV-9): the `agents` source's `workspaceReads` (each bound within
+  its range, `WORKSPACE_READ_BOUNDS`; refused at load otherwise) goes with every run as
+  `RunSpec.workspaceReads`, and the runtime refuses a run whose bounds are out of range
+  (`config_error`); the server refuses to start on them too.
+- **Confined twice.** Codex registers it for every run, the read-only sandbox's included, as a
+  `--config` override (`mcp_servers.workspace`, its only MCP server: the operator's own are
+  refused), with a 30 s start and a tool timeout of the search deadline and 30 s. Codex starts MCP
+  servers outside its own sandbox, so the command is `node` and the server's script under a
+  bubblewrap of their own, inside the run's read confinement: the host read-only, the workspace
+  bound back read-only (whatever the run's sandbox), no network, the workspace its directory. The
+  path checks above are a second layer. The probe proves it starts there (its self-test reads one
+  file of a fresh directory, nested as a run nests it) before it reports `workspaceReads`; on a
+  host that refuses, no Codex Worker is admitted.
+- **Gated as reads, where the runtime gives it.** Codex's hook reports the tools as
+  `mcp__workspace__read_file`, `mcp__workspace__list_dir`, and `mcp__workspace__search`; for a run
+  whose runtime reports `workspaceReads` (its evidence, passed to the gate as `cleanShells` is),
+  the gate classifies exactly these as `read` (inside the workspace, no `..`, not git's data) and
+  refuses any other tool name of the server; under any other runtime it refuses every
+  `mcp__workspace__…` tool, since no server of System's started there (`unclassified-tool`;
+  [approvals](approvals.md#how-a-call-is-classified)). Each allowed call accounts for one
+  `mcp_tool_call` item; one no allowed call accounts for stops the run.
+- **Told to use it.** The Tools section of every Worker whose runtime reports `workspaceReads`
+  (whatever its sandbox; never a review member, [approvals](approvals.md#a-deferred-call)) tells it
+  to read with these tools and never with a shell, whose every command may wait for the operator,
+  and names them as its reading tools; it names no `Bash` inspection command where shells are not
+  clean.
+- **Claude Code** gives no such server: it keeps its own `Read`, `Grep`, and `Glob`, which the gate
+  classifies as reads.
+
+Differs from target: that Codex 0.164 runs its PreToolUse hook before an MCP tool call and names it
+`mcp__workspace__<tool>` was not shown by the probe's turn, which calls no MCP tool; a hook that did
+not run stops the run at the first such call, after it ran, as for any tool.
+
 The Antigravity CLI offers no command tool (`run_command` is denied), so its Workers never
 `validate`: agy's own terminal sandbox (`--sandbox`) has no model-free proof.
 
@@ -837,9 +1115,41 @@ Agent SDK provider reports usage (from the result's `modelUsage`) and rate-limit
 ([its README](../../packages/plugins/runtime-claude-agent-sdk/README.md)); the Antigravity CLI
 provider reports turns, usage from agy's own result (normalized by the one reading whose sum is
 agy's total), and the main model when an event names it
-([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex and ACP
-providers report no usage. Codex and the Antigravity CLI report a usage limit's reset time
-([limit readings](#limit-readings)).
+([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex provider
+reports turns and usage ([below](#codex-metering)); the ACP provider reports no usage. Codex and the
+Antigravity CLI report a usage limit's reset time ([limit readings](#limit-readings)).
+
+### Codex metering
+
+The Codex provider counts each `turn.completed` as a turn and sums the `usage` it carries into the
+run's `usage` (T208). Codex reports five counts per turn; two are parts of another, and a part is
+never added to its whole, so nothing is counted twice:
+
+| Codex count | Is | Reported as |
+|---|---|---|
+| `input_tokens` | every input token of the turn, cached ones included | `inputTokens` |
+| `cached_input_tokens` | a part of `input_tokens`: read from the prompt cache | `cacheReadInputTokens` |
+| `cache_write_input_tokens` | a part of `input_tokens`: written to the prompt cache | `cacheCreationInputTokens` |
+| `output_tokens` | every output token, reasoning included | `outputTokens` |
+| `reasoning_output_tokens` | a part of `output_tokens` | not reported apart: `outputTokens` already counts it |
+
+A turn whose counts are not counts, or whose parts exceed their whole, is not read: the run then
+reports its turns and no tokens, never a sum that silently leaves a turn out. Codex reports no
+charge, so a Codex run has no `costUsd` (its cost stays unknown); a Codex subscription's capacity
+is judged by its windows ([an account's usage report](#an-accounts-usage-report)), not by tokens.
+The per-run token totals are recorded in the run's `usage-record` all the same, so a later forecast
+can relate them to the windows.
+
+A run that ends before the runtime's final count (stopped, past its timeout, drained at the host's
+stop, or at a deferred call) reports what the agent did report while it ran, marked `partial` with
+why in words (at most 300 characters), never an invented figure: the Claude Agent SDK provider sums
+the `usage` of the `assistant` messages it streamed (each message id once, at its largest counts,
+subagents included; the main loop's messages are its turns), and the Codex provider the turns it
+completed (`turn.completed`) and their summed tokens ([Codex metering](#codex-metering)); none
+completed is no number, never 0. A partial report names no
+result (`resultId`), and the conformance suite checks both. The `agents` source records it as a
+lower bound ([usage the ledger cannot count](resources.md#usage-the-ledger-cannot-count)), and says
+in each `usage.unknown` fact how the run ended.
 
 The `agents` source meters a Worker that draws on a resource pool through `ctx.resources`: a
 hand-named Worker whose configuration names a `pool` (with its `account`), or a derived Worker of a
@@ -864,8 +1174,10 @@ provider that names a pool template (its account's pool,
    `limitCooldownSeconds`, until a later reading says otherwise. A limit is never retried on the
    same pool unseen ([fail-closed rules](resources.md#fail-closed-rules)).
 
-A run that started before a restart has no result message, so nothing is recorded for it then;
-its usage is reconciled from the agent's session transcript later (planned). A Worker with no
+A run the host's stop drains is stopped through its signal, so what its runtime reported by then is
+recorded as a lower bound (partial, above). A run that started before a restart has no result
+message, so nothing more is recorded for it then; its usage is reconciled from the agent's session
+transcript later (planned). A Worker with no
 pool is not metered, but its limits still hold: a run that fails `quota_exhausted` on one (or on a
 metered Worker whose ledger did not take the reading) cools down every Worker of its account (for
 hand-named Workers, every Worker of the runtime, which share its one home and so its one sign-in).

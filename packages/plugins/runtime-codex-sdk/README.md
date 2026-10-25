@@ -17,6 +17,26 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   - the `codex` process starts without the daemon's credentials (INV-8):
     always with `childEnvironment` (agent-runtime-core), so credential-shaped
     and `DSH_*` variables are scrubbed;
+  - its shells run no startup code its agent wrote, nor the worktree's or the
+    operator's (T198): no variable a shell runs code from (`BASH_ENV`, `ENV`,
+    an exported function) or that moves its startup files (`ZDOTDIR`,
+    `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`; a `shell_environment_policy.set`
+    naming one, or `HOME`, is refused), and each run's `HOME` a fresh, empty,
+    owner-only directory in the run directory, outside the worktree, bound back
+    **read-only** (no startup file is there, login shell or not, and no call can
+    write one) and removed with the run. Each `exec_command` still picks its own
+    `shell` program and `login`, which the hook does not show, so it never
+    reports `cleanShells`, and the gate takes none of its shell commands for a
+    read;
+  - so it **reads through the workspace reads server** (T200b): every run, the
+    read-only sandbox's included, registers agent-runtime-core's server
+    (`mcp_servers.workspace`, a per-run `--config` override; `readsOverride`),
+    started as `node` and its script under a bubblewrap of their own inside the
+    run's confinement: the host and the workspace read-only, no network
+    (`readsServer`, the script, defaults to `WORKSPACE_READS_SCRIPT`). Its bounds
+    are the run's `workspaceReads` (out of range: `config_error`). The probe's
+    self-test starts it nested as a run does before it reports `workspaceReads`;
+    otherwise no Worker is offered;
   - Codex runs in **its own Codex home** (`CODEX_HOME`, config `home`, default
     `<DSH_HOME>/system/codex-home`, created owner-only), never the operator's
     `~/.codex`, where `system mcp-config codex` puts the `system` MCP server.
@@ -131,8 +151,19 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   `codex --version` fails, the message is not read and the error says so (`its
   reset time is not read: …`). Either way the `agents` source then closes the
   pool for the Worker's cooldown, never opens it. A completed run reports its
-  `turns` (one per `turn.completed`); nothing else of Codex's usage is
-  reported (no token counts).
+  `turns` (one per `turn.completed`) and `usage`, the sum of the token counts
+  each `turn.completed` carries (`usage.ts`, T208): `input_tokens` as
+  `inputTokens`, its parts `cached_input_tokens` and `cache_write_input_tokens`
+  as `cacheReadInputTokens` and `cacheCreationInputTokens`, `output_tokens` as
+  `outputTokens`; `reasoning_output_tokens`, a part of `output_tokens`, is not
+  added again. A turn whose counts cannot be read (or whose parts exceed their
+  whole) leaves the run with no token counts, never a sum without it. No cost
+  is reported: Codex names no charge. A run that ends before Codex finished
+  (stopped, past its timeout, drained at the host's stop, at a deferred call,
+  or at a tool call that passed no gate) carries (`withMetering`) the turns it
+  completed and their tokens, marked `partial` with why (a turn in flight is
+  left out, so it is a lower bound); with none completed, only the `partial`
+  words, never a turn count of 0.
 - **An account's usage report** (`limits({ home }, signal)`,
   [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
   `rate-limits.ts`): the app server's `account/rateLimits/read`, only on a Codex

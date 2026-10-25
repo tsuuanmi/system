@@ -228,6 +228,19 @@ describe('usage-record@1.0 and limit-state@1.0', () => {
     expect(valid('usage-record@1.0', { ...usage, source: 'model-self-report' })).toBe(false)
   })
 
+  it('says on a record that it is a lower bound of its run, as 1.1 only, naming the run (INV-2: never read as its usage)', () => {
+    const lower = example('usage-record.lower-bound')
+    expect(valid('usage-record@1.1', lower)).toBe(true)
+    expect(lower).toMatchObject({ schema: 'usage-record@1.1', partial: expect.any(String) })
+    expect(valid('usage-record@1.1', { ...lower, schema: 'usage-record@1.0' })).toBe(false)
+    const { runId: _, ...unnamed } = lower
+    expect(valid('usage-record@1.1', unnamed)).toBe(false)
+    for (const partial of ['', 'x'.repeat(301)]) expect(valid('usage-record@1.1', { ...lower, partial })).toBe(false)
+    // A 1.1 record without one is a whole record, as a 1.0 one is.
+    const { partial: __, ...whole } = lower
+    expect(valid('usage-record@1.1', whole)).toBe(true)
+  })
+
   it('tolerates a reading without its percentage or reset, but a limit hit says until when', () => {
     const { usedPercentage: _, resetsAt: __, ...bare } = limit
     expect(valid('limit-state@1.0', bare)).toBe(true)
@@ -258,6 +271,53 @@ describe('usage-unknown@1.0', () => {
     expect(valid('usage-unknown@1.0', { ...refused, failure: 'unknown-reservation' })).toBe(false)
     expect(valid('usage-unknown@1.0', { ...silent, failure: 'invalid' })).toBe(false)
     expect(valid('usage-unknown@1.0', { ...silent, record: refused.record })).toBe(false)
+  })
+
+  it('names a lower bound the ledger counted for a not-reported unit only, as 1.1 (INV-2: never read as its usage)', () => {
+    const partial = example('usage-unknown.partial')
+    expect(valid('usage-unknown@1.1', partial)).toBe(true)
+    expect(valid('usage-unknown@1.0', { ...partial, schema: 'usage-unknown@1.0' })).toBe(false)
+    for (const kind of ['interrupted', 'failed']) expect(valid('usage-unknown@1.1', { ...partial, kind }), kind).toBe(false)
+    expect(valid('usage-unknown@1.1', { ...refused, schema: 'usage-unknown@1.1', partial: partial.partial })).toBe(false)
+    expect(valid('usage-unknown@1.1', { ...partial, partial: 'not a ref' })).toBe(false)
+    // 1.1 without one is still a record: a reader takes both.
+    const { partial: _, ...plain } = partial
+    expect(valid('usage-unknown@1.1', plain)).toBe(true)
+  })
+})
+
+describe('quota-draw@1.0', () => {
+  const clean = example('quota-draw.clean')
+  const excluded = example('quota-draw.excluded')
+  const entries = (record: Json): Json[] => record.windows as Json[]
+
+  it('names the run, its account and pool, how it ended, and one entry per window (design/resources.md, quota drawn per run)', () => {
+    expect(valid('quota-draw@1.0', clean)).toBe(true)
+    expect(valid('quota-draw@1.0', excluded)).toBe(true)
+    for (const key of ['runId', 'worker', 'account', 'pool', 'outcome', 'startedAt', 'endedAt', 'overlapping', 'windows', 'observedAt']) {
+      const { [key]: _, ...without } = clean
+      expect(valid('quota-draw@1.0', without), key).toBe(false)
+    }
+    expect(valid('quota-draw@1.0', { ...clean, windows: [] })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...clean, kind: 'Code Work' })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...clean, overlapping: -1 })).toBe(false)
+    // One figure for the account is never a draw.
+    expect(valid('quota-draw@1.0', { ...clean, draw: 9 })).toBe(false)
+  })
+
+  it('holds a draw only for a clean or confounded entry with both shares, and never a negative one', () => {
+    const [entry] = entries(clean)
+    expect(valid('quota-draw@1.0', { ...clean, windows: [{ ...entry, draw: -1 }] })).toBe(false)
+    const { draw: _, ...undrawn } = entry!
+    expect(valid('quota-draw@1.0', { ...clean, windows: [undrawn] })).toBe(false)
+    const { usedPercentage: __, ...shareless } = entry!.after as Json
+    expect(valid('quota-draw@1.0', { ...clean, windows: [{ ...entry, after: shareless }] })).toBe(false)
+    const [crossed, confounded, unread] = entries(excluded)
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [{ ...crossed, draw: 0 }] })).toBe(false)
+    const { why: ___, ...unexplained } = crossed!
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [unexplained] })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [{ ...unread, draw: 1 }] })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [{ ...confounded, state: 'units-only' }] })).toBe(false)
   })
 })
 
@@ -364,6 +424,27 @@ describe('digest-extract@1.0', () => {
     expect(valid('digest-extract@1.0', unruled)).toBe(false)
     expect(valid('digest-extract@1.0', { ...extract, sources: [{ ...extract.sources[0], ref: 'the test log' }] })).toBe(false)
     expect(valid('digest-extract@1.0', { ...extract, sources: [{ ...extract.sources[0], truncated: false }] })).toBe(false)
+  })
+})
+
+describe('check-run@1.0', () => {
+  const run = example('check-run.lint-failed')
+
+  it('binds every check to one exact git tree, by a name a policy can require and an outcome that is never guessed (INV-5, T151)', () => {
+    expect(valid('check-run@1.0', run)).toBe(true)
+    // Only a working tree at an exact version: a check on a ref alone, or on another subject type, is no check of the result.
+    const { version: _, ...unversioned } = run.subject
+    expect(valid('check-run@1.0', { ...run, subject: unversioned })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, subject: { ...run.subject, type: 'artifact' } })).toBe(false)
+    // The checks that are commands, each with an outcome the reader knows.
+    for (const check of ['review', 'schema', 'quote-check', 'benchmark']) expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[0], check }] }), check).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[0], outcome: 'skipped' }] })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [] })).toBe(false)
+    // An error says why, and a command's output is kept to its bound, its digest whole.
+    expect(valid('check-run@1.0', { ...run, checks: [{ check: 'lint', outcome: 'error', reason: 'no command for the lint check is configured' }] })).toBe(true)
+    expect(valid('check-run@1.0', { ...run, checks: [{ check: 'lint', outcome: 'error' }] })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[1], output: { ...run.checks[1].output, tail: 'x'.repeat(4001) } }] })).toBe(false)
+    expect(valid('check-run@1.0', { ...run, checks: [{ ...run.checks[1], output: { tail: '', bytes: 0 } }] })).toBe(false)
   })
 })
 

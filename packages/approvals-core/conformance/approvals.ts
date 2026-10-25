@@ -439,7 +439,7 @@ export class FakeApprovals extends Approvals {
   }
 
   async policy(projectId?: string) {
-    const classes: ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion']
+    const classes: ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion', 'dispatch']
     const all = this.all()
     return {
       policies: this.policies(projectId), effective: classes.map((actionClass) => ({ actionClass, mode: this.effective(actionClass, projectId).mode })),

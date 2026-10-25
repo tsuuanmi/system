@@ -20,22 +20,13 @@ import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it } from 'vitest'
+import { cannotWrite, needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import AgentWorkers, { type Config } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
-
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const CONFINES = !!findBwrap() || process.env.SYSTEM_REQUIRE_BWRAP === '1'
 
 const temp = (prefix: string, under = tmpdir()): string => {
   mkdirSync(under, { recursive: true })
@@ -45,6 +36,8 @@ const temp = (prefix: string, under = tmpdir()): string => {
 }
 /** Outside every path hidden from agents (the temporary directories are hidden): a view's host directory must be. */
 const VISIBLE = fileURLToPath(new URL('../node_modules/.cache/', import.meta.url))
+/** Why no store can be made there (inside a run's check the worktree is read-only but for its scratch paths); undefined on a host. */
+const NO_STORE = cannotWrite(VISIBLE)
 
 const git = (dir: string, ...args: string[]): string => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' }).trim()
 
@@ -142,8 +135,10 @@ const setupDecision = (ctx: Context, done: WorkerExecution): Gate => {
 }
 
 describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, () => {
-  describe.skipIf(!CONFINES)('under the real bubblewrap', () => {
-    it('sets a new worktree up before the agent starts, confined, offline, from a private view of a store; the agent\'s tests then run there, and a later run reuses it (REQ-WRK-6, INV-12, INV-13)', async () => {
+  describe('under the real bubblewrap', () => {
+    needsBubblewrap()
+    it('sets a new worktree up before the agent starts, confined, offline, from a private view of a store; the agent\'s tests then run there, and a later run reuses it (REQ-WRK-6, INV-12, INV-13)', async (context) => {
+      if (NO_STORE) context.skip(`needs a store outside the hidden paths: ${NO_STORE}`)
       const repo = repository()
       const host = store()
       const outside = join(VISIBLE, `outside-${process.pid}`)
@@ -220,7 +215,8 @@ describe('a worktree\'s setup (worktreeSetup, ADR-0058)', { timeout: 60_000 }, (
       expect(agent.runs).toEqual([])
     })
 
-    it('asks the operator about a command the policy does not list, bound to the worktree and the setup\'s hash; runs it once approved; a changed setup asks again (INV-5)', async () => {
+    it('asks the operator about a command the policy does not list, bound to the worktree and the setup\'s hash; runs it once approved; a changed setup asks again (INV-5)', async (context) => {
+      if (NO_STORE) context.skip(`needs a store outside the hidden paths: ${NO_STORE}`)
       const repo = repository()
       const host = store()
       const lines = ['mkdir -p node_modules/dep', `cp ${join(host, 'files', 'dep', 'index.js')} node_modules/dep/`]

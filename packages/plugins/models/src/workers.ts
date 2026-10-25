@@ -15,7 +15,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
-import { ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
+import { type ModelCompletion, ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
 import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
@@ -42,7 +42,21 @@ export interface ModelWorkersConfig {
    * reaches it; an entry may set its own).
    */
   maxHistoryChars?: number
+  /**
+   * Retries of a request the provider said it did not process, before any output: `503
+   * UNAVAILABLE` or `429 RESOURCE_EXHAUSTED` (default 4, 0 to 10; T209). Each is a `recovery`
+   * decision on the call. Within `callTimeoutMs`, which bounds every wait too.
+   */
+  unprocessedRetries?: number
+  /** The longest wait before one of those retries: the back-off doubles from 1 s up to it (default 60 s, 100 ms to 10 min). */
+  unprocessedMaxDelayMs?: number
 }
+
+/** The bounds of the not-processed retry (INV-9): its defaults and the ranges configuration may set. */
+export const UNPROCESSED_RETRIES = { default: 4, min: 0, max: 10 } as const
+export const UNPROCESSED_MAX_DELAY_MS = { default: 60_000, min: 100, max: 600_000 } as const
+/** The first back-off of a not-processed retry, at most the configured maximum. */
+const UNPROCESSED_FIRST_DELAY_MS = 1_000
 
 interface TurnRow {
   seq: number
@@ -123,6 +137,11 @@ export class ModelWorkers {
   private readonly described = new Map<string, { family: string | undefined; locality: string; tier: string }>()
 
   constructor(private readonly ctx: Context, private readonly config: ModelWorkersConfig = {}) {
+    // Bounds that would make a retry unbounded, or a wait no wait at all, are refused at mount (INV-9).
+    for (const [key, range] of [['unprocessedRetries', UNPROCESSED_RETRIES], ['unprocessedMaxDelayMs', UNPROCESSED_MAX_DELAY_MS]] as const) {
+      const value = config[key]
+      if (value !== undefined && (!Number.isInteger(value) || value < range.min || value > range.max)) throw new Error(`models: ${key} must be an integer from ${range.min} to ${range.max}`)
+    }
     this.scheduler = new ProviderScheduler(config.maxConcurrentCalls ?? 4)
     ctx.store.migrate('models', [{
       version: 1,
@@ -418,6 +437,29 @@ export class ModelWorkers {
   }
 
   /**
+   * A request the provider said it did not process (T209): retried after a back-off while retries
+   * remain, or failed once they are used, recorded as a `recovery` decision on the call (INV-13)
+   * and a `models.call.retried` event for a retry. It is the same send: a restart's bound is apart.
+   */
+  private recordUnprocessed(row: CallRow, error: ModelError, at: { retry: number; retries: number; delayMs: number; again: boolean }, lease: () => Lease): void {
+    const status = error.unprocessed!.status
+    const why = `${status} before any output: the provider says the request was not processed, so sending it again cannot duplicate an answer`
+    const used = `${at.retry - 1} of ${at.retries} retries were used (unprocessedRetries)`
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'recovery', question: `Is model call ${row.call_id} sent again after ${status}?`, inputs: [],
+      candidates: [
+        { option: 'retry', selected: at.again, reasons: at.again ? [`${why}; it is sent again after ${at.delayMs} ms (retry ${at.retry} of ${at.retries})`] : [`not retry: ${used}`] },
+        { option: 'fail', selected: !at.again, reasons: at.again ? [`not fail: ${used}`] : [`${status} before any output, and ${used}`, `error: ${error.message.replace(/\s+/g, ' ').slice(0, 280)}`] },
+      ],
+      decider: { type: 'rule', id: 'models.unprocessed-retry', version: '1' },
+      outcome: { option: at.again ? 'retry' : 'fail', detail: { callId: row.call_id, status, retry: at.retry, retries: at.retries, ...(at.again ? { delayMs: at.delayMs } : {}) } },
+      deterministic: true,
+    }, { producer: { type: 'worker', ref: row.worker } }).id
+    this.addDecision(row, decision, lease)
+    if (at.again) this.ctx.get('eventLog')?.append({ type: 'models.call.retried', data: { callId: row.call_id, worker: row.worker, status, retry: at.retry, delayMs: at.delayMs, decision } })
+  }
+
+  /**
    * A session turn's history: exactly the turns it was accepted with (their hash must match, so a
    * reset since is not replayed as if nothing happened), within this entry's bounds. Past a bound
    * the turn fails, and nothing is cut.
@@ -481,18 +523,45 @@ export class ModelWorkers {
     this.update(row.call_id, { status: 'running', submitted_at: now(), sends: row.sends + 1 }, lease)
     const timeoutMs = this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
     const deadline = AbortSignal.timeout(timeoutMs)
-    const completion = await this.ctx.models.complete({ model: model.id, prompt: row.prompt, maxTokens: row.max_tokens ?? undefined, ...(history.turns.length ? { history: history.turns } : {}) }, AbortSignal.any([signal, deadline]))
-      .catch((error: unknown) => {
-        if (deadline.aborted && !signal.aborted) throw new ProviderError('timeout', `${row.worker} did not finish within ${timeoutMs} ms (callTimeoutMs, the ceiling over every attempt); the call was stopped`, { cause: error })
-        if (error instanceof ModelError) throw new ProviderError(KINDS[error.failure], error.message, { cause: error })
-        throw error
-      })
+    const bounded = AbortSignal.any([signal, deadline])
+    const typed = (error: unknown): unknown => {
+      if (deadline.aborted && !signal.aborted) return new ProviderError('timeout', `${row.worker} did not finish within ${timeoutMs} ms (callTimeoutMs, the ceiling over every attempt); the call was stopped`, { cause: error })
+      if (error instanceof ModelError) return new ProviderError(KINDS[error.failure], error.message, { cause: error })
+      return error
+    }
+    const retries = this.config.unprocessedRetries ?? UNPROCESSED_RETRIES.default
+    const maxDelayMs = this.config.unprocessedMaxDelayMs ?? UNPROCESSED_MAX_DELAY_MS.default
+    // Provider requests of earlier tries that the provider did not process (each may still be billed).
+    let earlier = 0
+    let completion: ModelCompletion
+    for (let retry = 0; ; retry++) {
+      try {
+        completion = await this.ctx.models.complete({ model: model.id, prompt: row.prompt, maxTokens: row.max_tokens ?? undefined, ...(history.turns.length ? { history: history.turns } : {}) }, bounded)
+        break
+      } catch (error) {
+        // Only the provider's own word that it did not process the request is retried here (T209):
+        // any other failure after the send is not resent (INV-4).
+        if (!(error instanceof ModelError) || !error.unprocessed || bounded.aborted) throw typed(error)
+        earlier += error.attempts ?? 1
+        const again = retry < retries
+        const delayMs = Math.min(maxDelayMs, error.unprocessed.retryAfterMs ?? Math.min(UNPROCESSED_FIRST_DELAY_MS, maxDelayMs) * 2 ** retry)
+        this.recordUnprocessed(row, error, { retry: retry + 1, retries, delayMs, again }, lease)
+        if (!again) throw typed(error)
+        await sleep(delayMs, bounded).catch((stopped: unknown) => {
+          throw typed(stopped)
+        })
+      }
+    }
+    completion = { ...completion, attempts: completion.attempts + earlier }
+    // More than 10 requests in one send (retries of requests the provider did not process, each
+    // try with its route re-attempts) is said by `model-answer@1.1`, up to the bounds' 66.
+    const schema = completion.attempts > 10 ? 'model-answer@1.1' : 'model-answer@1.0'
     this.ctx.store.transaction(() => {
       this.ctx.leases.fence(lease())
       const artifact = this.ctx.artifacts.put({
-        kind: 'report', bodySchema: 'model-answer@1.0',
+        kind: 'report', bodySchema: schema,
         body: {
-          schema: 'model-answer@1.0', worker: row.worker, model: model.id, callId: row.call_id, promptHash: sha256(row.prompt),
+          schema, worker: row.worker, model: model.id, callId: row.call_id, promptHash: sha256(row.prompt),
           quotaClass: model.quotaClass, locality: model.locality, finish: completion.finish, maxTokens: completion.maxTokens,
           // Every provider request this call made may be billed: sends of the call, re-attempts of the last one.
           sends: row.sends + 1, attempts: completion.attempts, usage: completion.usage, text: completion.text,
@@ -547,6 +616,22 @@ export class ModelWorkers {
   private row(callId: string): CallRow | undefined {
     return this.ctx.store.db.prepare('SELECT * FROM model_calls WHERE call_id = ?').get(callId) as CallRow | undefined
   }
+}
+
+/** Wait `ms`, or reject with an `aborted` failure once `signal` stops the call. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const stop = (): void => {
+      clearTimeout(timer)
+      reject(new ModelError('aborted', 'aborted while waiting to send the request again'))
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', stop)
+      resolve()
+    }, ms)
+    if (signal.aborted) stop()
+    else signal.addEventListener('abort', stop, { once: true })
+  })
 }
 
 function execution(row: CallRow): WorkerExecution {

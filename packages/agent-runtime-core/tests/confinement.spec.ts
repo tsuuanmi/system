@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,19 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import { type Confinement, confinedCommand, proveConfinement, writeLauncher } from '../src/index.ts'
+import { BWRAP, needsBubblewrap } from './host.ts'
 
 const PASSTHROUGH = fileURLToPath(new URL('../conformance/passthrough-bwrap.sh', import.meta.url))
 
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-const BWRAP = findBwrap()
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
 const OPTIONS = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc']
 /** Every confined command's temporary directory: its own tmpfs at /tmp, named by TMPDIR, TMP, and TEMP (T113). */
 const TEMP_ENV = ['--setenv', 'TMPDIR', '/tmp', '--setenv', 'TMP', '/tmp', '--setenv', 'TEMP', '/tmp']
@@ -110,7 +101,8 @@ describe('confinedCommand: the bubblewrap command line (ADR-0024)', () => {
   })
 })
 
-describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap cannot read host state (ADR-0024, REQ-WRK-6, INV-8)', () => {
+describe('an agent child under the real bubblewrap cannot read host state (ADR-0024, REQ-WRK-6, INV-8)', () => {
+  needsBubblewrap()
   const h = host()
   afterAll(() => rmSync(h.root, { recursive: true, force: true }))
   const confinement = (extra: Partial<Confinement> = {}): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [h.home, h.keyFile, h.vaultKey], readOnly: [h.tools], writable: [h.workerHome], ...extra })
@@ -148,6 +140,20 @@ describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap c
     rmSync(marker, { force: true })
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(existsSync(marker)).toBe(false)
+  })
+
+  it('starts a confinement nested in one with the same hidden paths, a hidden file among them, under every bubblewrap here (0.4.0 cannot mount over the null device; T200b)', async () => {
+    // The production bubblewrap is the first root-owned one on PATH, often an older distribution's; this suite's is the first on PATH.
+    const bwraps = [...new Set([BWRAP, '/usr/bin/bwrap'].filter((b): b is string => !!b && existsSync(b)))]
+    for (const bwrap of bwraps) {
+      const outer = { ...confinement(), bwrap }
+      // It starts at all: what failed in production (bwrap 0.4.0: "Can't create file at …: Permission denied").
+      const inner = confinedCommand('true', [], outer, { readOnly: true, network: false, nested: true })
+      // The inner bubblewrap mounts nothing over the hidden file, which the outer one shows as the null device.
+      expect(inner.args.join(' '), bwrap).not.toContain(`/dev/null ${h.keyFile}`)
+      const c = confinedCommand(inner.command, inner.args, outer)
+      await expect(promisify(execFile)(c.command, c.args, { encoding: 'utf8' }), bwrap).resolves.toBeDefined()
+    }
   })
 
   it('proves the confinement on this host: the masked directories are not the host\'s, and hidden files are the null device', async () => {

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Store from '@tsuuanmi/system-store'
 import { describe, expect, it, vi } from 'vitest'
@@ -43,6 +43,125 @@ async function boot(config: Config = {}) {
 }
 
 workersConformance('@tsuuanmi/system-workers', () => boot())
+
+/** One account's five-hour pool on a fake ledger: `used` percent read a minute ago, resetting in `resetsIn` minutes; no reading when `used` is undefined. */
+type FakePool = { pool: string; account: string; kind: string; available: boolean; windows: Array<{ id: string; kind: string; seconds: number }>; readings: unknown[] }
+const fivehour = (account: string, used?: number, resetsIn = 240): FakePool => ({
+  pool: `plan/${account}`, account, kind: 'interactive', available: true, windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18_000 }],
+  readings: used === undefined ? [] : [{ window: { id: 'five-hour' }, state: 'ok', usedPercentage: used, resetsAt: new Date(Date.now() + resetsIn * 60_000).toISOString(), observedAt: new Date(Date.now() - 60_000).toISOString() }],
+})
+
+/** Boot the router beside a fake resource ledger (`ctx.resources`) holding these pools. */
+async function bootWithLedger(pools: FakePool[], config: Config = {}) {
+  class Ledger extends Service {
+    constructor(ctx: Context) {
+      super(ctx, 'resources')
+    }
+
+    async pools(): Promise<FakePool[]> {
+      return pools
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'system-workers-'))
+  const ctx = new Context()
+  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(Ledger), ctx.plugin(WorkerRouter, config)]
+  await Promise.all(fibers)
+  return {
+    ctx,
+    dispose: async () => {
+      for (const fiber of fibers.reverse()) await fiber.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+/** A Worker on its own account (`capability-descriptor@1.5`), idle unless `load` says otherwise. */
+const onAccount = (id: string, account: string, extra: Parameters<typeof worker>[1] = {}) => worker(id, {
+  schema: 'capability-descriptor@1.5', family: 'plan', account: { id: account, group: 'plan', mode: 'assigned' }, load: { running: 0, queued: 0, pending: 0, slots: 2 }, ...extra,
+})
+
+describe('ctx.workers: quota in every route (PROP-0014 D3, quota-score@2)', () => {
+  const routeBody = (ctx: Context, ref: string) => ctx.artifacts.get(ref)?.body as { decider: { version: string }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
+
+  it('chooses the account at 10 % over one at 85 %, above its 20 % reserve, whatever their load, ids, or tiers, and records each score', async () => {
+    // w:a is at 85 % (above 100 − 20), idle, first by id; w:b is at 10 % and busier.
+    const { ctx, dispose } = await bootWithLedger([fivehour('acct-a', 85, 60), fivehour('acct-b', 10, 240)])
+    try {
+      ctx.workers.register(source('test', [onAccount('w:a', 'acct-a'), onAccount('w:b', 'acct-b', { load: { running: 1, queued: 0, pending: 0, slots: 2 } })]))
+      const admitted = await ctx.workers.route(requirement({ capabilities: ['reason'] }))
+      expect(admitted.worker.worker).toBe('w:b')
+      admitted.release()
+      const route = routeBody(ctx, admitted.decisions.route)
+      expect(route.decider.version).toBe('2')
+      const [a, b] = route.candidates
+      expect(b).toMatchObject({ option: 'w:b', selected: true })
+      expect(b!.reasons.at(-1)).toMatch(/^quota \(quota-score@2\): known, 5 h: used 10 %, resets in 3 h 5\d min, headroom 70$/)
+      expect(a!.selected).toBe(false)
+      expect(a!.reasons[0]).toBe('admitted; w:b\'s account has headroom; this one\'s 5 h window is used 85 %, above 80 % (the 20 % reserve), so it ranks last while another has headroom')
+      expect(a!.reasons[1]).toMatch(/^quota \(quota-score@2\): known, 5 h: used 85 %, resets in 5\d min, headroom -5$/)
+    } finally {
+      await dispose()
+    }
+    // Above its reserve, it gets no new step even at a lower tier, while another admitted Worker has headroom.
+    const tiered = await bootWithLedger([fivehour('acct-a', 85), fivehour('acct-b', 10)])
+    try {
+      tiered.ctx.workers.register(source('test', [onAccount('w:a', 'acct-a'), onAccount('w:b', 'acct-b', { tier: 'frontier', proves: ['reason', 'develop'] })]))
+      expect((await tiered.ctx.workers.route(requirement({ capabilities: ['reason'] }))).worker.worker).toBe('w:b')
+    } finally {
+      await tiered.dispose()
+    }
+  })
+
+  it('never prefers an unknown reading: no reading, no pool, or no account comes after a known one, and one above its reserve still ranks by its reading when none has headroom', async () => {
+    const { ctx, dispose } = await bootWithLedger([fivehour('acct-a'), fivehour('acct-b', 50), fivehour('acct-c', 85)])
+    try {
+      ctx.workers.register(source('test', [
+        onAccount('w:a', 'acct-a'), onAccount('w:b', 'acct-b', { load: { running: 2, queued: 1, pending: 0, slots: 2 } }), onAccount('w:none', 'acct-none'), worker('w:bare'),
+      ]))
+      const admitted = await ctx.workers.route(requirement())
+      expect(admitted.worker.worker).toBe('w:b')
+      admitted.release()
+      const lost = routeBody(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'w:a')!
+      expect(lost.reasons[0]).toBe('admitted; w:b\'s windows are all known; this one\'s are unknown')
+      expect(lost.reasons[1]).toBe('quota (quota-score@2): unknown')
+    } finally {
+      await dispose()
+    }
+    // Only an unknown reading and one at 85 %: none has headroom, so the known one still comes before the unknown one.
+    const none = await bootWithLedger([fivehour('acct-a'), fivehour('acct-c', 85)])
+    try {
+      none.ctx.workers.register(source('test', [onAccount('w:a', 'acct-a'), onAccount('w:c', 'acct-c')]))
+      expect((await none.ctx.workers.route(requirement())).worker.worker).toBe('w:c')
+    } finally {
+      await none.dispose()
+    }
+  })
+
+  it('breaks a tie of equal quota by load, then id', async () => {
+    const { ctx, dispose } = await bootWithLedger([fivehour('acct-y', 30, 300), fivehour('acct-x', 30, 300)])
+    try {
+      ctx.workers.register(source('test', [onAccount('w:y', 'acct-y'), onAccount('w:x', 'acct-x')]))
+      const admitted = await ctx.workers.route(requirement())
+      expect(admitted.worker.worker).toBe('w:x')
+      admitted.release()
+      expect(routeBody(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'w:y')!.reasons[0]).toBe('admitted; w:x comes first by id')
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('orders as before when no ledger is mounted: no quota line in the route decision', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      ctx.workers.register(source('test', [onAccount('w:a', 'acct-a'), onAccount('w:b', 'acct-b')]))
+      const admitted = await ctx.workers.route(requirement())
+      expect(admitted.worker.worker).toBe('w:a')
+      expect(routeBody(ctx, admitted.decisions.route).candidates.flatMap((c) => c.reasons).some((r) => r.startsWith('quota ('))).toBe(false)
+    } finally {
+      await dispose()
+    }
+  })
+})
 
 describe('ctx.workers: configured preferences', () => {
   it('orders by the configured priority list after tier and quota class, and says why each admitted Worker lost (REQ-ART-1)', async () => {

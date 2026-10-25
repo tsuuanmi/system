@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
+import { type RunMetering, withMetering } from '@tsuuanmi/system-agent-runtime-core'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type ToolCall, type ToolVerdict } from '@tsuuanmi/system-agent-runtimes'
 import StoreApprovals from '@tsuuanmi/system-approvals'
 import type { AutonomyPolicy } from '@tsuuanmi/system-approvals-core'
@@ -15,8 +16,10 @@ import StoreBoard from '@tsuuanmi/system-board'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { contentId } from '@tsuuanmi/system-libs'
+import { AGENT_TOOL_EVENTS, AGENT_TOOL_EXPLANATION_MAX, agentToolDenialOf, agentToolDenialReasons, agentToolEventOf, contentId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
+import type { PoolConfig } from '@tsuuanmi/system-resources-core'
+import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { ClaudeAgentRuntime, type QueryFn } from '@tsuuanmi/system-runtime-claude-agent-sdk'
 import { CodexRuntime } from '@tsuuanmi/system-runtime-codex-sdk'
 import Store from '@tsuuanmi/system-store'
@@ -26,7 +29,7 @@ import Workflow from '@tsuuanmi/system-workflow'
 import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
-import { classify } from '../src/gate.ts'
+import { classify, DENIAL_REASONS, EXPLANATION_MAX, TOOLS_NOTE_MAX, unaskedNote } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 
@@ -43,7 +46,7 @@ class GatedAgent implements AgentRuntimeProvider {
   readonly kind = 'gated'
   readonly runs: RunSpec[] = []
   readonly verdicts: ToolVerdict[][] = []
-  constructor(private readonly script: Array<Array<Omit<ToolCall, 'callId'>>>, private readonly options: { goesOn?: boolean } = {}) {}
+  constructor(private readonly script: Array<Array<Omit<ToolCall, 'callId'>>>, private readonly options: { goesOn?: boolean; deferredMetering?: RunMetering } = {}) {}
   async probe() {
     return { available: true, detail: 'gated 1.0', sandboxes: ['read-only', 'workspace-write'] as Array<'read-only' | 'workspace-write'>, resume: true, executes: true, readsConfined: true, gatesToolCalls: true }
   }
@@ -56,7 +59,10 @@ class GatedAgent implements AgentRuntimeProvider {
     for (const [i, call] of (this.script[this.runs.length - 1] ?? []).entries()) {
       const verdict = await spec.toolGate!({ ...call, callId: `call-${this.runs.length}-${i + 1}` }, signal)
       seen.push(verdict)
-      if (verdict.decision === 'defer' && !this.options.goesOn) throw new ProviderError('config_error', `gated: stopped at ${call.tool} (approval request ${verdict.requestId})`)
+      if (verdict.decision === 'defer' && !this.options.goesOn) {
+        const error = new ProviderError('config_error', `gated: stopped at ${call.tool} (approval request ${verdict.requestId})`)
+        throw this.options.deferredMetering ? withMetering(error, this.options.deferredMetering) : error
+      }
     }
     return { text: `done ${this.runs.length}`, nativeHandle: handle, turns: 1 }
   }
@@ -82,14 +88,20 @@ const requirement: WorkRequirement = {
   tier: { min: 'economy', source: 'caller' }, acceptance: { contract: 'acceptance.answer' },
 }
 
-async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | null = policy()) {
+/** A pool the Worker draws on, when a test meters it. */
+const POOL: PoolConfig = { pool: 'max.agents', account: 'max', kind: 'programmatic', unknown: 'available', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18000 }] }
+
+async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | null = policy(), metered = false, sandbox: 'read-only' | 'workspace-write' = 'workspace-write') {
+  // A read-only Worker proves review, never develop (INV-15): it is routed a review.
+  const required: WorkRequirement = sandbox === 'read-only' ? { ...requirement, capabilities: ['review', 'local-data'] } : requirement
   const dir = mkdtempSync(join(tmpdir(), 'system-gate-'))
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ...(approvals ? [ctx.plugin(StoreApprovals, { policies: [approvals] })] : []),
+    ...(metered ? [ctx.plugin(FakeResources, { pools: [POOL] })] : []),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry),
-    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard' }] }),
+    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox, tier: 'standard', ...(metered ? { pool: POOL.pool, account: POOL.account } : {}) }] }),
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
@@ -97,14 +109,14 @@ async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | nul
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
     rmSync(dir, { recursive: true, force: true })
   })
-  const admitted = await ctx.workers.route(requirement)
+  const admitted = await ctx.workers.route(required)
   expect(admitted).toMatchObject({ worker: { worker: 'agent:dev' } })
   const source = ctx.workers.source('agents')!
   let n = 0
   /** Start one run (in `session` unless null) and wait for its end. */
   const run = async (session: string | null = 'ses_dev'): Promise<WorkerExecution & { runId: string }> => {
     n += 1
-    const started = source.start({ key: `k-${n}`, worker: 'agent:dev', prompt: `step ${n}`, ...(session ? { sessionId: session } : {}), requirement, decisions: (admitted as { decisions: { tier: `sha256:${string}`; route: `sha256:${string}` } }).decisions })
+    const started = source.start({ key: `k-${n}`, worker: 'agent:dev', prompt: `step ${n}`, ...(session ? { sessionId: session } : {}), requirement: required, decisions: (admitted as { decisions: { tier: `sha256:${string}`; route: `sha256:${string}` } }).decisions })
     return { ...(await source.wait(started.id, 10_000)), runId: started.id }
   }
   return { ctx, run }
@@ -124,6 +136,8 @@ const decisionOf = (ctx: Context, reason: string) => {
   return ctx.artifacts.get(id!)!.body as { decisionType: string; decider: { type: string; id: string }; outcome: { option: string; detail?: Record<string, unknown> } }
 }
 const bash = (command: string) => ({ tool: 'Bash', input: { command } })
+/** A run whose runtime enforces shells that read no startup code (`cleanShells`, T198): the only one where a shell command can be a read. */
+const CLEAN = { shellReads: true } as const
 
 // The board's own steps to a ready task, as the workflow's suite takes them; kept here so the agent
 // Workers' tests compose the engine's code, never its tests (docs/engineering/testing.md#test-groups).
@@ -159,11 +173,76 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
       expect(decisionOf(ctx, denied.reason)).toMatchObject({ decisionType: 'gate', decider: { type: 'rule', id: 'agent-workers.tool-gate' }, outcome: { option: 'deny' } })
     }
     expect(await ctx.approvals.list()).toEqual([])
-    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' })).toHaveLength(2)
+    const events = ctx.eventLog.query({ type: 'agent-workers.tool.denied' })
+    expect(events).toHaveLength(2)
+    // Each denial explains itself (T207): a stable code, its fixed explanation, the Worker's kind, and the decision.
+    const decisions = [outside, unknown].map((v) => /decision (sha256:[0-9a-f]{64})/.exec((v as { reason: string }).reason)![1])
+    expect(events.map((e) => ({ decision: e.decision, data: e.data }))).toEqual([
+      { decision: decisions[0], data: { agentRun: done.runId, worker: 'agent:dev', workerKind: 'gated', tool: 'Read', reason: 'outside-workspace', explanation: DENIAL_REASONS['outside-workspace'], decision: decisions[0] } },
+      { decision: decisions[1], data: { agentRun: done.runId, worker: 'agent:dev', workerKind: 'gated', tool: 'Task', reason: 'unclassified-tool', explanation: DENIAL_REASONS['unclassified-tool'], decision: decisions[1] } },
+    ])
+    // The explanation never names the call's input.
+    expect(JSON.stringify(events)).not.toContain('/etc/passwd')
+    expect(decisionOf(ctx, (outside as { reason: string }).reason).outcome.detail).toMatchObject({ reason: 'outside-workspace' })
+  })
+
+  it('gives every denial reason a plain explanation of at most 300 characters (T207)', () => {
+    expect(EXPLANATION_MAX).toBe(300)
+    expect(Object.keys(DENIAL_REASONS)).toEqual(expect.arrayContaining(['metacharacter', 'empty-word', 'outside-workspace', 'unclassified-tool', 'unsupported-field', 'policy-forbid', 'not-listed']))
+    for (const [code, explanation] of Object.entries(DENIAL_REASONS)) {
+      expect(code).toMatch(/^[a-z]+(-[a-z]+)*$/)
+      expect(explanation.length, code).toBeGreaterThan(0)
+      expect(explanation.length, code).toBeLessThanOrEqual(EXPLANATION_MAX)
+    }
+  })
+
+  it('declares every reason code the gate emits, and the explanation\'s bound, in the tool events\' schema; an entry from before T207 stays valid (T211)', async () => {
+    // Derived from the gate's own list: a code added there and not to the schema fails here.
+    const declared = agentToolDenialReasons()
+    for (const code of Object.keys(DENIAL_REASONS)) expect(declared, code).toContain(code)
+    const call = { agentRun: 'arun_1', worker: 'agent:dev', tool: 'Bash' }
+    for (const [code, explanation] of Object.entries(DENIAL_REASONS)) {
+      expect(agentToolDenialOf({ ...call, workerKind: 'codex-sdk', reason: code, explanation, actionClass: 'command', requestId: 'apr-1', decision: `sha256:${'a'.repeat(64)}` }), code).toBeDefined()
+    }
+    // From before T207: no reason, no explanation, no Worker kind.
+    expect(agentToolDenialOf(call)).toEqual(call)
+    // The bound is the gate's own: EXPLANATION_MAX characters pass, one more does not.
+    expect(AGENT_TOOL_EXPLANATION_MAX).toBe(EXPLANATION_MAX)
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', explanation: 'x'.repeat(EXPLANATION_MAX) })).toBeDefined()
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', explanation: 'x'.repeat(EXPLANATION_MAX + 1) })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', explanation: '' })).toBeUndefined()
+    // A code the gate does not have, an explanation without a code, a field no denial carries: not a valid denial.
+    expect(agentToolDenialOf({ ...call, reason: 'made-up' })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, explanation: 'why' })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, reason: 'gate-error', command: 'rm -rf /' })).toBeUndefined()
+    expect(agentToolDenialOf({ ...call, tool: 'x'.repeat(101) })).toBeUndefined()
+
+    // What the gate appends is valid under its event type's definition, every kind.
+    const agent = new GatedAgent([[{ tool: 'Read', input: { file_path: '/etc/passwd' } }, { tool: 'Task', input: {} }, bash('npm test'), bash('echo a;b')]])
+    const { ctx, run } = await boot(agent)
+    await run()
+    const events = Object.keys(AGENT_TOOL_EVENTS).flatMap((type) => ctx.eventLog.query({ type }))
+    expect(events.map((e) => e.type).sort()).toEqual(['agent-workers.tool.deferred', 'agent-workers.tool.denied', 'agent-workers.tool.denied'])
+    for (const e of events) expect(agentToolEventOf(e.type, e.data), e.type).toBeDefined()
+    const pending = await boot(new GatedAgent([[{ tool: 'Write', input: { file_path: 'a.ts', content: 'x' } }, { tool: 'Read', input: { file_path: 'a.ts' } }]]), policy({ 'workspace-write': { mode: 'auto', requires: ['tests'] }, 'read': { mode: 'notify', requires: ['lint'] } }))
+    await pending.run()
+    const shown = Object.keys(AGENT_TOOL_EVENTS).flatMap((type) => pending.ctx.eventLog.query({ type }))
+    expect(shown.map((e) => e.type).sort()).toEqual(['agent-workers.tool.checks-pending', 'agent-workers.tool.notified'])
+    for (const e of shown) expect(agentToolEventOf(e.type, e.data), e.type).toBeDefined()
+  })
+
+  it('denies a workspace reads server call under a runtime that reports no such server, whatever the policy lets read, and tells it of no such server (T200b)', async () => {
+    const agent = new GatedAgent([[{ tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts' } }, { tool: 'Read', input: { file_path: join(WORKSPACE, 'src/a.ts') } }]])
+    const { ctx, run } = await boot(agent)
+    expect((await run()).status).toBe('completed')
+    expect(agent.verdicts[0]!.map((v) => v.decision)).toEqual(['deny', 'allow'])
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['unclassified-tool'])
+    expect(agent.runs[0]!.prompt).not.toContain('workspace server')
   })
 
   it('denies a call the policy forbids, with the reason its autonomy decision records', async () => {
-    const agent = new GatedAgent([[bash('ls')]])
+    // A command that is no read-only inspection stays `command`, which the policy decides.
+    const agent = new GatedAgent([[bash('npm test')]])
     const { ctx, run } = await boot(agent, policy({ command: { mode: 'forbid' } }))
     expect((await run()).status).toBe('completed')
     const verdict = agent.verdicts[0]![0] as { decision: string; reason: string }
@@ -187,6 +266,24 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     }
     expect(check).not.toHaveBeenCalled()
     expect(await ctx.approvals.list()).toEqual([])
+    // Each event names why (T207): never the command itself.
+    const events = ctx.eventLog.query({ type: 'agent-workers.tool.denied' })
+    expect(events.map((e) => e.data!.reason)).toEqual([...metacharacters.map(() => 'metacharacter'), ...empty.map(() => 'empty-word')])
+    expect(events.every((e) => e.data!.explanation === DENIAL_REASONS[e.data!.reason as keyof typeof DENIAL_REASONS] && typeof e.decision === 'string' && e.data!.decision === e.decision)).toBe(true)
+    expect(JSON.stringify(events.map((e) => e.data))).not.toContain('rm -rf')
+  })
+
+  it('names a forbidden command not on the commands list not-listed, and any other forbidden call policy-forbid, with its action class (T207)', async () => {
+    const agent = new GatedAgent([[bash('npm test'), bash('npm run build'), { tool: 'WebFetch', input: { url: 'https://example.com' } }]])
+    const { ctx, run } = await boot(agent, policy({ 'command': { mode: 'forbid' }, 'external-send': { mode: 'forbid' } }))
+    expect((await run()).status).toBe('completed')
+    expect(agent.verdicts[0]!.map((v) => v.decision)).toEqual(['deny', 'deny', 'deny'])
+    const events = ctx.eventLog.query({ type: 'agent-workers.tool.denied' })
+    expect(events.map((e) => [e.data!.reason, e.data!.actionClass])).toEqual([['not-listed', 'command'], ['policy-forbid', 'command'], ['policy-forbid', 'external-send']])
+    for (const [i, e] of events.entries()) {
+      expect(decisionOf(ctx, (agent.verdicts[0]![i] as { reason: string }).reason)).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'forbid' } })
+      expect(e.decision).toBe(e.data!.decision)
+    }
   })
 
   it('lets a command on the commands list run as the workspace write it is judged as', async () => {
@@ -194,6 +291,160 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     const { run } = await boot(agent)
     expect((await run()).status).toBe('completed')
     expect(agent.verdicts[0]).toEqual([{ decision: 'allow' }])
+  })
+
+  it('tells a Worker that may run commands which calls run unasked, the policy\'s commands list word for word, so it asks less (T199)', async () => {
+    const agent = new GatedAgent([[]])
+    const { run } = await boot(agent, { ...policy(), commands: ['npm run build', 'git status --short'] })
+    expect((await run()).status).toBe('completed')
+    const sent = agent.runs[0]!.prompt
+    // One Tools section (T199, extended by T207): the workspace, then what runs unasked.
+    expect(sent.startsWith(`step 1\n\nTools (your tool gate and the autonomy policy now):\n- Workspace: ${WORKSPACE}. A tool's path outside it is denied, and so is a write in its .git.\nTool calls that run without asking the operator:\n`)).toBe(true)
+    expect(sent).toContain('- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):\n  - npm run build\n  - git status --short\n')
+    expect(sent).toContain(`- Reading tools (Read, Glob, Grep, LS) on paths inside your workspace ${WORKSPACE}.`)
+    // This runtime enforces no clean shells, so its gate takes no Bash command for a read, and the section says so.
+    expect(sent).not.toContain('Bash read-only inspection')
+    expect(sent).toContain('Under this runtime no Bash command is a read')
+    expect(sent).toContain('a word with a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like) or an empty word (a doubled, leading, or trailing space) is denied')
+    expect(sent).toContain('so a relative path makes no command a read')
+    expect(sent).toContain('Any other command waits for the operator; unanswered in time, or rejected, it is denied and you go on without it')
+    expect(sent).toContain('An approval resumes this step')
+    expect(sent.length - 'step 1\n\n'.length).toBeLessThanOrEqual(TOOLS_NOTE_MAX)
+    // Nor is it told of a workspace reads server its runtime does not give it.
+    expect(sent).not.toContain('workspace server')
+  })
+
+  it('names Bash inspection among the unasked calls only where shells are clean, and the workspace server\'s tools where the runtime gives them, telling the Worker to read with them, never with a shell (T198, T200b)', () => {
+    const effective = [{ actionClass: 'read' as const, mode: 'auto' }]
+    expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('Bash read-only inspection')
+    expect(unaskedNote({ policies: [], effective }, '/ws', { shellReads: true })).toContain('- Bash read-only inspection, every path absolute and inside /ws')
+    const reads = unaskedNote({ policies: [], effective }, '/ws', { workspaceReads: true })
+    expect(reads).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace /ws.')
+    expect(reads).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range)')
+    expect(reads).toContain('read with the workspace server\'s tools, never with a shell.')
+    // A read-only Worker is told the same, whatever the policy runs unasked.
+    expect(unaskedNote({ policies: [], effective: [] }, '/ws', { workspaceReads: true, sandbox: 'read-only' })).toContain('- Read your workspace with the workspace server\'s tools, never with a shell')
+    expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('workspace server')
+  })
+
+  it('tells a read-only Worker its Tools section too, fit to its sandbox: the workspace, its reads, the refusals, and whether an approval resumes the step, with no writing tool, and the exact commands the gate runs unasked whatever the sandbox (T207)', async () => {
+    const agent = new GatedAgent([[]])
+    const { run } = await boot(agent, { ...policy(), commands: ['npm run build'] }, false, 'read-only')
+    expect((await run()).status).toBe('completed')
+    const sent = agent.runs[0]!.prompt
+    expect(sent.startsWith(`step 1\n\nTools (your tool gate and the autonomy policy now):\n- Workspace: ${WORKSPACE}.`)).toBe(true)
+    expect(sent).toContain('- Your sandbox is read-only: no tool call writes a file')
+    expect(sent).toContain(`- Reading tools (Read, Glob, Grep, LS) on paths inside your workspace ${WORKSPACE}.`)
+    expect(sent).toContain('a word with a shell metacharacter')
+    expect(sent).toContain('so a relative path makes no command a read')
+    expect(sent).toContain('An approval resumes this step')
+    expect(sent).not.toContain('Writing tools')
+    expect(sent).toContain('npm run build')
+    expect(sent.length - 'step 1\n\n'.length).toBeLessThanOrEqual(TOOLS_NOTE_MAX)
+    // Pure: a read-only sandbox where commands run unasked says the sandbox still holds them.
+    const all = [{ actionClass: 'read' as const, mode: 'auto' }, { actionClass: 'workspace-write' as const, mode: 'auto' }, { actionClass: 'command' as const, mode: 'auto' }]
+    const readOnly = unaskedNote({ policies: [{ commands: ['npm test'] }], effective: all }, '/ws', { sandbox: 'read-only', shellReads: true })
+    expect(readOnly).toContain('- Any other Bash command, under your read-only sandbox (it changes no file).')
+    expect(readOnly).toContain('- Bash read-only inspection, every path absolute and inside /ws')
+    expect(readOnly).not.toContain('Writing tools')
+    expect(unaskedNote({ policies: [], effective: all }, '/ws')).not.toContain('Your sandbox is read-only')
+    // A read-only Worker (a reviewer) is told the exact commands too: the gate runs a listed one unasked whatever the sandbox.
+    const listed = [{ actionClass: 'read' as const, mode: 'auto' }, { actionClass: 'workspace-write' as const, mode: 'auto' }, { actionClass: 'command' as const, mode: 'ask' }]
+    const reviewer = unaskedNote({ policies: [{ commands: ['git diff --stat'] }], effective: listed }, '/ws', { sandbox: 'read-only' })
+    expect(reviewer).toContain('  - git diff --stat')
+    expect(reviewer).not.toContain('Writing tools')
+  })
+
+  it('tells a run with no session that a call that would ask is denied at once, since no approval could resume it (T207)', async () => {
+    const agent = new GatedAgent([[]])
+    const { run } = await boot(agent)
+    expect((await run(null)).status).toBe('completed')
+    const sent = agent.runs[0]!.prompt
+    expect(sent).toContain('Any other command is denied at once: this run has no session an approval could resume.')
+    expect(sent).not.toContain('An approval resumes this step')
+  })
+
+  it('names in that section only what the policy lets run unasked: no commands list when commands are forbidden, every command when they run, none when nothing does; Bash reads only under clean shells; bounded', () => {
+    const effective = (modes: Record<string, string>) => Object.entries(modes).map(([actionClass, mode]) => ({ actionClass: actionClass as AutonomyPolicy['rules'][number]['actionClass'], mode }))
+    const policies = [{ commands: ['npm test'] }]
+    const forbidden = unaskedNote({ policies, effective: effective({ 'read': 'auto', 'workspace-write': 'auto', 'command': 'forbid' }) }, '/ws')
+    expect(forbidden).not.toContain('npm test')
+    expect(forbidden).toContain('Any other command is denied')
+    // Commands forbidden, reads and writes asked: the section still says whether an approval resumes the step.
+    const forbidAsk = effective({ 'read': 'ask', 'workspace-write': 'ask', 'command': 'forbid' })
+    const forbidResumes = unaskedNote({ policies, effective: forbidAsk }, '/ws')
+    expect(forbidResumes).toContain('Any other command is denied. A call the policy asks the operator about waits for the operator;')
+    expect(forbidResumes).toContain('An approval resumes this step')
+    const forbidNoSession = unaskedNote({ policies, effective: forbidAsk }, '/ws', { resumes: false })
+    expect(forbidNoSession).toContain('Any other command is denied. A call the policy asks the operator about is denied at once: this run has no session an approval could resume.')
+    expect(forbidNoSession).not.toContain('An approval resumes this step')
+    const asked = unaskedNote({ policies, effective: effective({ 'read': 'auto', 'workspace-write': 'ask', 'command': 'ask' }) }, '/ws')
+    // A listed command runs as a workspace write: when writes ask, so does it.
+    expect(asked).not.toContain('npm test')
+    expect(asked).not.toContain('Writing tools')
+    expect(unaskedNote({ policies, effective: effective({ 'read': 'notify', 'workspace-write': 'auto', 'command': 'auto' }) }, '/ws')).toContain('- Any other Bash command.')
+    // Nothing runs unasked: the section still names the workspace and the gate's refusals.
+    const nothing = unaskedNote({ policies, effective: effective({ 'read': 'ask', 'workspace-write': 'ask', 'command': 'ask' }) }, '/ws')
+    expect(nothing).toContain('Tool calls that run without asking the operator:\n- none now: every call asks the operator or is denied.')
+    expect(nothing).toContain('- Workspace: /ws.')
+    expect(nothing).toContain('shell metacharacter')
+    expect(nothing).not.toContain('Reading tools')
+    // A Bash inspection command is a read only where the runtime enforces clean shells (T198), as the gate judges it.
+    const reads = effective({ 'read': 'auto', 'workspace-write': 'auto', 'command': 'ask' })
+    expect(unaskedNote({ policies, effective: reads }, '/ws', { shellReads: true })).toContain('- Bash read-only inspection, every path absolute and inside /ws (a relative path, or a form that names none, asks): cat, head, tail')
+    expect(unaskedNote({ policies, effective: reads }, '/ws', { shellReads: true })).not.toContain('Under this runtime no Bash command is a read')
+    expect(unaskedNote({ policies, effective: reads }, '/ws')).not.toContain('Bash read-only inspection')
+    const many = unaskedNote({ policies: [{ commands: Array.from({ length: 60 }, (_, i) => `make t${i}`) }], effective: effective({ 'workspace-write': 'auto', 'command': 'ask' }) }, '/ws')
+    expect(many).toContain('  - make t49\n  - and 10 more')
+    expect(many).not.toContain('make t50')
+    // Bounded whatever the list holds: long lines are cut first, the rest counted, and a long workspace path is cut.
+    const long = Array.from({ length: 50 }, (_, i) => `make ${String(i).padStart(2, '0')}${'x'.repeat(190)}`)
+    const bounded = unaskedNote({ policies: [{ commands: long }], effective: effective({ 'read': 'auto', 'workspace-write': 'auto', 'command': 'ask' }) }, `/${'w'.repeat(1000)}`, { shellReads: true })
+    expect(bounded.length).toBeLessThanOrEqual(TOOLS_NOTE_MAX)
+    expect(bounded).toContain(`  - ${long[0]}`)
+    expect(bounded).toMatch(/\n {2}- and \d+ more\n/)
+    expect(bounded).toContain('An approval resumes this step')
+    expect(bounded).not.toContain('w'.repeat(301))
+  })
+
+  it('says what happens to other commands by the command mode, and that a listed command is judged as a workspace write, for every combination (T209)', () => {
+    const effective = (modes: Record<string, string>) => Object.entries(modes).map(([actionClass, mode]) => ({ actionClass: actionClass as AutonomyPolicy['rules'][number]['actionClass'], mode }))
+    const MODES = ['auto', 'notify', 'ask', 'forbid'] as const
+    const unasked = (m: string): boolean => m === 'auto' || m === 'notify'
+    const LISTED_RULE = 'A command on the autonomy policy\'s commands list is judged as a workspace write, not as a command'
+    for (const command of MODES) {
+      for (const write of MODES) {
+        for (const commands of [['npm test'], undefined]) {
+          const label = `command ${command}, workspace-write ${write}, ${commands ? 'a' : 'no'} commands list`
+          const note = unaskedNote({ policies: [{ commands }], effective: effective({ 'read': 'auto', 'workspace-write': write, 'command': command }) }, '/ws')!
+          // What any other command does, by the command mode.
+          if (unasked(command)) {
+            expect(note, label).toContain('- Any other Bash command')
+            expect(note, label).not.toContain('Any other command waits for the operator')
+            expect(note, label).not.toContain('Any other command is denied')
+          } else {
+            expect(note, label).not.toContain('- Any other Bash command')
+            expect(note, label).toContain(command === 'forbid' ? 'Any other command is denied' : 'Any other command waits for the operator; unanswered in time, or rejected, it is denied and you go on without it')
+          }
+          // A listed command is judged as a workspace write, unless commands are forbidden: said, with what that means now.
+          const rule = commands && command !== 'forbid'
+          if (!rule) {
+            expect(note, label).not.toContain(LISTED_RULE)
+            expect(note, label).not.toContain('npm test')
+            continue
+          }
+          expect(note, label).toContain(LISTED_RULE)
+          expect(note, label).toContain(unasked(write) ? 'workspace writes run unasked, so it runs unasked too'
+            : write === 'forbid' ? 'workspace writes are denied, so it is denied too, even where other commands run unasked'
+            : 'workspace writes wait for the operator, so it waits too, even where other commands run unasked')
+          // Named where it differs from other commands: run unasked while they wait, or the exception while they run.
+          if (unasked(write) && !unasked(command)) expect(note, label).toContain('word for word (the autonomy policy\'s commands list; no other word, option, or argument):\n  - npm test')
+          else if (!unasked(write) && unasked(command)) expect(note, label).toContain('- Any other Bash command, except one on the autonomy policy\'s commands list:\n  - npm test')
+          else if (unasked(command)) expect(note, label).toContain('- Any other Bash command.\n')
+          else expect(note, label).not.toContain('npm test')
+        }
+      }
+    }
   })
 
   it('opens one request bound to the exact call on an ask, defers it, and fails the run naming the request; a later run before the verdict waits on the same one (REQ-WRK-6, INV-5)', async () => {
@@ -229,6 +480,20 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('approval request apr-') } })
     expect(done.result).toBeUndefined()
     expect(agent.verdicts[0]![1]).toMatchObject({ decision: 'deny', reason: expect.stringContaining('the run stopped at its Bash call') })
+  })
+
+  it('records what a run that stopped at a deferred call reported, as a lower bound, and keeps it unknown, naming the request it waits on (INV-2)', async () => {
+    const deferredMetering: RunMetering = { turns: 1, usage: { inputTokens: 20, outputTokens: 8 }, partial: 'gated stopped at a deferred tool call before its result' }
+    const { ctx, run } = await boot(new GatedAgent([[bash('npm test')]], { deferredMetering }), policy(), true)
+    const done = await run()
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    const [request] = await ctx.approvals.list()
+    expect((await ctx.resources.usage({ runId: done.runId })).records).toMatchObject([{ outcome: 'failed', usage: deferredMetering.usage, turns: 1 }])
+    const facts = ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data!)
+    expect(facts).toEqual([expect.objectContaining({
+      schema: 'usage-unknown@1.1', runId: done.runId, kind: 'not-reported', outcome: 'failed', partial: expect.stringMatching(/^sha256:/),
+      reason: `it stopped at a Bash call that waits for approval request ${request!.requestId}; the ledger counted what its runtime reported while it ran (20 input and 8 output tokens, 1 turn), a lower bound: gated stopped at a deferred tool call before its result`,
+    })])
   })
 
   it('lets exactly the approved call run once in a later run of the session, and not another input; a used approval asks again', async () => {
@@ -268,6 +533,11 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(agent.verdicts[3]![0]).toMatchObject({ decision: 'deny', reason: expect.stringContaining('unanswered when it expired') })
     expect(last.status).toBe('completed')
     expect(await ctx.approvals.list()).toEqual([])
+    // Each denial names why, the class, and the request (T207).
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data)).toEqual([
+      expect.objectContaining({ reason: 'request-rejected', explanation: DENIAL_REASONS['request-rejected'], actionClass: 'command', requestId: rejected!.requestId }),
+      expect.objectContaining({ reason: 'request-expired', explanation: DENIAL_REASONS['request-expired'], actionClass: 'command', requestId: expiring!.requestId }),
+    ])
   })
 
   // PROP-0013: no automated input to a session blocked on an approval. The state is derived when read.
@@ -503,22 +773,170 @@ describe('classify: a tool call as the action the policy judges', () => {
     }
     for (const [tool, input] of valid) {
       expect(classify({ tool, input }, ws), tool).not.toHaveProperty('refused')
-      expect(classify({ tool, input: { ...input, extra: 1 } }, ws), tool).toEqual({ refused: `${tool} carries "extra", a field the gate does not classify` })
+      expect(classify({ tool, input: { ...input, extra: 1 } }, ws), tool).toEqual({ refused: `${tool} carries "extra", a field the gate does not classify`, reason: 'unsupported-field' })
       const [field, value] = wrong[tool]!
-      expect(classify({ tool, input: { ...input, [field]: value } }, ws), tool).toMatchObject({ refused: expect.stringContaining(`${tool} carries ${JSON.stringify(field)} that is not a `) })
+      expect(classify({ tool, input: { ...input, [field]: value } }, ws), tool).toMatchObject({ refused: expect.stringContaining(`${tool} carries ${JSON.stringify(field)} that is not a `), reason: 'unsupported-field' })
     }
-    expect(classify({ tool: 'Bash', input: { command: 'npm test', dangerouslyDisableSandbox: true } }, ws)).toEqual({ refused: 'Bash carries "dangerouslyDisableSandbox", a field the gate does not classify' })
+    expect(classify({ tool: 'Bash', input: { command: 'npm test', dangerouslyDisableSandbox: true } }, ws)).toEqual({ refused: 'Bash carries "dangerouslyDisableSandbox", a field the gate does not classify', reason: 'unsupported-field' })
     expect(classify({ tool: 'Read', input: JSON.parse('{"file_path": "src/a.ts", "__proto__": {"x": 1}}') as Record<string, unknown> }, ws)).toHaveProperty('refused')
   })
 
   it('splits a command on single spaces, exactly as the policy matches it, and refuses an empty word, a shell metacharacter, and an input field it does not know', () => {
     expect(classify(bash('npm run build'), ws)).toMatchObject({ class: 'command', command: ['npm', 'run', 'build'] })
-    for (const command of ['npm  test', ' npm test', 'npm test ', 'echo safe;id', 'echo $(id)', 'echo a\nid', 'ls ~', 'echo `id`']) {
-      expect(classify(bash(command), ws), command).toHaveProperty('refused')
+    for (const command of ['npm  test', ' npm test', 'npm test ']) {
+      expect(classify(bash(command), ws), command).toMatchObject({ refused: expect.any(String), reason: 'empty-word' })
+    }
+    for (const command of ['echo safe;id', 'echo $(id)', 'echo a\nid', 'ls ~', 'echo `id`']) {
+      expect(classify(bash(command), ws), command).toMatchObject({ refused: expect.any(String), reason: 'metacharacter' })
     }
     expect(classify({ tool: 'Bash', input: { command: 'npm test', timeout: 1000, description: 'run', run_in_background: false } }, ws)).toMatchObject({ command: ['npm', 'test'] })
     expect(classify({ tool: 'Bash', input: { command: 'npm test', dangerouslyDisableSandbox: true } }, ws)).toHaveProperty('refused')
-    expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toHaveProperty('refused')
+    expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toMatchObject({ refused: expect.any(String), reason: 'invalid-input' })
+  })
+
+  it('gives each refusal its stable reason code (T207)', () => {
+    const patchOf = (...lines: string[]) => ({ tool: 'apply_patch', input: { command: ['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n') } })
+    const cases: Array<[ToolCall, string]> = [
+      [{ tool: 'Read', input: 'not an object' as never }, 'invalid-input'],
+      [{ tool: 'run_command', input: { CommandLine: 'ls' } }, 'unclassified-tool'],
+      [{ tool: 'Read', input: { file_path: 'a', extra: 1 } }, 'unsupported-field'],
+      [{ tool: 'Read', input: { file_path: '/etc/passwd' } }, 'outside-workspace'],
+      [{ tool: 'Read', input: {} }, 'invalid-input'],
+      [{ tool: 'Glob', input: { pattern: '/etc/**' } }, 'outside-workspace'],
+      [{ tool: 'Write', input: { file_path: '/etc/x', content: 'x' } }, 'outside-workspace'],
+      [{ tool: 'Write', input: { file_path: '.git/config', content: 'x' } }, 'git-data'],
+      [{ tool: 'apply_patch', input: { command: 'not a patch' } }, 'invalid-patch'],
+      [patchOf('*** Add File: /etc/x', '+x'), 'outside-workspace'],
+      [{ tool: 'WebFetch', input: { url: '' } }, 'invalid-input'],
+      [bash('a  b'), 'empty-word'],
+      [bash('a;b'), 'metacharacter'],
+    ]
+    for (const [call, reason] of cases) expect(classify(call, ws), JSON.stringify(call)).toMatchObject({ refused: expect.any(String), reason })
+  })
+
+  it('classifies a probe that can do nothing as read: echo with any plain words, pwd with no argument, true, false (T187)', () => {
+    for (const command of ['echo', 'echo noop', 'echo -n x', 'echo -e a', 'echo -E -n', 'echo --help', 'echo #x', 'echo a=b /etc/passwd ../x', 'pwd', 'true', 'false']) {
+      expect(classify(bash(command), ws, CLEAN), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('reads and changes nothing') })
+    }
+    // A metacharacter is still refused, an empty word too.
+    for (const command of ['echo $HOME', 'echo `id`', 'echo a;id', 'echo a|id', 'echo >x', 'echo *', 'echo ~', 'echo "a"', 'echo a\\nb', 'echo  a', 'echo ', 'true;id', 'pwd&&id']) {
+      expect(classify(bash(command), ws, CLEAN), command).toHaveProperty('refused')
+    }
+    // Anything else of these programs stays a command, by its exact argv.
+    for (const command of ['pwd -P', 'pwd -L', 'pwd /tmp', 'true x', 'false --help', '/bin/echo x', 'printf x', 'Echo x', 'sh -c true']) {
+      expect(classify(bash(command), ws, CLEAN), command).toMatchObject({ class: 'command', command: command.split(' ') })
+    }
+  })
+
+  it('takes no shell command for a read where the runtime does not enforce shells that read no startup code: a function named echo or cat could run instead (T198)', () => {
+    const a = join(ws, 'src/a.ts')
+    for (const command of ['echo', 'echo noop', 'pwd', 'true', 'false', `cat ${a}`, `head -n 20 ${a}`, `ls -la ${ws}`, `sed -n 1,40p ${a}`, `rg -n foo ${ws}`, `grep -r foo ${ws}`, `find ${ws} -name a.ts`]) {
+      // Enforced clean: a read. Not enforced (absent, or false): the exact command, which the policy judges by its argv.
+      expect(classify(bash(command), ws, CLEAN), command).toMatchObject({ class: 'read' })
+      for (const options of [undefined, {}, { shellReads: false }]) {
+        expect(classify(bash(command), ws, options), command).toMatchObject({ class: 'command', command: command.split(' ') })
+      }
+    }
+    // The file tools read as before: the program they name is the runtime's own, no shell between.
+    expect(classify({ tool: 'Read', input: { file_path: a } }, ws)).toMatchObject({ class: 'read' })
+  })
+
+  describe('read-only inspection commands', () => {
+    // A workspace that holds its own .git.
+    const repo = join(tree, 'git-repo')
+    mkdirSync(join(repo, '.git'), { recursive: true })
+    mkdirSync(join(repo, 'src'))
+    writeFileSync(join(repo, 'src', 'a.ts'), 'x')
+    writeFileSync(join(repo, '.git', 'config'), '')
+    symlinkSync(join(repo, '.git'), join(repo, 'meta'))
+    // Each under a runtime that enforces clean shells (T198): only there could any of them be a read.
+    const read = (command: string, workspace = ws) => expect(classify(bash(command), workspace, CLEAN), command).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('Reads inside the run\'s workspace') })
+    const asks = (command: string, workspace = ws) => expect(classify(bash(command), workspace, CLEAN), command).toMatchObject({ class: 'command', command: command.split(' ') })
+    const notRead = (command: string, workspace = ws) => {
+      const action = classify(bash(command), workspace, CLEAN)
+      expect('refused' in action ? 'refused' : action.class, command).not.toBe('read')
+    }
+
+    it('classifies each program\'s allowed forms on absolute paths inside the workspace as read, with no argv for the commands list', () => {
+      const a = join(ws, 'src/a.ts')
+      const src = join(ws, 'src')
+      for (const command of [
+        `cat ${a}`, `cat -n ${a}`, `cat ${join(ws, 'inner/a.ts')}`, `cat ${a} ${join(ws, 'src/new.ts')}`,
+        `head -n 20 ${a}`, `head -20 ${a}`, `head -c 100 ${a}`, `tail -n +5 ${a}`, `tail -n 3 ${a}`, `tail -50 ${a}`,
+        `wc -l ${a}`, `wc -c -w ${a}`, `ls ${ws}`, `ls -la ${ws}`, `ls -la ${src}`, `ls -R ${src}`, `ls -1 ${ws}/`, `stat ${a}`, `file ${a}`, `file -i ${a}`,
+        `sed -n 1,40p ${a}`, `sed -n 7p ${a}`,
+        `rg -n classify ${src}`, `rg -i -F -w -c foo ${a}`, `rg -A 2 -B 1 -C 3 --line-number foo ${src}`, `rg -g src/a.ts --glob !dist -t ts foo ${ws}`, `rg -l foo ${ws}`,
+        `grep foo ${a}`, `grep -r -n foo ${src}`, `grep -r -i -F -w -c foo ${ws}`, `grep -l -A 2 -B 2 -C 1 --line-number foo ${a}`,
+        `find ${src}`, `find ${ws} -name a.ts -type f`, `find ${src} ${join(ws, 'inner')} -iname A.TS -path src/a.ts -maxdepth 2 -mindepth 1`,
+      ]) {
+        read(command)
+      }
+    })
+
+    it('leaves a relative path, a form that names no path, and git a command: the gate does not see the directory a command runs in (Codex\'s exec_command workdir)', () => {
+      for (const command of [
+        'cat src/a.ts', 'cat .ssh/id_rsa', 'cat src/new.ts', 'head -n 5 src/a.ts', 'tail src/a.ts', 'wc -l src/a.ts', 'stat src/a.ts', 'file src/a.ts', 'sed -n 1p src/a.ts',
+        'ls', 'ls -la', 'ls -R', 'ls .', 'ls src', 'rg -n token', 'rg foo src', 'rg foo .', 'grep -r foo', 'grep foo src/a.ts', 'find', 'find .', 'find src', 'find -name a.ts',
+        `cat ${join(ws, 'src')}/../src/a.ts`,
+      ]) {
+        notRead(command)
+      }
+      for (const command of [
+        'git status', 'git status --short', 'git diff', 'git log --oneline -n 5', 'git show HEAD:src/a.ts', 'git ls-files src', 'git grep -n foo', 'git blame src/a.ts', 'git rev-parse HEAD',
+        `git diff -- ${join(repo, 'src/a.ts')}`, `git log ${repo}`,
+      ]) {
+        asks(command, repo)
+        asks(command)
+      }
+    })
+
+    it('leaves every other form of these programs a command, which the policy asks about: an option off the list, an action, a missing path or value, a cluster or an abbreviation', () => {
+      const a = join(ws, 'src/a.ts')
+      const src = join(ws, 'src')
+      for (const command of [
+        'cat', `cat -v ${a}`, `cat -- ${a}`, `cat ${a} #x`, `cat file:${a}`, `head ${a} -n`, `head -n ${a}`, `head -n -5 ${a}`, `tail -f ${a}`, `tail -F ${a}`,
+        `wc --files0-from ${a}`, `wc -L ${a}`, `ls -L ${join(ws, 'link-dir')}`, `ls --color ${ws}`, `stat -L ${a}`, `stat -c %n ${a}`, `file -m ${a} ${a}`, `file -L ${a}`,
+        'sed -n 1p', `sed 1p ${a}`, `sed -n 1,2p ${a} ${a}`, `sed -i 1d ${a}`, `sed -n 1w ${a}`, `sed -n 1,2pw ${a}`, `sed -n -e 1p ${a}`, `sed -n /x/p ${a}`,
+        `rg --pre cat foo ${ws}`, `rg --pre-glob x foo ${ws}`, `rg -f ${a} ${ws}`, `rg --files-from ${a} foo ${ws}`, `rg -z foo ${ws}`, `rg --search-zip foo ${ws}`, `rg --follow foo ${ws}`, `rg -L foo ${ws}`, `rg -r x foo ${ws}`,
+        `rg -n ${ws}`, `rg -in foo ${ws}`, `rg --line foo ${ws}`, `rg -A x foo ${ws}`, `rg -A -1 foo ${ws}`, `rg -g -x foo ${ws}`, `rg -t t-s foo ${ws}`, `rg --files ${ws}`, `rg -- foo ${ws}`,
+        `grep -f ${a} ${src}`, `grep -R foo ${ws}`, `grep -z foo ${src}`, `grep --line foo ${src}`, `grep -rn foo ${ws}`, `grep --include a.ts foo ${src}`, `grep -g a.ts foo ${src}`, `grep -e foo ${src}`,
+        `find ${ws} -exec cat`, `find ${ws} -execdir ls`, `find ${ws} -ok ls`, `find ${ws} -okdir ls`, `find ${ws} -delete`, `find ${ws} -fprint out`, `find ${ws} -fprint0 out`, `find ${ws} -fprintf out x`, `find ${ws} -fls out`,
+        `find -L ${ws}`, `find -H ${ws}`, `find ${ws} -follow`, `find ${ws} -name`, `find ${ws} -name -delete`, `find ${ws} -type x`, `find ${ws} -maxdepth x`, `find ${ws} -newer ${a}`, `find ${src} ! -name a.ts`, `find ${ws} -print`,
+        `less ${a}`, `more ${a}`, `awk 1 ${a}`, `python3 ${a}`, `node ${a}`, `/bin/cat ${a}`, `./cat ${a}`, 'xargs cat', `env cat ${a}`, `nl ${a}`,
+        `git -c core.fsmonitor=x status`, `git -C ${repo} status`, `git --git-dir=${repo}/.git log`, 'git push', 'git',
+      ]) {
+        asks(command)
+      }
+    })
+
+    it('never reads outside the workspace: an absolute path outside, a climb with .., or a symlink pointing out is refused or stays a command', () => {
+      for (const path of ['/etc/passwd', `${ws}/../outside/secret`, join(outside, 'secret'), `${ws}-other/a`, join(ws, 'link-file'), join(ws, 'link-dir/secret'), join(ws, 'src/up/secret'), `${ws}/src/up/../outside/secret`, join(ws, 'dangling'), join(ws, 'loop'), '~/.ssh/id_rsa', '$HOME/x', '../outside/secret']) {
+        for (const command of [`cat ${path}`, `head -n 5 ${path}`, `tail ${path}`, `wc -l ${path}`, `ls ${path}`, `stat ${path}`, `file ${path}`, `sed -n 1p ${path}`, `rg foo ${path}`, `grep -r foo ${path}`, `find ${path}`, `find ${ws} ${path} -name a`]) {
+          notRead(command)
+        }
+      }
+      for (const dir of [join(ws, 'link-dir'), join(ws, 'src/up'), `${ws}/..`, '/', tree]) {
+        for (const command of [`ls ${dir}`, `ls -la ${dir}`, `rg foo ${dir}`, `grep -r foo ${dir}`, `find ${dir}`]) notRead(command)
+      }
+      // A workspace named through a symlink is its real directory.
+      read(`cat ${join(tree, 'repo-link', 'src/a.ts')}`, join(tree, 'repo-link'))
+      notRead(`cat ${join(tree, 'repo-link', 'link-file')}`, join(tree, 'repo-link'))
+    })
+
+    it('refuses a file tool\'s write into git\'s own data, which git reads its configuration from, as written or through a symlink; other dotfiles are written as before', () => {
+      for (const path of ['.git/config', '.git', 'src/.git/config', '.GIT/config', 'meta/config', 'meta/hooks/new', join(repo, '.git', 'config')]) {
+        expect(classify(write(path), repo), path).toMatchObject({ refused: expect.stringContaining('git\'s own data') })
+        expect(classify(edit(path), repo), path).toMatchObject({ refused: expect.stringContaining('git\'s own data') })
+        expect(classify({ tool: 'apply_patch', input: { command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch\n` } }, repo), path).toMatchObject({ refused: expect.stringContaining('git\'s own data') })
+        expect(classify({ tool: 'write_file', input: { Path: path.startsWith('/') ? path : join(repo, path), Content: 'x' } }, repo), path).toHaveProperty('refused')
+      }
+      for (const path of ['.gitignore', '.gitattributes', 'src/.github/workflows/ci.yml', 'src/a.ts']) {
+        expect(classify(write(path), repo), path).toMatchObject({ class: 'workspace-write' })
+      }
+      // Reading it stays a read.
+      expect(classify({ tool: 'Read', input: { file_path: '.git/config' } }, repo)).toMatchObject({ class: 'read' })
+      read(`cat ${join(repo, '.git/config')}`, repo)
+    })
   })
 
   it('reads a patch strictly and allows it only when every file it names is inside the workspace: added, deleted, updated, or moved to', () => {
@@ -581,7 +999,7 @@ describe('classify: a tool call as the action the policy judges', () => {
       { tool: 'schedule', input: { Prompt: 'x' } },
       { tool: 'call_mcp_tool', input: {} },
     ]) {
-      expect(classify(call, ws), call.tool).toEqual({ refused: `${call.tool} is not a tool the gate classifies` })
+      expect(classify(call, ws), call.tool).toEqual({ reason: 'unclassified-tool', refused: `${call.tool} is not a tool the gate classifies` })
     }
   })
 
@@ -601,6 +1019,45 @@ describe('classify: a tool call as the action the policy judges', () => {
     }
   })
 
+  it('classifies exactly the workspace reads server\'s three tools as reads inside the workspace, for a run whose runtime gives its agent that server, and refuses any other tool of it (T200b)', () => {
+    const served = { workspaceReads: true }
+    for (const options of [served, { ...served, shellReads: false }, { ...served, shellReads: true }]) {
+      expect(classify({ tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', startLine: 1, endLine: 2 } }, ws, options)).toMatchObject({ class: 'read', summary: 'mcp__workspace__read_file src/a.ts' })
+      expect(classify({ tool: 'mcp__workspace__list_dir', input: {} }, ws, options)).toMatchObject({ class: 'read' })
+      expect(classify({ tool: 'mcp__workspace__list_dir', input: { path: '' } }, ws, options)).toMatchObject({ class: 'read' })
+      expect(classify({ tool: 'mcp__workspace__search', input: { pattern: 'x', regex: true, ignoreCase: false, path: join(ws, 'src') } }, ws, options)).toMatchObject({ class: 'read' })
+    }
+    // Outside the workspace, through a symlink out, climbing with "..", or into git's data: refused, the policy never asked.
+    mkdirSync(join(ws, '.git'), { recursive: true })
+    const reasons: Record<string, string> = {
+      '/etc/hostname': 'outside-workspace', [join(outside, 'secret')]: 'outside-workspace', 'link-file': 'outside-workspace', 'link-dir': 'outside-workspace', 'src/up/secret': 'outside-workspace',
+      '../outside/secret': 'outside-workspace', 'src/../src/a.ts': 'outside-workspace', '.git/config': 'git-data', '.git': 'git-data',
+    }
+    for (const [path, reason] of Object.entries(reasons)) {
+      expect(classify({ tool: 'mcp__workspace__read_file', input: { path } }, ws, served), path).toMatchObject({ refused: expect.any(String), reason })
+      expect(classify({ tool: 'mcp__workspace__search', input: { pattern: 'x', path } }, ws, served), path).toMatchObject({ refused: expect.any(String), reason })
+    }
+    expect(classify({ tool: 'mcp__workspace__read_file', input: {} }, ws, served)).toMatchObject({ reason: 'invalid-input' })
+    // An argument the server does not take, or one of another type.
+    expect(classify({ tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', offset: 1 } }, ws, served)).toMatchObject({ refused: expect.stringContaining('"offset"'), reason: 'unsupported-field' })
+    expect(classify({ tool: 'mcp__workspace__search', input: { pattern: 'x', regex: 'yes' } }, ws, served)).toMatchObject({ reason: 'unsupported-field' })
+    // Any other tool of that server is refused by name, whatever its input.
+    for (const tool of ['mcp__workspace__write_file', 'mcp__workspace__exec', 'mcp__workspace__', 'mcp__workspace__read_file_x']) {
+      expect(classify({ tool, input: { path: 'src/a.ts' } }, ws, served), tool).toMatchObject({ refused: expect.stringContaining('is not one of the workspace reads server\'s tools'), reason: 'unclassified-tool' })
+    }
+  })
+
+  it('takes the workspace reads server\'s tools for reads only where the runtime reports it gives its agent that server: otherwise any tool of that name is refused (T200b)', () => {
+    for (const options of [{}, { workspaceReads: false }, { shellReads: true }, { shellReads: true, workspaceReads: false }]) {
+      for (const call of [
+        { tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts' } }, { tool: 'mcp__workspace__list_dir', input: {} }, { tool: 'mcp__workspace__search', input: { pattern: 'x' } },
+        { tool: 'mcp__workspace__write_file', input: { path: 'src/a.ts' } }, { tool: 'mcp__workspace__read_file', input: 'a' },
+      ]) {
+        expect(classify(call, ws, options), `${call.tool} ${JSON.stringify(options)}`).toMatchObject({ refused: expect.stringContaining('gives its agent no workspace reads server'), reason: 'unclassified-tool' })
+      }
+    }
+  })
+
   it('refuses a tool it does not know and an input that is not an object', () => {
     for (const call of [{ tool: 'mcp__x__y', input: {} }, { tool: 'Agent', input: {} }, { tool: 'request_user_input', input: { questions: [] } }, { tool: 'write_stdin', input: { session_id: 1, chars: 'x' } }, { tool: 'Read', input: 'a' }, { tool: 'Read', input: null }]) {
       expect(classify(call, ws)).toHaveProperty('refused')
@@ -617,7 +1074,10 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
    * Claude Code on a host where both of its confinements are proven (ADR-0038), its SDK stream
    * scripted: each tool call goes through the hooks the run registered, and a defer ends the run.
    */
-  function claude(calls: ReadonlyArray<readonly [string, Record<string, unknown>]>, outputs: Array<Record<string, unknown>>, optionsSeen: Array<Record<string, unknown>>): ClaudeAgentRuntime {
+  const runDir = mkdtempSync(join(tmpdir(), 'system-gate-claude-run-'))
+  afterAll(() => rmSync(runDir, { recursive: true, force: true }))
+
+  function claude(calls: ReadonlyArray<readonly [string, Record<string, unknown>]>, outputs: Array<Record<string, unknown>>, optionsSeen: Array<Record<string, unknown>>, enforcesCleanShells = false): ClaudeAgentRuntime {
     const query = ((params: { prompt: string; options: Record<string, unknown> }) => {
       optionsSeen.push(params.options)
       const hooks = (params.options.hooks as { PreToolUse: Array<{ hooks: Hook[] }> }).PreToolUse
@@ -638,11 +1098,18 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
         }
       })()
     }) as unknown as QueryFn
-    return new ClaudeAgentRuntime({
+    const runtime = new ClaudeAgentRuntime({
       query, executable: '/usr/bin/claude', findExecutable: () => undefined, version: async () => '2.1.300', home,
       confine: (bind) => ({ bwrap: '/usr/bin/bwrap', hide: [], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }),
       prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => '', status: async () => '{"loggedIn": true}',
+      runDir,
     })
+    // A stand-in for a runtime that would itself start every shell with no startup files (`cleanShells`, T198); Claude Code is not one.
+    if (enforcesCleanShells) {
+      const probe = runtime.probe.bind(runtime)
+      runtime.probe = async (options) => ({ ...await probe(options), cleanShells: true })
+    }
+    return runtime
   }
 
   it('reads and writes inside its workspace through the runtime\'s PreToolUse hook, and its pre-approvals still bind it there', async () => {
@@ -674,6 +1141,24 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
   })
+
+  it('takes a shell read for a read only where the runtime enforces shells with no startup files: Claude Code does not, so a function named cat in a startup file or its shell snapshot could run instead, and the exact command waits for the operator (T198)', async () => {
+    const a = join(WORKSPACE, 'src/a.ts')
+    const calls = [['Bash', { command: `cat ${a}` }], ['Bash', { command: 'echo probe' }]] as const
+    // A runtime that enforced it: both read, nothing asked.
+    const clean: Array<Record<string, unknown>> = []
+    const enforced = await boot(claude(calls, clean, [], true), bundlePolicies()[0]!)
+    expect((await enforced.run()).status).toBe('completed')
+    expect(clean).toEqual([{}, {}])
+    expect(await enforced.ctx.approvals.list()).toEqual([])
+    // Claude Code itself: the same read is the exact command, which the operator decides; the run stops there.
+    const unproven: Array<Record<string, unknown>> = []
+    const { ctx, run } = await boot(claude(calls, unproven, []), bundlePolicies()[0]!)
+    const done = await run()
+    expect(unproven.map((o) => (o.hookSpecificOutput as { permissionDecision?: string }).permissionDecision)).toEqual(['defer'])
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
+  })
 })
 
 // The gate hook runs as a real Node process for each tool call, as Codex runs it, and the probe runs
@@ -700,8 +1185,33 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
       confine: (bind) => ({ bwrap: '/usr/bin/bwrap', hide: [], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }),
       prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => undefined, status: async () => undefined, launcher: () => '/launcher',
     })
-    return { runtime, hooks: () => s.calls.flatMap((c) => c.hooks) }
+    return { runtime, hooks: () => s.calls.flatMap((c) => c.hooks), prompts: () => s.calls.map((c) => c.prompt) }
   }
+
+  it('reads its workspace through the workspace reads server with no approval request, as its brief tells it; another tool of that server is denied, and Bash cat stays a command (T200b)', async () => {
+    const a = join(WORKSPACE, 'src/a.ts')
+    const { runtime, hooks, prompts } = codex([
+      { tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', startLine: 1, endLine: 20 }, item: 'mcp_tool_call' },
+      { tool: 'mcp__workspace__search', input: { pattern: 'needle' }, item: 'mcp_tool_call' },
+      { tool: 'mcp__workspace__write_file', input: { path: 'src/a.ts' }, item: 'mcp_tool_call' },
+      { tool: 'Bash', input: { command: `cat ${a}` }, item: 'command_execution' },
+    ])
+    expect(await runtime.probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false, workspaceReads: true })
+    const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
+    const done = await run()
+    // The two reads run unasked; the server's other tool is denied by the gate's own rule; the shell read waits for the operator.
+    expect(hooks().map((h) => h.blocked)).toEqual([false, false, true, true])
+    expect(hooks()[2]!.reason).toContain('mcp__workspace__write_file is not one of the workspace reads server\'s tools')
+    expect(decisionOf(ctx, hooks()[2]!.reason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['unclassified-tool'])
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
+    // One request, for the shell command alone: no read asked the operator.
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
+    // Its brief says to read with the server's tools, never with a shell, and names no shell read as unasked.
+    expect(prompts()[0]).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file')
+    expect(prompts()[0]).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace')
+    expect(prompts()[0]).not.toContain('Bash read-only inspection')
+  })
 
   it('is admitted on its probe, patches its workspace through the hook, is denied outside it, and waits for the operator on a command', async () => {
     const patch = (path: string) => ({ command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch\n` })
@@ -720,6 +1230,20 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'call_4' }) })])
     expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ tool: 'apply_patch', pendingChecks: ['tests', 'lint'] }) })])
+  })
+
+  it('reads nothing through its shell: each call picks its own shell, which the hook does not see, so even a read inside the workspace waits for the operator as the exact command it is (T198)', async () => {
+    const shell = (command: string) => ({ tool: 'Bash', input: { command }, item: 'command_execution' })
+    const a = join(WORKSPACE, 'src/a.ts')
+    const { runtime, hooks } = codex([shell(`cat ${a}`), shell('echo probe')])
+    expect(await runtime.probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false })
+    const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
+    const done = await run()
+    // The read is blocked (deferred); nothing after it runs.
+    expect(hooks()[0]!.blocked).toBe(true)
+    expect(hooks().every((h) => h.blocked)).toBe(true)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
   })
 })
 
@@ -820,7 +1344,12 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
   const CHANGE = [{ nodeId: 'change', objective: 'Change the code', prompt: '{{input}}', capabilities: ['develop', 'local-data'], tier: 'standard' as const, conversation: 'persistent' as const, acceptance: 'acceptance.answer' }]
   const WORKFLOW = { retryDelayMs: 50, approvalPollSeconds: 1, templates: { change: CHANGE } }
 
-  async function bootTask(agent: AgentRuntimeProvider) {
+  /**
+   * `backdateMs`: each request the gate opens is made that long ago, so it expires that much sooner (the queue never sweeps here).
+   * `failRead`: a read of the queue fails while it returns true for the reading engine function's name (`awaitCall`, `settleCalls`).
+   */
+  async function bootTask(agent: AgentRuntimeProvider, overrides: Record<string, unknown> = {}, options: { backdateMs?: number; failRead?: (reader: 'awaitCall' | 'settleCalls') => boolean } = {}) {
+    const workflow = { ...WORKFLOW, ...overrides }
     const dir = mkdtempSync(join(tmpdir(), 'system-gate-task-'))
     const ctx = new Context()
     const fibers = [
@@ -830,7 +1359,7 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
       ctx.plugin(StoreBoard, { sweepSeconds: 0 }),
     ]
     await Promise.all(fibers)
-    let engine = ctx.plugin(Workflow, WORKFLOW)
+    let engine = ctx.plugin(Workflow, workflow)
     await engine
     ctx.agentRuntimes.register(agent)
     onTestFinished(async () => {
@@ -839,15 +1368,34 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
       rmSync(dir, { recursive: true, force: true })
     })
     await activeProject(ctx)
+    if (options.backdateMs) {
+      const request = ctx.approvals.request.bind(ctx.approvals)
+      ctx.approvals.request = (asked) => request(asked, new Date(Date.now() - options.backdateMs!))
+    }
+    if (options.failRead) {
+      // The engine's own reads, told apart by the function that makes them: the Worker's gate reads the queue too.
+      const get = ctx.approvals.get.bind(ctx.approvals)
+      ctx.approvals.get = (requestId) => {
+        const stack = new Error().stack ?? ''
+        const reader = (['awaitCall', 'settleCalls'] as const).find((name) => stack.includes(`at ${name} `))
+        return reader && options.failRead!(reader) ? Promise.reject(new Error('the approval queue is unavailable')) : get(requestId)
+      }
+    }
     const task = await readyTask(ctx, 'change')
     const run = await ctx.workflow.start({ template: 'change', input: 'Make the tests pass', classification: 'operator-shared', task: { taskId: task.taskId } })
-    // Stop the engine alone and start it again over the same store (a restart).
-    const restart = async (): Promise<void> => {
+    // Stop the engine alone, and start it again over the same store (a restart).
+    const stop = async (): Promise<void> => {
       await engine.dispose()
-      engine = ctx.plugin(Workflow, WORKFLOW)
+    }
+    const start = async (): Promise<void> => {
+      engine = ctx.plugin(Workflow, workflow)
       await engine
     }
-    return { ctx, task, run, restart }
+    const restart = async (): Promise<void> => {
+      await stop()
+      await start()
+    }
+    return { ctx, task, run, restart, stop, start }
   }
 
   const blockedOn = (ctx: Context, runId: string) => vi.waitFor(() => {
@@ -869,7 +1417,9 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
     const [request] = await open(ctx)
     // The run waits on exactly the request the Worker's gate opened, for that session; nothing failed.
     expect(request).toMatchObject({ action: { class: 'command' }, requester: { component: 'worker', runId: waiting.nodes[0]!.executionId, sessionId: run.sessionId } })
-    expect(waiting).toMatchObject({ status: 'running', blocked: { nodeId: 'change', approvalRequest: request!.requestId, until: request!.expiresAt } })
+    // A command call waits at most deferredCommandMinutes (default 10) from its request's creation, inside the request's own expiry.
+    expect(waiting).toMatchObject({ status: 'running', blocked: { nodeId: 'change', approvalRequest: request!.requestId, until: new Date(Date.parse(request!.createdAt) + 600_000).toISOString() } })
+    expect(Date.parse(waiting.blocked.until)).toBeLessThan(Date.parse(request!.expiresAt))
     expect(waiting.nodes).toEqual([expect.objectContaining({ nodeId: 'change', state: 'BLOCKED', attempt: 1 })])
     expect(waiting.nodes[0]!.error).toBeUndefined()
     expect(waiting.error).toBeUndefined()
@@ -896,23 +1446,229 @@ describe('a board task\'s step whose Worker stops at a deferred call', { timeout
     expect(await open(ctx)).toEqual([])
   })
 
-  it('ends the attempt for the operator when the request is rejected or expires: USER_ACTION, an attempt the board counts, nothing of the call run', async () => {
+  /** The step's `recovery` decisions of rule `workflow.deferred-call` whose outcome is `deny`. */
+  const denials = (ctx: Context, runId: string) => ctx.artifacts.list({ kind: 'decision', runId }).map((a) => a.body as { decisionType: string; decider: { id: string }; inputs: string[]; outcome: { option: string; detail?: Record<string, unknown> } })
+    .filter((d) => d.decider.id === 'workflow.deferred-call' && d.outcome.option === 'deny')
+
+  it('returns a rejected or expired call to the agent as a denied tool result, and the same session goes on once without it: the attempt completes, nothing of the call run (T199)', async () => {
     for (const how of ['rejected', 'expired'] as const) {
-      const agent = new GatedAgent([[bash('npm test')]])
-      const { ctx, task, run } = await bootTask(agent)
+      // The second run is the session resumed: the call it stopped at is put to the gate again, then the next call.
+      const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+      // deferredCommandMinutes 0 keeps waiting as before: until the request's own expiry. The expired
+      // request is made to expire 3 s from now, and the queue never sweeps: the engine reaches the
+      // deadline first, and resolves the expiry itself as a denial, never by ending the attempt.
+      const { ctx, task, run } = await bootTask(agent, { deferredCommandMinutes: 0 }, how === 'expired' ? { backdateMs: 3_597_000 } : {})
       const waiting = await blockedOn(ctx, run.runId)
       const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+      expect(waiting.blocked.until, how).toBe(request.expiresAt)
       if (how === 'rejected') await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'rejected' }])
-      else await ctx.approvals.sweep(new Date(Date.parse(request.expiresAt) + 1000))
-      const ended = await reportedRun(ctx, run.runId)
-      expect(ended, how).toMatchObject({ status: 'failed', error: { kind: how === 'rejected' ? 'call_rejected' : 'call_expired', disposition: 'USER_ACTION' } })
-      expect(ended.nodes[0]!.error).toMatchObject({ disposition: 'USER_ACTION', message: expect.stringContaining(request.requestId) })
-      expect(ended.task?.outcome, how).toMatchObject({ status: 'reconciled', state: 'ready' })
-      expect(await ctx.board.task(task.taskId), how).toMatchObject({ state: 'ready', attempts: { count: 1 } })
-      expect(agent.runs, how).toHaveLength(1)
-      // The notifier reads the step's failure as one only the operator resolves.
-      expect(ctx.eventLog.query({ type: 'workflow.node.failed', runId: run.runId }).at(-1)?.data, how).toMatchObject({ disposition: 'USER_ACTION', approvalRequest: request.requestId })
+      const done = await reportedRun(ctx, run.runId)
+      expect(done, how).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+      expect(done.nodes, how).toEqual([expect.objectContaining({ nodeId: 'change', state: 'COMPLETED', attempt: 2 })])
+      // The same session, resumed once, told the call was denied and why.
+      expect(agent.runs, how).toHaveLength(2)
+      expect(agent.runs[1]!.resume, how).toBe(agent.runs[0]!.resume ?? 'h-1')
+      expect(agent.runs[1]!.prompt, how).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): ${how === 'rejected' ? 'the operator rejected it' : `no verdict came by ${request.expiresAt}`}. It did not run`)
+      // The call itself is denied with the reason, never run, and nothing new is asked; the Worker's next call runs.
+      expect(agent.verdicts[1], how).toEqual([
+        { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how === 'rejected' ? 'rejected by the operator' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'}, so it does not run; go on without it` },
+        { decision: 'allow' },
+      ])
+      // Recorded (INV-13): the denial, on the queue's own resolution and the autonomy decision that the class still asks.
+      const [deny, ...more] = denials(ctx, run.runId)
+      expect(more, how).toEqual([])
+      expect(deny, how).toMatchObject({ decisionType: 'recovery', inputs: expect.arrayContaining([request.resolution?.decision ?? (await ctx.approvals.get(request.requestId))!.resolution!.decision]), outcome: { detail: { approvalRequest: request.requestId, cause: how } } })
+      expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId }).at(-1)?.data, how).toMatchObject({ approvalRequest: request.requestId, denied: true, cause: how })
+      // One attempt of the task, done; no request left open.
+      expect(await ctx.board.task(task.taskId), how).toMatchObject({ state: 'done', attempts: { count: 1 } })
+      expect(await open(ctx), how).toEqual([])
+      expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.component === 'worker'), how).toHaveLength(1)
     }
+  })
+
+  it('treats a command call unanswered past deferredCommandMinutes as denied, for that call alone: its request withdrawn, the expiry recorded, and the session goes on once (T199)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+    const { ctx, task, run } = await bootTask(agent, { deferredCommandMinutes: 0.05 })
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // Bounded: 3 s after the request was made, well inside its own expiry.
+    expect(waiting.blocked.until).toBe(new Date(Date.parse(request.createdAt) + 3000).toISOString())
+    expect(Date.parse(request.expiresAt) - Date.parse(waiting.blocked.until)).toBeGreaterThan(3_000_000)
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    // The request is withdrawn, by the queue's own record, and the expiry is the engine's decision.
+    const withdrawn = (await ctx.approvals.get(request.requestId))!
+    expect(withdrawn).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({
+      decisionType: 'recovery', inputs: expect.arrayContaining([withdrawn.resolution!.decision]),
+      outcome: { option: 'deny', detail: expect.objectContaining({ approvalRequest: request.requestId, cause: 'bound', boundMinutes: 0.05 }) },
+    })])
+    // That call is denied, never run; the session goes on, and its next call runs.
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.prompt).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): no verdict came within 0.05 minutes, so the call is denied.`)
+    expect(agent.verdicts[1]).toEqual([{ decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was withdrawn before a verdict`) }, { decision: 'allow' }])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    expect(await open(ctx)).toEqual([])
+  })
+
+  it('still ends the attempt for the operator when the policy now forbids the call\'s class: USER_ACTION, an attempt the board counts, nothing of the call run', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const { ctx, task, run } = await bootTask(agent)
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // The operator forbids commands while the step waits: the open request is withdrawn on the change.
+    const { request: change } = await ctx.approvals.proposePolicy!({ policy: { ...policy({ command: { mode: 'forbid' } }), version: 2 } })
+    const [applied] = await ctx.approvals.decide([{ requestId: change.requestId, subject: change.subject, verdict: 'approved' }])
+    expect(applied?.refused).toBeUndefined()
+    const ended = await reportedRun(ctx, run.runId)
+    expect(ended).toMatchObject({ status: 'failed', error: { kind: 'call_rejected', disposition: 'USER_ACTION' } })
+    expect(ended.nodes[0]!.error).toMatchObject({ disposition: 'USER_ACTION', message: expect.stringContaining('the autonomy policy now forbids its class command') })
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(ended.task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    expect(agent.runs).toHaveLength(1)
+    expect(denials(ctx, run.runId)).toEqual([])
+    // The notifier reads the step's failure as one only the operator resolves.
+    expect(ctx.eventLog.query({ type: 'workflow.node.failed', runId: run.runId }).at(-1)?.data).toMatchObject({ disposition: 'USER_ACTION', approvalRequest: request.requestId })
+  })
+
+  it('keeps a command call\'s bound across a restart of the engine mid-wait: past it, the call is denied once and the session goes on, nothing asked twice (INV-4)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    const { ctx, run, restart } = await bootTask(agent, { deferredCommandMinutes: 0.05 })
+    const waiting = await blockedOn(ctx, run.runId)
+    await restart()
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted' } } })
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.verdicts[1]).toEqual([expect.objectContaining({ decision: 'deny' })])
+    // One request, withdrawn once by its bound; one denial; one continuation.
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.component === 'worker').map((r) => r.requestId)).toEqual([waiting.blocked.approvalRequest])
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({ outcome: expect.objectContaining({ detail: expect.objectContaining({ cause: 'bound' }) }) })])
+    expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId })).toHaveLength(1)
+  })
+
+  /** The step's `wait` decisions of rule `workflow.deferred-call`, oldest first. */
+  const waits = (ctx: Context, runId: string) => ctx.artifacts.list({ kind: 'decision', runId }).map((a) => a.body as { decider: { id: string }; createdAt?: string; outcome: { option: string; detail: { until: string; boundMinutes?: number } } })
+    .filter((d) => d.decider.id === 'workflow.deferred-call' && d.outcome.option === 'wait')
+    .sort((a, b) => Date.parse(a.outcome.detail.until) - Date.parse(b.outcome.detail.until)).reverse()
+
+  it('bounds a command call by deferredCommandMinutes once its request can be read, when the first read of the queue failed: reconciled, persisted, and denied at the bound, not at the request\'s expiry (T209)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+    let failed = 0
+    // Only the engine's first read, as the step starts to wait, fails.
+    const { ctx, task, run } = await bootTask(agent, { deferredCommandMinutes: 0.05 }, { failRead: (reader) => reader === 'awaitCall' && failed++ === 0 })
+    const done = await reportedRun(ctx, run.runId)
+    expect(failed).toBeGreaterThan(0)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    const requestId = (await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).find((r) => r.requester.component === 'worker')!.requestId
+    const request = (await ctx.approvals.get(requestId))!
+    const bounded = new Date(Date.parse(request.createdAt) + 3000).toISOString()
+    // The first wait, unread, by gateTimeoutHours; then the bound, once the request was read, recorded once.
+    const [first, reconciled, ...more] = waits(ctx, run.runId)
+    expect(more).toEqual([])
+    expect(first!.outcome.detail.boundMinutes).toBeUndefined()
+    expect(Date.parse(first!.outcome.detail.until)).toBeGreaterThan(Date.parse(bounded) + 3_000_000)
+    expect(reconciled!.outcome.detail).toMatchObject({ until: bounded, boundMinutes: 0.05 })
+    // Denied at the bound, the request withdrawn: not left to wait for its own expiry, an hour off.
+    expect(await ctx.approvals.get(requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({ outcome: { option: 'deny', detail: expect.objectContaining({ approvalRequest: requestId, cause: 'bound', boundMinutes: 0.05 }) } })])
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.prompt).toContain(`The tool call you stopped at was denied (approval request ${requestId}): no verdict came within 0.05 minutes, so the call is denied.`)
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+  })
+
+  it('bounds it after a restart between the failed read and the first readable one: the deadline is derived from the request, not from the row, once (INV-4, T209)', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test')]])
+    // Every read of the engine fails until the restart.
+    let readable = false
+    const { ctx, run, stop, start } = await bootTask(agent, { deferredCommandMinutes: 0.05 }, { failRead: () => !readable })
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // Unread, the step waits by gateTimeoutHours, far past the command bound.
+    expect(Date.parse(waiting.blocked.until)).toBeGreaterThan(Date.parse(request.createdAt) + 3_000_000)
+    await stop()
+    readable = true
+    await start()
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted' } } })
+    const [, reconciled, ...more] = waits(ctx, run.runId)
+    expect(more).toEqual([])
+    expect(reconciled!.outcome.detail).toMatchObject({ until: new Date(Date.parse(request.createdAt) + 3000).toISOString(), boundMinutes: 0.05 })
+    // One request, withdrawn once by its bound; one denial; one continuation.
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({ outcome: expect.objectContaining({ detail: expect.objectContaining({ cause: 'bound' }) }) })])
+    expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId })).toHaveLength(1)
+    expect(agent.runs).toHaveLength(2)
+  })
+
+  it('denies an approval given after a command call\'s bound while the engine was down: the call never runs, the denial is the engine\'s, and the session goes on (INV-4); a later workflow run of the session is denied it too, once the event log dropped the engine\'s events', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm test')], [bash('npm test')]])
+    const { ctx, task, run, stop, start } = await bootTask(agent, { deferredCommandMinutes: 0.05 })
+    const waiting = await blockedOn(ctx, run.runId)
+    await stop()
+    // The bound passes with no engine to withdraw the request; the queue's own expiry is an hour off, so it takes the approval.
+    await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(Date.parse(waiting.blocked.until) + 100), { timeout: 10_000, interval: 100 })
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    const [applied] = await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+    expect(applied?.refused).toBeUndefined()
+    await start()
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    const approved = (await ctx.approvals.get(request.requestId))!
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({
+      decisionType: 'recovery', inputs: expect.arrayContaining([approved.resolution!.decision]),
+      outcome: { option: 'deny', detail: expect.objectContaining({ approvalRequest: request.requestId, cause: 'late' }) },
+    })])
+    // The approved call is denied, both times the resumed session makes it: its approval is never taken.
+    expect(agent.runs).toHaveLength(2)
+    expect(agent.runs[1]!.prompt).toContain(`The tool call you stopped at was denied (approval request ${request.requestId}): the approval came at ${approved.resolution!.at}, after the call's deadline`)
+    expect(agent.verdicts[1]).toEqual([
+      { decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was denied (late`) },
+      { decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was denied (late`) },
+    ])
+    expect(ctx.store.db.prepare('SELECT used_at FROM agent_tool_requests WHERE request_id = ?').get(request.requestId)).toEqual({ used_at: null })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
+    // The denial is kept on the gate's own row of the request, with the engine's decision and cause.
+    const kept = ctx.store.db.prepare('SELECT denial_decision, denial_cause FROM agent_tool_requests WHERE request_id = ?').get(request.requestId) as { denial_decision: string; denial_cause: string }
+    expect(kept.denial_cause).toBe('late')
+    expect(ctx.artifacts.get(kept.denial_decision)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'deny', detail: { approvalRequest: request.requestId, cause: 'late' } } })
+
+    // The event log's retention drops the engine's events; then another workflow run continues the
+    // session (a next attempt, a chained task). The request is still approved and its approval
+    // unused, but the call stays denied in the session: it never runs, and the approval is never taken.
+    ctx.store.db.prepare("DELETE FROM events WHERE type = 'workflow.run.continued'").run()
+    expect(ctx.eventLog.query({ type: 'workflow.run.continued', runId: run.runId })).toEqual([])
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'approved' })
+    const admitted = await ctx.workers.route(requirement) as { decisions: { tier: `sha256:${string}`; route: `sha256:${string}` } }
+    const source = ctx.workers.source('agents')!
+    const later = source.start({ key: 'a-later-workflow-run', worker: 'agent:dev', prompt: 'the next attempt', sessionId: run.sessionId!, runId: 'run_later', requirement, decisions: admitted.decisions })
+    expect(await source.wait(later.id, 10_000)).toMatchObject({ status: 'completed' })
+    expect(agent.runs).toHaveLength(3)
+    expect(agent.verdicts[2]).toEqual([{ decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was denied (late, decision ${kept.denial_decision}), so it does not run; go on without it` }])
+    expect(ctx.store.db.prepare('SELECT used_at FROM agent_tool_requests WHERE request_id = ?').get(request.requestId)).toEqual({ used_at: null })
+    expect(await open(ctx)).toEqual([])
+  })
+
+  it('never runs a denied call once a newer policy lists its command: the replay in the resumed session is denied by the persisted denial', async () => {
+    const agent = new GatedAgent([[bash('npm test')], [bash('npm test'), bash('npm run build')]])
+    const { ctx, task, run } = await bootTask(agent)
+    const waiting = await blockedOn(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    // The operator lists the very command while the step waits: the queue withdraws the open request on the change.
+    const { request: change } = await ctx.approvals.proposePolicy!({ policy: { ...policy(), commands: ['npm run build', 'npm test'], version: 2 } })
+    const [applied] = await ctx.approvals.decide([{ requestId: change.requestId, subject: change.subject, verdict: 'approved' }])
+    expect(applied?.refused).toBeUndefined()
+    expect((await ctx.approvals.check({ class: 'command', command: ['npm', 'test'] })).mode).not.toBe('ask')
+    const done = await reportedRun(ctx, run.runId)
+    expect(done).toMatchObject({ status: 'completed', task: { outcome: { status: 'accepted', state: 'done' } } })
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+    expect(denials(ctx, run.runId)).toEqual([expect.objectContaining({ outcome: expect.objectContaining({ detail: expect.objectContaining({ approvalRequest: request.requestId, cause: 'withdrawn' }) }) })])
+    // The policy now lets `npm test` run unasked, but this session's call was denied: it stays denied; the next call runs.
+    expect(agent.verdicts[1]).toEqual([
+      { decision: 'deny', reason: expect.stringContaining(`approval request ${request.requestId} for exactly this call was withdrawn before a verdict`) },
+      { decision: 'allow' },
+    ])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 1 } })
   })
 
   it('leaves no request open once the attempt has ended any other way: stopped while it waits, its request is withdrawn, so none is orphaned on a session no later attempt resumes', async () => {

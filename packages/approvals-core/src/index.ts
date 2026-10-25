@@ -28,9 +28,15 @@ export type ContentHash = `sha256:${string}`
 export type Classification = 'public' | 'operator-shared' | 'local-private'
 export interface Subject { type: 'content' | 'git-head' | 'pull-request' | 'artifact' | 'external'; ref: string; version?: string }
 
+/**
+ * What an action does, as the autonomy policy classifies it (`common@1` `actionClass`). `dispatch`
+ * (ADR-0064): System starting a ready board task's next attempt with no person or lead asking for it;
+ * it is reversible (the run can be stopped, nothing lands without `merge`), so it is not in
+ * {@link ALWAYS_ASK}, and a policy written before it names no rule for it and takes its `default`.
+ */
 export type ActionClass =
   | 'read' | 'workspace-write' | 'merge' | 'command' | 'external-send' | 'deploy' | 'delete-data' | 'spend'
-  | 'charter' | 'funding' | 'remediation' | 'policy-change' | 'promotion'
+  | 'charter' | 'funding' | 'remediation' | 'policy-change' | 'promotion' | 'dispatch'
 /**
  * Classes that always ask, even unattended: irreversible effects, the investor's own decisions,
  * remediation (a fix that writes, or a lost run going on: the workflow's remediation gate and the

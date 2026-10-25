@@ -1,0 +1,14 @@
+{
+  "type": "agent-workers.tool.denied",
+  "data": {
+    "agentRun": "arun_7d21a84f36c0",
+    "worker": "agent:dev",
+    "workerKind": "codex-sdk",
+    "tool": "Bash",
+    "reason": "request-expired",
+    "explanation": "The approval request for exactly this call expired unanswered, so it stays denied in this session.",
+    "actionClass": "command",
+    "requestId": "apr-0039",
+    "decision": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51"
+  }
+}

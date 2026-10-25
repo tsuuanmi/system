@@ -514,6 +514,32 @@ Scope: `client`
 | `clientRequestId` | string |  | Retry-safe request key |
 | `waitSeconds` | integer |  | Seconds to wait for the request to settle (default 0) |
 
+## `dispatch_pause`
+
+Pause dispatch: System asks for and starts no ready task by itself until resumed; its open asks are withdrawn (an operator decision, kept across restarts).
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `reason` | string |  |  |
+
+## `dispatch_resume`
+
+Resume dispatch after a pause (an operator decision).
+
+Scope: `operator`
+
+No arguments.
+
+## `dispatch_status`
+
+Dispatch: whether System asks to start ready board tasks on free Workers by itself, its pause, the last pass with its reason for each ready task, each bound and its use, and the starts waiting for the operator's go.
+
+Scope: `client`
+
+No arguments.
+
 ## `drain`
 
 Drain the host before a stop or upgrade: admit no new run, and report the runs still executing. Call again to poll.
@@ -659,7 +685,7 @@ Scope: `client`
 
 ## `roster`
 
-Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit's reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account's pools (each window's used share and reset, runs the ledger could not count). A fact no source gave reads unknown, with why.
+Every Worker, read now: provider and family, what it is for, account (id and state; label for the operator), role, tier, quota class, availability (ready, busy N of M, resting until a limit's reset, unavailable with why, quarantined), the steps and board tasks it serves now and since when, its load, and its account's pools (each window's used share and reset, runs the ledger could not count). `now`: the Workers free, the quota lost soonest first; stalled runs; accounts out of quota; ready tasks, each with its likely Worker. A fact no source gave reads unknown, with why.
 
 Scope: `client`
 

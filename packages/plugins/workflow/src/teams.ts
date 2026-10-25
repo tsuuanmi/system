@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { canonicalJson, extractJson, sha256 } from '@tsuuanmi/system-libs'
 import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
-import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
+import { type ArtifactRef, type CapabilityDescriptor, provesFor, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { sameFamilyOf } from './recovery.ts'
@@ -736,18 +736,162 @@ function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], roun
   return lines.join('\n')
 }
 
+/** Which Workers a node may be routed to, and the rules that say so: see {@link restriction}. */
+export interface Restriction {
+  /** Only these Workers may take the node, and why. */
+  restrict?: { workers: string[]; reason: string }
+  /** The distinct-account rule (REQ-TEAM-4), when `restrict` holds it: `allowSameFamily` may lift it, and the record names it (ADR-0029, ADR-0035). */
+  distinctAccounts?: string
+  /** The Workers the operator's `teams.excludeWorkers` leaves a member, alone: what still binds it once the distinct-account rule is lifted. */
+  teams?: { workers: string[]; reason: string }
+  /** The Workers `teams.excludeWorkers` leaves out, from the same list `teams` came from: a family shortage is told from these, never from a second read. */
+  leftOut?: string[]
+  /** Entries of `teams.excludeWorkers` that match no Worker or account now: they leave nothing out, and the engine records them. */
+  unmatched?: string[]
+}
+
+/** What `teams.excludeWorkers` leaves out of teams now: see {@link leftOutOfTeams}. */
+export interface LeftOut {
+  out: Set<string>
+  /** Entries that match no Worker listed now, no account a listed Worker names, and no Worker a source names with its account: they leave nothing out. */
+  unmatched: string[]
+  /** Why what an entry leaves out cannot be told (fail closed, as the distinct-account rule does): no member joins. */
+  problem?: string
+}
+
+/** Names, sorted, at most `max` of them, then how many more (INV-9). */
+function bounded(names: Iterable<string>, max = 64): string {
+  const all = [...new Set(names)].sort()
+  return all.length > max ? `${all.slice(0, max).join(', ')} and ${all.length - max} more` : all.join(', ')
+}
+
+/**
+ * The Workers the operator keeps out of teams (`teams.excludeWorkers`), compared for equality only
+ * (INV-11; docs/design/teams.md#workers-left-out-of-teams):
+ * - an entry equal to a listed Worker's id leaves out that Worker; one no source describes now
+ *   leaves out the Workers its source names as its account's (its siblings), when it names any;
+ * - an entry `<group>/<id>` leaves out every Worker whose descriptor names that account; a bare
+ *   `<id>` does too when one group has an account by that id, and is refused when several do;
+ * - each Worker left out takes its whole account with it, as distinct accounts count one: its
+ *   siblings, and every Worker whose descriptor names the same account, repeated until nothing
+ *   new is added.
+ * A named Worker whose source's siblings name different accounts is refused (`problem`), as the
+ * distinct-account rule refuses such a held Worker. An entry that matches nothing is `unmatched`.
+ */
+export function leftOutOfTeams(entries: readonly string[], listed: readonly CapabilityDescriptor[], siblings: (worker: string) => string[]): LeftOut {
+  const accountOf = (w: CapabilityDescriptor | undefined): string => (w?.account ? JSON.stringify([w.account.group, w.account.id]) : '')
+  const described = new Map(listed.map((w) => [w.worker, w]))
+  const out = new Set<string>()
+  const unmatched: string[] = []
+  for (const entry of new Set(entries)) {
+    const byAccount = listed.filter((w) => w.account && (w.account.id === entry || `${w.account.group}/${w.account.id}` === entry))
+    const groups = new Set(byAccount.filter((w) => w.account!.id === entry).map((w) => w.account!.group))
+    if (groups.size > 1) {
+      return { out, unmatched, problem: `teams.excludeWorkers entry ${entry} is the id of accounts in ${groups.size} groups (${bounded(groups)}); name the one meant as <group>/${entry}, as system roster lists it` }
+    }
+    const hit = byAccount.map((w) => w.worker)
+    // An account match is resolved first: an entry that names an account never also leaves out a listed
+    // Worker that only shares its id, nor that Worker's siblings and account (N1).
+    if (!hit.length) {
+      // Siblings only for an id that is no account's: an account id never pulls in a Worker's siblings.
+      const own = siblings(entry)
+      const isWorker = described.has(entry) || own.some((s) => s !== entry)
+      if (isWorker) {
+        // Fail closed whether or not the named Worker is described now: its siblings' descriptors
+        // must name one account between them.
+        const named = new Set([entry, ...own].filter((s) => described.has(s)).map((s) => accountOf(described.get(s))))
+        if (named.size > 1) {
+          return { out, unmatched, problem: `teams.excludeWorkers entry ${entry}: its source names ${bounded(own)} as the Workers of its account, and their descriptors name different accounts, so what it leaves out cannot be told (REQ-TEAM-8)` }
+        }
+        hit.push(entry)
+        if (!described.has(entry)) hit.push(...own)
+      }
+    }
+    if (!hit.length) unmatched.push(entry)
+    for (const w of hit) out.add(w)
+  }
+  // Whole accounts, until nothing new is added: each one's siblings, and every Worker naming an account
+  // one of them names. A Set's iteration visits what is added during it, so each pass expands those too.
+  const expanded = new Set<string>()
+  while ([...out].some((w) => !expanded.has(w))) {
+    for (const w of out) {
+      if (expanded.has(w)) continue
+      expanded.add(w)
+      for (const s of siblings(w)) out.add(s)
+    }
+    const accounts = new Set([...out].map((w) => accountOf(described.get(w))).filter((a) => a))
+    for (const w of listed) if (accounts.has(accountOf(w))) out.add(w.worker)
+  }
+  return { out, unmatched }
+}
+
+/** The Workers ready or busy, of a known family, that prove what the step needs (all of them without a requirement). */
+export function proving(listed: readonly CapabilityDescriptor[], requirement?: WorkRequirement): CapabilityDescriptor[] {
+  return listed.filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined
+    && (!requirement || requirement.capabilities.every((c) => w.capabilities.some((o) => o.capability === c && provesFor(o, requirement)))))
+}
+
+/**
+ * A member's own conversation (Model A) on a Worker `teams.excludeWorkers` leaves out: kept, and
+ * the route decision says so, when it is this team's conversation in this run (a run continued or
+ * retried after the option changed); refused otherwise, nothing sent (REQ-TEAM-8, INV-13).
+ */
+async function ownConversation(e: Engine, run: RunRow, spec: ResolvedNode, own: string[]): Promise<Restriction | { problem: string }> {
+  const sessionId = spec.session.sessionId!
+  const stays = `session ${sessionId} stays on its Worker`
+  const excluded = e.config.teams?.excludeWorkers ?? []
+  const team = spec.team
+  if (!team?.member || !excluded.length) return { restrict: { workers: own, reason: stays } }
+  const left = leftOutOfTeams(excluded, await e.ctx.workers.list(), (w) => e.ctx.workers.siblings(w))
+  if (left.problem) return { problem: `team ${team.id}: ${left.problem}; nothing was sent for member m${team.member}` }
+  const out = own.filter((w) => left.out.has(w))
+  if (!out.length) return { restrict: { workers: own, reason: stays } }
+  const joined = e.ctx.workerSessions.session(sessionId)
+  if (joined?.group === teamGroup(run.run_id, team.id)) {
+    return { restrict: { workers: own, reason: `${stays}: ${bounded(out)}, which the operator's teams.excludeWorkers leaves out of teams, is kept as team ${team.id}'s own conversation in this run (Model A)` } }
+  }
+  const rest = own.filter((w) => !left.out.has(w))
+  if (rest.length) return { restrict: { workers: rest, reason: `${stays}, but not on ${bounded(out)}: left out of teams by the operator's teams.excludeWorkers` } }
+  return { problem: `team ${team.id}: member m${team.member} would resume session ${sessionId} on ${bounded(out)}, which the operator's teams.excludeWorkers leaves out of teams, and the session is not this team's own conversation in this run (REQ-TEAM-8); nothing was sent for member m${team.member}` }
+}
+
+/**
+ * Why a team cannot form under `teams.excludeWorkers`, before anything is routed (INV-2): every
+ * Worker listed is left out, or the Workers left out are what leaves fewer provider families that
+ * can do the step than the team has members. Empty otherwise: a roster short of families without
+ * the option is the family rule's to refuse, or `allowSameFamily`'s to lift.
+ */
+function exclusionShortage(team: NonNullable<ResolvedNode['team']>, listed: readonly CapabilityDescriptor[], out: ReadonlySet<string>, requirement?: WorkRequirement): string {
+  const nothing = `nothing was sent for member m${team.member}`
+  if (listed.length && listed.every((w) => out.has(w.worker))) {
+    return `team ${team.id}: the operator's teams.excludeWorkers leaves out every Worker listed now (${listed.length}), so no member can join (REQ-TEAM-8, INV-2); ${nothing}`
+  }
+  const able = proving(listed, requirement)
+  const all = new Set(able.map((w) => w.family)).size
+  const ready = new Set(able.filter((w) => !out.has(w.worker)).map((w) => w.family)).size
+  if (ready >= team.members || ready === all) return ''
+  return `team ${team.id} needs ${team.members} provider families, one per member; ${ready} ${ready === 1 ? 'is' : 'are'} ready outside the operator's teams.excludeWorkers, which leaves ${all - ready} more out of teams (ADR-0027, REQ-TEAM-8); ${nothing}`
+}
+
 /**
  * Which Workers may take a node: a session stays on its Worker; a member of a team avoids every
  * account another member already holds (REQ-TEAM-4), on top of its provider family (ADR-0027).
  * An account is every Worker on it: each held Worker's siblings, and every Worker whose descriptor
  * names the same account (docs/design/teams.md#distinct-accounts). When a held Worker's account
  * cannot be told apart, the member is refused with the cause (`problem`), never admitted beside it.
+ * A member joins on none of the Workers the operator's `teams.excludeWorkers` leaves out: the
+ * allowed set is the Workers listed now, less those, so one described later is refused too. When
+ * those are what leaves the team too few provider families that can do the step (`requirement`),
+ * every member, whatever its role, is refused before anything is routed, so `allowSameFamily`
+ * never runs a team on one family the operator's exclusion made (INV-2). A member already in its
+ * conversation keeps it only as this team's own in this run, recorded (see {@link ownConversation}).
  */
-export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string }; distinctAccounts?: true } | { problem: string }> {
+export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode, requirement?: WorkRequirement): Promise<Restriction | { problem: string }> {
   const own = spec.session.sessionId ? e.ctx.workers.affinity(spec.session.sessionId) : undefined
-  if (own) return { restrict: { workers: own, reason: `session ${spec.session.sessionId} stays on its Worker` } }
+  if (own) return ownConversation(e, run, spec, own)
   if (!spec.team?.member) return {}
   const team = spec.team
+  const excluded = e.config.teams?.excludeWorkers ?? []
   // What each other member holds: its session's Workers, from the source that owns the session,
   // else the Worker it joined the team on.
   const held = new Map<string, number>()
@@ -756,8 +900,17 @@ export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): P
     const joined = e.ctx.workerSessions.session(s.session.sessionId)
     for (const worker of e.ctx.workers.affinity(s.session.sessionId) ?? (joined ? [joined.worker] : [])) if (!held.has(worker)) held.set(worker, s.team.member)
   }
-  if (!held.size) return {}
+  if (!held.size && !excluded.length) return {}
   const listed = await e.ctx.workers.list()
+  const left: LeftOut = excluded.length ? leftOutOfTeams(excluded, listed, (w) => e.ctx.workers.siblings(w)) : { out: new Set(), unmatched: [] }
+  if (left.problem) return { problem: `team ${team.id}: ${left.problem}; nothing was sent for member m${team.member}` }
+  const out = left.out
+  const shortage = excluded.length ? exclusionShortage(team, listed, out, requirement) : ''
+  if (shortage) return { problem: shortage }
+  const teams = excluded.length ? { workers: listed.map((w) => w.worker).filter((w) => !out.has(w)), reason: `team ${team.id}: left out of teams by the operator's teams.excludeWorkers` } : undefined
+  // What the exclusion adds to the record: the Workers it leaves out, and the entries that matched nothing.
+  const noted = excluded.length ? { leftOut: [...out].sort(), ...(left.unmatched.length ? { unmatched: left.unmatched } : {}) } : {}
+  if (!held.size) return teams ? { restrict: teams, teams, ...noted } : {}
   const described = new Map(listed.map((w) => [w.worker, w]))
   // An account a descriptor names, as one comparable value; none for a Worker that names none.
   const accountOf = (worker: string): string => {
@@ -782,6 +935,10 @@ export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): P
   }
   // A Worker that names an account a member holds is on it, whichever source describes it.
   for (const w of listed) if (accounts.has(accountOf(w.worker))) taken.add(w.worker)
-  const workers = listed.map((w) => w.worker).filter((w) => !taken.has(w))
-  return { restrict: { workers, reason: `team ${team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` }, distinctAccounts: true }
+  const workers = listed.map((w) => w.worker).filter((w) => !taken.has(w) && !out.has(w))
+  const rule = `team ${team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account`
+  // One reason holds both rules, so it names the Workers the exclusion refuses: any other is refused for the account (INV-13).
+  const excludedListed = listed.map((w) => w.worker).filter((w) => out.has(w))
+  const reason = teams && excludedListed.length ? `${rule}; or, for ${bounded(excludedListed)}, left out of teams by the operator's teams.excludeWorkers` : rule
+  return { restrict: { workers, reason }, distinctAccounts: rule, ...(teams ? { teams } : {}), ...noted }
 }

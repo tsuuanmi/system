@@ -2,10 +2,15 @@
  * Generates docs/reference/configuration.md: the configuration catalog of every plugin, from the
  * plugin's own `Config` schema (the one place each option is defined). `--check` fails when the
  * checked-in catalog is out of date (CI), so the reference cannot drift from the code.
+ *
+ * Without `--check` it also refreshes scripts/schema-snapshot.json, the record schemas' contracts
+ * that `check:schemas` compares against; a schema changed in place keeps its old entry, so the
+ * check keeps failing until the change is versioned (scripts/check-schemas.ts).
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { SNAPSHOT, writeSnapshot } from './check-schemas.ts'
 
 /** The part of a Schemastery schema the generators read. */
 export interface Schema {
@@ -110,6 +115,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   } else {
     writeFileSync(OUT, text)
     console.log(`wrote ${OUT}`)
+    writeSnapshot(join(root, 'schemas'))
+    console.log(`wrote ${SNAPSHOT}`)
   }
   process.exit(0)
 }

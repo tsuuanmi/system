@@ -198,6 +198,12 @@ export interface WorkerStart {
    * per run by it: the `agents` source gives a run a git worktree of its own.
    */
   runId?: string | undefined
+  /**
+   * The workflow template and the step (node id) of it this execution serves, when it serves one: set
+   * by the workflow engine from its own record, never from model text (INV-6). A source may record it
+   * with what the execution drew (the `agents` source's `quota-draw@1.0`, PROP-0015 E2).
+   */
+  step?: { template: string; node: string } | undefined
   /** The requirement the Worker was admitted for, and the decisions that admitted it. */
   requirement: WorkRequirement
   decisions: { tier: ArtifactRef; route: ArtifactRef }
@@ -225,7 +231,12 @@ export interface WorkerExecution {
   submitted: boolean
   /** The stored result, once completed. */
   result?: ArtifactRef
-  error?: { kind: string; disposition: string; message: string }
+  /**
+   * Why it failed. `siteError` (optional, ADR-0062): the input was sent, and the site answered it with
+   * its own error in place of an answer, read on the execution's own page; nothing was answered. Only
+   * a source that read that says so; absent, nothing is known of it.
+   */
+  error?: { kind: string; disposition: string; message: string; siteError?: true }
   /** Decisions the runtime made for this execution, such as `egress`. */
   decisions: ArtifactRef[]
 }
@@ -295,6 +306,17 @@ export type LandStep =
   | { step: 'commit'; runId: string; workspace: string; subject: { ref: string; version: string }; message: string }
   | { step: 'merge'; runId: string; workspace: string; head: string; base: { branch: string; sha: string }; message: string }
 
+/**
+ * A merge's generated files made again (T166): the files (repository-relative) the merge conflicted in
+ * or the commands changed, the commands that made them (as configured), and the autonomy decisions
+ * they ran on.
+ */
+export interface Regenerated {
+  files: string[]
+  commands: string[]
+  autonomy: string[]
+}
+
 /** Why a landing step changed nothing: everything stays as it was. */
 export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved' | 'dirty' | 'conflict' | 'failed'
 
@@ -305,12 +327,13 @@ export type LandRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'head-moved
  *   whether it already holds `head` (nothing to merge), `stat` the change against it (`git diff
  *   --stat`, bounded);
  * - `merged`: `commit` is the base branch's new head, which holds `head` (`already` when it held it
- *   before this step, such as after a restart);
+ *   before this step, such as after a restart); `regenerated` when the merge conflicted only in files
+ *   the repository declares generated, and they were made again by its commands (T166);
  * - `refused`: nothing changed, and why.
  */
 export type Landed =
   | { outcome: 'committed'; repository: string; branch: string; head: string; committed: boolean; base: { branch: string; sha: string }; contained: boolean; stat: string }
-  | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean }
+  | { outcome: 'merged'; repository: string; branch: string; head: string; base: { branch: string; sha: string }; commit: string; already: boolean; regenerated?: Regenerated }
   | { outcome: 'refused'; cause: LandRefusal; reason: string }
 
 /** One file of a run's change (`WorkChange`): its path, how it changed, its lines added and removed, and its diff. */
@@ -400,6 +423,55 @@ export type Carried =
   | { outcome: 'refused'; cause: CarryRefusal; reason: string }
 
 /**
+ * The checks a policy can require that are commands (`autonomy-policy` `requires`): what a run's
+ * checks run (T151). The others (`schema`, `review`, `quote-check`) are judged by the run itself.
+ */
+export type RunCheck = 'tests' | 'typecheck' | 'lint'
+export const RUN_CHECKS: readonly RunCheck[] = ['tests', 'typecheck', 'lint']
+
+/**
+ * Run a workflow run's required checks on its result (T151): the source that holds `workspace` as
+ * the worktree of workflow run `runId` runs, for each name in `checks`, the command its operator's
+ * configuration gives that check for the worktree's repository, confined, only while the worktree is
+ * exactly `subject` (the tree the result is on) and no run of it can still write it. `classification`
+ * is the run's: what a check printed is recorded at it.
+ */
+export interface CheckStep {
+  runId: string
+  workspace: string
+  subject: { ref: string; version: string }
+  checks: RunCheck[]
+  classification: 'public' | 'operator-shared' | 'local-private'
+}
+
+/**
+ * One check of a {@link CheckStep}: `passed` (its command exited 0 on the subject, and left it as it
+ * was), `failed` (it exited with another code, on the subject), or `error` (it did not run to an exit
+ * code on the subject: no command configured, not allowed by the policy, could not start or be
+ * confined, timed out, or changed the tree). An `error` is never passed or failed: the check stays
+ * pending (INV-2).
+ */
+export interface CheckResult {
+  check: RunCheck
+  outcome: 'passed' | 'failed' | 'error'
+  exitCode?: number
+  reason: string
+}
+
+/** Why a run's checks did not run at all: the worktree moved off the subject, was removed, may still be written, or anything else. */
+export type CheckRefusal = 'moved' | 'gone' | 'busy' | 'failed'
+
+/**
+ * What a run's checks came to (T151):
+ * - `checked`: one result per check asked, in its order; `evidence`, the `check-run@1.0` evidence
+ *   artifact that records what ran, when any command was started;
+ * - `refused`: nothing ran, and why; every check stays pending.
+ */
+export type Checked =
+  | { outcome: 'checked'; results: CheckResult[]; evidence?: string }
+  | { outcome: 'refused'; cause: CheckRefusal; reason: string }
+
+/**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept
  * this work now, how is it invoked, what did it produce). `describe` is called on every
  * route, so states are current.
@@ -434,7 +506,12 @@ export interface WorkerSource {
   siblings?(worker: string): string[] | undefined
   /** The session's native conversation handle (conversation URL, SDK session or thread id), once known. */
   handle?(sessionId: string): string | undefined
-  /** Start the session's next work in a fresh native conversation, on the same Worker (a compaction, REQ-SES-6). */
+  /**
+   * Start the session's next work in a fresh native conversation, on the same Worker (a compaction,
+   * REQ-SES-6; a resend, ADR-0062). Called inside a caller's store transaction, anything it does
+   * outside the store (closing a kept browser tab) runs after that transaction commits (the store's
+   * `afterCommit`), never on a rollback.
+   */
   reset?(sessionId: string): boolean
   /**
    * Why the session takes no input now, when this source owns it and it does not (PROP-0013,
@@ -470,6 +547,16 @@ export interface WorkerSource {
    * finds its own work done and says so (INV-4).
    */
   carry?(step: CarryStep): Promise<Carried | undefined>
+  /**
+   * Run workflow run `step.runId`'s required checks on the worktree `step.workspace` (T151).
+   * Undefined when this source holds no such worktree. The commands change nothing a later step reads
+   * (a check that changes the tree is an `error`). A step repeated after a restart gets each check's
+   * stored outcome on that subject back, never a check run again to replace what it came to; one a
+   * crash interrupted is an `error` (INV-4). An infrastructure failure (a command the source's
+   * confinement did not start) is an `error`, never `failed`. `signal` stops the commands in flight;
+   * the step then throws.
+   */
+  check?(step: CheckStep, signal?: AbortSignal): Promise<Checked | undefined>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -542,6 +629,33 @@ export interface RouteOptions {
   assignment?: { group: string; account: string; reason: string }
   /** Who asked, recorded as the producer of the decisions. */
   producer?: string
+}
+
+/** One Worker as admission sees it now, with nothing reserved (`Workers.candidates`). */
+export interface Candidate {
+  worker: CapabilityDescriptor
+  /** The source that describes it. */
+  source: string
+  /** Every admission check it fails, in the router's order and words; empty when routing admits it. */
+  failed: Rejection['failed']
+}
+
+/**
+ * What admission would say of every Worker for one requirement, with nothing reserved and nothing
+ * decided (PROP-0014, ADR-0064): the same checks `route` runs, in the same order, under the same lock.
+ */
+export interface Candidates {
+  /** The stored work requirement (an `objective` artifact), for the caller's own decision to name. */
+  requirement: ArtifactRef
+  /** Every Worker every source describes now, by id, each with the checks it fails. */
+  workers: Candidate[]
+  /** Sources that did not describe their Workers within the router's bound: none of theirs is listed, never read as having none. */
+  unheard: Array<{ source: string; reason: string }>
+  /**
+   * The router's own order after tier, for this requirement: its quota classes (`budget.preferQuota`,
+   * then the configured preference) and its configured priority list of Worker ids.
+   */
+  order: { quota: QuotaClass[]; priority: string[] }
 }
 
 export interface AdmittedWorker {
@@ -664,6 +778,15 @@ export abstract class Workers extends Service {
    */
   abstract carry?(step: CarryStep): Promise<(Carried & { source: string }) | undefined>
 
+  /**
+   * Run a workflow run's required checks on its result's worktree, by the source that holds it
+   * (`WorkerSource.check`), with that source's name; undefined when none holds it. A source that
+   * throws, unless `signal` stopped it, is a refusal (`failed`), never read as not holding it, and
+   * never as a check passed (INV-2). Optional: a caller that finds no `check` runs none, and the
+   * checks stay pending (T151).
+   */
+  abstract check?(step: CheckStep, signal?: AbortSignal): Promise<(Checked & { source: string }) | undefined>
+
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }
 
@@ -673,6 +796,16 @@ export abstract class Workers extends Service {
    * decision, or an `admission` decision and throws {@link AdmissionFailure}.
    */
   abstract route(requirement: WorkRequirement, options?: RouteOptions): Promise<AdmittedWorker>
+
+  /**
+   * Every Worker with what admission says of it for this requirement, as `route` would judge it now:
+   * the same checks, in the same order, under the same lock, the assigned-account hold included
+   * (PROP-0014, ADR-0064). It reserves nothing (no Worker's `load.pending` moves) and records no
+   * decision: a caller that acts on it records its own, listing every Worker with its checks
+   * (INV-13). Optional: a caller that finds none cannot look before it routes, and starts nothing on
+   * a look (INV-2).
+   */
+  abstract candidates?(requirement: WorkRequirement, options?: RouteOptions): Promise<Candidates>
 
   /** Register an acceptance contract for the calling plugin's lifetime. Ids are unique. */
   abstract contract(id: string, check: AcceptanceContract): void

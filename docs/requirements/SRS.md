@@ -127,6 +127,13 @@
   it is, and a Worker the operator gives kinds takes only work of those kinds. Kinds are
   configuration labels, never tool names, compared for equality only; admission fails closed when
   no Worker takes the kind ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)).
+- **REQ-WRK-12** The Worker of a dispatched task's writing step is chosen among the Workers
+  routing admits, by a versioned score over each account's windows as the resource ledger read
+  them: headroom is counted above the operator's reserve, a window about to reset comes first, an
+  unknown or stale reading is never capacity, and a metered pool is never chosen. Each choice
+  records a reason on every candidate
+  ([candidates](../design/routing.md#candidates-without-a-reservation),
+  [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)).
 - **REQ-WRK-16** A run is declared dead only when its holder and its runtime are both
   positively gone and no activity was seen within a bound; a failed probe, a failed lease
   renewal, or a signal never reported is not death
@@ -164,6 +171,11 @@
   authorizes no effect outside the run.
 - **REQ-TEAM-7** A tie is broken by the caller through `vote`, bound to the tie
   decision. A tie waits a bounded time, then ends inconclusive.
+- **REQ-TEAM-8** The operator can keep Workers, named by Worker or by account, out of
+  team membership while they still serve all other work. No member, the first one
+  included, is formed on such a Worker or on another Worker of its account; no
+  same-family fallback lifts this; and a team left with too few provider families
+  fails with that cause ([Workers left out of teams](../design/teams.md#workers-left-out-of-teams)).
 
 ## Workflows (`REQ-WF`)
 
@@ -210,6 +222,23 @@
   only while the earlier tree is exactly what its writing step left and the repository's HEAD has
   not moved; the writing step builds on it and the review reviews the whole change. Anything else
   starts from HEAD. Each choice is a recorded decision.
+
+- **REQ-WF-15** Before a written result is accepted, the checks the autonomy policy requires of it
+  that are commands (`tests`, `typecheck`, `lint`) run on the exact tree the result is on, each the
+  command the operator configured for the repository, allowed by the policy unasked and run
+  confined. A check is reported passed or failed only by its exit code on that tree, unchanged
+  after it; one that cannot run so stays pending, and a model's account of a command is never a
+  check. What ran is recorded evidence the acceptance decision names
+  ([a run's required checks](../design/workflow-engine.md#a-runs-required-checks),
+  [ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)).
+- **REQ-WF-16** A ready board task of an active project is started without a person or the lead
+  asking only under its project's `dispatch` mode, oldest first, within recorded bounds per
+  account, per project, per repository, and in total, and with a share of every window kept for the
+  operator; under `ask`, each start is one request bound to the task, its attempt, and the Worker,
+  asked once across restarts and started only as approved (an attempt the operator approved through
+  the board's gate counts as approved). Dispatch can be turned off and paused by the operator
+  ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md),
+  [dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself)).
 
 ## Artifacts and schemas (`REQ-ART`)
 

@@ -1,5 +1,5 @@
-import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { type Confinement, confinedCommand, meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
+import { BWRAP, needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { ClaudeAgentRuntime, type ConfinedRun, commandSandbox, type QueryFn, type RuntimeOptions, type SpawnConfined } from '../src/index.ts'
 
 type Call = { prompt: string; options: Record<string, unknown> }
@@ -21,9 +22,13 @@ const confine = (bind: { readOnly?: readonly string[]; writable?: readonly strin
   binds.push(bind)
   return { bwrap: '/usr/bin/bwrap', hide: ['/dsh'], readOnly: ['/dsh/system/tools', ...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }
 }
+/** The run directory of these tests, where each run's private shell home is made (T198). */
+const RUN_DIR = mkdtempSync(join(tmpdir(), 'system-claude-run-'))
+afterAll(() => rmSync(RUN_DIR, { recursive: true, force: true }))
 /** A host where both layers start: the read confinement is proven, a nested sandbox starts, and Claude Code is signed in. */
 const confined: Partial<RuntimeOptions> = {
   confine, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), nested: async () => '', status: async () => '{"loggedIn": true, "apiProvider": "firstParty"}',
+  runDir: RUN_DIR,
 }
 
 /** The SDK's `modelUsage`: its `inputTokens` excludes cached input. */
@@ -75,7 +80,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
   it('probes the installed Claude Code without running a task, and offers only what it can confine', async () => {
     expect(await runtime(scripted()).probe()).toEqual({
       available: true, detail: 'Claude Code 2.1.294; host state hidden by /usr/bin/bwrap; commands confined: a sandbox with no network starts inside it', version: '2.1.294',
-      sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, homes: true,
+      sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true, homes: true, cleanShells: false,
     })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
@@ -209,24 +214,66 @@ describe('claude-agent-sdk: what a run consumed, from the SDK\'s own numbers (do
     // The stream broke after the limit, with no result at all.
     const broken = await failure(scripted([], null, { before, throws: new Error('429') }))
     expect(broken.kind).toBe('quota_exhausted')
-    expect(meteringOf(broken)).toEqual({ model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'rejected' })] })
+    expect(meteringOf(broken)).toEqual({
+      model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'rejected' })],
+      partial: 'Claude Code ended before its result message, and before any assistant message reported usage',
+    })
   })
 
-  it('reports what an aborted run saw before it stopped; a run with no result reports no usage', async () => {
+  /** A Claude Code that streams `before`, then waits until the run is stopped, and never sends its result. */
+  const stoppable = (before: Array<Record<string, unknown>>) => ((params: { options?: Record<string, unknown> }) => {
+    const signal = (params.options!.abortController as AbortController).signal
+    return (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
+      for (const message of before) yield message
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
+      throw new Error('aborted by the caller')
+    })()
+  }) as unknown as QueryFn
+  /** One streamed assistant message: the SDK's own usage (input excludes cached input), once per content block. */
+  const assistant = (id: string, usage: Record<string, number>, extra: Record<string, unknown> = {}) => ({
+    type: 'assistant', session_id: 'h-1', parent_tool_use_id: null, message: { id, model: 'model-main', role: 'assistant', content: [], usage }, ...extra,
+  })
+
+  it('reports what an aborted run saw before it stopped, marked partial; with no assistant message, no number (stop, timeout, drain)', async () => {
     const controller = new AbortController()
-    const query = ((params: { options?: Record<string, unknown> }) => {
-      const signal = (params.options!.abortController as AbortController).signal
-      return (async function* () {
-        yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
-        yield event({ status: 'allowed', rateLimitType: 'five_hour' })
-        await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
-        throw new Error('aborted by the caller')
-      })()
-    }) as unknown as QueryFn
     setTimeout(() => controller.abort(), 20)
-    const error = await failure(query, controller.signal)
+    const error = await failure(stoppable([event({ status: 'allowed', rateLimitType: 'five_hour' })]), controller.signal)
     expect(error.kind).toBe('aborted')
-    expect(meteringOf(error)).toEqual({ model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'allowed' })] })
+    expect(meteringOf(error)).toEqual({
+      model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'allowed' })],
+      partial: 'Claude Code was stopped before its result message, and before any assistant message reported usage',
+    })
+    expectConsistentMetering(meteringOf(error)!)
+    // A stop by the operator, a timeout, and a drain at the host's stop all abort the run's signal:
+    // what its assistant messages streamed is reported, each response once, at its largest counts.
+    const streamed = [
+      assistant('msg_1', { input_tokens: 100, output_tokens: 5, cache_read_input_tokens: 2000, cache_creation_input_tokens: 300 }),
+      assistant('msg_1', { input_tokens: 100, output_tokens: 40, cache_read_input_tokens: 2000, cache_creation_input_tokens: 300 }),
+      assistant('msg_2', { input_tokens: 50, output_tokens: 10, cache_read_input_tokens: 2300 }),
+      // A subagent's response counts as usage, not as a turn of the main loop.
+      assistant('msg_3', { input_tokens: 7, output_tokens: 3 }, { parent_tool_use_id: 'toolu_1', message: { id: 'msg_3', model: 'model-small', usage: { input_tokens: 7, output_tokens: 3 } } }),
+      // One without whole counts is not read: a number the SDK did not give stays missing.
+      assistant('msg_4', { output_tokens: 9 }),
+    ]
+    const stopped = new AbortController()
+    setTimeout(() => stopped.abort(), 20)
+    const partial = await failure(stoppable(streamed), stopped.signal)
+    expect(partial.kind).toBe('aborted')
+    expect(meteringOf(partial)).toEqual({
+      model: 'model-main', turns: 2,
+      usage: { inputTokens: 4757, outputTokens: 53, cacheReadInputTokens: 4300, cacheCreationInputTokens: 300 },
+      models: [
+        { model: 'model-main', usage: { inputTokens: 4750, outputTokens: 50, cacheReadInputTokens: 4300, cacheCreationInputTokens: 300 } },
+        { model: 'model-small', usage: { inputTokens: 7, outputTokens: 3 } },
+      ],
+      partial: 'Claude Code was stopped before its result message; counted from the usage its 3 assistant messages streamed, which leaves out the response in flight',
+    })
+    expectConsistentMetering(meteringOf(partial)!)
+    // A run that sent its result is counted from it alone, never from the stream.
+    const done = await runtime(scripted([], {}, { before: streamed })).run(spec, new AbortController().signal)
+    expect(done).toMatchObject({ turns: 2, resultId: 'h-1:r-1', ...NORMALIZED })
+    expect(done).not.toHaveProperty('partial')
   })
 })
 
@@ -321,6 +368,28 @@ describe('claude-agent-sdk: the run\'s tool gate is a PreToolUse hook on every t
     // What the run consumed is still reported.
     expectConsistentMetering(meteringOf(failure)!)
     expect(meteringOf(failure)).toMatchObject({ turns: 1 })
+  })
+
+  it('reports what a run that stopped at a deferred call streamed, marked partial, when no result follows the defer', async () => {
+    const toolGate = async () => ({ decision: 'defer' as const, reason: 'waits for the operator', requestId: 'apr-9' })
+    const query = ((params: { options?: Record<string, unknown> }) => {
+      const registered = ((params.options?.hooks as Record<string, Matcher[]> | undefined)?.PreToolUse ?? [])
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
+        yield { type: 'assistant', session_id: 'h-1', parent_tool_use_id: null, message: { id: 'msg_1', model: 'model-main', usage: { input_tokens: 20, output_tokens: 8 } } }
+        for (const hook of registered[0]!.hooks) await hook({ hook_event_name: 'PreToolUse', session_id: 'h-1', transcript_path: '/t', cwd: workspace, tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_use_id: 'toolu_1' }, 'toolu_1', { signal: new AbortController().signal })
+        // The CLI exits on the defer without a result message.
+        throw new Error('Claude Code process exited with code 1')
+      })()
+    }) as unknown as QueryFn
+    const failure = await runtime(query).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
+      .then(() => { throw new Error('the run completed') }, (error: unknown) => error as Error & { kind: string })
+    expect(failure).toMatchObject({ kind: 'config_error', message: expect.stringContaining('apr-9') })
+    expect(meteringOf(failure)).toEqual({
+      model: 'model-main', turns: 1, usage: { inputTokens: 20, outputTokens: 8 }, models: [{ model: 'model-main', usage: { inputTokens: 20, outputTokens: 8 } }],
+      partial: 'Claude Code stopped at a deferred tool call before its result message; counted from the usage its 1 assistant message streamed, which leaves out the response in flight',
+    })
+    expectConsistentMetering(meteringOf(failure)!)
   })
 
   it('denies every call after a defer, without asking the gate again, should the agent go on', async () => {
@@ -422,17 +491,21 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
   it('enables the SDK\'s sandbox in a workspace-write run with exactly ADR-0038\'s settings, and offers Bash there', async () => {
     const calls: Call[] = []
     await runtime(scripted(calls)).run({ prompt: 'run the tests', workspace, sandbox: 'workspace-write' }, new AbortController().signal)
+    // Its commands write the workspace only, and never where a later command's shell reads startup
+    // code (T198): Claude Code's home, which holds the shell snapshot it sources, nor the shells' HOME.
+    const shellHome = (calls[0]!.options.env as Record<string, string>).HOME!
+    expect(shellHome).toMatch(new RegExp(`^${RUN_DIR}/agent-home-`))
     expect(calls[0]!.options.sandbox).toEqual({
       enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false,
-      filesystem: { allowWrite: [workspace] },
+      filesystem: { allowWrite: [workspace], denyWrite: [HOME, shellHome] },
       network: { allowedDomains: [], strictAllowlist: true },
     })
-    expect(calls[0]!.options.sandbox).toEqual(commandSandbox(workspace))
+    expect(calls[0]!.options.sandbox).toEqual(commandSandbox(workspace, [HOME, shellHome]))
     expect(calls[0]!.options).toMatchObject({ tools: expect.arrayContaining(['Bash']), allowedTools: expect.arrayContaining(['Bash']) })
     // A Worker that lists its tools without Bash runs no command, in the same sandbox.
     const listed: Call[] = []
     await runtime(scripted(listed)).run({ prompt: 'x', workspace, sandbox: 'workspace-write', tools: ['Read', 'Edit'] }, new AbortController().signal)
-    expect(listed[0]!.options).toMatchObject({ tools: ['Read', 'Edit'], allowedTools: ['Read(./**)', 'Edit(./**)'], sandbox: commandSandbox(workspace) })
+    expect(listed[0]!.options).toMatchObject({ tools: ['Read', 'Edit'], allowedTools: ['Read(./**)', 'Edit(./**)'], sandbox: commandSandbox(workspace, [HOME, (listed[0]!.options.env as Record<string, string>).HOME!]) })
   })
 
   it('keeps Bash off in a read-only run, and refuses it there before anything runs', async () => {
@@ -487,16 +560,27 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
       spawned.push({ command, args, cwd: options.cwd, env: options.env })
       return {} as ReturnType<SpawnConfined>
     }
+    // Each run's private shell home (T198), bound back read-only after its own home and the workspace: no startup file can be written there.
+    const shellHomes: string[] = []
     for (const sandbox of ['read-only', 'workspace-write'] as const) {
       const calls: Call[] = []
-      await runtime(scripted(calls), '/usr/bin/claude', { spawn }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
-      expect(binds.at(-1)).toEqual(sandbox === 'read-only' ? { writable: [HOME], readOnly: [workspace] } : { writable: [HOME, workspace] })
-      const start = calls[0]!.options.spawnClaudeCodeProcess as (options: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => unknown
-      start({ command: '/usr/bin/claude', args: ['--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME }, signal: new AbortController().signal })
+      const query = scripted(calls)
+      // As the SDK does: it starts Claude Code while the run is on, when the run's shell home exists (removed with the run).
+      const starting = ((params: Parameters<QueryFn>[0]) => {
+        const messages = query(params)
+        const start = (params as { options?: Record<string, unknown> }).options?.spawnClaudeCodeProcess as (options: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => unknown
+        start({ command: '/usr/bin/claude', args: ['--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME }, signal: new AbortController().signal })
+        return messages
+      }) as unknown as QueryFn
+      await runtime(starting, '/usr/bin/claude', { spawn }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
+      const shellHome = binds.at(-1)!.readOnly!.at(-1)!
+      shellHomes.push(shellHome)
+      expect(shellHome).toMatch(new RegExp(`^${RUN_DIR}/agent-home-`))
+      expect(binds.at(-1)).toEqual(sandbox === 'read-only' ? { writable: [HOME], readOnly: [workspace, shellHome] } : { writable: [HOME, workspace], readOnly: [shellHome] })
     }
     expect(spawned).toEqual([
-      { command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--ro-bind', workspace, workspace, '--bind', HOME, HOME, ...TEMP_ENV, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
-      { command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--bind', HOME, HOME, '--bind', workspace, workspace, ...TEMP_ENV, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
+      { command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--ro-bind', workspace, workspace, '--bind', HOME, HOME, '--ro-bind', shellHomes[0], shellHomes[0], ...TEMP_ENV, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
+      { command: '/usr/bin/bwrap', args: [...OPTIONS, ...PRIVATE_TMP, '--bind', HOME, HOME, '--bind', workspace, workspace, '--ro-bind', shellHomes[1], shellHomes[1], ...TEMP_ENV, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
     ])
   })
 
@@ -541,20 +625,51 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
     rmSync(join(workspace, 'secret'))
     expect(none).toEqual([])
   })
+
+  it('gives each run\'s shells a fresh, empty, private HOME outside the workspace, removed with the run, and no variable a shell runs code from (T198)', async () => {
+    // The daemon's environment names startup code, and the operator's config sets one: neither reaches Claude Code.
+    Object.assign(process.env, { BASH_ENV: join(workspace, '.bashrc'), ENV: join(workspace, '.profile'), 'BASH_FUNC_echo%%': '() { id; }' })
+    try {
+      // What Claude Code is started with, as it starts: its environment, and what its HOME holds then.
+      const homes: Array<{ home: string; env: Record<string, string>; entries: string[]; mode: number }> = []
+      const script = scripted() as unknown as (params: { prompt: string; options?: Record<string, unknown> }) => unknown
+      const spy = ((params: { prompt: string; options?: Record<string, unknown> }) => {
+        const env = params.options!.env as Record<string, string>
+        homes.push({ home: env.HOME!, env, entries: readdirSync(env.HOME!), mode: statSync(env.HOME!).mode & 0o777 })
+        return script(params)
+      }) as unknown as QueryFn
+      for (const sandbox of ['read-only', 'workspace-write'] as const) {
+        await runtime(spy, '/usr/bin/claude', { env: { ENV: '/x', PS4: '$(id)' } }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
+      }
+      expect(homes).toHaveLength(2)
+      for (const { env } of homes) {
+        for (const name of ['BASH_ENV', 'ENV', 'PS4', 'BASH_FUNC_echo%%']) expect(env, name).not.toHaveProperty(name)
+      }
+      for (const { home, entries, mode } of homes) {
+        // Made in the run directory: not in the workspace (where its tools write and git sees it), empty, owner-only.
+        expect(home.startsWith(`${RUN_DIR}/agent-home-`)).toBe(true)
+        expect(home.startsWith(workspace)).toBe(false)
+        expect(entries).toEqual([])
+        expect(mode).toBe(0o700)
+        // Removed once the run ended: nothing a run wrote there reaches the next one.
+        expect(existsSync(home)).toBe(false)
+      }
+      expect(homes[0]!.home).not.toBe(homes[1]!.home)
+    } finally {
+      delete process.env.BASH_ENV
+      delete process.env.ENV
+      delete process.env['BASH_FUNC_echo%%']
+    }
+  })
+
+  it('never reports cleanShells: Claude Code starts its shells its own way, sourcing a snapshot of its own, so no gate takes its shell command for a read (T198)', async () => {
+    expect(await runtime(scripted()).probe()).toMatchObject({ executes: true, cleanShells: false })
+    expect(await runtime(scripted(), '/usr/bin/claude', { nested: failing('no namespace') }).probe()).toMatchObject({ executes: false, cleanShells: false })
+  })
 })
 
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-const BWRAP = findBwrap()
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
-
-describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap: both layers nest on this host (ADR-0038)', () => {
+describe('claude-agent-sdk under the real bubblewrap: both layers nest on this host (ADR-0038)', () => {
+  needsBubblewrap()
   const root = mkdtempSync(join(tmpdir(), 'system-claude-host-'))
   const dsh = join(root, 'dsh')
   const home = join(dsh, 'system', 'claude-home')
@@ -568,7 +683,7 @@ describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap
   const server = createServer((socket) => socket.end())
   let port = 0
   beforeAll(async () => {
-    for (const dir of [home, workspace, outside, join(root, 'bin')]) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    for (const dir of [home, workspace, outside, join(root, 'bin'), shellHome, join(home, 'shell-snapshots')]) mkdirSync(dir, { recursive: true, mode: 0o700 })
     writeFileSync(vaultKey, 'vault key')
     writeFileSync(claude, '#!/bin/sh\ncase "$1" in\n  --version) echo "2.1.308 (Claude Code)" ;;\n  auth) echo \'{"loggedIn": true}\' ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -579,26 +694,35 @@ describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap
     rmSync(root, { recursive: true, force: true })
   })
 
+  /** A run's private shell home (T198): in the run directory, which the confinement hides, bound back read-only. */
+  const shellHome = join(dsh, 'system', 'run', 'agent-home-test')
+
   /**
    * A command in the sandbox a workspace-write run's settings ask for, rendered as the SDK's
    * sandbox renders them on Linux (bubblewrap): the root read-only, each `allowWrite` path writable,
-   * and its own network namespace when no domain is allowed; nested inside the run's confinement.
+   * each `denyWrite` path read-only over it, and its own network namespace when no domain is
+   * allowed; nested inside the run's confinement, as a run's (its shell home read-only).
    */
   const sandboxed = async (script: string): Promise<number> => {
-    const settings = commandSandbox(workspace)
+    const settings = commandSandbox(workspace, [home, shellHome])
     const writable = settings.filesystem?.allowWrite ?? []
+    const denied = settings.filesystem?.denyWrite ?? []
     const network = settings.network?.allowedDomains?.length ? [] : ['--unshare-net']
-    const inner = ['--die-with-parent', '--new-session', ...network, '--unshare-pid', '--ro-bind', '/', '/', ...writable.flatMap((path) => ['--bind', path, path]), '--dev', '/dev', '--proc', '/proc', '--', 'sh', '-c', script]
-    const c = confinedCommand('bwrap', inner, confine({ writable: [home, workspace] }))
+    const inner = [
+      '--die-with-parent', '--new-session', ...network, '--unshare-pid', '--ro-bind', '/', '/', ...writable.flatMap((path) => ['--bind', path, path]),
+      ...denied.flatMap((path) => ['--ro-bind', path, path]), '--dev', '/dev', '--proc', '/proc', '--', 'sh', '-c', script,
+    ]
+    const c = confinedCommand('bwrap', inner, confine({ writable: [home, workspace], readOnly: [shellHome] }))
     return promisify(execFile)(c.command, c.args).then(() => 0, (error: { code?: number }) => error.code ?? 1)
   }
   const connect = `${process.execPath} -e "require('net').connect(PORT, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(3))"`
 
   it('proves both layers with the real bubblewrap: reads confined, and a sandbox with no network nested inside', async () => {
-    const evidence = await new ClaudeAgentRuntime({ executable: claude, home, confine }).probe()
-    expect(evidence).toMatchObject({ available: true, version: '2.1.308', readsConfined: true, executes: true, sandboxes: ['read-only', 'workspace-write'] })
+    const runDir = join(dsh, 'system', 'run')
+    const evidence = await new ClaudeAgentRuntime({ executable: claude, home, confine, runDir }).probe()
+    expect(evidence).toMatchObject({ available: true, version: '2.1.308', readsConfined: true, executes: true, sandboxes: ['read-only', 'workspace-write'], cleanShells: false })
     // Without bubblewrap on Claude Code's PATH the SDK's sandbox cannot start: no executes, the reason named.
-    const noNested = await new ClaudeAgentRuntime({ executable: claude, home, confine, env: { PATH: join(root, 'bin') } }).probe()
+    const noNested = await new ClaudeAgentRuntime({ executable: claude, home, confine, runDir, env: { PATH: join(root, 'bin') } }).probe()
     expect(noNested).toMatchObject({ readsConfined: true, executes: false, sandboxes: ['read-only'], detail: expect.stringContaining('commands cannot be confined') })
   })
 
@@ -609,6 +733,16 @@ describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap
     expect(await sandboxed(`touch ${join(home, 'settings.json')}`)).not.toBe(0)
     expect(existsSync(join(outside, 'escaped')) || existsSync(join(home, 'settings.json'))).toBe(false)
     expect(await sandboxed(`cat ${vaultKey}`)).not.toBe(0)
+  })
+
+  it('lets no sandboxed command write startup code a later command\'s shell would run: not Claude Code\'s shell snapshot, not a startup file in the shells\' HOME (T198)', async () => {
+    const plant = 'echo() { builtin printf pwned; }'
+    for (const file of [join(home, 'shell-snapshots', 'snapshot-bash-1.sh'), join(shellHome, '.bashrc'), join(shellHome, '.bash_profile'), join(shellHome, '.profile')]) {
+      expect(await sandboxed(`printf '%s\\n' '${plant}' > ${file}`), file).not.toBe(0)
+      expect(existsSync(file), file).toBe(false)
+    }
+    // The workspace stays writable: the denial is of those directories, not of every write.
+    expect(await sandboxed(`printf '%s\\n' '${plant}' > ${join(workspace, '.bashrc')}`)).toBe(0)
   })
 
   it('cuts a sandboxed command off the network, while the confinement alone still reaches it (the check can see a connection)', async () => {

@@ -9,9 +9,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
-import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Carried, type CarryStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
+  type AccountQuota, extractJson, HEADROOM_KEYS, type HeadroomKeys, headroomLine, headroomOrderOf, headroomReason, QUOTA_DEFAULTS, QUOTA_SCORE, type QuotaPool, type QuotaSettings,
+  quotaSettingsProblems, SchemaRegistry,
+} from '@tsuuanmi/system-libs'
+import {
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Candidates, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
   type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -26,7 +29,20 @@ export interface Config {
 }
 
 const QUOTA_CLASSES: QuotaClass[] = ['subscription-chat', 'local', 'agent-plan', 'metered']
-const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '1' } as const
+/** Version 2 (T185, PROP-0014 D3): the quota score's headroom order is part of every route's order. */
+const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '2' } as const
+
+/** A pool of the resource ledger as routing reads it (`ctx.resources.pools()`): the account it is of, and what the quota score reads. */
+type LedgerPool = QuotaPool & { account: string }
+/** The resource ledger as routing reads it, when it is mounted: its pools now, and the operator's quota settings. */
+interface Ledger {
+  pools(filter?: { account?: string }, at?: Date): Promise<LedgerPool[]>
+  quota?(): QuotaSettings
+}
+/** Each admitted Worker's account quota and its keys in the headroom order, by Worker id. */
+type Quotas = ReadonlyMap<string, { quota: AccountQuota; keys: HeadroomKeys; settings: QuotaSettings }>
+/** One key of routing's order, by name, so a decision says which one a Worker lost on. */
+type OrderKey = { name: 'tier' | 'quota' | keyof HeadroomKeys | 'load' | 'priority'; key: (w: CapabilityDescriptor) => number }
 /** How long one source may take to describe its Workers inside the routing lock (ADR-0033). */
 const DESCRIBE_MS = 5000
 /** Why a source counted as describing none: it did not answer within `DESCRIBE_MS`. */
@@ -211,6 +227,22 @@ export class WorkerRouter extends Workers {
     return undefined
   }
 
+  async check(step: CheckStep, signal?: AbortSignal): Promise<(Checked & { source: string }) | undefined> {
+    for (const source of this.registry.values()) {
+      if (!source.check) continue
+      let checked: Checked | undefined
+      try {
+        checked = await source.check(step, signal)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        // A source that cannot answer is never read as not holding the worktree, nor as a check passed (INV-2).
+        checked = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not run the checks of run ${step.runId} in ${step.workspace}: ${(error as Error).message.slice(0, 300)}` }
+      }
+      if (checked) return { ...checked, source: source.name }
+    }
+    return undefined
+  }
+
   release(sessionIds: readonly string[], reason: string): { due: number } {
     let due = 0
     if (sessionIds.length) for (const source of this.registry.values()) due += source.release?.(sessionIds, reason).due ?? 0
@@ -275,27 +307,62 @@ export class WorkerRouter extends Workers {
   }
 
   async route(requirement: WorkRequirement, options: RouteOptions = {}): Promise<AdmittedWorker> {
-    const turn = this.routing.then(() => this.routeNow(requirement, options))
+    return this.inTurn(() => this.routeNow(requirement, options))
+  }
+
+  /**
+   * Every Worker with the checks it fails for this requirement, judged as `route` judges it, under the
+   * same lock (PROP-0014): nothing is reserved, and no decision is recorded (the caller that acts on it
+   * records its own).
+   */
+  async candidates(requirement: WorkRequirement, options: RouteOptions = {}): Promise<Candidates> {
+    return this.inTurn(async () => {
+      const { described, requirementRef, failures, silent } = await this.judge(requirement, options)
+      return {
+        requirement: requirementRef,
+        workers: described.map((d) => ({ worker: d.worker, source: d.source, failed: failures.get(d.worker.worker)! })),
+        unheard: silent.map((source) => ({ source, reason: SILENT })),
+        order: { quota: this.quotaOrder(requirement), priority: [...(this.config.priority ?? [])] },
+      }
+    })
+  }
+
+  /** One turn of the routing lock: what runs in it reads the Workers' load alone (ADR-0033). */
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const turn = this.routing.then(work)
     this.routing = turn.catch(() => undefined)
     return turn
   }
 
-  private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
+  /**
+   * Admission for one requirement: every Worker described now, the stored requirement, and each
+   * Worker's failed checks, in the design's order, the assigned-account hold applied (ADR-0052).
+   */
+  private async judge(requirement: WorkRequirement, options: RouteOptions): Promise<{ described: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[]; requirementRef: ArtifactRef; failures: Map<string, Failed>; limited: Limited[] }> {
     this.schemas.assertRecord(requirement)
     const { all: described, silent } = await this.described()
     const workers = described.map((d) => d.worker)
-    // A source that did not answer in time is named in the decision, as a candidate it could not offer.
-    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [SILENT] }))
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
       kind: 'objective', bodySchema: requirement.schema, body: requirement, classification: requirement.data.classification, producer,
     })
-    const requirementRef = stored.id as ArtifactRef
     const failures = new Map(workers.map((w) => [w.worker, this.admit(w, requirement, options)]))
     // Under assigned accounts, a limit keeps the work off the group's other accounts (ADR-0052).
     const limited = limitedOnly(workers, failures, requirement)
     assign(workers, failures, limited)
-    const admitted = workers.filter((w) => failures.get(w.worker)!.length === 0).sort(this.order(requirement))
+    return { described, silent, requirementRef: stored.id as ArtifactRef, failures, limited }
+  }
+
+  private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
+    const { described, silent, requirementRef, failures, limited } = await this.judge(requirement, options)
+    const workers = described.map((d) => d.worker)
+    // A source that did not answer in time is named in the decision, as a candidate it could not offer.
+    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [SILENT] }))
+    const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
+    const passed = workers.filter((w) => failures.get(w.worker)!.length === 0)
+    // Each admitted Worker's account quota, in the quota score's one headroom order (PROP-0014 D3).
+    const quotas = await this.quotas(passed)
+    const admitted = passed.sort(this.order(requirement, quotas))
     const chosen = admitted[0]
     if (!chosen) {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
@@ -339,9 +406,11 @@ export class WorkerRouter extends Workers {
       question: `Which Worker runs ${requirement.kind === undefined ? '' : `${requirement.kind} `}work needing ${requirement.capabilities.join(', ')}?`,
       inputs: [requirementRef, tier.id],
       candidates: [...workers.map((w) => {
-        if (w === chosen) return { option: w.worker, selected: true, reasons: this.chosenReasons(w, requirement) }
+        // Every admitted Worker's score, when the ledger was read: its account's quota in one line.
+        const score = quotas?.get(w.worker) ? [`quota (${QUOTA_SCORE}): ${headroomLine(quotas.get(w.worker)!.quota)}`] : []
+        if (w === chosen) return { option: w.worker, selected: true, reasons: [...this.chosenReasons(w, requirement), ...score] }
         const failed = failures.get(w.worker)!
-        return { option: w.worker, selected: false, reasons: failed.length ? failed.map((f) => f.reason) : [`admitted; ${this.lostTo(w, chosen, requirement)}`] }
+        return { option: w.worker, selected: false, reasons: failed.length ? failed.map((f) => f.reason) : [`admitted; ${this.lostTo(w, chosen, requirement, quotas)}`, ...score] }
       }), ...unheard],
       decider: DECIDER,
       outcome: { option: chosen.worker },
@@ -455,10 +524,45 @@ export class WorkerRouter extends Workers {
     return failed
   }
 
-  /** Lowest tier, then quota class preference, then least busy, then configured priority, then stable id. */
-  private order(requirement: WorkRequirement): (a: CapabilityDescriptor, b: CapabilityDescriptor) => number {
+  /**
+   * Each admitted Worker's account quota and headroom keys (`quota-score@2`, libs' one implementation),
+   * read from the resource ledger once per route; undefined when no ledger is mounted, so the order is
+   * routing's own as before. A ledger that cannot be read leaves every account's quota unknown, never
+   * headroom (INV-2); settings it cannot tell are the defaults (the 20 % reserve, D63).
+   */
+  private async quotas(admitted: readonly CapabilityDescriptor[]): Promise<Quotas | undefined> {
+    const ledger = this.ctx.get('resources' as never) as Ledger | undefined
+    if (!ledger) return undefined
+    const now = new Date()
+    let pools: LedgerPool[] | { unknown: string }
+    try {
+      pools = await ledger.pools({}, now)
+    } catch (error) {
+      pools = { unknown: `the resource ledger could not be read: ${(error as Error).message.slice(0, 200)}` }
+    }
+    let settings: QuotaSettings = QUOTA_DEFAULTS
+    try {
+      const given = ledger.quota?.()
+      if (given && !quotaSettingsProblems(given).length) settings = given
+    } catch {
+      settings = QUOTA_DEFAULTS
+    }
+    const poolsOf = (w: CapabilityDescriptor): readonly QuotaPool[] | { unknown: string } | undefined => {
+      if (!w.account) return undefined
+      return Array.isArray(pools) ? pools.filter((p) => p.account === w.account!.id) : pools
+    }
+    return new Map(headroomOrderOf(admitted, poolsOf, settings, now).map((o) => [o.item.worker, { quota: o.quota, keys: o.keys, settings }]))
+  }
+
+  /**
+   * An account over its reserve last while another admitted Worker has headroom (it gets no new step,
+   * writing or not, while one does); then lowest tier, quota class preference, the rest of the quota
+   * score's headroom order (known before unknown, the window that resets soonest with headroom, the
+   * most headroom), least busy, configured priority, and stable id.
+   */
+  private order(requirement: WorkRequirement, quotas?: Quotas): (a: CapabilityDescriptor, b: CapabilityDescriptor) => number {
     return (a, b) => {
-      for (const key of this.keys(requirement)) {
+      for (const { key } of this.keys(requirement, quotas)) {
         const difference = key(a) - key(b)
         if (difference) return difference
       }
@@ -466,11 +570,17 @@ export class WorkerRouter extends Workers {
     }
   }
 
-  private keys(requirement: WorkRequirement): Array<(w: CapabilityDescriptor) => number> {
+  private keys(requirement: WorkRequirement, quotas?: Quotas): OrderKey[] {
     const quota = this.quotaOrder(requirement)
     const priority = this.config.priority ?? []
     const rankOf = (list: readonly string[], value: string): number => (list.includes(value) ? list.indexOf(value) : list.length)
-    return [(w) => TIERS.indexOf(w.tier), (w) => rankOf(quota, w.quotaClass), busy, (w) => rankOf(priority, w.worker)]
+    const headroom = (name: keyof HeadroomKeys): OrderKey => ({ name, key: (w) => quotas?.get(w.worker)?.keys[name] ?? 0 })
+    return [
+      headroom('reserve'),
+      { name: 'tier', key: (w) => TIERS.indexOf(w.tier) }, { name: 'quota', key: (w) => rankOf(quota, w.quotaClass) },
+      ...HEADROOM_KEYS.filter((k) => k !== 'reserve').map(headroom),
+      { name: 'load', key: busy }, { name: 'priority', key: (w) => rankOf(priority, w.worker) },
+    ]
   }
 
   private quotaOrder(requirement: WorkRequirement): QuotaClass[] {
@@ -488,13 +598,20 @@ export class WorkerRouter extends Workers {
   }
 
   /** Why an admitted Worker ordered after the chosen one: the first ordering key that differs. */
-  private lostTo(worker: CapabilityDescriptor, chosen: CapabilityDescriptor, requirement: WorkRequirement): string {
-    const [tier, quota, load, priority] = this.keys(requirement)
-    if (tier!(worker) !== tier!(chosen)) return `${chosen.worker} has the lower tier ${chosen.tier}`
-    if (quota!(worker) !== quota!(chosen)) return `${chosen.worker} has the preferred quota class ${chosen.quotaClass}`
-    if (load!(worker) !== load!(chosen)) return `${chosen.worker} is less busy (${loadOf(chosen.load)}; this one ${loadOf(worker.load)})`
-    if (priority!(worker) !== priority!(chosen)) return `${chosen.worker} comes first in the configured priority list`
-    return `${chosen.worker} comes first by id`
+  private lostTo(worker: CapabilityDescriptor, chosen: CapabilityDescriptor, requirement: WorkRequirement, quotas?: Quotas): string {
+    const differs = this.keys(requirement, quotas).find(({ key }) => key(worker) !== key(chosen))
+    switch (differs?.name) {
+      case undefined: return `${chosen.worker} comes first by id`
+      case 'tier': return `${chosen.worker} has the lower tier ${chosen.tier}`
+      case 'quota': return `${chosen.worker} has the preferred quota class ${chosen.quotaClass}`
+      case 'load': return `${chosen.worker} is less busy (${loadOf(chosen.load)}; this one ${loadOf(worker.load)})`
+      case 'priority': return `${chosen.worker} comes first in the configured priority list`
+      default: {
+        const a = quotas!.get(chosen.worker)!
+        const b = quotas!.get(worker.worker)!
+        return headroomReason({ who: chosen.worker, quota: a.quota, keys: a.keys }, b, a.settings) ?? `${chosen.worker} comes first by quota`
+      }
+    }
   }
 
   private tierReasons(tier: Tier, chosen: Tier, requirement: WorkRequirement, admitted: CapabilityDescriptor[]): string[] {

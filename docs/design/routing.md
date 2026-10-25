@@ -1,7 +1,7 @@
 # Routing
 
 > Target state. Boundary: [routing](../architecture/components.md#routing).
-> Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..10.
+> Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..10, REQ-WRK-12.
 >
 > Implemented in [`workers`](../../packages/plugins/workers/README.md) (admission, order,
 > decisions, acceptance) and [`workflow`](../../packages/plugins/workflow/README.md) (tier
@@ -134,7 +134,7 @@ flowchart TD
   D -->|no| R
   E -->|no| R
   F -->|no| R
-  G --> H["order: lowest tier, budget.preferQuota, quotaPreference, least load, priority list, id"]
+  G --> H["order: over its reserve last while another has headroom, lowest tier, budget.preferQuota, quotaPreference, quota headroom, least load, priority list, id"]
   H --> I[first candidate: tier and route decisions, counted pending on it until started]
   R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
@@ -158,7 +158,7 @@ the engine names the bound that sized it (a review's `repositories.maxSourceChar
 **Load** ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). A descriptor may carry
 `load` (`capability-descriptor@1.3`): the turns `running` in its runtime's `slots`, `queued`, and
 routed to it but not started (`pending`). The Workers of one account report the same numbers,
-since they share its scheduler. Among Workers equal in tier and quota class, the least loaded
+since they share its scheduler. Among Workers equal in tier, quota class, and quota headroom ([quota in every route](#quota-in-every-route)), the least loaded
 comes first (running, queued, and pending together); then the `priority` list and the id decide
 as before, and a source that reports no load reads 0. A Worker at its limit reads `busy`, which
 stays admissible: it only orders it later.
@@ -240,6 +240,82 @@ A Worker with no `account` is routed as before.
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified
 failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provider.
+
+### Candidates without a reservation
+
+> Decision: [ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)
+> (accepted 2026-10-25, D61). Requirement: REQ-WRK-12.
+
+The optional `candidates(requirement, options)` tells a caller what admission says of every Worker
+before it starts anything: the checks `route` runs, in the same order and under the same lock, the
+`assignment` hold included, each Worker with the checks it fails (empty when admitted), the sources
+that did not answer, the stored requirement, and the router's own order after tier (its quota
+classes for the requirement, its priority list). It reserves nothing (no `load.pending` moves) and
+records no decision: the caller that acts on it records its own, listing every Worker with these
+checks (INV-13). The workflow engine's dispatch pass is its one caller
+([dispatch](workflow-engine.md#dispatch-starting-ready-work-by-itself)).
+
+**The quota score** (`quotaScoreOf`, `quota-score@2`, pure, in [`libs`](../../packages/libs/README.md))
+orders the Workers `candidates` admits for a dispatched task's writing step, by the headroom order
+[below](#quota-in-every-route) around tier and quota class (metered last). The chosen Worker is the
+first **free** one: every pool available, every window known with headroom above the reserve, not
+metered, and what the caller adds (idle enough, within its bounds). Every candidate carries its
+reasons: why it won, why it lost to the chosen one (the first key that differs), why it is not free,
+or why routing refused it. Among assigned accounts this chooses by headroom for new work only;
+`assignment` still holds a limited account's work (D24, D66).
+
+### Quota in every route
+
+> Decision: [ADR-0066](../decisions/adr/0066-every-route-orders-workers-by-their-accounts-quota-headroom.md),
+> increment D3 of [PROP-0014](../proposals/0014-dispatch-by-quota.md#increments) (T185).
+> Requirements: REQ-WRK-8, REQ-WRK-12.
+
+Every route, for every step of every run (dispatched or started by the lead or the operator), orders
+the admitted Workers by their accounts' quota. There is **one** implementation of a pool's headroom
+and its order, in `libs` (`accountQuotaOf`, `headroomOrderOf`): the quota score, routing, and the
+roster's [capacity now](roster.md#capacity-now) all call it, and none computes headroom itself.
+The router reads the ledger's `pools()` and the operator's quota settings (`quota()`,
+[resources](resources.md#quota-settings)) once per route, inside the routing lock:
+
+| A window is | When |
+|---|---|
+| known | its latest reading is at most `staleReadingSeconds` old, reads `ok`, gives a used share, and its reset (when it names one) is still ahead |
+| its headroom | `100 − used − reservePercent` (the reserve: 20 % of each window by default, D63) |
+| its reset | the later of `resetsAt` and `cooldownUntil` |
+| over the reserve | read now as `limited`, or known with no headroom: used above `100 − reservePercent` % |
+
+An unread window (no reading, stale, `unknown`, no used share, or from before its reset) never
+counts as headroom ([INV-2](../architecture/invariants.md#inv-2-fail-closed)). Which windows an
+account has is the operator's pool configuration: its **canonical gauge** is the windows its pool
+lists. A Claude Code plan's pool lists only its five-hour window (operator D70); a Codex plan's lists
+the windows it reports.
+
+The order, each key compared only when every key before it is equal:
+
+1. **Over the reserve, last.** A Worker whose account is over its reserve ranks after every other
+   admitted Worker while another admitted Worker's account is free (every window known with
+   headroom). So it gets no new step, writing or not, while one has headroom. When none has, this
+   key ties, and it ranks by its readings like any other.
+2. **Tier**, lowest admissible first.
+3. **Quota class**, `budget.preferQuota`, then `quotaPreference`.
+4. **Known** before configured-available (`unknown: available`) before unknown or stale: an
+   unknown reading is never preferred to a known one.
+5. **Use it or lose it**: a window resetting within `useSoonMinutes` with at least
+   `minHeadroomPercent` headroom in the binding window (the one with the least headroom) first, the
+   earlier reset first.
+6. **Headroom** in the binding window, most first, in `headroomBucketPercent`-point buckets.
+7. **Load**, then the priority list, then **id**.
+
+- **Recorded.** The route decision (`workers.route.deterministic` version 2) lists every admitted
+  Worker's score in one line, `quota (quota-score@2): known, 5 h: used 10 %, resets in 3 h 59 min,
+  headroom 70`. An admitted Worker that lost on a quota key says which one: "w:b's account has
+  headroom; this one's 5 h window is used 85 %, above 80 % (the 20 % reserve), so it ranks last
+  while another has headroom". The readings the order read are the ledger's own records.
+- **No ledger.** With no resource ledger mounted, every quota key ties, so the order is routing's
+  own as before and the decision carries no quota line. A ledger that cannot be read leaves every
+  account's quota unknown, never headroom; settings it cannot tell are the defaults.
+- **Never a refusal.** The order only ranks: a Worker over its reserve is still admitted and runs
+  when it is the only one. A turn in flight is never moved ([assigned accounts](#assigned-accounts)).
 
 ## Provider diversity
 

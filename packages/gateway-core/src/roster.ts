@@ -8,10 +8,11 @@
  * (INV-8): an account's id, state, and the operator's label only.
  * @module
  */
-import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
+import { countedWhole, countUnknownUsage, MAX_UNKNOWN_ENTRIES, type QuotaSettings, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
+import { type Capacity, CAPACITY_BOUNDS, type CapacityStep, type CapacityTaskRead, formatCapacity, projectCapacity } from './capacity.ts'
 
-/** The schema of the roster (`mcp-roster@1.5`, `#/$defs/roster-output`). */
-export const ROSTER_SCHEMA = 'mcp-roster@1.5'
+/** The schema of the roster (`mcp-roster@1.9`, `#/$defs/roster-output`). */
+export const ROSTER_SCHEMA = 'mcp-roster@1.9'
 
 /** The engine's event when a step's attempt starts (docs/design/workflow-engine.md), read for when a running step began. */
 export const NODE_STARTED = 'workflow.node.started'
@@ -72,6 +73,8 @@ export interface RosterDescriptor {
   locality: 'local' | 'remote'
   state: 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
   observedAt: string
+  /** What it offers, read only to tell which Worker a ready task's start would most likely go to (capacity now). */
+  capabilities?: ReadonlyArray<{ capability: string; scope?: unknown }> | undefined
 }
 /**
  * How a Worker source answered the router's last read (`ctx.workers.sources()`); `describing`
@@ -106,8 +109,11 @@ export interface RosterRun {
   template: string
   status: string
   nodes: Array<{ nodeId: string; state: string; attempt: number; worker?: string | undefined }>
-  task?: { taskId: string } | undefined
+  /** `startedBy` (workflow contract 1.10): who started the task's run. */
+  task?: { taskId: string; startedBy?: RosterStartedBy | undefined } | undefined
 }
+/** Who started a board task's run: dispatch by itself, the lead, or the operator (PROP-0014 D2). */
+export type RosterStartedBy = 'dispatch' | 'lead' | 'operator'
 /** A board task, as much of it as the roster shows. */
 export interface RosterTask { taskId: string; projectId: string; title: string; state: string }
 
@@ -128,6 +134,9 @@ export interface RosterLivenessRun {
 /** What `ctx.workers.liveness()` tells: the runs, the latest first, and each source that could not tell. */
 export interface RosterLivenessRead { runs: RosterLivenessRun[]; counts: Record<RosterLivenessRun['state'], number>; unread: Array<{ source: string; detail: string }> }
 
+/** What the engine's `teamExclusion()` tells: the operator's `teams.excludeWorkers` entries, and every Worker they leave out of teams now. */
+export interface RosterTeamExclusion { entries: string[]; workers: string[] }
+
 export interface RosterServices {
   workers?: { list(): Promise<RosterDescriptor[]>; sources?(): RosterSourceRead[]; siblings(worker: string): string[]; liveness?(): Promise<RosterLivenessRead> } | undefined
   accounts?: { list(): Promise<RosterWebsiteAccount[]>; duplicateIdentities(): Promise<string[][]> } | undefined
@@ -143,10 +152,27 @@ export interface RosterServices {
       providers?(): Array<{ provider: string; title?: string | undefined }>
     }
   } | undefined
-  resources?: { pools(): Promise<RosterPool[]>; usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }> } | undefined
+  resources?: {
+    pools(): Promise<RosterPool[]>
+    usage(filter: { runId: string; pool: string }): Promise<{ records: Array<{ partial?: unknown }> }>
+    /** The operator's quota settings (the reserve), which capacity now's headroom reads; the defaults when absent. */
+    quota?(): QuotaSettings
+  } | undefined
   eventLog?: { query(filter: { type: string; since?: string; afterSeq: number; limit: number; runId?: string; nodeId?: string }): Array<{ seq: number; at: string; data?: unknown }> } | undefined
-  workflow?: { usage(limit: number): RosterRun[] } | undefined
-  board?: { task(taskId: string): Promise<RosterTask | undefined> } | undefined
+  workflow?: {
+    usage(limit: number): RosterRun[]
+    /** The Workers the operator keeps out of teams (`teams.excludeWorkers`, D58): the entries configured, and the Workers listed now that they leave out. */
+    teamExclusion?(): Promise<RosterTeamExclusion>
+    /** A template's steps as a start's preview reads them (capacity now: the Worker a ready task's start would most likely go to); undefined when it is not served. */
+    templateSteps?(template: string): CapacityStep[] | undefined
+  } | undefined
+  board?: {
+    task(taskId: string): Promise<RosterTask | undefined>
+    /** The projects, for capacity now's ready tasks (of the active ones). */
+    projects?(filter?: { state?: 'proposed' | 'active' | 'paused' | 'closed' }): Promise<Array<{ projectId: string }>>
+    /** A project's tasks in some states, for capacity now's ready tasks. */
+    tasks?(filter: { projectId: string; states?: Array<'ready'> }): Promise<Array<{ taskId: string; projectId: string; title: string; state: string; template?: string | undefined; createdAt?: string | undefined }>>
+  } | undefined
 }
 
 /** Everything the projection takes, each source already read or known to be unreadable. */
@@ -175,6 +201,8 @@ export interface RosterInput {
   starts?: ReadonlyMap<string, Known<string>>
   /** The runs whose liveness needs a look; absent when the router tells none (no `liveness`). */
   liveness?: Known<RosterLivenessRead>
+  /** The Workers the operator keeps out of teams; absent when the engine tells none (no `teamExclusion`). */
+  teams?: Known<RosterTeamExclusion>
 }
 
 /** The key of one step's start in {@link RosterInput}.starts. */
@@ -207,6 +235,8 @@ export interface RosterWork {
   nodeId: string
   attempt: number
   task?: { taskId: string; board: Known<{ projectId: string; title: string; state: string }> }
+  /** `@1.8`: who started the task's run (`dispatch`: System by itself); absent when the engine does not tell. */
+  startedBy?: RosterStartedBy
   /** When its current attempt started. */
   since: Known<string>
   /** The step in one sentence: its task, the run, the step, and for how long. */
@@ -247,6 +277,11 @@ export interface RosterEntry {
   work: Known<{ items: RosterWork[]; more: number; unread?: string }>
   /** Its runs whose liveness needs a look, each in one sentence; only when it has any, or they could not be told. */
   liveness?: Known<RosterLiveness[]>
+  /**
+   * `@1.6`: that the operator keeps it out of teams (`teams.excludeWorkers`, D58), in one sentence;
+   * only when the engine tells it and leaves this Worker out, or could not tell.
+   */
+  teams?: Known<{ excluded: true; summary: string }>
   pools: Known<RosterPoolView[]>
 }
 /** A run of a Worker whose liveness needs a look, as the roster shows it (PROP-0013). */
@@ -261,6 +296,8 @@ export interface Roster {
   sources: Known<RosterSourceRead[]>
   /** `usage.unknown` entries no pool counts: not valid records, or naming a pool the ledger does not configure. */
   unknownUsage: Known<{ unreadable: number; unconfigured: Array<{ pool: string; runs: number }> }>
+  /** `@1.7`: capacity now ({@link readCapacity}, ./capacity.ts): who takes work, whose quota would be lost first, and the ready tasks; absent from a bare projection. */
+  now?: Capacity
 }
 
 /** Who reads the roster: an operator sees account labels, a client (the lead) does not. */
@@ -405,7 +442,7 @@ function summaryOf(work: Omit<RosterWork, 'summary'>, now: Date): string {
   if (!work.task) return clip(`Running ${step}, ${how}`)
   const board = work.task.board
   const task = isKnown(board) ? `"${board.value.title}" (task ${work.task.taskId}, project ${board.value.projectId})` : `task ${work.task.taskId}`
-  return clip(`Working on ${task}: ${step}, ${how}`, 800)
+  return clip(`Working on ${task}: ${step}, ${how}${work.startedBy === 'dispatch' ? ', started by itself' : ''}`, 800)
 }
 
 function workOf(input: RosterInput, worker: string, now: Date): Known<{ items: RosterWork[]; more: number; unread?: string }> {
@@ -418,7 +455,11 @@ function workOf(input: RosterInput, worker: string, now: Date): Known<{ items: R
       const task = run.task ? input.tasks.get(run.task.taskId) ?? unknown<RosterTask>('the board task was not read') : undefined
       const board = task && (isKnown(task) ? known({ projectId: task.value.projectId, title: task.value.title, state: task.value.state }) : unknown<{ projectId: string; title: string; state: string }>(task.unknown))
       const since = input.starts?.get(stepKey(run.runId, node.nodeId)) ?? unknown<string>('its start was not read')
-      const work = { runId: run.runId, template: run.template, nodeId: node.nodeId, attempt: node.attempt, ...(run.task && board ? { task: { taskId: run.task.taskId, board } } : {}), since }
+      const startedBy = run.task?.startedBy
+      const work = {
+        runId: run.runId, template: run.template, nodeId: node.nodeId, attempt: node.attempt, ...(run.task && board ? { task: { taskId: run.task.taskId, board } } : {}),
+        ...(startedBy === 'dispatch' || startedBy === 'lead' || startedBy === 'operator' ? { startedBy } : {}), since,
+      }
       items.push({ ...work, summary: summaryOf(work, now) })
     }
   }
@@ -448,6 +489,19 @@ function livenessFor(input: RosterInput, worker: string, now: Date): Pick<Roster
   // A source that could not tell is never read as having none of its Workers' runs (INV-2).
   const unread = told.value.unread
   return unread.length ? { liveness: unknown(`${unread.map((u) => `source ${u.source} could not tell (${u.detail})`).join('; ')}`) } : {}
+}
+
+/**
+ * Whether the operator keeps a Worker out of teams, as its entry gives it: absent when the engine
+ * tells none or does not leave it out; unknown on every Worker when the engine could not tell (INV-2).
+ */
+function teamsFor(input: RosterInput, d: RosterDescriptor): Pick<RosterEntry, 'teams'> {
+  const told = input.teams
+  if (!told) return {}
+  if (!isKnown(told)) return { teams: unknown(told.unknown) }
+  if (!told.value.workers.includes(d.worker)) return {}
+  const named = told.value.entries.includes(d.worker) ? 'it is named' : d.account && told.value.entries.includes(d.account.id) ? 'its account is named' : 'another Worker of its account is named'
+  return { teams: known({ excluded: true, summary: clip(`Kept out of teams by the operator: ${named} in teams.excludeWorkers, so it is never a team member; it takes every other step`) }) }
 }
 
 /** A Worker's siblings without itself, in id order, at most {@link ROSTER_BOUNDS}.siblings. */
@@ -499,6 +553,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         siblings: siblingsOf(siblings, d.worker),
         work,
         ...livenessFor(input, d.worker, options.now),
+        ...teamsFor(input, d),
         pools,
       }
     }))
@@ -609,7 +664,7 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
   const unknownUsage = await read(!resources ? 'the resource ledger (ctx.resources) is not mounted' : !eventLog ? 'the event log (ctx.eventLog) is not mounted' : undefined, () => countUnknownUsage({
     pools: async () => (isKnown(pools) ? pools.value : await resources!.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
     entries: ({ since, afterSeq, limit }) => eventLog!.query({ type: USAGE_UNKNOWN_EVENT, since, afterSeq, limit }),
-    counted: async (runId, pool) => (await resources!.usage({ runId, pool })).records.length > 0,
+    counted: async (runId, pool) => countedWhole((await resources!.usage({ runId, pool })).records),
   }, now.getTime()))
   const runs = await read(workflow ? undefined : 'the workflow engine (ctx.workflow) is not mounted', () => {
     const page = workflow!.usage(ROSTER_BOUNDS.runs)
@@ -646,9 +701,61 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
   }
   // The runs whose liveness needs a look, once, when the router tells them (PROP-0013).
   const liveness = workers?.liveness ? await read(undefined, () => workers.liveness!()) : undefined
-  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, titles, pools, unknownUsage, runs, tasks, starts, ...(liveness ? { liveness } : {}) }, { scope: options.scope, now })
-  schemas().assertDef(ROSTER_SCHEMA, 'roster-output', roster)
-  return roster
+  // The Workers the operator keeps out of teams, once, when the engine tells them (D58).
+  const teams = workflow?.teamExclusion ? await read(undefined, () => workflow.teamExclusion!()) : undefined
+  const roster = projectRoster({ workers: listed, sources, siblings, websiteAccounts, duplicates, agentAccounts, titles, pools, unknownUsage, runs, tasks, starts, ...(liveness ? { liveness } : {}), ...(teams ? { teams } : {}) }, { scope: options.scope, now })
+  // Capacity now (`@1.7`): made from this roster, the descriptors it was made from, and the board's ready tasks.
+  const ready = await readReady(board)
+  const steps = new Map<string, Known<CapacityStep[] | null>>()
+  if (isKnown(ready)) {
+    for (const t of ready.value.tasks.slice(0, CAPACITY_BOUNDS.list)) {
+      const template = t.template
+      if (!template || steps.has(template)) continue
+      steps.set(template, !workflow ? unknown('the workflow engine (ctx.workflow) is not mounted')
+        : !workflow.templateSteps ? unknown('the workflow engine does not preview a template\'s steps')
+          : await read(undefined, () => workflow.templateSteps!(template) ?? null))
+    }
+  }
+  const descriptors = new Map(isKnown(listed) ? listed.value.map((d) => [d.worker, d] as const) : [])
+  // The operator's reserve: a ledger that cannot tell its settings gives the defaults (20 %, D63), never none.
+  let quota: QuotaSettings | undefined
+  try {
+    quota = resources?.quota?.()
+  } catch {
+    quota = undefined
+  }
+  const record: Roster = { ...roster, now: projectCapacity({ roster, descriptors, ready, steps, quota }, now) }
+  schemas().assertDef(ROSTER_SCHEMA, 'roster-output', record)
+  return record
+}
+
+/**
+ * The board's ready tasks, of its active projects in id order (at most {@link CAPACITY_BOUNDS}.projects),
+ * each project's oldest first; a paused project's ready task cannot start, so it is not read.
+ */
+async function readReady(board: RosterServices['board']): Promise<Known<{ tasks: CapacityTaskRead[]; unread?: string }>> {
+  if (!board) return unknown('the board (ctx.board) is not mounted')
+  const { projects: listProjects, tasks: listTasks } = board
+  if (!listProjects || !listTasks) return unknown('the board does not list its projects and their tasks')
+  return read(undefined, async () => {
+    const projects = (await listProjects.call(board, { state: 'active' })).map((p) => p.projectId).sort(cmp)
+    const tasks: CapacityTaskRead[] = []
+    for (const projectId of projects.slice(0, CAPACITY_BOUNDS.projects)) {
+      const ready = (await listTasks.call(board, { projectId, states: ['ready'] })).filter((t) => t.state === 'ready')
+        .sort((a, b) => cmp(a.createdAt ?? '', b.createdAt ?? '') || cmp(a.taskId, b.taskId))
+      tasks.push(...ready.map((t) => ({ projectId, taskId: t.taskId, title: clip(t.title, 200), ...(t.template ? { template: t.template } : {}), ...(t.createdAt ? { createdAt: t.createdAt } : {}) })))
+    }
+    return { tasks, ...(projects.length > CAPACITY_BOUNDS.projects ? { unread: `only the first ${CAPACITY_BOUNDS.projects} of ${projects.length} active projects were read: a ready task of another is not listed` } : {}) }
+  })
+}
+
+/**
+ * Capacity now (docs/design/roster.md#capacity-now): the roster's "Right now" as data, the one
+ * summary MCP `roster` (`now`), `system capacity`, and the Workers page read. Made by
+ * {@link readRoster}, which reads each source once.
+ */
+export async function readCapacity(services: RosterServices, options: { scope: RosterScope; now?: Date }): Promise<Capacity> {
+  return (await readRoster(services, options)).now!
 }
 
 const text = <T>(k: Known<T>, show: (value: T) => string = String): string => (isKnown(k) ? show(k.value) : `unknown (${k.unknown})`)
@@ -674,6 +781,7 @@ export function formatRoster(roster: Roster): string {
         ...(work.more ? [`${work.more} more`] : []), ...(work.unread ? [work.unread] : []),
       ].join('; '))}`)
       if (w.liveness) lines.push(`  liveness   ${text(w.liveness, (runs) => runs.map((r) => r.summary).join('; '))}`)
+      if (w.teams) lines.push(`  teams      ${text(w.teams, (t) => t.summary)}`)
       if (!isKnown(w.pools)) lines.push(`  pools      unknown (${w.pools.unknown})`)
       else if (!w.pools.value.length) lines.push('  pools      none on its account')
       for (const p of isKnown(w.pools) ? w.pools.value : []) {
@@ -694,5 +802,6 @@ export function formatRoster(roster: Roster): string {
     if (u.unreadable) lines.push('', `${u.unreadable} usage.unknown entr${u.unreadable === 1 ? 'y is' : 'ies are'} not a valid record, so no pool counts ${u.unreadable === 1 ? 'it' : 'them'}`)
     for (const g of u.unconfigured) lines.push('', `${g.runs} run(s) whose usage is unknown name the pool ${g.pool}, which the ledger does not configure`)
   }
+  if (roster.now) lines.push('', ...formatCapacity(roster.now))
   return lines.join('\n')
 }

@@ -140,6 +140,7 @@
           "limits": [],
           "siblings": { "value": ["worker:chatgpt-plus/frontier"] },
           "work": { "value": { "items": [], "more": 0 } },
+          "teams": { "value": { "excluded": true, "summary": "Kept out of teams by the operator: its account is named in teams.excludeWorkers, so it is never a team member; it takes every other step" } },
           "pools": { "value": [] }
         }
       ]
@@ -152,6 +153,36 @@
         { "source": "website", "state": "described", "at": "2026-10-24T09:29:58.000Z", "workers": 1 }
       ]
     },
-    "unknownUsage": { "value": { "unreadable": 0, "unconfigured": [] } }
+    "unknownUsage": { "value": { "unreadable": 0, "unconfigured": [] } },
+    "now": {
+      "asOf": "2026-10-24T09:30:00.000Z",
+      "accounts": {
+        "value": {
+          "items": [
+            { "account": "chatgpt-plus", "name": "Chatgpt · Studio Plus", "windows": { "value": [] }, "canWork": { "value": false }, "summary": "at its limit until 2026-10-24T11:00:00Z" },
+            {
+              "account": "claude-agent-sdk:1f0c2b7e9a5d3c41",
+              "name": "Claude Code · science",
+              "windows": {
+                "value": [
+                  { "pool": "claude-plan/claude-agent-sdk:1f0c2b7e9a5d3c41", "id": "five-hour", "seconds": 18000, "state": "ok", "used": { "value": 37.5 }, "resets": { "value": "2026-10-24T13:00:00Z" } },
+                  { "pool": "claude-plan/claude-agent-sdk:1f0c2b7e9a5d3c41", "id": "weekly", "seconds": 604800, "state": "unknown", "used": { "unknown": "no reading yet" }, "resets": { "unknown": "no reading yet" } }
+                ]
+              },
+              "canWork": { "value": false },
+              "summary": "none of its 1 Worker(s) takes work now (busy)"
+            },
+            { "account": "codex-sdk:04aa5c1e9b7d3f20", "name": "Codex · slot 2", "windows": { "value": [] }, "canWork": { "value": false }, "summary": "none of its 1 Worker(s) takes work now (quarantined)" }
+          ],
+          "more": 0
+        }
+      },
+      "free": { "value": { "items": [], "more": 0 } },
+      "quotaUnknown": { "value": { "items": [], "more": 0 } },
+      "stalled": { "value": { "items": [], "more": 0 } },
+      "noQuota": { "value": { "items": [{ "account": "chatgpt-plus", "name": "Chatgpt · Studio Plus", "until": { "value": "2026-10-24T11:00:00Z" } }], "more": 0 } },
+      "cannotWork": { "value": { "items": [{ "worker": "agent:codex-sdk:04aa5c1e9b7d3f20/review", "name": "Codex · slot 2 · review", "state": "quarantined", "reason": "quarantined: changed, since 2026-10-24T08:00:00Z" }], "more": 0 } },
+      "ready": { "value": { "items": [{ "projectId": "studio", "taskId": "task-43", "title": "Document the parser change", "template": "algorithm-development", "likely": { "value": null } }], "more": 0 } }
+    }
   }
 }

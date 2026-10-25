@@ -1,7 +1,7 @@
 # Teams
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-TEAM-1, 2, 4..7.
+> Requirements: REQ-TEAM-1, 2, 4..8.
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (the `team` option on a
 > template node, unrolled by the engine; a review's source step; the `vote` tool),
@@ -42,7 +42,13 @@ without changing identity.
   review-member profile whose runtime cannot resume, for a review member's steps only, an exact
   replay of its earlier turns, recorded with its answer, [agent runtimes](agent-runtimes.md#review-members)).
   A member whose conversation can be neither resumed nor replayed whole fails its step unsent; it
-  is never given a fresh conversation for a continuation.
+  is never given a fresh conversation for a continuation. The one new conversation a member may get
+  is for its first step (`propose`), whose prompt is the whole request and material: when the site
+  answered it with its own error after the send, it is resent once there, the same member on the
+  same Worker, recorded as a `recovery` decision `resend` (operator decision D60,
+  [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md),
+  [workflow engine](workflow-engine.md#a-team-members-first-step-after-a-sites-own-error)). A
+  ballot or debate that meets such an error fails for the operator.
   A later step, an escalated one too, stays in that conversation through session affinity,
   which admits any tier of the same account (a model Worker's session: a higher tier of its
   family); it never joins again. So a member's rejected answer escalates only when one of its
@@ -91,7 +97,8 @@ the Worker another member runs on (PROP-0012 phase C,
 
 With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),
 [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)), such a member routes
-again in up to two more steps:
+again in up to two more steps, both still off the Workers the operator leaves out of teams
+([below](#workers-left-out-of-teams)):
 
 1. Without the family rule, **keeping distinct accounts**: on a provider with several accounts,
    members spread over accounts of their own (the least busy first, ADR-0033). This is a
@@ -104,6 +111,83 @@ again in up to two more steps:
 The team's final decision records `members: same provider family, on accounts of their own` or
 `…, sharing an account`, and its answer's second line says which, and that no other provider
 judged it.
+
+### Workers left out of teams
+
+The operator may keep Workers out of team membership while they still take every other node
+(REQ-TEAM-8):
+the workflow's `teams.excludeWorkers` (operator decision D58, 2026-10-25: while a website is
+unstable, teams run on the other providers, and the site still takes single asks and research).
+Each entry is a Worker id or an account id, as `system roster` lists them, compared for equality
+only ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)):
+
+- **A Worker id** (one a source describes now) leaves out that Worker and its account, counted as
+  [distinct accounts](#distinct-accounts) count one: its siblings, whether a source describes them
+  now or not, and every Worker whose descriptor names the same `account`. An id no source
+  describes now leaves out the Workers its source names as its account's, when one names any.
+- **An account**, written `<group>/<id>`, leaves out every Worker whose descriptor names that
+  account, with each one's account counted the same way. A bare account id does too when only one
+  group has an account by that id; when several do, it is refused (below), since leaving out both
+  providers' `default` account can leave a team one family. A Worker that names no account (a model
+  Worker) is left out by its Worker id only. An entry is read as an account first: one that is an
+  account id never leaves out a Worker that happens to have the same id, described or not, nor
+  that Worker's siblings or account.
+- **Whole accounts.** Each Worker left out takes its account with it, repeated until nothing new
+  is added: a Worker added because it names an account left out takes its own siblings too.
+- **Fail closed, as distinct accounts does.** When a named Worker's source names siblings whose
+  descriptors name different accounts (whether or not the named Worker is described now), or a bare account id names accounts in several groups, what
+  the entry leaves out cannot be told: every member is refused, `config_error`, nothing sent. A
+  Worker a source describes with no `account` and no siblings is an account of its own, as it is
+  for distinct accounts; a login it shares with a Worker of another source is out of reach of
+  either rule, so leave such a login out by the account its other Workers name.
+- **An entry that matches nothing** (no Worker listed now, no account a listed Worker names, no
+  Worker a source names with its account) leaves nothing out, and each member's routing records
+  it in a `workflow.team.unmatched-exclusions` event (at most 16 entries, then a count). It is not
+  refused: a Worker whose source is off for a while is not a typo. `system check` refuses what the
+  schema refuses before a host starts: an option under `teams` it does not know (so a misspelt
+  `excludeWorkers` is not taken for an empty one), a `teams` that is not an object, an
+  `excludeWorkers` that is not a list, an entry with whitespace or over 200 characters, more than
+  64 entries, and an entry listed twice, one line each, bounded.
+
+Every member, the first included, routes to the Workers listed when it routes, less the ones left
+out (and, for a later member, less the accounts the others hold). A Worker described only after
+that is refused too, so nothing the option names reaches a team by appearing late (INV-2). The
+member's `route` decision gives each Worker it left out the reason
+`team T: left out of teams by the operator's teams.excludeWorkers`. Beside the distinct-account
+rule, one reason holds both, and it names the Workers the exclusion refuses (at most 64, then a
+count), so the record tells the rules apart: `…; another member holds this account; or, for W1,
+W2, left out of teams by the operator's teams.excludeWorkers`. A Worker it names is left out (and
+may be on a held account too); any other is refused for the account.
+
+- **Too few families: the team fails, `allowSameFamily` or not** (INV-2). Before routing, every
+  member, whatever its role, counts the provider families of the Workers ready or busy that prove
+  its step's capabilities, with and without the ones left out. When the ones left out are what
+  leaves fewer than the team has members, it fails as `config_error`, nothing sent, before any
+  same-family re-route: `team T needs N provider families, one per member; M is ready outside the
+  operator's teams.excludeWorkers, which leaves K more out of teams (ADR-0027, REQ-TEAM-8); nothing
+  was sent for member mK`. With every Worker listed left out, `team T: the operator's
+  teams.excludeWorkers leaves out every Worker listed now (N), so no member can join …`. So a
+  team never runs on one family because of the operator's exclusion. When a member's admission
+  fails later anyway, its family-shortage line counts against the Workers left out when it was
+  restricted, never a second read of the roster.
+- **`allowSameFamily` never lifts it.** When the roster has too few families without the
+  exclusion, the re-routes lift the family rule, then the distinct-account rule, and keep this
+  one, so a one-family team shares an account before it reaches a Worker left out. The
+  same-family decision names only the rules it lifted.
+- **It decides who joins.** A member already in its own team's conversation in this run keeps it
+  (Model A): its ballot and debate turns, an escalation to another tier of its account, and the
+  run continued or retried after the option changed. When that Worker is left out now, the route
+  decision says so: `session S stays on its Worker: W, which the operator's teams.excludeWorkers
+  leaves out of teams, is kept as team T's own conversation in this run (Model A)`. A member that
+  would resume, on a Worker left out, a session that is not its team's in this run (one another
+  run started) stays on the session's Workers not left out, or, with none, fails as `config_error`,
+  nothing sent. A team that formed before the option changed finishes on its Workers; start it
+  again to form it under the option.
+- **Only team members.** Every other step, a single `ask` or a research step, routes as before.
+- **Shown where the operator looks.** The engine's read-only `teamExclusion()` gives the entries
+  and every Worker they leave out now, with its account's Workers; the
+  [roster](roster.md#one-workers-entry) carries it per Worker (`teams`, `mcp-roster@1.6`), and the
+  Workers page shows an *Excluded from teams* chip on each such Worker's card (T141, T172).
 
 ## Procedure
 

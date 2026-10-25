@@ -4,7 +4,7 @@
  * something needs the operator), or `down` (work cannot run); the report is the worst of them.
  */
 import { statfsSync } from 'node:fs'
-import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources } from '@tsuuanmi/system-libs'
+import { agentToolDenialOf, countUnknownUsage, MAX_UNKNOWN_ENTRIES, nodeVersionProblem, type UnknownUsageSources } from '@tsuuanmi/system-libs'
 
 export type HealthState = 'ok' | 'degraded' | 'down'
 
@@ -66,6 +66,11 @@ export interface HealthSources {
    */
   deliveries?: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; data?: Record<string, unknown> | undefined }>
   /**
+   * The agent Workers' tool denials (`agent-workers.tool.denied` events, T207): a page of them since
+   * a time, in `seq` order, after `afterSeq`, at most `limit`, each with when it was appended.
+   */
+  denials?: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; at: string; data?: Record<string, unknown> | undefined }>
+  /**
    * The board tasks whose review is held for the operator (`operator-review`), each with when the
    * hold expires unseen (T99 D6); `more` when the board held more than were read.
    */
@@ -121,6 +126,50 @@ const span = (seconds: number): string => {
 }
 
 const ok = (name: string, detail: string): HealthCheck => ({ name, state: 'ok', detail })
+
+/** `agent-workers.tool.denied` entries the `tool-denials` check reads at most (INV-9): past it, it says so. */
+export const MAX_DENIALS = 10_000
+
+/** The tool denials of one UTC day and one Worker kind, counted by reason code. */
+export interface DenialCount { day: string; workerKind: string; total: number; reasons: Record<string, number> }
+
+/** A value an event names, as a count's key: a short word, else `unrecorded` (an event from before T207, or a value that is no code). */
+const keyOf = (value: unknown): string => (typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,99}$/.test(value) ? value : 'unrecorded')
+
+/** The tool denials counted ({@link countDenials}), and the entries apart that are no valid denial. */
+export interface DenialTally {
+  counts: DenialCount[]
+  /** Entries whose data is not a valid `agent-tool-event@1` denial (T211): counted here, never by reason. */
+  invalid: number
+}
+
+/**
+ * The tool denials counted by reason code per Worker kind per UTC day (T207), from
+ * `agent-workers.tool.denied` entries: the day of each entry's `at`, its `workerKind` (the
+ * Worker's runtime), and its `reason` code; an entry without one (appended before denials carried
+ * it) counts as `unrecorded`. Ordered by day, then Worker kind. Each entry's data is validated
+ * against its contract (`agent-tool-event@1`'s `denied`, T211): one that is not valid is counted
+ * apart (`invalid`), never by reason, so an unknown code or an unbounded field is not read as a cause.
+ */
+export function countDenials(entries: ReadonlyArray<{ at: string; data?: Record<string, unknown> | undefined }>): DenialTally {
+  const counts = new Map<string, DenialCount>()
+  let invalid = 0
+  for (const { at, data } of entries) {
+    if (!agentToolDenialOf(data)) {
+      invalid += 1
+      continue
+    }
+    const day = /^\d{4}-\d{2}-\d{2}/.exec(at)?.[0] ?? 'unrecorded'
+    const workerKind = keyOf(data?.workerKind)
+    const reason = keyOf(data?.reason)
+    const key = `${day}\0${workerKind}`
+    const count = counts.get(key) ?? { day, workerKind, total: 0, reasons: {} }
+    count.total += 1
+    count.reasons[reason] = (count.reasons[reason] ?? 0) + 1
+    counts.set(key, count)
+  }
+  return { counts: [...counts.values()].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.workerKind < b.workerKind ? -1 : a.workerKind > b.workerKind ? 1 : 0)), invalid }
+}
 
 /** Items a check's detail names from one list at most, and the characters of each; the rest are counted (INV-9). */
 export const NAMED_ITEMS = 20
@@ -334,8 +383,13 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const count = await countUnknownUsage(unknownUsage, (sources.now ?? Date.now)())
       if (!count.pools.length) return ok('usage', 'no resource pool is configured')
       const open: string[] = []
-      for (const { pool, seconds, runs, kinds } of count.pools.slice(0, NAMED_ITEMS)) {
-        if (runs) open.push(`${pool}: ${runs} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${Object.entries(kinds).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(', ')})`)
+      for (const { pool, seconds, runs, kinds, named } of count.pools.slice(0, NAMED_ITEMS)) {
+        if (!runs) continue
+        // Which runs, and why, in their source's own words: the latest first, the rest counted.
+        const which = named.map((r) => clip(`${r.runId}${r.worker ? ` on ${r.worker}` : ''} (${r.kind}${r.lowerBound ? ', a lower bound counted' : ''}): ${r.reason}`, ITEM_CHARS))
+        const more = runs - named.length
+        open.push(`${pool}: ${runs} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${Object.entries(kinds).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(', ')})`
+          + `${which.length ? ` — ${which.join(' | ')}${more > 0 ? ` | and ${more} more` : ''}` : ''}`)
       }
       if (count.pools.length > NAMED_ITEMS) open.push(`and ${count.pools.length - NAMED_ITEMS} more pool(s) not named here (system usage)`)
       if (count.unconfigured.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${listOf(count.unconfigured.map((u) => `${u.pool} ${u.runs}`))}), so no window counts them`)
@@ -343,7 +397,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       if (unreadable) open.push(`${unreadable} usage.unknown entr${unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record, so no pool counts ${unreadable === 1 ? 'it' : 'them'}`)
       if (count.unread) open.push(`more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here`)
       return open.length
-        ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
+        ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap of such a run's task or project in its pool is refused until the ledger counts a record of it, never counting it as 0: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
         : ok('usage', 'the ledger counted the usage of every run in each pool\'s current window')
     }))
   }
@@ -397,6 +451,35 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
     } catch (error) {
       checks.push({ name: 'notifications', state: 'down', detail: `the check failed: ${(error as Error).message.slice(0, 160)}` })
     }
+  }
+
+  // A notice, not an alarm (T207): the agent Workers' tool calls their gates denied recently, counted
+  // by reason code per Worker kind per day, so a cause that repeats is seen and its rule or brief fixed.
+  const denials = sources.denials
+  if (denials) {
+    checks.push(await guarded('tool-denials', () => {
+      const since = new Date((sources.now ?? Date.now)() - sources.driftWindowMs).toISOString()
+      const entries: ReturnType<typeof denials> = []
+      let unread = false
+      for (let afterSeq = 0; ;) {
+        const limit = Math.min(DELIVERIES_PAGE, MAX_DENIALS + 1 - entries.length)
+        const page = denials({ since, afterSeq, limit })
+        entries.push(...page)
+        if (entries.length > MAX_DENIALS) {
+          unread = true
+          entries.length = MAX_DENIALS
+          break
+        }
+        if (page.length < limit) break
+        afterSeq = page.at(-1)!.seq
+      }
+      if (!entries.length) return ok('tool-denials', `no tool call was denied in the last ${span(Math.round(sources.driftWindowMs / 1000))}`)
+      const tally = countDenials(entries)
+      const counted = tally.counts.map((c) => `${c.day} ${c.workerKind}: ${c.total} (${Object.entries(c.reasons)
+        .sort(([a, m], [b, n]) => n - m || (a < b ? -1 : a > b ? 1 : 0)).map(([reason, n]) => `${n} ${reason}`).join(', ')})`)
+      const apart = tally.invalid ? `${counted.length ? '; ' : ''}${tally.invalid} entry(ies) not a valid denial (agent-tool-event@1), not counted by reason` : ''
+      return ok('tool-denials', `${unread ? `more than ${MAX_DENIALS}` : entries.length} tool call(s) denied in the last ${span(Math.round(sources.driftWindowMs / 1000))}, by day, Worker kind, and reason: ${listOf(counted, '; ')}${apart}${unread ? ` (only the first ${MAX_DENIALS} were read)` : ''}. Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)`)
+    }))
   }
 
   const undeleted = sources.undeleted

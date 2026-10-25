@@ -42,8 +42,11 @@ export type Boot = (source: (ctx: Context) => WorkerSource, config: Config) => P
 /** A start as the scripted Worker reads it: its brief rendered to the prompt a text-prompted source sends. */
 export type Rendered = WorkerStart & { prompt: string }
 
-/** A scripted execution's outcome: an answer, a failure (sent or not), or `hold` until {@link ScriptedWorkers.release}. */
-export type Reply = { text: string } | { fail: string; disposition: string; sent: boolean } | 'hold'
+/**
+ * A scripted execution's outcome: an answer, a failure (sent or not; since 1.8 `siteError`, the site
+ * answered the sent input with its own error), or `hold` until {@link ScriptedWorkers.release}.
+ */
+export type Reply = { text: string } | { fail: string; disposition: string; sent: boolean; siteError?: true } | 'hold'
 
 const PROVES = ['reason', 'develop']
 /** One Worker per tier, each proving `reason` and `develop`, none `deep-research`. */
@@ -59,8 +62,13 @@ export const WORKERS: readonly CapabilityDescriptor[] = [
  * idempotent by key, and every new execution is recorded in {@link started}.
  */
 export class ScriptedWorkers {
-  /** Every execution started, in order, with the prompt its brief renders to (what the Worker reads); a repeated key starts none. */
-  readonly started: Array<Rendered & { id: string }> = []
+  /**
+   * Every execution started, in order, with the prompt its brief renders to (what the Worker reads)
+   * and, on a session, the native conversation it ran in; a repeated key starts none.
+   */
+  readonly started: Array<Rendered & { id: string; conversation?: string }> = []
+  /** Since 1.8: the sessions whose native conversation was reset (`WorkerSource.reset`), in order. */
+  readonly resets: string[] = []
   /** Workers beside {@link WORKERS} that this scenario's runtime offers (described on every route). */
   extra: CapabilityDescriptor[] = []
   /**
@@ -72,7 +80,7 @@ export class ScriptedWorkers {
   accounts: string[][] = []
   /** Since 1.6: the sessions this runtime says take no input now, with why (`WorkerSource.held`); others are free. */
   readonly heldSessions = new Map<string, string>()
-  private readonly sessions = new Map<string, { worker: string; handle?: string }>()
+  private readonly sessions = new Map<string, { worker: string; handle?: string; conversations: number }>()
   /** Executions cancelled while they ran. */
   readonly cancelled: string[] = []
   /** How a new execution ends; by default it answers at once. */
@@ -114,6 +122,15 @@ export class ScriptedWorkers {
         return session ? [session.worker] : undefined
       },
       handle: (sessionId) => this.sessions.get(sessionId)?.handle,
+      // The session stays on its Worker; its next execution opens a new native conversation.
+      reset: (sessionId) => {
+        const session = this.sessions.get(sessionId)
+        if (!session) return false
+        delete session.handle
+        session.conversations += 1
+        this.resets.push(sessionId)
+        return true
+      },
       siblings: (worker) => this.accounts.find((account) => account.includes(worker)),
       held: async (sessionId) => this.heldSessions.get(sessionId),
     }
@@ -161,14 +178,14 @@ export class ScriptedWorkers {
     const worktree = this.worktreePerRun && start.runId ? this.place(start, this.worktreePerRun) : undefined
     // Rendered as a text-prompted source renders a brief, its pointers resolved at start.
     const request: Rendered = { ...start, prompt: startPrompt(start, (ref) => this.ctx!.artifacts.get(ref), { placesFiles: !!worktree }).prompt }
-    if (start.sessionId && !this.sessions.has(start.sessionId)) this.sessions.set(start.sessionId, { worker: start.worker })
+    if (start.sessionId && !this.sessions.has(start.sessionId)) this.sessions.set(start.sessionId, { worker: start.worker, conversations: 1 })
     const session = start.sessionId ? this.sessions.get(start.sessionId)! : undefined
-    if (session && this.keepsHandles) session.handle ??= `native-${start.sessionId}`
+    if (session && this.keepsHandles) session.handle ??= `native-${start.sessionId}${session.conversations > 1 ? `-${session.conversations}` : ''}`
     const id = `x-${this.started.length + 1}`
     if (worktree) this.worktreeOf.set(id, worktree)
     this.keys.set(start.key, id)
     this.requests.set(id, request)
-    this.started.push({ ...request, id })
+    this.started.push({ ...request, id, ...(session?.handle ? { conversation: session.handle } : {}) })
     this.executions.set(id, { id, status: 'running', submitted: true, decisions: [] })
     const reply = this.reply(request)
     if (reply !== 'hold') this.finish(id, reply)
@@ -212,7 +229,7 @@ export class ScriptedWorkers {
     } else {
       execution.status = 'failed'
       execution.submitted = reply.sent
-      execution.error = { kind: reply.fail, disposition: reply.disposition, message: `scripted ${reply.fail}` }
+      execution.error = { kind: reply.fail, disposition: reply.disposition, message: `scripted ${reply.fail}`, ...(reply.siteError ? { siteError: true as const } : {}) }
     }
     for (const wake of this.waiters.get(id) ?? []) wake()
     this.waiters.delete(id)
@@ -340,7 +357,7 @@ const valid = (record: NodeRecord): NodeRecord => {
 
 type Decision = {
   decisionType: string; inputs: string[]; outcome: { option: string; detail?: Record<string, unknown> }
-  decider: { type: string; id: string }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>
+  decider: { type: string; id: string; version?: string }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>
 }
 const decisionOf = (ctx: Context, ref: string | undefined): Decision => {
   expect(ref, 'a decision is named').toBeDefined()
@@ -459,8 +476,19 @@ export const workflowSuite = defineSuite<Boot>({
   // session its Worker source holds (`held`: blocked on an approval, or its latest run not finished
   // or not known to be gone), and starts fresh, saying why (ADR-0056). 1.7: `usage` lists runs by state,
   // whenever they started, and by when their state changed, the latest changed first; a start bound to
-  // the revision of its task the caller read is refused once the task moved (T127).
-  contract: '1.7',
+  // the revision of its task the caller read is refused once the task moved (T127). 1.8: a team
+  // member's first step that the site answered with its own error after the send (an execution's
+  // optional `error.siteError`) is resent once, in a new conversation of its session (`reset`), as a
+  // recovery decision `resend`; nothing else sent is ever started again (D60, ADR-0062). 1.9: the dispatch
+  // pass (ADR-0064): a ready task of an active project is asked about once on a free Worker chosen by
+  // quota, adopted across passes and restarts, and started on the operator's approval exactly as asked;
+  // `dispatch.enabled: false` starts nothing; `sweepDispatch`, `dispatchStatus`, `pauseDispatch`, and
+  // `resumeDispatch` on the seam. Since 1.9 the context's approval queue gives `dispatch` its default, ask.
+  // 1.10 (PROP-0014 D2): a task's run says who started it (`task.startedBy`: `dispatch`, `lead`, or
+  // `operator`, which a start may say it is); under a policy that gives dispatch `auto` or `notify` the
+  // pass starts the chosen attempt with nothing asked; dispatch is bounded per rolling hour
+  // (`maxPerHour`, `maxPerHourPerProject`) and paused per project (`pauseDispatch(reason, projectId)`).
+  contract: '1.10',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1270,5 +1298,178 @@ export const workflowSuite = defineSuite<Boot>({
       expect(ctx.workflow.usage(50, { status: [] })).toEqual([])
       expect(() => ctx.workflow.usage(5, { changedSince: 'yesterday' })).toThrow()
     }, {}, '1.7'),
+
+    scenario('site-error-resend', 'resends a team member\'s first step once, in a new conversation of its session on the same Worker, when the site answered the sent prompt with its own error, as a recovery decision resend naming the failed execution and the new one\'s key; a second site error fails it for the operator, never resent twice (D60, ADR-0062, INV-4, INV-9, INV-13)', async ({ ctx, workers }) => {
+      workers.extra = [MEMBER('w:a', 'family-a'), MEMBER('w:b', 'family-b')]
+      let m1 = 0
+      workers.reply = (request) => (request.key.includes(':team:m1:propose:') && m1++ === 0 ? SITE_ERROR : 'hold')
+      const run = start(ctx, 'team', 'q')
+      await until(() => proposals(workers, 'm1').length === 2 && proposals(workers, 'm2').length === 1, 'm1 resent, m2 started')
+      const [failed, resent] = proposals(workers, 'm1')
+      // The member stays: its session and Worker; only the conversation is new.
+      expect(resent!.sessionId).toBe(failed!.sessionId)
+      expect(resent!.worker).toBe(failed!.worker)
+      expect(resent!.conversation).toBeDefined()
+      expect(resent!.conversation).not.toBe(failed!.conversation)
+      expect(workers.resets).toEqual([failed!.sessionId])
+      expect(proposals(workers, 'm2')).toHaveLength(1)
+      const [decision] = decisionsOf(ctx, run.runId, 'recovery', 'team:m1:propose').filter((d) => d.outcome.option === 'resend')
+      expect(decision).toBeDefined()
+      expect(decision!.outcome.detail).toMatchObject({ failed: { execution: failed!.id }, next: { key: resent!.key, conversation: 'new' }, sessionId: failed!.sessionId })
+      expect(decision!.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
+      schemas.assertRecord(decision as Decision & { schema: string })
+      // The site errs again: never twice.
+      workers.release(resent!.id, SITE_ERROR)
+      await until(() => nodeOf(ctx, run.runId, 'team:m1:propose')?.state === 'FAILED', 'm1 failed')
+      expect(nodeOf(ctx, run.runId, 'team:m1:propose')!.error).toMatchObject({ kind: 'overloaded', disposition: 'USER_ACTION' })
+      const last = decisionsOf(ctx, run.runId, 'recovery', 'team:m1:propose').find((d) => d.outcome.option === 'fail')
+      expect(last?.candidates.find((c) => c.option === 'resend')?.reasons.join(' ')).toMatch(/never twice/)
+      // A failure that weighed a resend is decided under the resend's rule version (INV-13).
+      expect(last?.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
+      await pause(200)
+      expect(proposals(workers, 'm1')).toHaveLength(2)
+      expect(workers.resets).toHaveLength(1)
+    }, {}, '1.8'),
+
+    scenario('site-error-not-resent', 'never resends, after a site\'s own error, a step that is not a team member\'s first step: a plain step or a writing one fails for the operator, its recovery decision saying why not (D60, ADR-0062, INV-4)', async ({ ctx, workers }) => {
+      workers.reply = () => SITE_ERROR
+      for (const template of ['solo', 'writer']) {
+        const before = workers.started.length
+        const done = await settled(ctx, start(ctx, template, 'q').runId)
+        const node = done.nodes[0]!
+        expect(node).toMatchObject({ state: 'FAILED', error: { kind: 'overloaded', disposition: 'USER_ACTION' } })
+        expect(workers.started.length - before).toBe(1)
+        const [decision] = decisionsOf(ctx, done.runId, 'recovery', node.nodeId)
+        expect(decision!.outcome.option).toBe('fail')
+        expect(decision!.candidates.find((c) => c.option === 'resend')?.reasons.join(' ')).toMatch(/not a team member's step/)
+        expect(decision!.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
+      }
+      // A sent failure the site did not mark is decided as before, under rule version 1.
+      workers.reply = () => ({ fail: 'overloaded', disposition: 'BACKOFF', sent: true })
+      const plain = await settled(ctx, start(ctx, 'solo', 'q').runId)
+      const [before] = decisionsOf(ctx, plain.runId, 'recovery', plain.nodes[0]!.nodeId)
+      expect(before!.candidates.map((c) => c.option)).not.toContain('resend')
+      expect(before!.decider).toMatchObject({ id: 'workflow.recovery', version: '1' })
+      expect(workers.resets).toEqual([])
+    }, { templates: { writer: [step('write', { capabilities: ['reason', 'develop'] })] } }, '1.8'),
+
+    scenario('site-error-not-retryable', 'never resends, after a site\'s own error, a team member\'s first step whose failure is not retryable: it fails as before, its recovery decision saying why not (D60, ADR-0062, INV-4)', async ({ ctx, workers }) => {
+      workers.extra = [MEMBER('w:a', 'family-a'), MEMBER('w:b', 'family-b')]
+      workers.reply = (request) => (request.key.includes(':team:m1:propose:') ? { fail: 'challenge', disposition: 'USER_ACTION', sent: true, siteError: true } : 'hold')
+      const run = start(ctx, 'team', 'q')
+      await until(() => nodeOf(ctx, run.runId, 'team:m1:propose')?.state === 'FAILED', 'm1 failed')
+      expect(nodeOf(ctx, run.runId, 'team:m1:propose')!.error).toMatchObject({ kind: 'challenge', disposition: 'USER_ACTION' })
+      const [decision] = decisionsOf(ctx, run.runId, 'recovery', 'team:m1:propose')
+      expect(decision!.outcome.option).toBe('fail')
+      expect(decision!.candidates.find((c) => c.option === 'resend')?.reasons.join(' ')).toMatch(/challenge is USER_ACTION, not retryable/)
+      expect(decision!.decider).toMatchObject({ id: 'workflow.recovery', version: '2' })
+      await pause(200)
+      expect(proposals(workers, 'm1')).toHaveLength(1)
+      expect(workers.resets).toEqual([])
+    }, {}, '1.8'),
+
+    scenario('site-error-resend-restart', 'resends once after a restart a team member\'s first step whose site error arrived while the engine was down, and fails it, never resent again, when the site errs once more across another restart (D60, ADR-0062, INV-4)', async (h) => {
+      h.workers.extra = [MEMBER('w:a', 'family-a'), MEMBER('w:b', 'family-b')]
+      h.workers.reply = () => 'hold'
+      const run = start(h.ctx, 'team', 'q')
+      await until(() => proposals(h.workers, 'm1').length === 1 && proposals(h.workers, 'm2').length === 1, 'both members running')
+      // While the engine is down, m1's site errs and m2 proposes (its turn ends, so the run loop goes on).
+      await h.restart(() => {
+        h.workers.release(proposals(h.workers, 'm1')[0]!.id, SITE_ERROR)
+        h.workers.release(proposals(h.workers, 'm2')[0]!.id, { text: `My proposal.\n${JSON.stringify({ recommendation: 'option of m2', rationale: 'it fits', risks: [] })}` })
+      })
+      await until(() => proposals(h.workers, 'm1').length === 2, 'm1 resent after the restart')
+      const [failed, resent] = proposals(h.workers, 'm1')
+      expect(resent!.conversation).not.toBe(failed!.conversation)
+      expect(decisionsOf(h.ctx, run.runId, 'recovery', 'team:m1:propose').filter((d) => d.outcome.option === 'resend')).toHaveLength(1)
+      await h.restart(() => h.workers.release(resent!.id, SITE_ERROR))
+      await until(() => nodeOf(h.ctx, run.runId, 'team:m1:propose')?.state === 'FAILED', 'm1 failed')
+      await pause(200)
+      expect(proposals(h.workers, 'm1')).toHaveLength(2)
+      expect(h.workers.resets).toHaveLength(1)
+    }, {}, '1.8'),
+
+    scenario('dispatch-asks-once-and-starts-the-approved-worker', 'asks once to start a ready task of an active project on a free Worker chosen by quota, a pass repeated or restarted adopting its ask, and on the operator\'s approval starts exactly that attempt with its step on exactly that Worker, its admission naming why (ADR-0064, INV-4, INV-5, INV-13)', async (h) => {
+      h.workers.reply = () => 'hold'
+      await activeProject(h.ctx)
+      // One Worker on the account the ledger has a pool for, idle, its window read just now.
+      h.workers.extra = [DISPATCHABLE]
+      await poolRead(h.ctx)
+      const task = await readyTask(h.ctx, 'dispatched', { template: 'solo' })
+      await h.ctx.workflow.sweepDispatch()
+      const ask = h.ctx.workflow.dispatchStatus().asks.find((a) => a.taskId === task.taskId)
+      expect(ask).toMatchObject({ state: 'asked', worker: 'w:max', attempt: 1 })
+      const asked = async () => (await h.ctx.approvals.list({ states: ['open', 'batched', 'approved'] })).filter((r) => r.action.class === 'dispatch')
+      expect(await asked()).toHaveLength(1)
+      // A repeated pass, and a restarted engine's first pass, ask nothing new.
+      await h.ctx.workflow.sweepDispatch()
+      await h.restart()
+      await h.ctx.workflow.sweepDispatch()
+      const [request] = await asked()
+      expect(await asked()).toHaveLength(1)
+      expect(request).toMatchObject({ requestId: ask!.requestId, subject: { type: 'content', ref: `dispatch:${task.taskId}:attempt:0` }, requester: { component: 'workflow', taskId: task.taskId } })
+      const [verdict] = await h.ctx.approvals.decide([{ requestId: request!.requestId, subject: request!.subject, verdict: 'approved' }])
+      expect(verdict?.refused).toBeUndefined()
+      await h.ctx.workflow.sweepDispatch()
+      await until(() => h.workers.started.length === 1, 'the dispatched run\'s step started')
+      expect(h.workers.started[0]!.worker).toBe('w:max')
+      const runId = (await h.ctx.board.task(task.taskId))!.run!.runId
+      expect(h.workers.started[0]!.runId).toBe(runId)
+      const admission = decisionsOf(h.ctx, runId, 'admission').find((d) => d.decider.id === 'workflow.task-admission')!
+      expect(admission.inputs).toEqual(expect.arrayContaining(ask!.decisions))
+      expect(decisionOf(h.ctx, ask!.decisions[1])).toMatchObject({ decisionType: 'route', decider: { id: 'dispatch.choice' }, outcome: { option: 'w:max' } })
+      expect(h.ctx.workflow.dispatchStatus().asks).toEqual([])
+    }, {}, '1.9'),
+
+    scenario('dispatch-off-starts-nothing', 'asks for and starts nothing with dispatch.enabled false, whatever is ready and free (ADR-0064)', async (h) => {
+      await activeProject(h.ctx)
+      h.workers.extra = [DISPATCHABLE]
+      await poolRead(h.ctx)
+      await readyTask(h.ctx, 'not dispatched', { template: 'solo' })
+      expect(await h.ctx.workflow.sweepDispatch()).toMatchObject({ state: 'off', took: [] })
+      expect((await h.ctx.approvals.list()).filter((r) => r.action.class === 'dispatch')).toEqual([])
+      expect(h.workers.started).toEqual([])
+    }, { dispatch: { enabled: false } }, '1.9'),
+
+    scenario('task-run-says-who-started-it', 'says on a board task\'s run who started it: the lead by default, the operator when its start says so, and a pause of one project\'s dispatch starts and asks nothing there (PROP-0014 D2)', async (h) => {
+      h.workers.reply = () => 'hold'
+      await activeProject(h.ctx)
+      const lead = await readyTask(h.ctx, 'by the lead', { template: 'solo' })
+      const operator = await readyTask(h.ctx, 'by the operator', { template: 'solo' })
+      const byLead = await h.ctx.workflow.start({ template: 'solo', input: 'go', task: { taskId: lead.taskId } })
+      const byOperator = await h.ctx.workflow.start({ template: 'solo', input: 'go', task: { taskId: operator.taskId }, startedBy: 'operator' })
+      expect(byLead.task?.startedBy).toBe('lead')
+      expect(byOperator.task?.startedBy).toBe('operator')
+      await h.restart()
+      expect(h.ctx.workflow.get(byOperator.runId)?.task?.startedBy).toBe('operator')
+      // One project's pause: its ready task is neither asked about nor started by dispatch.
+      h.workers.extra = [DISPATCHABLE]
+      await poolRead(h.ctx)
+      const held = await readyTask(h.ctx, 'held by a pause', { template: 'solo' })
+      const paused = h.ctx.workflow.pauseDispatch('not now', held.projectId)
+      expect(paused.pausedProjects).toEqual([expect.objectContaining({ projectId: held.projectId, reason: 'not now' })])
+      const pass = await h.ctx.workflow.sweepDispatch()
+      expect(pass.took).toEqual([])
+      expect(pass.tasks.find((t) => t.taskId === held.taskId)?.reason).toMatch(new RegExp(`^you paused dispatch in project ${held.projectId}`))
+      expect((await h.ctx.approvals.list()).filter((r) => r.action.class === 'dispatch')).toEqual([])
+      expect(h.ctx.workflow.resumeDispatch(held.projectId).pausedProjects).toEqual([])
+    }, {}, '1.10'),
   ],
 })
+
+/** Since 1.9: a Worker on the account of the ledger's pool {@link POOLS} names, idle, which dispatch may choose once its window reads ok. */
+const DISPATCHABLE: CapabilityDescriptor = worker('w:max', {
+  schema: 'capability-descriptor@1.5', tier: 'standard', quotaClass: 'agent-plan', proves: ['reason', 'develop'],
+  account: { id: 'max', group: 'g', mode: 'assigned' }, load: { running: 0, queued: 0, pending: 0, slots: 1 },
+})
+
+/** Since 1.9: the pool {@link POOLS} configures reads 0 % used now, so its account's Worker is free by its quota. */
+async function poolRead(ctx: Context): Promise<void> {
+  await ctx.resources.observe({ schema: 'limit-state@1.0', pool: 'max.programmatic', account: 'max', window: { id: 'monthly', kind: 'credit' }, state: 'ok', usedPercentage: 0, source: 'runtime-result', observedAt: new Date().toISOString() })
+}
+
+/** Since 1.8: the site answered the sent input with its own error in place of an answer (ADR-0062). */
+const SITE_ERROR = { fail: 'overloaded', disposition: 'BACKOFF', sent: true, siteError: true } as const
+
+/** The executions of a team member's first step (`team:<member>:propose`), in order. */
+const proposals = (workers: ScriptedWorkers, member: string): ScriptedWorkers['started'] => workers.started.filter((s) => s.key.includes(`:team:${member}:propose:`))

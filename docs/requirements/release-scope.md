@@ -149,7 +149,7 @@ Messages gateways, the operator Web UI, and packaged installers.
 Adds, as plugins:
 
 - **Orchestration:** the full `workflow` engine, `worker-sessions`, and
-  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1, 2, 4..7,
+  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1, 2, 4..8,
   REQ-SES-1..8). A team is the `team` option of a workflow node, which the
   engine unrolls; its members are durable sessions that propose, vote, and
   debate on prompts the engine composes ([teams](../design/teams.md)).
@@ -201,8 +201,10 @@ Claude Code Workers under the operator's Claude Max plan.
 
 The default composition keeps some rows off ([turn an off row back
 on](../operations/runbooks.md#turn-an-off-row-back-on)). The Base pilot (exit criterion 3) needs
-exactly one of them: **`profile-software-development`**, which contributes the
-`algorithm-development` template (and `agent-review`). The operator turns it on in the profile
+one of them: **`profile-software-development`**, which contributes the
+`algorithm-development` template (and `agent-review`). A pilot that validates or reviews on Codex
+Workers, as the `system` project's does ([pilot](../operations/pilot.md)), also turns on
+`runtime-codex-sdk` ([Codex Workers](../operations/runbooks.md#codex-workers)). The operator turns it on in the profile
 patch (`- id: profile-software-development`, `disabled: false`), with the Workers, the pool, and
 the policy the [pilot runbook](../operations/pilot.md#name-the-repository-and-the-workers) names;
 the checks of the [release checklist](../validation/release-checklist.md) marked *only with
@@ -221,7 +223,8 @@ the pilot and the live checks; the live install also puts its Claude Code Worker
 ### Not in Base
 
 Deep Research, which is future work; new work on website Workers and on API or local model
-Workers, which follows Base; Codex and ACP Workers; decision-assisted routing (PROP-0002); the
+Workers, which follows Base; Codex and ACP Workers (beyond Codex validating and reviewing in the
+pilot, exit criterion 3); decision-assisted routing (PROP-0002); the
 knowledge family; RTK, Serena, context-mode; automated shadow and canary runs.
 
 ### Base exit criteria
@@ -232,8 +235,10 @@ knowledge family; RTK, Serena, context-mode; automated shadow and canary runs.
 2. **Crash.** Killing the host at every reconcile point, including board transitions, approval
    verdicts, and the start of an agent run, produces no duplicate effect.
 3. **Pilot.** One algorithm-development project chosen by the operator runs from charter to
-   close over at least five working days, through at least one restart, on Claude Code Workers
-   only. The board shows progress without reading a transcript.
+   close over at least five working days, through at least one restart. Claude Code Workers write
+   every change; other agent Workers (Codex) may validate and review. The board shows progress
+   without reading a transcript. (Amended on 2026-10-25, operator decision D69: before, "on Claude
+   Code Workers only".)
 4. **Attention.** Every approval goes through the queue, in batches, and interruptions stay
    under the threshold set in the charter.
 5. **Resources.** Every run has a usage record taken from the runtime's own usage fields. The
