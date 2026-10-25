@@ -516,6 +516,19 @@ second execution path (INV-1).
     own bound. A retryable failure after sending fails the node as
     `USER_ACTION`, so the engine never causes a duplicate provider turn
     (INV-4).
+  - **A site's own error after the send (D60, ADR-0062,
+    [design](../../../docs/design/workflow-engine.md#a-team-members-first-step-after-a-sites-own-error)).**
+    The one exception: a team member's `propose` step whose sent execution
+    failed with `error.siteError` (its source read the site's own error in
+    place of an answer) runs once more, in a new conversation of its session
+    (`ctx.workers.reset`), the same member on the same Worker, as its next
+    attempt after the back-off. Only when it proves no `develop`, grows no plan,
+    has a session, has an attempt left, and no `resend` of the node is on record
+    (never twice). The `recovery` decision `resend` (`decision@1.9`, rule
+    version 2) names the failed execution and the new attempt's key, recorded in
+    the transaction that resets the session and readies the node; the event is
+    `workflow.node.resent`. Otherwise the node fails as above, its `fail`
+    decision carrying a `resend` candidate saying why not.
   - **Failover (ADR-0034).** An unsent `quota_exhausted`, `challenge`,
     `reauth_required`, or `overloaded` instead routes the node again with the
     failed Worker left out (`excluded` on the node row, the router's `excluded`
@@ -534,9 +547,9 @@ second execution path (INV-1).
     takes the node (`assignment` on the row, `RouteOptions.assignment` on every
     later route); an unsent overload there is retried, never failed over.
     `continue` clears both. The view shows a waiting node's `waitingUntil`.
-  - Each choice is a `recovery` decision (`retry`, `failover`, `wait`, or
-    `fail`). It becomes the node's `lastDecision`, and the `retry` (with
-    `failoverFrom`), `waiting`, or `failed` event names it.
+  - Each choice is a `recovery` decision (`retry`, `failover`, `wait`, `resend`,
+    or `fail`). It becomes the node's `lastDecision`, and the `retry` (with
+    `failoverFrom`), `waiting`, `resent`, or `failed` event names it.
 - **Ownership and restart (REQ-WF-4).**
   - A run advances under a `run:<id>` lease, and every node write is fenced.
   - A lost lease (a host that slept past it, or a takeover) re-arms the run,
@@ -656,7 +669,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.7 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.8 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board, approval queue, and resource ledger among them), with only Worker execution
   scripted:
@@ -696,6 +709,12 @@ second execution path (INV-1).
     changed, the latest changed first, at most the limit asked; and a start bound to the revision
     of its task the caller read (`task.revision`) is refused before anything is written once the
     task moved, so the run's input and every brief come from one reading of it;
+  - since 1.8 ([ADR-0062](../../../docs/decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)),
+    a team member's first step that the site answered with its own error after the send
+    (`error.siteError`) is resent once, in a new conversation of its session on the same Worker, a
+    `resend` decision naming the failed execution and the new one's key, also when the error
+    arrived while the engine was down; a second such error fails it, never resent twice; a plain
+    or a writing step after such an error fails, its decision saying why not;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

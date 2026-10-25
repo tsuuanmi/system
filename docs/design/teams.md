@@ -42,7 +42,13 @@ without changing identity.
   review-member profile whose runtime cannot resume, for a review member's steps only, an exact
   replay of its earlier turns, recorded with its answer, [agent runtimes](agent-runtimes.md#review-members)).
   A member whose conversation can be neither resumed nor replayed whole fails its step unsent; it
-  is never given a fresh conversation for a continuation.
+  is never given a fresh conversation for a continuation. The one new conversation a member may get
+  is for its first step (`propose`), whose prompt is the whole request and material: when the site
+  answered it with its own error after the send, it is resent once there, the same member on the
+  same Worker, recorded as a `recovery` decision `resend` (operator decision D60,
+  [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md),
+  [workflow engine](workflow-engine.md#a-team-members-first-step-after-a-sites-own-error)). A
+  ballot or debate that meets such an error fails for the operator.
   A later step, an escalated one too, stays in that conversation through session affinity,
   which admits any tier of the same account (a model Worker's session: a higher tier of its
   family); it never joins again. So a member's rejected answer escalates only when one of its

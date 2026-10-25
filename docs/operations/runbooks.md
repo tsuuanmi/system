@@ -820,21 +820,32 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
     bound ([a provider UI change](playbooks.md#a-provider-ui-change)).
 - **The site's own error** (`overloaded`: `the site answered with its own error instead of an
   answer ("Sorry, something went wrong. Please try your request again."); the prompt was sent, so
-  it is not resent`). The site took the prompt and answered with an error of its own, so `system`
-  never sends it again on its own (INV-4), and the run fails `USER_ACTION`. When it was seen live,
-  nothing came later to be read: on 2026-10-24 (Gemini, within 6 s of the conversation getting its
-  id) the conversation, reopened 30 minutes later, showed an empty new chat, neither the prompt nor
-  the error. The site's own way to retry (its Redo, or trying again as it asks) sends the prompt
-  again.
+  it is not resent`). The site took the prompt and answered with an error of its own. When it was
+  seen live, nothing came later to be read: on 2026-10-24 (Gemini, within 6 s of the conversation
+  getting its id) the conversation, reopened 30 minutes later, showed an empty new chat, neither
+  the prompt nor the error. The site's own way to retry (its Redo, or trying again as it asks)
+  sends the prompt again.
+  - **A member's first step is resent once, on its own** (D60,
+    [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)):
+    nothing to do. After the `overloaded` back-off the member's proposal runs again on the same
+    account, in a new conversation, and the team goes on there. `system explain <runId>` shows the
+    `recovery` decision `resend` on the member's `propose` node: why, the failed turn, and the key
+    of the new one; `system events --type workflow.node.resent` lists them. The abandoned
+    conversation is deleted with the member's others when the run is released.
+  - **Anything else fails for you** (`USER_ACTION`): the same step erring a second time (never
+    resent twice), a member's ballot or debate (they rely on their conversation), or any other
+    step. The `recovery` decision's `resend` candidate says why it was not resent. `system` never
+    sends the prompt again on its own (INV-4).
   - Look at what the site kept, sending nothing: `system conversations` names the member's
     conversation (the failed turn's binding), and `system conversation inspect <account>
     <binding>` outlines it. To read an answer it shows, open it in the login profile (`system
     account login <id>`, then Cancel). If it holds a finished answer to the prompt, take it with
     `system supersede <runId> <nodeId> -` (the answer on stdin).
   - If it holds nothing, `continue` cannot help a team member: its conversation has nothing to
-    continue, and a member is never given a fresh one, so its step fails again, unsent
-    (`conversation_lost` when the site sends the page elsewhere). Start the run again. For a one-shot `ask`, `system continue <runId>` sends
-    the prompt again in a new Temporary chat: that resend is your decision.
+    continue, and a member is given a new one only for that one resend of its first step, so its
+    step fails again, unsent (`conversation_lost` when the site sends the page elsewhere). Start
+    the run again. For a one-shot `ask`, `system continue <runId>` sends the prompt again in a new
+    Temporary chat: that resend is your decision.
 - **The page showed neither the account nor a sign-in page** (`ui_drift`: `the app rendered, but
   neither the signed-in account nor a sign-in page showed within 15 s …`, or `the page showed
   neither the app, …`, each `(outlined as a ui.drift of auth.account)`). Nothing was sent. The

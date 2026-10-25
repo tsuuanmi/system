@@ -500,7 +500,9 @@ back-off and retries there, while an account that hit a limit or needs the opera
 by its own state or cooldown, and the node fails with that kind (or, on an assigned account,
 [waits for the limit](#waiting-for-an-accounts-limit)). A node never fails over:
 
-- once its prompt may have been sent: reconciliation and the dispositions above apply (INV-4);
+- once its prompt may have been sent: reconciliation and the dispositions above apply (INV-4),
+  and only a team member's first step after a site's own error is resent, once, in a new
+  conversation ([below](#a-team-members-first-step-after-a-sites-own-error));
 - when its session holds an account: a turn of it was sent, or it has a conversation (a session
   whose turns all failed unsent holds none);
 - as a team member, which joins its team bound to the Worker of its first admission (Model A).
@@ -509,6 +511,43 @@ A bare `ask` outside a run has no recovery and fails as before.
 
 This failover applies to a Worker whose account is `pooled`, or that declares none. For an
 `assigned` account it is narrowed, below.
+
+### A team member's first step after a site's own error
+
+> Decision: [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)
+> (accepted, operator decision D60, 2026-10-25). Contract 1.8 of the `workflow` seam.
+
+A step whose prompt was sent is never started again by the engine, with one exception. A website
+can answer a sent prompt with its own error in place of an answer (live 2026-10-24, Gemini:
+"Sorry, something went wrong. Please try your request again."); the turn fails `overloaded`, its
+execution `submitted`, and its source marks the failure `siteError` (the optional
+`WorkerExecution.error.siteError`, set only by a source that read that error on the execution's
+own page after the send: [provider turns](provider-turns.md#a-sites-own-error-after-the-send)).
+The conversation then holds the prompt and the error and nothing else, and reopening it later can
+show an empty chat, so neither reconciliation nor `continue` can help a team member there
+([teams](teams.md#membership-model-a)).
+
+- **Which step.** Only a team member's first step, its `propose`: its prompt is the whole request
+  and material, so a new conversation loses nothing, and it writes nothing (website and model
+  Workers write nothing; a review member's agent Worker is read-only; a step that proves `develop`
+  or grows a plan never qualifies). A ballot or debate relies on its conversation, and any other
+  step may have done more than answer: they fail for the operator as before (`USER_ACTION`).
+- **Once.** At most one resend per node, ever: a node with a `resend` decision on record fails on
+  a second site error. It also needs an attempt left (`maxAttempts`); the resend is that attempt.
+- **A new conversation, the same member.** The engine resets the member's session
+  (`ctx.workers.reset`: its native conversation is cleared, its account and Worker kept, so session
+  affinity routes it back to the same Worker), and the node runs again as its next attempt, under
+  that attempt's execution key, after the `overloaded` back-off. The abandoned conversation stays
+  in the [conversation ledger](provider-turns.md#conversation-ledger), owned by the session, and is
+  deleted with it when the run releases it. A source that owns no such session refuses the reset,
+  and the step fails as before (INV-2).
+- **Recorded first** (INV-13). The `recovery` decision (`decision@1.9`, rule `workflow.recovery`
+  version 2) chooses `resend`, its reasons saying why, its `detail` naming the failed execution
+  (the failed turn), the session, and the new attempt and the key its execution starts under (the
+  new turn, in a new conversation). It is recorded in the transaction that resets the session and
+  readies the node, so a restart finds all three or none (INV-4); the event log has
+  `workflow.node.resent`. A site's own error that is not resent fails as before, its `recovery`
+  decision carrying a `resend` candidate that says why not.
 
 ### Waiting for an account's limit
 
