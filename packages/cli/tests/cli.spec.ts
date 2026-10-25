@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatDispatch, formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -90,6 +90,25 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect([healthExit('ok'), healthExit('degraded'), healthExit('down'), healthExit('unknown')]).toEqual([0, 1, 2, 2])
     const down = await hostHealth(async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:47317') })
     expect(down).toMatchObject({ state: 'down', checks: [{ name: 'host', detail: expect.stringContaining('ECONNREFUSED') }] })
+  })
+
+  it('prints dispatch: on, off, or paused with how to resume, the bounds in use, the starts waiting for the operator\'s go, and why each ready task did not start (ADR-0063)', () => {
+    const bounds = { running: { used: 1, max: 8 }, openAsks: { used: 1, max: 4 }, engine: { active: 2, max: 12 } }
+    expect(formatDispatch({
+      enabled: true, bounds,
+      asks: [{ taskId: 'task-1', title: 'Write the notes', attempt: 1, state: 'asked', worker: 'agent:a/develop', requestId: 'apr_1', why: 'tier standard, agent-plan, known, 5 h: used 0 %, headroom 80, load 0 of 1' }],
+      lastPass: { at: '2026-10-25T12:00:00.000Z', state: 'ran', took: [{ taskId: 'task-1', worker: 'agent:a/develop', how: 'asked' }], tasks: [{ taskId: 'task-2', title: 'Fix it', reason: 'no Worker is free for step develop:1 (1 admitted)' }], more: 3 },
+    })).toEqual([
+      'dispatch: on',
+      '  bounds: 1 of 8 dispatched runs and asks, 1 of 4 asks open, 2 of 12 active runs it may fill',
+      '  waiting for your go: "Write the notes" (task task-1, attempt 1) on agent:a/develop, request apr_1: decide it in the queue (system ui, or MCP approvals_decide)',
+      '    why agent:a/develop: tier standard, agent-plan, known, 5 h: used 0 %, headroom 80, load 0 of 1',
+      '  last pass 2026-10-25T12:00:00.000Z: ran; took task-1 on agent:a/develop (asked)',
+      '    task-2 "Fix it": no Worker is free for step develop:1 (1 admitted)',
+      '    and 3 more ready task(s)',
+    ])
+    expect(formatDispatch({ enabled: true, bounds, asks: [], paused: { since: '2026-10-25T12:00:00.000Z', reason: 'quiet', decision: 'sha256:aa' } })[0]).toBe('dispatch: paused since 2026-10-25T12:00:00.000Z: quiet (system dispatch resume; decision sha256:aa)')
+    expect(formatDispatch({ enabled: false, bounds, asks: [] })[0]).toBe('dispatch: off (dispatch.enabled is false): nothing is asked or started by itself')
   })
 
   it('prints the roster from the running profile: its rendering, or with --json the record, and refuses a failed call (REQ-HOST-8)', async () => {

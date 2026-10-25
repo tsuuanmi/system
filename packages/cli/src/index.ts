@@ -693,6 +693,40 @@ export async function hostRoster(json: boolean, call: typeof callTool = callTool
   return outcome.text
 }
 
+/** Dispatch as MCP `dispatch_status`, `dispatch_pause`, and `dispatch_resume` give it (ADR-0063), as much as `system dispatch` prints. */
+export interface DispatchView {
+  enabled: boolean
+  paused?: { since: string; reason?: string; decision: string }
+  lastPass?: { at: string; state: string; reason?: string; took: Array<{ taskId: string; worker: string; how: string }>; tasks: Array<{ taskId: string; title: string; reason: string }>; more: number }
+  bounds: { running: { used: number; max: number }; openAsks: { used: number; max: number }; engine: { active: number; max: number } }
+  asks: Array<{ taskId: string; title: string; attempt: number; state: string; worker: string; requestId?: string; why: string }>
+}
+
+/**
+ * `system dispatch` for a terminal: on, off, or paused (since when, why, how to resume), the bounds in
+ * use, the starts waiting for the operator's go or for their Worker, and the last pass with its reason
+ * for each ready task it looked at.
+ */
+export function formatDispatch(view: DispatchView): string[] {
+  const state = !view.enabled ? 'off (dispatch.enabled is false): nothing is asked or started by itself'
+    : view.paused ? `paused since ${view.paused.since}${view.paused.reason ? `: ${view.paused.reason}` : ''} (system dispatch resume; decision ${view.paused.decision})` : 'on'
+  const b = view.bounds
+  const lines = [`dispatch: ${state}`, `  bounds: ${b.running.used} of ${b.running.max} dispatched runs and asks, ${b.openAsks.used} of ${b.openAsks.max} asks open, ${b.engine.active} of ${b.engine.max} active runs it may fill`]
+  for (const ask of view.asks) {
+    lines.push(ask.state === 'asked'
+      ? `  waiting for your go: "${ask.title}" (task ${ask.taskId}, attempt ${ask.attempt}) on ${ask.worker}, request ${ask.requestId}: decide it in the queue (system ui, or MCP approvals_decide)`
+      : `  ${ask.state}: "${ask.title}" (task ${ask.taskId}, attempt ${ask.attempt}) on ${ask.worker}`)
+    lines.push(`    why ${ask.worker}: ${ask.why}`)
+  }
+  const last = view.lastPass
+  if (last) {
+    lines.push(`  last pass ${last.at}: ${last.state}${last.reason ? `: ${last.reason}` : ''}${last.took.length ? `; took ${last.took.map((t) => `${t.taskId} on ${t.worker} (${t.how})`).join(', ')}` : ''}`)
+    for (const task of last.tasks) lines.push(`    ${task.taskId} "${task.title}": ${task.reason}`)
+    if (last.more) lines.push(`    and ${last.more} more ready task(s)`)
+  }
+  return lines
+}
+
 /** A plugin of the composition as the running profile's `status` lists it to the operator (REQ-HOST-7). */
 export interface PluginView {
   name: string
