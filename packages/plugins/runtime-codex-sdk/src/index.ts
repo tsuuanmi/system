@@ -550,7 +550,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     const script = this.readsScript()
     const root = realPath(workspace)
     const confinement = this.confinement({ readOnly: [root, script, this.node()] })
-    return confinedCommand(this.node(), [script, ...workspaceReadArgs(root, bounds), ...extra], confinement, { readOnly: true, network: false, chdir: root })
+    // Started inside the run's (or the probe's) confinement, whose hidden files it keeps as they are there.
+    return confinedCommand(this.node(), [script, ...workspaceReadArgs(root, bounds), ...extra], confinement, { readOnly: true, network: false, chdir: root, nested: true })
   }
 
   /** The hook script and `node` exist: a gated run without them would run its tools unasked. */

@@ -142,6 +142,20 @@ describe('an agent child under the real bubblewrap cannot read host state (ADR-0
     expect(existsSync(marker)).toBe(false)
   })
 
+  it('starts a confinement nested in one with the same hidden paths, a hidden file among them, under every bubblewrap here (0.4.0 cannot mount over the null device; T200b)', async () => {
+    // The production bubblewrap is the first root-owned one on PATH, often an older distribution's; this suite's is the first on PATH.
+    const bwraps = [...new Set([BWRAP, '/usr/bin/bwrap'].filter((b): b is string => !!b && existsSync(b)))]
+    for (const bwrap of bwraps) {
+      const outer = { ...confinement(), bwrap }
+      // It starts at all: what failed in production (bwrap 0.4.0: "Can't create file at …: Permission denied").
+      const inner = confinedCommand('true', [], outer, { readOnly: true, network: false, nested: true })
+      // The inner bubblewrap mounts nothing over the hidden file, which the outer one shows as the null device.
+      expect(inner.args.join(' '), bwrap).not.toContain(`/dev/null ${h.keyFile}`)
+      const c = confinedCommand(inner.command, inner.args, outer)
+      await expect(promisify(execFile)(c.command, c.args, { encoding: 'utf8' }), bwrap).resolves.toBeDefined()
+    }
+  })
+
   it('proves the confinement on this host: the masked directories are not the host\'s, and hidden files are the null device', async () => {
     expect(await proveConfinement(confinement())).toEqual({ confined: true, detail: `host state hidden by ${BWRAP}` })
   })

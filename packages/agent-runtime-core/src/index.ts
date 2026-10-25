@@ -696,6 +696,14 @@ export interface ConfinedCommandOptions {
   /** The directory the child starts in (absolute). */
   chdir?: string
   /**
+   * The command starts inside a confinement that already hides the same paths (a server a confined
+   * agent starts in a confinement of its own): each hidden file is left as that outer one shows it,
+   * the `/dev/null` bound over it, since bubblewrap before 0.5 cannot mount over a file that is not a
+   * regular one and so cannot start (seen with 0.4.0, T200b). Hidden directories get their tmpfs as
+   * ever. Only for a confinement whose hidden paths are the outer one's, or fewer.
+   */
+  nested?: true
+  /**
    * Host directories seen at another path, mounted in this order after every other mount: `source`
    * at `path`, writable or read-only. Like a bind, a view whose source is, or holds, a hidden path
    * is refused, and so is one whose source does not exist. A source inside a hidden directory is
@@ -727,7 +735,7 @@ export function confinedCommand(command: string, args: readonly string[], confin
   if (options.chdir !== undefined && !isAbsolute(options.chdir)) throw new Error(`read confinement refused: the start directory ${options.chdir} is not absolute`)
   const mounts = [
     ...(tmp !== undefined ? [{ path: tmp, args: ['--tmpfs', tmp] }] : []),
-    ...hidden.map((h) => ({ path: h.path, args: h.dir ? ['--tmpfs', h.path] : ['--ro-bind', '/dev/null', h.path] })),
+    ...hidden.filter((h) => h.dir || !options.nested).map((h) => ({ path: h.path, args: h.dir ? ['--tmpfs', h.path] : ['--ro-bind', '/dev/null', h.path] })),
     ...binds.map((b) => ({ path: b.path, args: [b.writable ? '--bind' : '--ro-bind', b.path, b.path] })),
   ].sort((a, b) => depth(a.path) - depth(b.path))
   const root = options.readOnly ? ['--ro-bind', '/', '/', '--dev', '/dev'] : ['--dev-bind', '/', '/']
