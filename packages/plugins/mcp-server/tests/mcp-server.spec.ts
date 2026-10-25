@@ -164,7 +164,10 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await usage()).toMatchObject({ state: 'ok' })
     const observedAt = new Date().toISOString()
     ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
-    expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window \(the last 5h\) whose usage the ledger could not count \(1 not-reported\)\. A cap counts each as 0/) })
+    expect(await usage()).toMatchObject({
+      state: 'degraded',
+      detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window \(the last 5h\) whose usage the ledger could not count \(1 not-reported\) — arun_1 \(not-reported\): its runtime reported neither tokens nor turns\. A cap of such a run's task or project in its pool is refused/),
+    })
     // Reconciled: the ledger now counts a record of the run.
     await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_1', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_1', turns: 4 })
     expect(await usage()).toMatchObject({ state: 'ok' })

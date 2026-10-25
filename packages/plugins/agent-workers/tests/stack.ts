@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import type { RunMetering, RunObserver } from '@tsuuanmi/system-agent-runtime-core'
+import { type RunMetering, type RunObserver, withMetering } from '@tsuuanmi/system-agent-runtime-core'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type SandboxMode } from '@tsuuanmi/system-agent-runtimes'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
@@ -43,6 +43,8 @@ export class ScriptedAgent implements AgentRuntimeProvider {
     sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; gatesToolCalls?: boolean; act?: (spec: RunSpec) => string | undefined
     /** What each run reports it consumed. */
     metering?: RunMetering
+    /** What a run stopped while it holds reports it consumed before then (`withMetering` on its `aborted` error). */
+    stoppedMetering?: RunMetering
     process?: boolean
     activityEveryMs?: number
   } = {}) {}
@@ -67,7 +69,11 @@ export class ScriptedAgent implements AgentRuntimeProvider {
       if (this.options.holdMs) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, this.options.holdMs)
-          signal.addEventListener('abort', () => (clearTimeout(timer), reject(new ProviderError('aborted', 'stopped'))), { once: true })
+          const stopped = (): ProviderError => {
+            const error = new ProviderError('aborted', 'stopped')
+            return this.options.stoppedMetering ? withMetering(error, this.options.stoppedMetering) : error
+          }
+          signal.addEventListener('abort', () => (clearTimeout(timer), reject(stopped())), { once: true })
         })
       }
       if (this.options.fail) throw this.options.fail

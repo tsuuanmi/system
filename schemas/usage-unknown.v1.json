@@ -2,17 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:usage-unknown:v1",
   "title": "Unknown usage",
-  "description": "The data of a `usage.unknown` event: one accounting unit (an agent run, a model call, a website turn) whose usage the resource ledger could not count, recorded by the Worker source that meters it (design/resources.md, usage the ledger cannot count). A cap counts the unit as 0 until the ledger counts a usage record of its run in its pool: then it is reconciled. Never an estimate of the usage.",
+  "description": "The data of a `usage.unknown` event: one accounting unit (an agent run, a model call, a website turn) whose usage the resource ledger could not count, recorded by the Worker source that meters it (design/resources.md, usage the ledger cannot count). Until the ledger counts a usage record of its run in its pool other than its `partial` one (reconciled), a cap of its scope and pool fails closed (INV-2, ADR-0065): it is never counted as 0. Never an estimate of the usage.",
   "type": "object",
   "required": ["schema", "runId", "kind", "account", "pool", "observedAt", "reason"],
   "properties": {
-    "schema": { "const": "usage-unknown@1.0" },
+    "schema": { "enum": ["usage-unknown@1.0", "usage-unknown@1.1"] },
     "runId": {
-      "description": "The unit, as a usage record of it names its `runId` (an agent Worker's run). The unit is reconciled once the ledger counts a record of this run in `pool`.",
+      "description": "The unit, as a usage record of it names its `runId` (an agent Worker's run). The unit is reconciled once the ledger counts a record of this run in `pool` that is not its `partial` one.",
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
     },
     "kind": {
-      "description": "not-reported: the unit ended and its runtime reported neither tokens nor turns; interrupted: the host stopped while it ran, so no result came; refused: the ledger refused its usage record (`failure`); failed: recording it failed otherwise (the ledger threw).",
+      "description": "not-reported: the unit ended without its runtime's final count: it reported neither tokens nor turns, or (with `partial`) only what it reported while it ran; interrupted: the host stopped while it ran, so no result came; refused: the ledger refused its usage record (`failure`); failed: recording it failed otherwise (the ledger threw).",
       "enum": ["not-reported", "interrupted", "refused", "failed"]
     },
     "account": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -30,7 +30,7 @@
     },
     "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
     "reason": {
-      "description": "Why its usage is unknown: what the runtime reported, or the ledger's own message.",
+      "description": "Why its usage is unknown, in plain words: how the unit ended (completed, stopped by the operator, past its timeout, stopped by the host's stop or a drain at restart, at a deferred call, failed), and what the runtime reported, or the ledger's own message.",
       "type": "string",
       "minLength": 1,
       "maxLength": 500
@@ -42,17 +42,29 @@
     "record": {
       "description": "For `refused`: the usage record the ledger refused, kept as an `evidence` artifact (`usage-record@1.0`), so its numbers are not lost; absent when it is not a valid record.",
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "partial": {
+      "description": "For `not-reported` (1.1): the usage record (`receipt`) the ledger counted of what the runtime reported while the unit ran, before it ended without the runtime's final count (a stop, a timeout, a drain, a deferred call). A lower bound, never the unit's usage: it does not reconcile the unit.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
     }
   },
-  "if": { "properties": { "kind": { "const": "refused" } } },
-  "then": { "required": ["failure"], "properties": { "failure": true } },
-  "else": {
-    "not": {
-      "anyOf": [
-        { "required": ["failure"], "properties": { "failure": true } },
-        { "required": ["record"], "properties": { "record": true } }
-      ]
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "refused" } } },
+      "then": { "required": ["failure"], "properties": { "failure": true } },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["failure"], "properties": { "failure": true } },
+            { "required": ["record"], "properties": { "record": true } }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "required": ["partial"], "properties": { "partial": true } },
+      "then": { "properties": { "kind": { "const": "not-reported" }, "schema": { "const": "usage-unknown@1.1" } } }
     }
-  },
+  ],
   "additionalProperties": false
 }

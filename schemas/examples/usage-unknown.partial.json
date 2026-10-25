@@ -1,0 +1,15 @@
+{
+  "schema": "usage-unknown@1.1",
+  "runId": "arun_9a41c07e2f5b3d68",
+  "kind": "not-reported",
+  "account": "claude-max-main",
+  "pool": "claude-max-main.programmatic",
+  "worker": "agent:developer",
+  "sessionId": "ses_01JB8Y4K2M",
+  "projectId": "proj-sparse-align",
+  "taskId": "task-0007",
+  "outcome": "failed",
+  "observedAt": "2026-10-24T09:12:40Z",
+  "reason": "it ran past its timeout of 900000 ms and was stopped; the ledger counted what its runtime reported while it ran (412,300 input and 9,800 output tokens, 14 turns), a lower bound: Claude Code was stopped before its result message; counted from the usage its 15 assistant messages streamed, which leaves out the response in flight",
+  "partial": "sha256:5e1f3a0c9b7d2e4f6a8c0b1d3e5f7a9c2b4d6e8f0a1c3e5b7d9f1a2c4e6b8d0f"
+}

@@ -132,7 +132,12 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   reset time is not read: …`). Either way the `agents` source then closes the
   pool for the Worker's cooldown, never opens it. A completed run reports its
   `turns` (one per `turn.completed`); nothing else of Codex's usage is
-  reported (no token counts).
+  reported (no token counts). A run that ends before Codex finished (stopped,
+  past its timeout, drained at the host's stop, at a deferred call, or at a
+  tool call that passed no gate) carries (`withMetering`) the turns it
+  completed, marked `partial` with why (a turn in flight is left out, so it
+  is a lower bound); with none completed, only the `partial` words, never a
+  turn count of 0.
 - **An account's usage report** (`limits({ home }, signal)`,
   [ADR-0059](../../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),
   `rate-limits.ts`): the app server's `account/rateLimits/read`, only on a Codex

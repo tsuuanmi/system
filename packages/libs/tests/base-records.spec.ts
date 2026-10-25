@@ -259,6 +259,18 @@ describe('usage-unknown@1.0', () => {
     expect(valid('usage-unknown@1.0', { ...silent, failure: 'invalid' })).toBe(false)
     expect(valid('usage-unknown@1.0', { ...silent, record: refused.record })).toBe(false)
   })
+
+  it('names a lower bound the ledger counted for a not-reported unit only, as 1.1 (INV-2: never read as its usage)', () => {
+    const partial = example('usage-unknown.partial')
+    expect(valid('usage-unknown@1.1', partial)).toBe(true)
+    expect(valid('usage-unknown@1.0', { ...partial, schema: 'usage-unknown@1.0' })).toBe(false)
+    for (const kind of ['interrupted', 'failed']) expect(valid('usage-unknown@1.1', { ...partial, kind }), kind).toBe(false)
+    expect(valid('usage-unknown@1.1', { ...refused, schema: 'usage-unknown@1.1', partial: partial.partial })).toBe(false)
+    expect(valid('usage-unknown@1.1', { ...partial, partial: 'not a ref' })).toBe(false)
+    // 1.1 without one is still a record: a reader takes both.
+    const { partial: _, ...plain } = partial
+    expect(valid('usage-unknown@1.1', plain)).toBe(true)
+  })
 })
 
 describe('notification@1.0', () => {

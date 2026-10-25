@@ -2013,7 +2013,12 @@ export class AgentWorkers extends Service {
       const metering = meteringOf(error)
       const durationMs = Date.now() - startedAt
       const report = await reportAfter(kind)
-      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', durationMs, report) : false
+      // How it ended, in plain words, for a fact of its usage (docs/design/resources.md#usage-the-ledger-cannot-count).
+      const ending = deadline.aborted && !signal.aborted ? `it ran past its timeout of ${this.config.runTimeoutMs ?? 15 * 60_000} ms and was stopped`
+        : signal.aborted ? this.stopOf(signal)
+          : deferred ? `it stopped at a ${deferred.tool} call that waits for approval request ${deferred.requestId}`
+            : `it failed (${kind})`
+      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', durationMs, report, ending) : false
       // A limit hit that left no limited reading in the ledger is never retried there unseen (INV-2).
       if (kind === 'quota_exhausted' && !limited) {
         // The run's own outcome stays the limit, whatever recording it does.
@@ -2031,11 +2036,19 @@ export class AgentWorkers extends Service {
     const durationMs = Date.now() - startedAt
     if (deferred) {
       this.noteDeferral(row, deferred, lease)
-      if (meter) await this.account(row, worker, meter, result, 'failed', durationMs, await reportAfter(undefined))
+      if (meter) await this.account(row, worker, meter, result, 'failed', durationMs, await reportAfter(undefined), `it stopped at a ${deferred.tool} call that waits for approval request ${deferred.requestId}`)
       throw waiting(row, deferred)
     }
-    if (meter) await this.account(row, worker, meter, result, 'completed', durationMs, await reportAfter(undefined))
+    if (meter) await this.account(row, worker, meter, result, 'completed', durationMs, await reportAfter(undefined), 'it completed')
     return result
+  }
+
+  /** Who stopped a run whose signal aborted, in plain words: the host stopping (a drain), the operator, or a lost lease. */
+  private stopOf(signal: AbortSignal): string {
+    if (this.stopped.signal.aborted) return 'the host stopped while it ran, and stopped it (a drain at stop or restart)'
+    const reason: unknown = signal.reason
+    if (reason instanceof ProviderError) return `it was stopped: ${reason.message}`
+    return 'it was stopped, its lease on the run lost'
   }
 
   /**
@@ -2155,7 +2168,7 @@ export class AgentWorkers extends Service {
    * counts a record of it. A fact that cannot be appended (no event log, the store failing) is
    * logged, never dropped silently; the run's own outcome never depends on it.
    */
-  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record'> = {}): void {
+  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record' | 'partial'> = {}): void {
     try {
       const eventLog = this.ctx.get('eventLog')
       if (!eventLog) throw new Error('no event log (ctx.eventLog) is loaded')
@@ -2174,16 +2187,18 @@ export class AgentWorkers extends Service {
    * `invalid` with a per-model split is offered again with its totals alone, which are what a cap
    * counts. Otherwise the run's usage is unknown: a refused record is kept as an `evidence`
    * artifact (when it is a valid `usage-record@1.0`) that the fact names, `refused` with the
-   * ledger's failure; anything else the ledger threw is `failed`. Never throws.
+   * ledger's failure; anything else the ledger threw is `failed`. Never throws. Returns what the
+   * ledger counted, its totals, if it took them.
    */
-  private async unrecorded(row: RunRow, meter: Meter, record: UsageRecord, error: unknown): Promise<void> {
+  private async unrecorded(row: RunRow, meter: Meter, record: UsageRecord, error: unknown): Promise<{ ref: ArtifactRef } | undefined> {
     let cause = error
     if (cause instanceof ResourcesError && cause.failure === 'invalid' && record.models) {
       const { models: _, ...totals } = record
-      cause = await meter.resources.record(totals).then(() => undefined, (again: unknown) => again)
+      let taken: { ref: ArtifactRef } | undefined
+      cause = await meter.resources.record(totals).then((r) => { taken = { ref: r.ref as ArtifactRef } }, (again: unknown) => again)
       if (cause === undefined) {
         this.ctx.logger.warn(`agent Workers: the ledger refused the per-model split of ${row.run_id} on ${row.worker} (${(error as Error).message}); its totals were recorded`)
-        return
+        return taken
       }
     }
     const message = cause instanceof Error ? cause.message : String(cause)
@@ -2191,6 +2206,7 @@ export class AgentWorkers extends Service {
     const failure = cause instanceof ResourcesError && (cause.failure === 'invalid' || cause.failure === 'unknown-pool') ? cause.failure : undefined
     const kept = failure ? this.keep(row, record) : undefined
     this.unknownUsage(row, meter, failure ? 'refused' : 'failed', message, { ...(record.outcome ? { outcome: record.outcome } : {}), ...(failure ? { failure } : {}), ...(kept ? { record: kept } : {}) })
+    return undefined
   }
 
   /** A record the ledger refused, as an `evidence` artifact when it is a valid `usage-record@1.0`, so its numbers are not lost; else nothing. */
@@ -2222,19 +2238,26 @@ export class AgentWorkers extends Service {
    * Meter a run from what its runtime reported: each limit observation as a `limit-state`
    * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
    * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
-   * is reconciled later). The run's own outcome never depends on the ledger: a refusal is logged.
+   * is reconciled later). A run that ended before its runtime's final count (`partial`: a stop, a
+   * timeout, a drain, a deferred call) is recorded with what the runtime did report, a lower bound,
+   * and stays a `not-reported` unit that names that record (`usage-unknown@1.1`): a lower bound
+   * never reconciles it, so a cap of its scope stays closed (INV-2, ADR-0065). A partial report with
+   * no number above 0 is no record: a reported 0 would read as known. `ending`: how the run ended,
+   * in plain words. The run's own outcome never depends on the ledger: a refusal is logged.
    * `report`: what the account's usage report said after the run (ADR-0059), recorded after the run's
    * own observations, so the latest reading has its share, and never opening a window a limit closed.
    * Whether a `limited` reading of the pool was recorded.
    */
-  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number, report: readonly LimitObservation[] = []): Promise<boolean> {
+  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number, report: readonly LimitObservation[], ending: string): Promise<boolean> {
     const ran = metering?.limits?.length ? await this.observe(row.worker, worker, meter, metering.limits) : false
     const reported = report.length ? await this.observe(row.worker, worker, meter, report, true) : false
     const limited = ran || reported
     const usage = usageOf(metering)
-    if (!usage.usage && metering?.turns === undefined) {
-      this.unknownUsage(row, meter, 'not-reported', 'its runtime reported neither tokens nor turns', { outcome })
-      this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage; it is left to transcript reconciliation`)
+    const partial = metering?.partial
+    if ((!usage.usage && metering?.turns === undefined) || (partial && !anyCounted(usage.usage, metering?.turns))) {
+      const said = partial ? `its runtime reported no number above 0 before it ended: ${partial}` : 'its runtime reported neither tokens nor turns'
+      this.unknownUsage(row, meter, 'not-reported', `${ending}; ${said}`, { outcome })
+      this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage (${ending}); it is left to transcript reconciliation`)
       return limited
     }
     const model = { ...(worker.model ? { request: worker.model } : {}), ...(metering?.model ? { response: metering.model } : {}) }
@@ -2249,9 +2272,11 @@ export class AgentWorkers extends Service {
       ...(metering?.costUsd !== undefined ? { cost: { amount: metering.costUsd, currency: 'USD' as const, basis: 'runtime-estimate' as const } } : {}),
       outcome,
     }
-    await meter.resources.record(record).catch((error: unknown) => {
-      return this.unrecorded(row, meter, record, error)
-    })
+    const recorded = await meter.resources.record(record).catch((error: unknown) => this.unrecorded(row, meter, record, error))
+    // A lower bound counted: the run stays unknown, named with what was counted and why it is partial.
+    if (partial && recorded) {
+      this.unknownUsage(row, meter, 'not-reported', `${ending}; the ledger counted what its runtime reported while it ran (${figures(usage.usage, metering?.turns)}), a lower bound: ${partial}`, { outcome, partial: recorded.ref as ArtifactRef })
+    }
     return limited
   }
 
@@ -2560,6 +2585,20 @@ function usageOf(metering: RunMetering | undefined): Pick<UsageRecord, 'usage' |
   if (!metering?.usage) return {}
   const models = metering.models && metering.models.length <= MAX_MODELS ? metering.models : undefined
   return { usage: { ...metering.usage }, ...(models ? { models: models.map((m) => ({ model: m.model, usage: { ...m.usage }, ...(m.costUsd !== undefined ? { costUsd: m.costUsd } : {}) })) } : {}) }
+}
+
+/** Whether a partial report carries a number above 0: a token count or a turn. */
+function anyCounted(usage: UsageRecord['usage'], turns: number | undefined): boolean {
+  return (usage !== undefined && usage.inputTokens + usage.outputTokens > 0) || (turns ?? 0) > 0
+}
+
+/** A report's figures in words: "412,300 input and 9,800 output tokens, 14 turns". */
+function figures(usage: UsageRecord['usage'], turns: number | undefined): string {
+  const n = (value: number): string => value.toLocaleString('en-US')
+  return [
+    ...(usage ? [`${n(usage.inputTokens)} input and ${n(usage.outputTokens)} output tokens`] : []),
+    ...(turns !== undefined ? [`${n(turns)} turn${turns === 1 ? '' : 's'}`] : []),
+  ].join(', ')
 }
 
 export type { RunWorktree, RunWorktreeRelease, SweepOutcome } from './worktrees.ts'

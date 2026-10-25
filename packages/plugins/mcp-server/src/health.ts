@@ -334,8 +334,13 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const count = await countUnknownUsage(unknownUsage, (sources.now ?? Date.now)())
       if (!count.pools.length) return ok('usage', 'no resource pool is configured')
       const open: string[] = []
-      for (const { pool, seconds, runs, kinds } of count.pools.slice(0, NAMED_ITEMS)) {
-        if (runs) open.push(`${pool}: ${runs} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${Object.entries(kinds).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(', ')})`)
+      for (const { pool, seconds, runs, kinds, named } of count.pools.slice(0, NAMED_ITEMS)) {
+        if (!runs) continue
+        // Which runs, and why, in their source's own words: the latest first, the rest counted.
+        const which = named.map((r) => clip(`${r.runId}${r.worker ? ` on ${r.worker}` : ''} (${r.kind}${r.lowerBound ? ', a lower bound counted' : ''}): ${r.reason}`, ITEM_CHARS))
+        const more = runs - named.length
+        open.push(`${pool}: ${runs} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${Object.entries(kinds).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(', ')})`
+          + `${which.length ? ` — ${which.join(' | ')}${more > 0 ? ` | and ${more} more` : ''}` : ''}`)
       }
       if (count.pools.length > NAMED_ITEMS) open.push(`and ${count.pools.length - NAMED_ITEMS} more pool(s) not named here (system usage)`)
       if (count.unconfigured.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${listOf(count.unconfigured.map((u) => `${u.pool} ${u.runs}`))}), so no window counts them`)
@@ -343,7 +348,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       if (unreadable) open.push(`${unreadable} usage.unknown entr${unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record, so no pool counts ${unreadable === 1 ? 'it' : 'them'}`)
       if (count.unread) open.push(`more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here`)
       return open.length
-        ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
+        ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap of such a run's task or project in its pool is refused until the ledger counts a record of it, never counting it as 0: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
         : ok('usage', 'the ledger counted the usage of every run in each pool\'s current window')
     }))
   }

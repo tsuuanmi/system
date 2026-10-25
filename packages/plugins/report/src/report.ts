@@ -358,7 +358,7 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
   if (total.withoutTurns) notes.push(`${total.withoutTurns} usage record(s) carry no turn count: turns count the others only`)
   if (total.unknownRuns && unknown) {
     const kinds = (Object.entries(KINDS) as Array<[UsageUnknown['kind'], keyof UnknownUsage]>).filter(([, key]) => unknown[key]).map(([kind, key]) => `${unknown[key]} ${kind}`).join(', ')
-    notes.push(`${total.unknownRuns} run(s) whose usage the ledger could not count, and has not counted since: no figure counts them, and a cap counts them as 0 `
+    notes.push(`${total.unknownRuns} run(s) whose usage the ledger could not count, and has not counted since: a figure counts at most a lower bound of them, and a cap of their task or project in their pool is refused `
       + `(${unknown.runs} recorded in the period: ${kinds}${unknown.reconciled ? `, ${unknown.reconciled} of them counted since` : ''}; system events --type usage.unknown)`)
   }
 

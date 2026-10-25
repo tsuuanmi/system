@@ -234,6 +234,14 @@ export class CodexRuntime implements AgentRuntimeProvider {
     let launcher: string | undefined
     // The child's environment, set before Codex starts: its `TZ` is the zone a limit's reset is read in.
     let env: Record<string, string> | undefined
+    // A run that ended before Codex finished (a stop, a timeout, a drain, a deferred call) reports
+    // what it did report: the turns it completed, a lower bound, and says so; none completed is no number.
+    const ended = (error: ProviderError, how: string): ProviderError => withMetering(error, {
+      ...(turns > 0 ? { turns } : {}),
+      partial: turns > 0
+        ? `Codex ${how}; counted the ${turns} turn${turns === 1 ? '' : 's'} it completed before then, which leaves out a turn in flight`
+        : `Codex ${how} before it completed a turn`,
+    })
     try {
       if (spec.toolGate) {
         try {
@@ -287,10 +295,10 @@ export class CodexRuntime implements AgentRuntimeProvider {
       }
       id = handle.id
     } catch (error) {
-      if (signal.aborted) throw new ProviderError('aborted', 'codex-sdk: the run was stopped')
-      if (ungated) throw ungatedError(ungated)
+      if (signal.aborted) throw ended(new ProviderError('aborted', 'codex-sdk: the run was stopped'), 'was stopped')
+      if (ungated) throw ended(ungatedError(ungated), 'was stopped at a tool call that passed no gate')
       const deferral = channel?.deferral()
-      if (deferral) throw deferredError(deferral)
+      if (deferral) throw ended(deferredError(deferral), 'stopped at a deferred tool call')
       if (error instanceof ProviderError) throw error
       throw new ProviderError('session_broken', `codex-sdk: ${firstLine(error)}`, { cause: error })
     } finally {
@@ -298,11 +306,11 @@ export class CodexRuntime implements AgentRuntimeProvider {
       await channel?.close()
       if (launcher) rmSync(launcher, { force: true })
     }
-    if (signal.aborted) throw new ProviderError('aborted', 'codex-sdk: the run was stopped')
-    if (ungated) throw ungatedError(ungated)
+    if (signal.aborted) throw ended(new ProviderError('aborted', 'codex-sdk: the run was stopped'), 'was stopped')
+    if (ungated) throw ended(ungatedError(ungated), 'was stopped at a tool call that passed no gate')
     // A deferred run did not finish, whatever Codex reported: the call it stopped at never ran.
     const deferral = channel?.deferral()
-    if (deferral) throw deferredError(deferral)
+    if (deferral) throw ended(deferredError(deferral), 'stopped at a deferred tool call')
     // A failed turn breaks the thread's work (as for Claude): the engine's recovery decides what follows.
     if (failure && !/usage limit|quota|rate limit/i.test(failure)) throw new ProviderError('session_broken', `codex-sdk: ${failure.slice(0, 500)}`)
     if (failure) throw await this.limitError(executable, failure, env!.TZ)

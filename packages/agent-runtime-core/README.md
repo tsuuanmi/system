@@ -17,7 +17,10 @@ Capability **seam definition** for agent runtimes
   observations: the runtime's own window name, kept opaque (INV-11), `allowed`, `warning`, or
   `rejected`, `resetsAt` and `observedAt` in ISO time, `usedPercentage`). Every field is
   optional: a missing number stays missing. A run that fails attaches what it consumed to its
-  error (`withMetering`), read back with `meteringOf`. Names are provider-neutral; the
+  error (`withMetering`), read back with `meteringOf`. A run that ended before the runtime's
+  final count (a stop, a timeout, a deferred call) reports what the agent reported while it ran
+  and says so in `partial` (plain words, at most `MAX_PARTIAL` = 300 characters, no `resultId`):
+  a lower bound, never an invented figure. Names are provider-neutral; the
   [`agent-workers`](../plugins/agent-workers/README.md) source maps them into the ledger.
 - **An account's usage report**
   ([ADR-0059](../../docs/decisions/adr/0059-quota-readings-from-each-accounts-own-usage-report.md),

@@ -625,18 +625,27 @@ guesses.
   appended by the Worker source that meters it (today the `agents` source). The event's own
   `runId` is the workflow run the unit belongs to, if any; the record's `runId` is the unit itself,
   as a usage record of it would name it.
-- `kind`: `not-reported` (the unit ended, and its runtime reported neither tokens nor turns, so no
-  record can be written), `interrupted` (the host stopped while it ran, so no result came),
+- `kind`: `not-reported` (the unit ended without its runtime's final count: its runtime reported
+  neither tokens nor turns, so no record can be written, or, with `partial`, only what it reported
+  while it ran), `interrupted` (the host stopped while it ran, so no result came),
   `refused` (the ledger refused its record: `failure` is the ledger's, and `record` the refused
   record kept as an `evidence` artifact when it is a valid `usage-record@1.0`), or `failed`
   (recording it failed otherwise). `failure` and `record` belong to `refused` only.
-- It never carries a number for the unit's usage, and nothing estimates one. A cap counts the unit
-  as 0. The unit is **reconciled** once the ledger counts a usage record of the same `runId` in
-  the same `pool` (later a `transcript` record): from then on the report counts it as reconciled,
-  and health no longer counts it. A reader validates the data and skips an entry that is not a
-  valid record. Examples:
+- `reason`: why, in plain words: how the unit ended (completed, stopped by the operator, past its
+  timeout, stopped by the host's stop or a drain at restart, at a call that waits for an approval
+  request, failed) and what its runtime reported.
+- `partial` (1.1, `not-reported` only, and only under `usage-unknown@1.1`): the usage record
+  (`receipt`) the ledger counted of what the runtime reported before the unit ended without its
+  final count. A lower bound, never the unit's usage.
+- It never carries a number for the unit's usage, and nothing estimates one. Until the unit is
+  **reconciled** (the ledger counts a usage record of the same `runId` in the same `pool` other
+  than its `partial` one, later a `transcript` record), a cap of its task or project in its pool is
+  refused ([ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md));
+  from then on the report counts it as reconciled, and health no longer counts it. A reader
+  validates the data and skips an entry that is not a valid record. Examples:
   [`usage-unknown.not-reported.json`](../../schemas/examples/usage-unknown.not-reported.json),
-  [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json).
+  [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json),
+  [`usage-unknown.partial.json`](../../schemas/examples/usage-unknown.partial.json).
 
 ### `notification`
 

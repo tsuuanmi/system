@@ -148,6 +148,17 @@ installed.
     most output tokens;
   - `turns` (`num_turns`), `costUsd` (`total_cost_usd`), and `resultId`
     (`<session_id>:<uuid>` of the result message);
+  - a run that ends without a result message (stopped, past its timeout,
+    drained at the host's stop, at a deferred call, or a stream that broke)
+    reports what its `assistant` messages streamed instead, marked `partial`
+    with why: each message id once, at its largest counts (the SDK sends one
+    message per content block, each with its response's usage so far),
+    normalized as above and summed per model, subagents' included; `turns` is
+    the main loop's messages (no `parent_tool_use_id`). A message without an
+    id, a model, or whole input and output counts is skipped. It leaves out the
+    response in flight, so it is a lower bound, never an estimate; with no
+    message streamed, no number is reported. A run with a result is counted
+    from it alone;
   - `limits` from each `rate_limit_event`: the window is the SDK's
     `rateLimitType` (for example `five_hour`), kept opaque; `allowed_warning`
     → `warning`; `resetsAt` is Unix time in **seconds** (the CLI fills it from

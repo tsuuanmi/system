@@ -187,11 +187,12 @@ describe('host health (REQ-HOST-6)', () => {
     expect(report.state).toBe('degraded')
     expect(report.checks.find((c) => c.name === 'usage')).toEqual({
       name: 'usage', state: 'degraded',
-      detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported); '
-        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused); '
+      // Each pool names its open runs, the latest first, and why, in their source's own words.
+      detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported) — arun_5 (not-reported): why; '
+        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused) — arun_2 (refused): why | arun_1 (not-reported): why; '
         + 'unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (gone.pool 1), so no window counts them; '
         + '1 usage.unknown entry is not a valid usage-unknown@1.0 record, so no pool counts it. '
-        + 'A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
+        + 'A cap of such a run\'s task or project in its pool is refused until the ledger counts a record of it, never counting it as 0: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
     })
     // Read once, back to the earliest window's start: the start of time for a window that never resets.
     expect(asked).toEqual([new Date(0).toISOString()])
@@ -210,6 +211,31 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ unknownUsage: { pools, entries: () => [gone], counted: async () => true }, now }, 'usage')).toMatchObject({ state: 'ok' })
     // A ledger that cannot be read leaves the check down, saying why, never ok.
     expect(await check({ unknownUsage: { pools: async () => { throw new Error('the store is closed') }, entries: () => [], counted: async () => false } }, 'usage')).toMatchObject({ state: 'down', detail: expect.stringContaining('the store is closed') })
+  })
+
+  it('stays degraded for a run whose lower bound the ledger counted, naming the run, its Worker, and why; never ok on a lower bound (INV-2)', async () => {
+    const at = '2026-10-23T11:00:00.000Z'
+    const reason = 'it was stopped: cancelled by the operator; the ledger counted what its runtime reported while it ran (4,757 input and 53 output tokens, 2 turns), a lower bound: Claude Code was stopped before its result message'
+    const partial = {
+      seq: 1, at, data: { schema: 'usage-unknown@1.1', runId: 'arun_7', kind: 'not-reported', account: 'max', pool: 'max.agents', worker: 'agent:developer', outcome: 'aborted', observedAt: at, reason, partial: `sha256:${'b'.repeat(64)}` },
+    }
+    const pools = async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }]
+    // The ledger counts a record of the run: its own lower bound, which reconciles nothing.
+    const report = await check({ unknownUsage: { pools, entries: () => [partial], counted: async () => true }, now: () => Date.parse('2026-10-23T12:00:00Z') }, 'usage')
+    expect(report).toMatchObject({ state: 'degraded' })
+    expect(report!.detail).toContain(`max.agents: 1 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported) — arun_7 on agent:developer (not-reported, a lower bound counted): ${reason.slice(0, 120)}`)
+    // Past the pool's window, it no longer bears on what the pool admits.
+    expect(await check({ unknownUsage: { pools, entries: () => [partial], counted: async () => true }, now: () => Date.parse('2026-10-24T12:00:00Z') }, 'usage')).toMatchObject({ state: 'ok' })
+  })
+
+  it('names at most three runs of a pool, the latest first, and counts the rest', async () => {
+    const at = '2026-10-23T11:00:00.000Z'
+    const fact = (n: number) => ({ seq: n, at, data: { schema: 'usage-unknown@1.0', runId: `arun_${n}`, kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt: at, reason: `why ${n}` } })
+    const report = await check({
+      unknownUsage: { pools: async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }], entries: () => [1, 2, 3, 4, 5].map(fact), counted: async () => false },
+      now: () => Date.parse('2026-10-23T12:00:00Z'),
+    }, 'usage')
+    expect(report!.detail).toMatch(/^max\.agents: 5 run\(s\) .* \(5 not-reported\) — arun_5 \(not-reported\): why 5 \| arun_4 \(not-reported\): why 4 \| arun_3 \(not-reported\): why 3 \| and 2 more\. A cap/)
   })
 
   it('reads every entry of the windows a page at a time, and past what it reads is degraded, never ok (INV-2, INV-9)', async () => {

@@ -2528,22 +2528,36 @@ that reported no numbers has no record, and a crashed run has none until a trans
 ## Usage the ledger could not count
 
 Seen as `system health` showing `usage  degraded  max.agents: 2 run(s) in its current window (the
-last 7d) whose usage the ledger could not count (1 not-reported, 1 refused)…`, as `usage unknown
-(<why>)` on a step in `system usage`, or in the report's resources and `Not counted` lines.
+last 7d) whose usage the ledger could not count (1 not-reported, 1 refused) — arun_… on agent:…
+(refused): <why> | arun_… on agent:… (not-reported, a lower bound counted): <why>…`, as `usage unknown
+(<why>)` on a step in `system usage`, in the report's resources and `Not counted` lines, or as a
+refused `budget` decision whose reason starts `cap of <pool> cannot be held: run <run> … has usage
+the ledger could not count`. Health names the latest three runs of each pool, each with its Worker
+and why in plain words: how it ended (completed, stopped by you, past its timeout, stopped by the
+host's stop or a drain at restart, at a call that waits for an approval request) and what its
+runtime reported.
 
-The ledger counted no usage record for those runs, so every cap (a board task's budget lines)
-counts them as 0, and the tokens and cost the report gives are lower bounds. They are not refused:
-you chose to count them as 0 and see them (D25); failing closed for metered pools waits for
-transcript reconciliation ([resources](../design/resources.md#usage-the-ledger-cannot-count)). A
-pool's availability is unaffected: it comes from limit readings, not records.
+The ledger counted no usage record for those runs, or only a lower bound of one (`a lower bound
+counted`), so the tokens and cost the report gives are lower bounds. A cap never counts them as 0
+(INV-2, [ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md)):
+any reservation whose budget lines cap that pool for the run's board task, or its project, is
+refused, for every pool kind, so the task's next step does not start and the task is blocked. Funding
+the task does not help: the cap is refused for what it cannot count, not for what it holds. A pool's
+availability is unaffected: it comes from limit readings, not records.
 
 1. **Read them.** `system events --type usage.unknown`: each entry's `data` names the run
    (`runId`), Worker, pool, account, board task, how it ended, `kind`, and `reason`; the entry's own
    `runId` is the workflow run (`system explain <it>`).
 2. **Act on the kind:**
-   - `not-reported`: the runtime gave neither tokens nor turns. A runtime that reports none (the
-     Codex and ACP runtimes today, [metering](../design/agent-runtimes.md#metering)) makes every run
-     of its Worker one: give its tasks `runs` budget lines rather than `tokens` or `usd`.
+   - `not-reported`: the run ended without its runtime's final count. Its `reason` says how: most
+     often it was stopped (by you, its timeout, or the host's stop) or stopped at a deferred call
+     before Claude Code sent its result message, or before Codex completed a turn. With `partial`,
+     the ledger counted what the runtime reported while it ran (`system artifact <data.partial>`
+     shows that record): a lower bound, the response or turn in flight left out. Without it, the
+     runtime gave no number above 0. A runtime that reports no usage on a run that completes (the
+     Codex and ACP runtimes today, [metering](../design/agent-runtimes.md#metering)) makes every
+     completed run of its Worker one: give its tasks no `tokens` or `usd` lines for that pool. A
+     run that keeps ending at its timeout needs a larger `runTimeoutMs` or a smaller task.
    - `interrupted`: the host stopped while the run ran. Its usage comes from its transcript once
      transcript reconciliation exists.
    - `refused` with `failure: unknown-pool`: the Worker's `account` is not the account the
@@ -2558,11 +2572,17 @@ pool's availability is unaffected: it comes from limit readings, not records.
      `pool` and restart. The line stays until the ledger counts a record of those runs, or their
      entries are older than every configured pool's longest window (kept until retention removes
      them while a pool has a window of no length).
-3. **Until it clears,** read the provider's own usage for that account (its status line or usage
-   page) before funding a task of that pool, since its budget counted those runs as nothing.
+3. **A task its cap now refuses** has two ways out: wait until the ledger counts a record of the
+   run (transcript reconciliation, once it exists; the run's own lower bound never counts), or
+   cancel the task and file it again without a budget line on that pool (read the provider's own
+   usage for that account first, its status line or usage page, to decide the new task's lines).
+   A refusal that says no event log is loaded, or that an entry is not a valid record, or that
+   more than 10,000 entries are kept, is about the host: load the `eventLog` row, or report the
+   entry.
 
-The check clears once the runs fall out of the pool's longest window, or once the ledger counts a
-record of each. A pool with a window of no length (a credit balance) keeps them until the event
+The health check clears once the runs fall out of the pool's longest window, or once the ledger
+counts a record of each other than the lower bound its fact names (that one never clears it). A
+cap's refusal does not clear with the window: it lasts until the run is reconciled. A pool with a window of no length (a credit balance) keeps them until the event
 log's retention removes the entries. A fact that could not be recorded at all is only in the
 daemon's log (`the usage of <run> on <Worker> (pool <pool>) is unknown (…), and that could not be
 recorded`).

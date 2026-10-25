@@ -210,24 +210,66 @@ describe('claude-agent-sdk: what a run consumed, from the SDK\'s own numbers (do
     // The stream broke after the limit, with no result at all.
     const broken = await failure(scripted([], null, { before, throws: new Error('429') }))
     expect(broken.kind).toBe('quota_exhausted')
-    expect(meteringOf(broken)).toEqual({ model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'rejected' })] })
+    expect(meteringOf(broken)).toEqual({
+      model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'rejected' })],
+      partial: 'Claude Code ended before its result message, and before any assistant message reported usage',
+    })
   })
 
-  it('reports what an aborted run saw before it stopped; a run with no result reports no usage', async () => {
+  /** A Claude Code that streams `before`, then waits until the run is stopped, and never sends its result. */
+  const stoppable = (before: Array<Record<string, unknown>>) => ((params: { options?: Record<string, unknown> }) => {
+    const signal = (params.options!.abortController as AbortController).signal
+    return (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
+      for (const message of before) yield message
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
+      throw new Error('aborted by the caller')
+    })()
+  }) as unknown as QueryFn
+  /** One streamed assistant message: the SDK's own usage (input excludes cached input), once per content block. */
+  const assistant = (id: string, usage: Record<string, number>, extra: Record<string, unknown> = {}) => ({
+    type: 'assistant', session_id: 'h-1', parent_tool_use_id: null, message: { id, model: 'model-main', role: 'assistant', content: [], usage }, ...extra,
+  })
+
+  it('reports what an aborted run saw before it stopped, marked partial; with no assistant message, no number (stop, timeout, drain)', async () => {
     const controller = new AbortController()
-    const query = ((params: { options?: Record<string, unknown> }) => {
-      const signal = (params.options!.abortController as AbortController).signal
-      return (async function* () {
-        yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
-        yield event({ status: 'allowed', rateLimitType: 'five_hour' })
-        await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
-        throw new Error('aborted by the caller')
-      })()
-    }) as unknown as QueryFn
     setTimeout(() => controller.abort(), 20)
-    const error = await failure(query, controller.signal)
+    const error = await failure(stoppable([event({ status: 'allowed', rateLimitType: 'five_hour' })]), controller.signal)
     expect(error.kind).toBe('aborted')
-    expect(meteringOf(error)).toEqual({ model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'allowed' })] })
+    expect(meteringOf(error)).toEqual({
+      model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'allowed' })],
+      partial: 'Claude Code was stopped before its result message, and before any assistant message reported usage',
+    })
+    expectConsistentMetering(meteringOf(error)!)
+    // A stop by the operator, a timeout, and a drain at the host's stop all abort the run's signal:
+    // what its assistant messages streamed is reported, each response once, at its largest counts.
+    const streamed = [
+      assistant('msg_1', { input_tokens: 100, output_tokens: 5, cache_read_input_tokens: 2000, cache_creation_input_tokens: 300 }),
+      assistant('msg_1', { input_tokens: 100, output_tokens: 40, cache_read_input_tokens: 2000, cache_creation_input_tokens: 300 }),
+      assistant('msg_2', { input_tokens: 50, output_tokens: 10, cache_read_input_tokens: 2300 }),
+      // A subagent's response counts as usage, not as a turn of the main loop.
+      assistant('msg_3', { input_tokens: 7, output_tokens: 3 }, { parent_tool_use_id: 'toolu_1', message: { id: 'msg_3', model: 'model-small', usage: { input_tokens: 7, output_tokens: 3 } } }),
+      // One without whole counts is not read: a number the SDK did not give stays missing.
+      assistant('msg_4', { output_tokens: 9 }),
+    ]
+    const stopped = new AbortController()
+    setTimeout(() => stopped.abort(), 20)
+    const partial = await failure(stoppable(streamed), stopped.signal)
+    expect(partial.kind).toBe('aborted')
+    expect(meteringOf(partial)).toEqual({
+      model: 'model-main', turns: 2,
+      usage: { inputTokens: 4757, outputTokens: 53, cacheReadInputTokens: 4300, cacheCreationInputTokens: 300 },
+      models: [
+        { model: 'model-main', usage: { inputTokens: 4750, outputTokens: 50, cacheReadInputTokens: 4300, cacheCreationInputTokens: 300 } },
+        { model: 'model-small', usage: { inputTokens: 7, outputTokens: 3 } },
+      ],
+      partial: 'Claude Code was stopped before its result message; counted from the usage its 3 assistant messages streamed, which leaves out the response in flight',
+    })
+    expectConsistentMetering(meteringOf(partial)!)
+    // A run that sent its result is counted from it alone, never from the stream.
+    const done = await runtime(scripted([], {}, { before: streamed })).run(spec, new AbortController().signal)
+    expect(done).toMatchObject({ turns: 2, resultId: 'h-1:r-1', ...NORMALIZED })
+    expect(done).not.toHaveProperty('partial')
   })
 })
 
@@ -322,6 +364,28 @@ describe('claude-agent-sdk: the run\'s tool gate is a PreToolUse hook on every t
     // What the run consumed is still reported.
     expectConsistentMetering(meteringOf(failure)!)
     expect(meteringOf(failure)).toMatchObject({ turns: 1 })
+  })
+
+  it('reports what a run that stopped at a deferred call streamed, marked partial, when no result follows the defer', async () => {
+    const toolGate = async () => ({ decision: 'defer' as const, reason: 'waits for the operator', requestId: 'apr-9' })
+    const query = ((params: { options?: Record<string, unknown> }) => {
+      const registered = ((params.options?.hooks as Record<string, Matcher[]> | undefined)?.PreToolUse ?? [])
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
+        yield { type: 'assistant', session_id: 'h-1', parent_tool_use_id: null, message: { id: 'msg_1', model: 'model-main', usage: { input_tokens: 20, output_tokens: 8 } } }
+        for (const hook of registered[0]!.hooks) await hook({ hook_event_name: 'PreToolUse', session_id: 'h-1', transcript_path: '/t', cwd: workspace, tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_use_id: 'toolu_1' }, 'toolu_1', { signal: new AbortController().signal })
+        // The CLI exits on the defer without a result message.
+        throw new Error('Claude Code process exited with code 1')
+      })()
+    }) as unknown as QueryFn
+    const failure = await runtime(query).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
+      .then(() => { throw new Error('the run completed') }, (error: unknown) => error as Error & { kind: string })
+    expect(failure).toMatchObject({ kind: 'config_error', message: expect.stringContaining('apr-9') })
+    expect(meteringOf(failure)).toEqual({
+      model: 'model-main', turns: 1, usage: { inputTokens: 20, outputTokens: 8 }, models: [{ model: 'model-main', usage: { inputTokens: 20, outputTokens: 8 } }],
+      partial: 'Claude Code stopped at a deferred tool call before its result message; counted from the usage its 1 assistant message streamed, which leaves out the response in flight',
+    })
+    expectConsistentMetering(meteringOf(failure)!)
   })
 
   it('denies every call after a defer, without asking the gate again, should the agent go on', async () => {

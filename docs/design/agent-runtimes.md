@@ -976,6 +976,16 @@ agy's total), and the main model when an event names it
 providers report no usage. Codex and the Antigravity CLI report a usage limit's reset time
 ([limit readings](#limit-readings)).
 
+A run that ends before the runtime's final count (stopped, past its timeout, drained at the host's
+stop, or at a deferred call) reports what the agent did report while it ran, marked `partial` with
+why in words (at most 300 characters), never an invented figure: the Claude Agent SDK provider sums
+the `usage` of the `assistant` messages it streamed (each message id once, at its largest counts,
+subagents included; the main loop's messages are its turns), and the Codex provider the turns it
+completed (`turn.completed`); none completed is no number, never 0. A partial report names no
+result (`resultId`), and the conformance suite checks both. The `agents` source records it as a
+lower bound ([usage the ledger cannot count](resources.md#usage-the-ledger-cannot-count)), and says
+in each `usage.unknown` fact how the run ended.
+
 The `agents` source meters a Worker that draws on a resource pool through `ctx.resources`: a
 hand-named Worker whose configuration names a `pool` (with its `account`), or a derived Worker of a
 provider that names a pool template (its account's pool,
@@ -999,8 +1009,10 @@ provider that names a pool template (its account's pool,
    `limitCooldownSeconds`, until a later reading says otherwise. A limit is never retried on the
    same pool unseen ([fail-closed rules](resources.md#fail-closed-rules)).
 
-A run that started before a restart has no result message, so nothing is recorded for it then;
-its usage is reconciled from the agent's session transcript later (planned). A Worker with no
+A run the host's stop drains is stopped through its signal, so what its runtime reported by then is
+recorded as a lower bound (partial, above). A run that started before a restart has no result
+message, so nothing more is recorded for it then; its usage is reconciled from the agent's session
+transcript later (planned). A Worker with no
 pool is not metered, but its limits still hold: a run that fails `quota_exhausted` on one (or on a
 metered Worker whose ledger did not take the reading) cools down every Worker of its account (for
 hand-named Workers, every Worker of the runtime, which share its one home and so its one sign-in).

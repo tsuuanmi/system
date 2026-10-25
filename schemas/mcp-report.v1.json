@@ -139,7 +139,7 @@
           "$ref": "#/$defs/count"
         },
         "unknownRuns": {
-          "description": "Runs recorded in the period whose usage the ledger could not count (`usage.unknown`) and has not counted a record of since: no figure counts them, and a cap counts them as 0 (1.1). Absent: none.",
+          "description": "Runs recorded in the period whose usage the ledger could not count (`usage.unknown`) and has not counted a record of since (its own lower bound never counts as one): a figure counts at most that lower bound, and a cap of their task or project in their pool is refused (1.1; ADR-0065). Absent: none.",
           "$ref": "#/$defs/count"
         }
       },
@@ -938,7 +938,7 @@
           "$ref": "#/$defs/count"
         },
         "unknownRuns": {
-          "description": "Runs recorded in the period whose usage the ledger could not count (`usage.unknown`) and has not counted a record of since: no figure counts them, and a cap counts them as 0 (1.1). Absent: none.",
+          "description": "Runs recorded in the period whose usage the ledger could not count (`usage.unknown`) and has not counted a record of since (its own lower bound never counts as one): a figure counts at most that lower bound, and a cap of their task or project in their pool is refused (1.1; ADR-0065). Absent: none.",
           "$ref": "#/$defs/count"
         }
       },

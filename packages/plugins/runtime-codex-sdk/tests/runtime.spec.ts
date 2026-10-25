@@ -236,6 +236,29 @@ describe('codex-sdk: the run\'s tool gate is a PreToolUse hook on every tool (do
     expect(asked).toEqual(['ls', 'npm publish'])
     expect(s.calls[0]!.hooks.map((h) => h.blocked)).toEqual([false, true])
     expect(s.calls[0]!.hooks[1]!.reason).toMatch(/apr-1.*the run stops here/)
+    // It stopped inside its first turn: no number is reported, and it says why in words.
+    expect(meteringOf(error)).toEqual({ partial: 'Codex stopped at a deferred tool call before it completed a turn' })
+  })
+
+  it('reports the turns a stopped run completed, marked partial: a stop, a timeout and a drain all stop the run\'s signal', async () => {
+    const steps: Step[] = [
+      { type: 'thread.started', thread_id: 'h-1' }, { type: 'turn.started' }, answer('first'),
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+      // The next turn is under way when the run is stopped (the fake names its thread again, which stops it here).
+      { type: 'thread.started', thread_id: 'h-1' }, { type: 'turn.started' }, answer('second'),
+    ]
+    const stop = new AbortController()
+    let handles = 0
+    const error = await runtime(scripted(() => steps)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, stop.signal, () => { if (++handles === 2) stop.abort() })
+      .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
+    expect(error).toMatchObject({ kind: 'aborted' })
+    expect(meteringOf(error)).toEqual({ turns: 1, partial: 'Codex was stopped; counted the 1 turn it completed before then, which leaves out a turn in flight' })
+    expectConsistentMetering(meteringOf(error)!)
+    // Stopped before any turn completed: no number, never a turn count of 0.
+    const early = new AbortController()
+    const none = await runtime(scripted(() => steps)).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, early.signal, () => early.abort())
+      .then(() => { throw new Error('the run completed') }, (e: unknown) => e as Error & { kind: string })
+    expect(meteringOf(none)).toEqual({ partial: 'Codex was stopped before it completed a turn' })
   })
 
   it('stops a run in which Codex reports a tool item its gate never allowed: a hook that failed or did not run', async () => {

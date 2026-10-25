@@ -524,8 +524,19 @@ The **`agents` Worker source**: agent runtimes as Workers
     `runId`), its data `usage-unknown@1.0`: `not-reported` for a run that
     reported neither tokens nor turns, `refused` (the ledger's `failure`, and
     the refused record kept as an `evidence` artifact when it is a valid
-    record) or `failed` for one it did not take, and `interrupted` below. A
-    fact that cannot be appended is logged. A cap counts such a run as 0;
+    record) or `failed` for one it did not take, and `interrupted` below. Its
+    `reason` says in plain words how the run ended (`it completed`, `it was
+    stopped: cancelled by the operator`, `it ran past its timeout of … ms and
+    was stopped`, `the host stopped while it ran, and stopped it (a drain at
+    stop or restart)`, `it stopped at a <tool> call that waits for approval
+    request <id>`, `it failed (<kind>)`), then what its runtime reported. A run
+    that ended before its runtime's final count, whose runtime reported some
+    usage while it ran (`partial`), gets its record of that lower bound and a
+    `not-reported` fact (`usage-unknown@1.1`) whose `partial` names that
+    record, which never reconciles it; a partial report with no number above
+    0 gets no record. A fact that cannot be appended is logged. A cap of such
+    a run's task or project in its pool is refused until it is reconciled
+    ([ADR-0065](../../../docs/decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md));
   - **observe** each rate-limit observation the runtime reported as a
     `limit-state` reading (source `runtime-result`) of the window `windows`
     maps it to: `limited` with `resetsAt` when `rejected`, `limited` until

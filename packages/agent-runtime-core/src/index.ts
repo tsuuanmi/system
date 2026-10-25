@@ -328,7 +328,17 @@ export interface RunMetering {
   costUsd?: number | undefined
   /** The rate-limit observations the agent reported during the run, in the order seen. */
   limits?: LimitObservation[] | undefined
+  /**
+   * Present when the run ended before the runtime's own final count of it (a stop, a timeout, a
+   * deferred call): `usage` and `turns` are then what the agent reported while it ran, a lower bound
+   * of what it consumed, and this says so in plain words (at most {@link MAX_PARTIAL} characters).
+   * Never an invented figure: a number the agent did not report stays missing.
+   */
+  partial?: string | undefined
 }
+
+/** The longest {@link RunMetering.partial} a provider reports, in characters. */
+export const MAX_PARTIAL = 300
 
 export interface RunResult extends RunMetering {
   /** The agent's final message. */

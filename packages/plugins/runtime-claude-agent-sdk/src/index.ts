@@ -251,7 +251,9 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     const limits: LimitObservation[] = []
     let rejected = false
     const deferral: { current?: Deferral } = {}
-    const metering = (): RunMetering => meteringFrom(result, mainModel, limits)
+    // What each assistant message reported, by message id: the run's usage when no result comes.
+    const streamed = new Map<string, StreamedMessage>()
+    const metering = (): RunMetering => (result ? meteringFrom(result, mainModel, limits) : partialMetering(streamed, mainModel, limits, signal.aborted ? 'stopped' : deferral.current ? 'deferred' : 'ended'))
     try {
       const messages = this.query({
         prompt: spec.prompt,
@@ -286,6 +288,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           const observed = limitFrom(info)
           if (observed) limits.push(observed)
         }
+        if (message.type === 'assistant') streamedFrom(message, streamed)
         if (message.type === 'result') result = message
       }
     } catch (error) {
@@ -641,6 +644,81 @@ function meteringFrom(result: Record<string, unknown> | undefined, mainModel: st
       mainModel ??= [...sorted].sort((a, b) => b.usage.outputTokens - a.usage.outputTokens || a.model.localeCompare(b.model))[0]!.model
     }
   }
+  if (mainModel) metering.model = mainModel
+  if (limits.length) metering.limits = limits.map((limit) => ({ ...limit }))
+  return metering
+}
+
+/** One assistant message's usage as the SDK streamed it: the model, whether the main loop sent it, and its counts (normalized). */
+interface StreamedMessage { model: string; main: boolean; usage: TokenUsage }
+/** Assistant messages a run keeps the usage of at most (INV-9); past it, later ones are not counted, and the figure stays a lower bound. */
+const MAX_STREAMED = 10_000
+
+/**
+ * Keep one streamed `assistant` message's usage, by its message id: the SDK sends one message per
+ * content block, each with the usage of the whole API response so far, so each count is the largest
+ * seen for that id. A message without an id, a model, or whole input and output counts is skipped:
+ * a number the SDK did not give stays missing.
+ */
+function streamedFrom(message: Record<string, unknown>, streamed: Map<string, StreamedMessage>): void {
+  const inner = message.message as Record<string, unknown> | undefined
+  if (!inner || typeof inner !== 'object') return
+  const id = typeof inner.id === 'string' && inner.id ? inner.id : undefined
+  const model = typeof inner.model === 'string' && inner.model ? inner.model : undefined
+  const raw = inner.usage && typeof inner.usage === 'object' ? inner.usage as Record<string, unknown> : undefined
+  if (!id || !model || !raw) return
+  const read = modelUsageFrom(model, { inputTokens: raw.input_tokens, outputTokens: raw.output_tokens, cacheReadInputTokens: raw.cache_read_input_tokens, cacheCreationInputTokens: raw.cache_creation_input_tokens })
+  if (!read) return
+  const before = streamed.get(id)
+  if (!before && streamed.size >= MAX_STREAMED) return
+  const usage: TokenUsage = { ...read.usage }
+  if (before) {
+    usage.inputTokens = Math.max(usage.inputTokens, before.usage.inputTokens)
+    usage.outputTokens = Math.max(usage.outputTokens, before.usage.outputTokens)
+    for (const key of CACHE) {
+      if (usage[key] !== undefined || before.usage[key] !== undefined) usage[key] = Math.max(usage[key] ?? 0, before.usage[key] ?? 0)
+    }
+  }
+  streamed.set(id, { model, main: message.parent_tool_use_id === null || message.parent_tool_use_id === undefined, usage })
+}
+
+const ENDED = { stopped: 'was stopped', deferred: 'stopped at a deferred tool call', ended: 'ended' } as const
+
+/**
+ * What a run that ended without its result message consumed, as far as the SDK said: the usage its
+ * assistant messages streamed, summed per model, and the main loop's messages as its turns. It leaves
+ * out the response in flight when it ended, and anything the SDK did not stream, so it is a lower
+ * bound, and says so (`partial`). With no message streamed, it reports no number.
+ */
+function partialMetering(streamed: Map<string, StreamedMessage>, mainModel: string | undefined, limits: LimitObservation[], ended: keyof typeof ENDED): RunMetering {
+  const metering: RunMetering = {}
+  const byModel = new Map<string, TokenUsage>()
+  let turns = 0
+  for (const message of streamed.values()) {
+    if (message.main) turns += 1
+    const sum = byModel.get(message.model) ?? { inputTokens: 0, outputTokens: 0 }
+    sum.inputTokens += message.usage.inputTokens
+    sum.outputTokens += message.usage.outputTokens
+    for (const key of CACHE) if (message.usage[key] !== undefined) sum[key] = (sum[key] ?? 0) + message.usage[key]
+    byModel.set(message.model, sum)
+  }
+  if (byModel.size) {
+    const models = [...byModel].map(([model, usage]): ModelUsage => ({ model, usage })).sort((a, b) => a.model.localeCompare(b.model))
+    const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
+    for (const m of models) {
+      usage.inputTokens += m.usage.inputTokens
+      usage.outputTokens += m.usage.outputTokens
+      for (const key of CACHE) if (m.usage[key] !== undefined) usage[key] = (usage[key] ?? 0) + m.usage[key]
+    }
+    metering.usage = usage
+    metering.models = models
+    metering.turns = turns
+    mainModel ??= [...models].sort((a, b) => b.usage.outputTokens - a.usage.outputTokens || a.model.localeCompare(b.model))[0]!.model
+  }
+  const n = streamed.size
+  metering.partial = n
+    ? `Claude Code ${ENDED[ended]} before its result message; counted from the usage its ${n} assistant message${n === 1 ? '' : 's'} streamed, which leaves out the response in flight`
+    : `Claude Code ${ENDED[ended]} before its result message, and before any assistant message reported usage`
   if (mainModel) metering.model = mainModel
   if (limits.length) metering.limits = limits.map((limit) => ({ ...limit }))
   return metering

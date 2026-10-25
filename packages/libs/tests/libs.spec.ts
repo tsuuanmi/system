@@ -2,7 +2,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { MAX_UNKNOWN_REASON, SchemaError, SchemaRegistry, canonicalJson, contentId, dshHome, readOrCreateSecretFile, USAGE_UNKNOWN_EVENT, usageUnknown, usageUnknownOf } from '../src/index.ts'
+import {
+  MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, SchemaError, SchemaRegistry, canonicalJson, contentId, countUnknownUsage, dshHome, readOrCreateSecretFile, reconciledBy, unknownUsageOf, USAGE_UNKNOWN_EVENT,
+  type UsageUnknown, usageUnknown, usageUnknownOf,
+} from '../src/index.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'system-libs-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -93,6 +96,74 @@ describe('usage the ledger could not count (usage-unknown@1.0)', () => {
     for (const data of [undefined, {}, { ...record, schema: 'usage-unknown@2.0' }, { ...record, kind: 'estimated' }, { ...record, usage: { inputTokens: 1, outputTokens: 1 } }]) {
       expect(usageUnknownOf(data)).toBeUndefined()
     }
+  })
+
+  const PARTIAL = `sha256:${'a'.repeat(64)}` as const
+  /** The facts as event log entries, read a page at a time. */
+  const log = (facts: Array<Omit<UsageUnknown, 'schema'>>) => {
+    const entries = facts.map((f, i) => ({ seq: i + 1, at: '2026-10-23T11:00:00.000Z', data: usageUnknown(f) }))
+    return ({ afterSeq, limit }: { afterSeq: number; limit: number }) => entries.filter((e) => e.seq > afterSeq).slice(0, limit)
+  }
+  const fact = (runId: string, extra: Partial<Omit<UsageUnknown, 'schema'>> = {}): Omit<UsageUnknown, 'schema'> => ({ ...fields, runId, worker: 'agent:reviewer', reason: `why ${runId}`, ...extra })
+
+  it('names the lower bound the ledger counted as 1.1, for a not-reported unit only; that record never reconciles the unit (INV-2)', () => {
+    const lower = usageUnknown({ ...fields, partial: PARTIAL })
+    expect(lower).toEqual({ schema: 'usage-unknown@1.1', ...fields, partial: PARTIAL })
+    expect(usageUnknownOf(lower)).toEqual(lower)
+    // Only under 1.1, and only for a unit whose runtime gave no final count.
+    expect(usageUnknownOf({ ...lower, schema: 'usage-unknown@1.0' })).toBeUndefined()
+    expect(() => usageUnknown({ ...fields, kind: 'interrupted', partial: PARTIAL })).toThrow(SchemaError)
+    expect(reconciledBy(lower, true)).toBe(false)
+    expect(reconciledBy(usageUnknown(fields), true)).toBe(true)
+    expect(reconciledBy(usageUnknown(fields), false)).toBe(false)
+  })
+
+  it('counts each open run once per pool, and names the latest with its Worker and its reason; a lower bound counted keeps it open', async () => {
+    const count = await countUnknownUsage({
+      pools: async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }],
+      entries: log([
+        fact('arun_1'), fact('arun_2', { partial: PARTIAL, outcome: 'aborted' }), fact('arun_3'), fact('arun_4'), fact('arun_5'),
+        // The same run again (a restart found it interrupted): named once, by its first fact.
+        fact('arun_2', { kind: 'interrupted', outcome: 'failed' }),
+      ]),
+      // The ledger counts a record of arun_2 (its own lower bound) and of arun_5 (reconciled).
+      counted: async (runId) => runId === 'arun_2' || runId === 'arun_5',
+    }, Date.parse('2026-10-23T12:00:00Z'))
+    expect(count.pools).toEqual([{
+      pool: 'max.agents', seconds: 18_000, runs: 4, kinds: { 'not-reported': 4 },
+      named: [
+        { runId: 'arun_4', worker: 'agent:reviewer', kind: 'not-reported', reason: 'why arun_4' },
+        { runId: 'arun_3', worker: 'agent:reviewer', kind: 'not-reported', reason: 'why arun_3' },
+        { runId: 'arun_2', worker: 'agent:reviewer', kind: 'not-reported', outcome: 'aborted', reason: 'why arun_2', lowerBound: true },
+      ],
+    }])
+    expect(NAMED_UNKNOWN_RUNS).toBe(3)
+  })
+
+  it('gives the runs of a task, else a project, whose usage a cap of their pool cannot count: by the fact\'s scope, else the run\'s reservation (INV-2)', () => {
+    const entries = log([
+      fact('arun_1', { taskId: 't1', projectId: 'p1' }),
+      fact('arun_2', { taskId: 't2', projectId: 'p1', partial: PARTIAL }),
+      // Its fact names no scope: its reservation's is taken.
+      fact('arun_3'),
+      fact('arun_4', { taskId: 't1', projectId: 'p1', pool: 'other.pool' }),
+      fact('arun_5', { taskId: 't1', projectId: 'p1' }),
+    ])
+    const counted = (runId: string) => runId === 'arun_2' || runId === 'arun_5'
+    const reservedFor = (runId: string) => (runId === 'arun_3' ? { taskId: 't1', projectId: 'p1' } : undefined)
+    const pools = new Set(['max.agents'])
+    expect(unknownUsageOf({ entries, counted, reservedFor }, { taskId: 't1' }, pools)).toEqual({
+      runs: [
+        { pool: 'max.agents', runId: 'arun_1', worker: 'agent:reviewer', kind: 'not-reported', reason: 'why arun_1' },
+        { pool: 'max.agents', runId: 'arun_3', worker: 'agent:reviewer', kind: 'not-reported', reason: 'why arun_3' },
+      ],
+      unread: false, unreadable: 0,
+    })
+    // A project's scope takes every task of it; a lower bound counted keeps its run unknown.
+    expect(unknownUsageOf({ entries, counted, reservedFor }, { projectId: 'p1' }, pools).runs.map((r) => [r.runId, r.lowerBound])).toEqual([['arun_1', undefined], ['arun_2', true], ['arun_3', undefined]])
+    expect(unknownUsageOf({ entries, counted, reservedFor }, { taskId: 't9' }, pools).runs).toEqual([])
+    // No scope: a cap bounds the run's own lines only.
+    expect(unknownUsageOf({ entries, counted, reservedFor }, {}, pools).runs).toEqual([])
   })
 })
 

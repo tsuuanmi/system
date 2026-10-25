@@ -218,13 +218,13 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect(fact).toMatchObject({ type: 'usage.unknown', runId: 'run_wf' })
     expect(fact!.data).toEqual({
       schema: 'usage-unknown@1.0', runId: done.id, kind: 'not-reported', account: 'max', pool: 'max.agents', worker: 'agent:reviewer', projectId: 'p1', taskId: 'task-1',
-      outcome: 'completed', observedAt: expect.any(String), reason: 'its runtime reported neither tokens nor turns',
+      outcome: 'completed', observedAt: expect.any(String), reason: 'it completed; its runtime reported neither tokens nor turns',
     })
     expect(usageUnknownOf(fact!.data)).toBeDefined()
     // A failed run that reported nothing is one too.
     const failing = await boot(new ScriptedAgent({ fail: new ProviderError('session_broken', 'no result') }), { workers: [metered()] }, undefined, LEDGER)
     const failed = await run(failing.ctx)
-    expect(unknowns(failing.ctx)).toMatchObject([{ data: { runId: failed.id, kind: 'not-reported', outcome: 'failed' } }])
+    expect(unknowns(failing.ctx)).toMatchObject([{ data: { runId: failed.id, kind: 'not-reported', outcome: 'failed', reason: 'it failed (session_broken); its runtime reported neither tokens nor turns' } }])
   })
 
   it('records what the ledger takes of a refused record: its totals without a per-model split it refused; else a refused fact naming the record, kept as evidence (D25)', async () => {
@@ -291,7 +291,7 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     const silent = await run(odd.ctx)
     expect(silent.status).toBe('completed')
     expect(unknowns(odd.ctx)).toEqual([])
-    expect(warned).toContainEqual(expect.stringContaining(`the usage of ${silent.id} on agent:reviewer (pool max.agents) is unknown (not-reported: its runtime reported neither tokens nor turns), and that could not be recorded`))
+    expect(warned).toContainEqual(expect.stringContaining(`the usage of ${silent.id} on agent:reviewer (pool max.agents) is unknown (not-reported: it completed; its runtime reported neither tokens nor turns), and that could not be recorded`))
   })
 
   it('meters nothing for a Worker with no pool, even with a ledger loaded; a runtime\'s usage still goes into agent-result@1.2', async () => {
@@ -318,7 +318,83 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     // What the ledger cannot count is recorded, under the pool the run drew on (D25): the stop
     // aborted the agent before it reported anything, and the restart found the run interrupted.
     const facts = second.ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data)
-    expect(facts).toMatchObject([{ runId: started.id, kind: 'not-reported', outcome: 'aborted' }, { runId: started.id, kind: 'interrupted', pool: 'max.agents', account: 'max', outcome: 'failed' }])
+    expect(facts).toMatchObject([
+      { runId: started.id, kind: 'not-reported', outcome: 'aborted', reason: 'the host stopped while it ran, and stopped it (a drain at stop or restart); its runtime reported neither tokens nor turns' },
+      { runId: started.id, kind: 'interrupted', pool: 'max.agents', account: 'max', outcome: 'failed' },
+    ])
+  })
+
+  /** What a stopped run's runtime reported before it ended without its final count: a lower bound, marked partial. */
+  const STREAMED: RunMetering = {
+    model: 'model-main', turns: 2, usage: { inputTokens: 4757, outputTokens: 53, cacheReadInputTokens: 4300 },
+    partial: 'scripted was stopped before its result; counted from what it streamed',
+  }
+  /** Start one run that holds until it is stopped, and wait until it runs. */
+  const holding = async (ctx: Context, key = 'k-hold') => {
+    const source = ctx.workers.source('agents')!
+    const started = source.start({ key, worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    return started
+  }
+  /** The lower bound counted for a run, and its fact: `not-reported`, naming that record, saying how the run ended. */
+  const lowerBound = async (ctx: Context, runId: string, ending: RegExp, outcome: 'aborted' | 'failed' = 'aborted') => {
+    const { records } = await ctx.resources.usage({ runId })
+    expect(records).toMatchObject([{ source: 'runtime-result', outcome, usage: STREAMED.usage, turns: 2, requestId: `scripted:${runId}` }])
+    const facts = unknowns(ctx).map((e) => e.data!)
+    expect(facts).toHaveLength(1)
+    expect(facts[0]).toMatchObject({ schema: 'usage-unknown@1.1', runId, kind: 'not-reported', outcome, partial: expect.stringMatching(/^sha256:/) })
+    expect(ctx.artifacts.get(String(facts[0]!['partial']))).toMatchObject({ kind: 'receipt', body: { runId, usage: STREAMED.usage } })
+    expect(String(facts[0]!['reason'])).toMatch(ending)
+    expect(String(facts[0]!['reason'])).toContain('the ledger counted what its runtime reported while it ran (4,757 input and 53 output tokens, 2 turns), a lower bound: scripted was stopped before its result')
+    expect(usageUnknownOf(facts[0])).toBeDefined()
+  }
+
+  it('records what a run the operator stopped reported, as a lower bound, and keeps it unknown, saying it was stopped (INV-2)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ holdMs: 30_000, stoppedMetering: STREAMED }), { workers: [metered()] }, undefined, LEDGER)
+    const started = await holding(ctx)
+    expect(ctx.workers.source('agents')!.cancel!(started.id)).toBe(true)
+    expect(await ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', error: { kind: 'aborted' } })
+    await lowerBound(ctx, started.id, /^it was stopped: cancelled by the operator; /)
+    // What the runtime reported is counted, never nothing.
+    expect((await ctx.resources.usage({ runId: started.id })).totals).toMatchObject([{ pool: 'max.agents', records: 1, usage: STREAMED.usage, turns: 2 }])
+  })
+
+  it('records what a run past its timeout reported, as a lower bound, saying it ran past its timeout', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ holdMs: 30_000, stoppedMetering: STREAMED }), { workers: [metered()], runTimeoutMs: 300 }, undefined, LEDGER)
+    const source = ctx.workers.source('agents')!
+    const done = await source.wait(source.start({ key: 'k-late', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'timeout' } })
+    await lowerBound(ctx, done.id, /^it ran past its timeout of 300 ms and was stopped; /, 'failed')
+  })
+
+  it('records what a run the host drained at its stop reported, as a lower bound; the restart finds it interrupted, and it stays unknown by its first fact', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
+    const first = await boot(new ScriptedAgent({ holdMs: 30_000, process: true, stoppedMetering: STREAMED }), { workers: [metered()] }, dir, LEDGER)
+    const started = await holding(first.ctx)
+    await first.stop()
+    const second = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered()], deadAfterSeconds: 1 }, dir, LEDGER)
+    expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
+    // The facts the drain wrote are durable; the restart adds that it found the run interrupted.
+    const facts = second.ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data!)
+    expect(facts).toMatchObject([
+      { schema: 'usage-unknown@1.1', runId: started.id, kind: 'not-reported', outcome: 'aborted', partial: expect.stringMatching(/^sha256:/) },
+      { runId: started.id, kind: 'interrupted' },
+    ])
+    expect(String(facts[0]!['reason'])).toMatch(/^the host stopped while it ran, and stopped it \(a drain at stop or restart\); the ledger counted what its runtime reported while it ran \(4,757 input and 53 output tokens, 2 turns\), a lower bound: /)
+    expect(second.ctx.artifacts.get(String(facts[0]!['partial']))).toMatchObject({ kind: 'receipt', body: { runId: started.id, outcome: 'aborted', usage: STREAMED.usage, turns: 2 } })
+  })
+
+  it('writes no record of a partial report with no number above 0, which would read as known: the run is not-reported, saying what its runtime said', async () => {
+    const zero: RunMetering = { turns: 0, usage: { inputTokens: 0, outputTokens: 0 }, partial: 'scripted was stopped before it completed a turn' }
+    const { ctx } = await boot(new ScriptedAgent({ holdMs: 30_000, stoppedMetering: zero }), { workers: [metered()] }, undefined, LEDGER)
+    const started = await holding(ctx)
+    ctx.workers.source('agents')!.cancel!(started.id)
+    await ctx.workers.source('agents')!.wait(started.id, 10_000)
+    expect((await ctx.resources.usage()).records).toEqual([])
+    expect(unknowns(ctx).map((e) => e.data)).toEqual([expect.objectContaining({
+      schema: 'usage-unknown@1.0', runId: started.id, kind: 'not-reported', outcome: 'aborted',
+      reason: 'it was stopped: cancelled by the operator; its runtime reported no number above 0 before it ended: scripted was stopped before it completed a turn',
+    })])
   })
 })
 

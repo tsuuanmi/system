@@ -16,7 +16,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   type AgentRuntimeProvider, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunMetering, type RunObserver, type RunResult,
   type RunSpec, type RuntimeEvidence, type TokenUsage,
-  accountIdOf, identityHmac, limitProblem, maskEmail, observe, probeIn, readLimits, titleOf,
+  MAX_PARTIAL, accountIdOf, identityHmac, limitProblem, maskEmail, observe, probeIn, readLimits, titleOf,
 } from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
@@ -79,6 +79,12 @@ export function expectConsistentMetering(metering: RunMetering): void {
     for (const key of COUNTS) {
       expect(metering.models.reduce((n, m) => n + (m.usage[key] ?? 0), 0), `${key} is the sum over models`).toBe(metering.usage![key] ?? 0)
     }
+  }
+  if (metering.partial !== undefined) {
+    expect(metering.partial.length, 'a partial report says why in words').toBeGreaterThan(0)
+    expect(metering.partial.length, 'a partial report says why within MAX_PARTIAL').toBeLessThanOrEqual(MAX_PARTIAL)
+    // A partial report is what the agent reported before the runtime's own count: never its final result.
+    expect(metering.resultId, 'a partial report names no result').toBeUndefined()
   }
   for (const limit of metering.limits ?? []) {
     expect(limit.window.length, 'a limit names its window').toBeGreaterThan(0)

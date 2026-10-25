@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
+import { type RunMetering, withMetering } from '@tsuuanmi/system-agent-runtime-core'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type ToolCall, type ToolVerdict } from '@tsuuanmi/system-agent-runtimes'
 import StoreApprovals from '@tsuuanmi/system-approvals'
 import type { AutonomyPolicy } from '@tsuuanmi/system-approvals-core'
@@ -17,6 +18,8 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import { contentId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
+import type { PoolConfig } from '@tsuuanmi/system-resources-core'
+import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { ClaudeAgentRuntime, type QueryFn } from '@tsuuanmi/system-runtime-claude-agent-sdk'
 import { CodexRuntime } from '@tsuuanmi/system-runtime-codex-sdk'
 import Store from '@tsuuanmi/system-store'
@@ -43,7 +46,7 @@ class GatedAgent implements AgentRuntimeProvider {
   readonly kind = 'gated'
   readonly runs: RunSpec[] = []
   readonly verdicts: ToolVerdict[][] = []
-  constructor(private readonly script: Array<Array<Omit<ToolCall, 'callId'>>>, private readonly options: { goesOn?: boolean } = {}) {}
+  constructor(private readonly script: Array<Array<Omit<ToolCall, 'callId'>>>, private readonly options: { goesOn?: boolean; deferredMetering?: RunMetering } = {}) {}
   async probe() {
     return { available: true, detail: 'gated 1.0', sandboxes: ['read-only', 'workspace-write'] as Array<'read-only' | 'workspace-write'>, resume: true, executes: true, readsConfined: true, gatesToolCalls: true }
   }
@@ -56,7 +59,10 @@ class GatedAgent implements AgentRuntimeProvider {
     for (const [i, call] of (this.script[this.runs.length - 1] ?? []).entries()) {
       const verdict = await spec.toolGate!({ ...call, callId: `call-${this.runs.length}-${i + 1}` }, signal)
       seen.push(verdict)
-      if (verdict.decision === 'defer' && !this.options.goesOn) throw new ProviderError('config_error', `gated: stopped at ${call.tool} (approval request ${verdict.requestId})`)
+      if (verdict.decision === 'defer' && !this.options.goesOn) {
+        const error = new ProviderError('config_error', `gated: stopped at ${call.tool} (approval request ${verdict.requestId})`)
+        throw this.options.deferredMetering ? withMetering(error, this.options.deferredMetering) : error
+      }
     }
     return { text: `done ${this.runs.length}`, nativeHandle: handle, turns: 1 }
   }
@@ -82,14 +88,18 @@ const requirement: WorkRequirement = {
   tier: { min: 'economy', source: 'caller' }, acceptance: { contract: 'acceptance.answer' },
 }
 
-async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | null = policy()) {
+/** A pool the Worker draws on, when a test meters it. */
+const POOL: PoolConfig = { pool: 'max.agents', account: 'max', kind: 'programmatic', unknown: 'available', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18000 }] }
+
+async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | null = policy(), metered = false) {
   const dir = mkdtempSync(join(tmpdir(), 'system-gate-'))
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ...(approvals ? [ctx.plugin(StoreApprovals, { policies: [approvals] })] : []),
+    ...(metered ? [ctx.plugin(FakeResources, { pools: [POOL] })] : []),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry),
-    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard' }] }),
+    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard', ...(metered ? { pool: POOL.pool, account: POOL.account } : {}) }] }),
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
@@ -230,6 +240,20 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('approval request apr-') } })
     expect(done.result).toBeUndefined()
     expect(agent.verdicts[0]![1]).toMatchObject({ decision: 'deny', reason: expect.stringContaining('the run stopped at its Bash call') })
+  })
+
+  it('records what a run that stopped at a deferred call reported, as a lower bound, and keeps it unknown, naming the request it waits on (INV-2)', async () => {
+    const deferredMetering: RunMetering = { turns: 1, usage: { inputTokens: 20, outputTokens: 8 }, partial: 'gated stopped at a deferred tool call before its result' }
+    const { ctx, run } = await boot(new GatedAgent([[bash('npm test')]], { deferredMetering }), policy(), true)
+    const done = await run()
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    const [request] = await ctx.approvals.list()
+    expect((await ctx.resources.usage({ runId: done.runId })).records).toMatchObject([{ outcome: 'failed', usage: deferredMetering.usage, turns: 1 }])
+    const facts = ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data!)
+    expect(facts).toEqual([expect.objectContaining({
+      schema: 'usage-unknown@1.1', runId: done.runId, kind: 'not-reported', outcome: 'failed', partial: expect.stringMatching(/^sha256:/),
+      reason: `it stopped at a Bash call that waits for approval request ${request!.requestId}; the ledger counted what its runtime reported while it ran (20 input and 8 output tokens, 1 turn), a lower bound: gated stopped at a deferred tool call before its result`,
+    })])
   })
 
   it('lets exactly the approved call run once in a later run of the session, and not another input; a used approval asks again', async () => {

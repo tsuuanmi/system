@@ -192,17 +192,29 @@ counts, reserves, and closes nothing by them: they are read through `quota()`.
 
 ## Usage the ledger cannot count
 
-Some usage reaches no counted figure, and a cap counts it as 0:
+Some usage reaches no counted figure, or only a lower bound of one:
 
-| Case | Counts against a cap |
+| Case | A cap of its scope and pool |
 |---|---|
-| a counted record without the figure of a cap's unit (no token counts, no `cost`, no `turns`, no `durationMs`) | 0 of that unit; the record's other figures, and `runs` 1 |
-| a run whose runtime reported neither tokens nor turns, so no record can be written | nothing |
-| a run the host stopped while it ran: no result came | nothing |
-| a record the ledger refused (`unknown-pool`, `invalid`), or a `record()` that failed | nothing |
+| a counted record without the figure of a cap's unit (no token counts, no `cost`, no `turns`, no `durationMs`) | counts 0 of that unit; the record's other figures, and `runs` 1 |
+| a run that ended before its runtime's final count (a stop, a timeout, a drain at the host's stop, a deferred call), whose runtime reported some usage while it ran | its record of that lower bound is counted, and the cap is refused until the run is reconciled |
+| a run whose runtime reported neither tokens nor turns (nor any number above 0 before it ended), so no record can be written | is refused until the run is reconciled |
+| a run the host stopped while it ran: no result came | is refused until the run is reconciled |
+| a record the ledger refused (`unknown-pool`, `invalid`), or a `record()` that failed | is refused until the run is reconciled |
 
-The operator decided (D25, 2026-10-23) to keep counting these as 0, so this seam's cap semantics
-and its contract do not change, and to make each one visible and durable instead:
+**Why a run goes `not-reported`.** Its runtime's numbers come from its final message: the Claude
+Agent SDK's `result` (its `modelUsage` and `num_turns`), Codex's turn count. A run that ends before
+that message (stopped by the operator, past its `runTimeoutMs`, stopped by the host's stop or a
+drain at restart, or at a call its gate deferred) has none. What the runtime did report while it
+ran is not dropped ([metering](agent-runtimes.md#metering)): the Claude Agent SDK provider sums the
+`usage` of the assistant messages it streamed (each response once, at its largest counts; the main
+loop's responses are its turns), and Codex counts the turns it completed. That is a lower bound (the
+response or turn in flight is not in it), marked `partial` with why, never an estimate.
+
+The operator decided first (D25, 2026-10-23) to count these as 0 and make each one visible and
+durable; then that a cap never counts unknown usage as 0, for every pool kind (INV-2,
+[ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md)). Each
+case is visible and durable:
 
 - **A record without a figure** is its own fact: it names its run, Worker, pool, and task, and the
   figure it lacks is missing from it. The [report](reports.md) counts the records without token
@@ -211,32 +223,50 @@ and its contract do not change, and to make each one visible and durable instead
   `usage.unknown` event, its data a
   [`usage-unknown@1.0`](../reference/schemas.md#usage-unknown) record: the run, Worker, pool,
   account, session, board task and project, how it ended, and its kind (`not-reported`,
-  `interrupted`, `refused`, `failed`) with why; the event names the workflow run, whose view maps
-  the run to its step. Nothing estimates its usage. A run may get two (a stop aborted it before it
-  reported anything, then the restart found it interrupted): readers count it once, by its first.
+  `interrupted`, `refused`, `failed`) with why. The reason says, in plain words, how the run ended
+  (`it completed`, `it was stopped: cancelled by the operator`, `it ran past its timeout of … ms
+  and was stopped`, `the host stopped while it ran, and stopped it (a drain at stop or restart)`,
+  `it stopped at a Bash call that waits for approval request apr-…`, `it failed (…)`) and what its
+  runtime reported. The event names the workflow run, whose view maps the run to its step. Nothing
+  estimates its usage. A run may get two (a stop aborted it before it reported anything, then the
+  restart found it interrupted): readers count it once, by its first.
+- **A run with a lower bound counted** (it ended before its runtime's final count, and its runtime
+  reported some usage while it ran) gets its record of that lower bound and a `not-reported` fact
+  (`usage-unknown@1.1`) whose `partial` names that record. A partial report with no number above 0
+  gets no record: a reported 0 would read as known. Its own record never reconciles it (INV-2: a
+  lower bound is not its usage). A later `transcript` record of the same run is a duplicate of its
+  `runtime-result` one, so transcript reconciliation will have to replace the lower bound.
+- **A cap fails closed** (ADR-0065): the store-backed ledger refuses a reservation whose caps have
+  a scope (a task, else a project) while a run of that scope, by its fact or else by its
+  reservation, has a fact in a capped pool and is not reconciled, naming each such run, its Worker,
+  and why in the `budget` decision. It refuses too when no event log is loaded, when more than
+  10,000 `usage.unknown` entries are kept, or when an entry is not a valid record: whether such a
+  run exists is then unknown. A request without caps, or caps without a scope, is not concerned. It
+  holds for every pool kind; nothing reconciles a run until transcript reconciliation exists, so the
+  way out is the runbook's ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
 - **A failed `record()` is never lost silently.** What can be recorded is: a record refused as
   `invalid` with a per-model split is offered again with its totals alone, which are what a cap
   counts. Still refused, the record is kept as an `evidence` artifact (when it is a valid
   `usage-record@1.0`) that the fact names, with the ledger's failure. A fact that cannot be
   appended either (no event log, or the store failing) is logged.
 - **Reconciled:** a unit is reconciled once the ledger counts a usage record of its run in its
-  pool, which is what transcript reconciliation will write (`source: transcript`; a crashed run's
-  record written before the crash counts too).
+  pool other than the lower bound its fact names, which is what transcript reconciliation will
+  write (`source: transcript`; a crashed run's record written before the crash counts too).
 - **Shown** in the [report](reports.md#what-it-counts) (per pool: the runs whose usage is unknown
   and not reconciled, the records without a figure; in all: each kind, and how many were
   reconciled since), per step in `system usage` (MCP `usage`), and in health: the `usage` check is
   degraded while a configured pool has a run whose usage is unknown and not reconciled in its
-  current window, naming the pool and the count; while such a run names a pool the ledger does not
+  current window, naming the pool, the count, and its latest three runs, each with its Worker, its
+  kind, whether a lower bound was counted, and its reason; while such a run names a pool the ledger does not
   configure; and when there are more entries than it reads (it is never `ok` on part of them). A
   pool's current window is its longest configured window, back from now; a pool with a window of
   no length (a credit balance) never resets, so every such run counts until it is reconciled or
   the event log's retention removes it ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
 
-**Deferred: failing closed for metered pools** (D25's third option). A cap could refuse its
-scope's next reservation while a run of a pool whose kind requires counted usage (a metered pool)
-is unreconciled, keeping 0 for subscription pools with windows. That changes this guarantee seam's
-cap semantics, so it needs its own ADR (ADR-0036), and it waits until transcript reconciliation
-exists: before then, nothing could reconcile such a run, and its scope would stay refused for good.
+**Failing closed** (D25's third option, taken for every pool kind by
+[ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md)): until
+transcript reconciliation exists, nothing reconciles such a run, so its scope's capped pool stays
+refused; the seam's conformance suite gains the rule once its fake ledger reads the event log.
 
 ## Fail-closed rules
 
@@ -247,8 +277,9 @@ exists: before then, nothing could reconcile such a run, and its scope would sta
    runtime read from the agent's own report
    ([limit readings](agent-runtimes.md#limit-readings)), else for the Worker's cooldown; a
    reading that cannot be read never opens a pool.
-3. Usage is never estimated from a model's own report. A missing number stays missing: a cap
-   counts it as 0, and it is recorded and shown ([above](#usage-the-ledger-cannot-count)).
+3. Usage is never estimated from a model's own report. A missing number stays missing: a run whose
+   usage the ledger could not count refuses a cap of its scope and pool until it is reconciled,
+   and it is recorded and shown ([above](#usage-the-ledger-cannot-count), ADR-0065).
 4. Every cap is enforced before the run, never after, and every hold expires (INV-9).
 
 ## Conformance

@@ -15,7 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { outline, reply } from '@tsuuanmi/system-gateway-core'
-import { QUOTA_DEFAULTS, QUOTA_RANGES, quotaSettingsProblems, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { MAX_UNKNOWN_ENTRIES, QUOTA_DEFAULTS, QUOTA_RANGES, quotaSettingsProblems, SchemaRegistry, unknownUsageOf, USAGE_UNKNOWN_EVENT } from '@tsuuanmi/system-libs'
 import {
   type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type QuotaSettings, type Reservation, type ReservationRequest, Resources, ResourcesError,
   templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
@@ -403,6 +403,8 @@ export class StoreResources extends Resources {
         if (total > cap.amount) faults.push(`cap ${cap.amount} ${cap.unit} of ${cap.pool} would be exceeded: ${sum}`)
         else fine.push(`cap ${cap.amount} ${cap.unit} of ${cap.pool} holds: ${sum}`)
       }
+      // A cap never counts usage it cannot see as 0 (INV-2, ADR-0065).
+      faults.push(...this.uncountable(db, request))
       const state = faults.length ? 'refused' : 'reserved'
       const reservationId = `res-${randomUUID()}`
       const inputs = [...new Set(request.lines.flatMap((l) => pools.some((p) => p.pool === l.pool) ? this.readingArtifacts(db, l.pool) : []))]
@@ -574,6 +576,38 @@ export class StoreResources extends Resources {
     }[cap.unit]
     const row = db.prepare(`SELECT ${amount} AS n FROM resource_usage WHERE ${scope.column} = ? AND pool = ?`).get(scope.value, cap.pool) as { n: number | null }
     return round6(row.n ?? 0)
+  }
+
+  /**
+   * Why the request's caps cannot be held, for usage the ledger could not count (INV-2, ADR-0065): a
+   * run of the caps' scope (its task, else its project) whose usage the ledger could not count in a
+   * capped pool, and has not counted since (its own lower bound never counts as counted), is unknown
+   * usage, which a cap never reads as 0. Each such run is named, with its Worker and why. With no
+   * event log, or more `usage.unknown` entries than are read, or entries no reader can place, whether
+   * there is one is unknown, and the caps are refused as well. A request without caps, or without a
+   * scope (its caps bound its own lines only), is not concerned.
+   */
+  private uncountable(db: DatabaseSync, request: ReservationRequest): string[] {
+    const scope = this.scope(request)
+    if (!scope || !request.caps?.length) return []
+    const pools = new Set(request.caps.map((c) => c.pool))
+    const named = [...pools].sort().join(', ')
+    const eventLog = this.ctx.get('eventLog')
+    if (!eventLog) return [`the caps of ${named} cannot be held: no event log (ctx.eventLog) is loaded, so whether a run of ${scope.value} has usage the ledger could not count is unknown, and a cap never counts unknown usage as 0 (INV-2)`]
+    const reservedFor = db.prepare('SELECT project_id, task_id FROM resource_reservations WHERE run_id = ? ORDER BY reserved_at DESC LIMIT 1')
+    const counted = db.prepare('SELECT 1 FROM resource_usage WHERE run_id = ? AND pool = ? LIMIT 1')
+    const found = unknownUsageOf({
+      entries: ({ afterSeq, limit }) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, afterSeq, limit }),
+      counted: (runId, pool) => counted.get(runId, pool) !== undefined,
+      reservedFor: (runId) => {
+        const row = reservedFor.get(runId) as { project_id: string | null; task_id: string | null } | undefined
+        return row ? { ...(row.project_id !== null ? { projectId: row.project_id } : {}), ...(row.task_id !== null ? { taskId: row.task_id } : {}) } : undefined
+      },
+    }, scope.column === 'task_id' ? { taskId: scope.value } : { projectId: scope.value }, pools)
+    const faults = found.runs.map((r) => `cap of ${r.pool} cannot be held: run ${r.runId}${r.worker ? ` on ${r.worker}` : ''} of ${scope.value} has usage the ledger could not count (${r.kind}${r.lowerBound ? ', only a lower bound counted' : ''}: ${r.reason})`)
+    if (found.unread) faults.push(`the caps of ${named} cannot be held: more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries are kept, and only the first were read, so a run of ${scope.value} may have usage the ledger could not count`)
+    if (found.unreadable) faults.push(`the caps of ${named} cannot be held: ${found.unreadable} usage.unknown entr${found.unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1 record, so its run and scope are unknown`)
+    return faults
   }
 
   /** What unexpired holds of the request's scope keep of a cap: a hold nobody released stops counting when it expires (INV-9). */

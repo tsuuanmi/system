@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import EventLog from '@tsuuanmi/system-event-log'
 import Store from '@tsuuanmi/system-store'
 import { runSuite } from '../../../libs/conformance/runner.ts'
 import { POOLS, resourcesSuite, TEMPLATES } from '../../../resources-core/conformance/resources.ts'
@@ -17,7 +18,11 @@ runSuite(resourcesSuite, {
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-resources-conformance-'))
     const ctx = new Context()
-    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(StoreResources, { pools: structuredClone([...POOLS]), templates: structuredClone([...TEMPLATES]) })]
+    // With the event log the host loads: a scoped cap reads it for usage the ledger could not count (ADR-0065).
+    const fibers = [
+      ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}),
+      ctx.plugin(StoreResources, { pools: structuredClone([...POOLS]), templates: structuredClone([...TEMPLATES]) }),
+    ]
     await Promise.all(fibers)
     return {
       ctx,

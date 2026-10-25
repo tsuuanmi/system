@@ -286,7 +286,7 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
       '1 usage record(s) carry no token counts (the runtime reported none): tokens count the others only',
       '1 usage record(s) carry no cost (the runtime reported none): cost counts the others only',
       '1 usage record(s) carry no turn count: turns count the others only',
-      '3 run(s) whose usage the ledger could not count, and has not counted since: no figure counts them, and a cap counts them as 0 (4 recorded in the period: 1 not-reported, 1 interrupted, 1 refused, 1 failed, 1 of them counted since; system events --type usage.unknown)',
+      '3 run(s) whose usage the ledger could not count, and has not counted since: a figure counts at most a lower bound of them, and a cap of their task or project in their pool is refused (4 recorded in the period: 1 not-reported, 1 interrupted, 1 refused, 1 failed, 1 of them counted since; system events --type usage.unknown)',
     ])
     const text = renderReport(report)
     expect(text).toContain('- a.pool: 2,000 tokens in (1,600 cache reads, 0 cache writes), 200 out; 7 turns; $0.4000; 3 records; not counted: 2 runs whose usage is unknown, 1 record without token counts.')

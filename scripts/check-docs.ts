@@ -11,7 +11,8 @@ export interface DocProblem {
   detail: string
 }
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'lib', 'dist', 'coverage'])
+// `.claude` is an agent harness's own directory (settings, loop files), never documentation.
+const SKIP_DIRS = new Set(['.git', '.claude', 'node_modules', 'lib', 'dist', 'coverage'])
 
 function walk(dir: string, visit: (path: string, isDir: boolean) => void): void {
   for (const entry of readdirSync(dir)) {
