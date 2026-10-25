@@ -405,6 +405,55 @@ export type Carried =
   | { outcome: 'refused'; cause: CarryRefusal; reason: string }
 
 /**
+ * The checks a policy can require that are commands (`autonomy-policy` `requires`): what a run's
+ * checks run (T151). The others (`schema`, `review`, `quote-check`) are judged by the run itself.
+ */
+export type RunCheck = 'tests' | 'typecheck' | 'lint'
+export const RUN_CHECKS: readonly RunCheck[] = ['tests', 'typecheck', 'lint']
+
+/**
+ * Run a workflow run's required checks on its result (T151): the source that holds `workspace` as
+ * the worktree of workflow run `runId` runs, for each name in `checks`, the command its operator's
+ * configuration gives that check for the worktree's repository, confined, only while the worktree is
+ * exactly `subject` (the tree the result is on) and no run of it can still write it. `classification`
+ * is the run's: what a check printed is recorded at it.
+ */
+export interface CheckStep {
+  runId: string
+  workspace: string
+  subject: { ref: string; version: string }
+  checks: RunCheck[]
+  classification: 'public' | 'operator-shared' | 'local-private'
+}
+
+/**
+ * One check of a {@link CheckStep}: `passed` (its command exited 0 on the subject, and left it as it
+ * was), `failed` (it exited with another code, on the subject), or `error` (it did not run to an exit
+ * code on the subject: no command configured, not allowed by the policy, could not start or be
+ * confined, timed out, or changed the tree). An `error` is never passed or failed: the check stays
+ * pending (INV-2).
+ */
+export interface CheckResult {
+  check: RunCheck
+  outcome: 'passed' | 'failed' | 'error'
+  exitCode?: number
+  reason: string
+}
+
+/** Why a run's checks did not run at all: the worktree moved off the subject, was removed, may still be written, or anything else. */
+export type CheckRefusal = 'moved' | 'gone' | 'busy' | 'failed'
+
+/**
+ * What a run's checks came to (T151):
+ * - `checked`: one result per check asked, in its order; `evidence`, the `check-run@1.0` evidence
+ *   artifact that records what ran, when any command was started;
+ * - `refused`: nothing ran, and why; every check stays pending.
+ */
+export type Checked =
+  | { outcome: 'checked'; results: CheckResult[]; evidence?: string }
+  | { outcome: 'refused'; cause: CheckRefusal; reason: string }
+
+/**
  * Contributes Workers and runs work on them (the Worker's three questions: can it accept
  * this work now, how is it invoked, what did it produce). `describe` is called on every
  * route, so states are current.
@@ -480,6 +529,13 @@ export interface WorkerSource {
    * finds its own work done and says so (INV-4).
    */
   carry?(step: CarryStep): Promise<Carried | undefined>
+  /**
+   * Run workflow run `step.runId`'s required checks on the worktree `step.workspace` (T151).
+   * Undefined when this source holds no such worktree. The commands change nothing a later step reads
+   * (a check that changes the tree is an `error`), so a step repeated after a restart runs them again
+   * (INV-4: safe to repeat). `signal` stops the commands in flight; the step then throws.
+   */
+  check?(step: CheckStep, signal?: AbortSignal): Promise<Checked | undefined>
   /**
    * The caller is done with these sessions for good (their run was deleted or expired): what the
    * source created for them outside `system` (a website conversation) is deleted. How many of
@@ -673,6 +729,15 @@ export abstract class Workers extends Service {
    * `carry` starts the run's worktree from HEAD, as before.
    */
   abstract carry?(step: CarryStep): Promise<(Carried & { source: string }) | undefined>
+
+  /**
+   * Run a workflow run's required checks on its result's worktree, by the source that holds it
+   * (`WorkerSource.check`), with that source's name; undefined when none holds it. A source that
+   * throws, unless `signal` stopped it, is a refusal (`failed`), never read as not holding it, and
+   * never as a check passed (INV-2). Optional: a caller that finds no `check` runs none, and the
+   * checks stay pending (T151).
+   */
+  abstract check?(step: CheckStep, signal?: AbortSignal): Promise<(Checked & { source: string }) | undefined>
 
   /** Release sessions for good, at every source that owns some of them: how many records became due. */
   abstract release(sessionIds: readonly string[], reason: string): { due: number }

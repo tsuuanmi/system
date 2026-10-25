@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Carried, type CarryStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
+  type Acceptance, type AcceptanceContract, ADMISSION_CHECKS, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type Carried, type CarryStep, type Checked, type CheckStep, type Landed, type LandStep, type WorkChange, LIVENESS_STATES, type LivenessQuery,
   type LivenessState, MAX_LIVENESS_RUNS, provesFor, type QuotaClass, type Rejection, type RouteOptions, type RunLiveness, takesKind, TIERS, type Tier, type WorkRequirement, type WorkerSource,
   type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
@@ -207,6 +207,22 @@ export class WorkerRouter extends Workers {
         carried = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not carry the worktree ${step.from.workspace} into run ${step.runId}: ${(error as Error).message.slice(0, 300)}` }
       }
       if (carried) return { ...carried, source: source.name }
+    }
+    return undefined
+  }
+
+  async check(step: CheckStep, signal?: AbortSignal): Promise<(Checked & { source: string }) | undefined> {
+    for (const source of this.registry.values()) {
+      if (!source.check) continue
+      let checked: Checked | undefined
+      try {
+        checked = await source.check(step, signal)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        // A source that cannot answer is never read as not holding the worktree, nor as a check passed (INV-2).
+        checked = { outcome: 'refused', cause: 'failed', reason: `source ${source.name} could not run the checks of run ${step.runId} in ${step.workspace}: ${(error as Error).message.slice(0, 300)}` }
+      }
+      if (checked) return { ...checked, source: source.name }
     }
     return undefined
   }

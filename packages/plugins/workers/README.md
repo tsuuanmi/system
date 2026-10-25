@@ -19,7 +19,10 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   (`changes`, T122: every source that holds one answers, with its name; one that
   throws is named in `unread`, never read as no change), and starts a workflow
   run's worktree from an earlier run's tree it holds (`carry`, ADR-0061, accepted 2026-10-25, D59; asked as
-  `land` is, by the earlier tree's worktree). The router
+  `land` is, by the earlier tree's worktree), and runs a workflow run's required
+  checks on its result's worktree (`check`, T151: asked as `land` is; one that
+  throws, unless the caller stopped it, is a `failed` refusal, never a check
+  passed). The router
   returns the admitted Worker with its source's name; `source(name)` finds the
   source. Three sources register today: website Workers (`ctx.turns`, one Worker
   per account and mapped tier), agent Workers
