@@ -103,7 +103,10 @@ accepted/implemented -> superseded
   same session, bounded and failing closed; and a liveness verdict under which a failed probe is
   never death and no automation sends input to a session blocked on an approval.
 
-- [PROP-0014: Dispatch by quota](0014-dispatch-by-quota.md), **proposed**. System starts ready
+- [PROP-0014: Dispatch by quota](0014-dispatch-by-quota.md), **accepted** (D61 to D66, 2026-10-25:
+  increment D1, ask to start, chosen by quota, built under
+  [ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md);
+  never a metered pool, a 20 % reserve of every window). System starts ready
   board tasks on free Workers by itself instead of waiting for the lead. A dispatch sweep in the
   workflow engine takes the ready tasks of active projects by priority, then age. A new action
   class `dispatch` gates each start: the shipped studio policy asks, so the operator approves by
