@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { baselineProblems, type Health, healthProblems, runProblems } from './live-update-check.ts'
+import { baselineProblems, type Health, healthOf, healthProblems, runProblems } from './live-update-check.ts'
 import { daemonEnv, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
 
 // Each test runs the script end to end, once or several times, and each run starts git, Node, and
@@ -318,6 +318,17 @@ describe('live-update.sh and system.service', () => {
 })
 
 describe('live-update-check: what the update may not make worse', () => {
+  it('reads every health check, ok ones too, so a status that lists only the not-ok ones by default is no check gone (2026-10-25 rollback)', async () => {
+    const asked: Array<Record<string, unknown>> = []
+    const health: Health = { state: 'ok', checks: [{ name: 'store', state: 'ok' }] }
+    const call = async (name: string, args: Record<string, unknown>) => {
+      asked.push({ name, ...args })
+      return { isError: false, text: '', structured: { health } }
+    }
+    expect(await healthOf(call, '/nowhere')).toEqual(health)
+    expect(asked).toEqual([{ name: 'status', checks: true }])
+  })
+
   const health = (state: Health['state'], ...checks: Health['checks']): Health => ({ state, checks })
 
   it('a check that was ok and is not, or is gone, is a problem; one that was not ok already is a note', () => {
