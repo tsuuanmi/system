@@ -136,7 +136,7 @@ const LINT = 'node lint.mjs'
 
 describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_000 }, () => {
   describe.skipIf(!CONFINES)('under the real bubblewrap', () => {
-    it('runs each check\'s configured command on the exact tree, confined, in the setup\'s environment: tests pass, lint fails by its exit code, recorded as check-run@1.0 (INV-5, INV-13)', async () => {
+    it('runs each check\'s configured command on the exact tree, confined, in the setup\'s environment: tests pass, lint fails by its exit code, recorded as check-run@1.0 (REQ-WF-15, INV-5, INV-13)', async () => {
       const repo = repository()
       const { ctx, write, check } = await boot(repo, { checks: { tests: TESTS, lint: LINT } }, [...SETUP, TESTS, LINT])
       const at = await write('run_lint', 'write unused')
