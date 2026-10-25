@@ -203,9 +203,11 @@ absence of automation leaks are properties of the real browser.
 
 ## Test groups
 
-`pnpm test` runs the whole suite. Every workspace package's tests, and the repository scripts',
-belong to one functional group: `kernel`, `workflow`, `workers`, `websites`, `surfaces`, and
-`libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
+`pnpm test` runs the whole suite, at most 32 test files at once, one per CPU but one on a smaller
+host ([`vitest.config.ts`](../../vitest.config.ts)): vitest's own default of one per CPU ran every
+file at once on a 256-CPU host, where in-process tests passed their bounds. Every workspace
+package's tests, and the repository scripts', belong to one functional group: `kernel`,
+`workflow`, `workers`, `websites`, `surfaces`, and `libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
 `pnpm test:group` with no name lists each with its packages; its own test fails when a package or
 a test file is in no group, or in two.
 
