@@ -144,6 +144,12 @@ describe('the report tool without its sources', () => {
     return ctx
   }
 
+  /**
+   * A period that ends after the entries a test just made. A report's period excludes its end, and
+   * its default end is the moment it is read: an entry made in that same millisecond is outside it.
+   */
+  const afterNow = (): { until: string } => ({ until: new Date(Date.now() + 1).toISOString() })
+
   it('refuses to report without the board, rather than report part of it (INV-2)', async () => {
     const refused = await call(await boot({ board: false }), {})
     expect(refused).toMatchObject({ isError: true, text: 'unavailable: the board not loaded: a report reads the board, the approval queue, and the resource ledger, so none is made' })
@@ -169,7 +175,7 @@ describe('the report tool without its sources', () => {
     ctx.eventLog.append({ type: 'usage.unknown', data: { kind: 'not-reported', pool: 'max.agents' } })
     // A transcript record of the second counts it since: reconciled.
     await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_2', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_2', turns: 2 })
-    const { report, text, isError } = await call(ctx, {})
+    const { report, text, isError } = await call(ctx, afterNow())
     expect(isError).toBeUndefined()
     expect(report!.usage.unknown).toEqual({ runs: 2, reconciled: 1, notReported: 1, interrupted: 0, refused: 1, failed: 0 })
     expect(report!.usage.pools).toMatchObject([{ pool: 'max.agents', records: 1, turns: 2, unknownRuns: 1, withoutTokens: 1, withoutCost: 1 }])
@@ -180,7 +186,7 @@ describe('the report tool without its sources', () => {
   it('says when the digest provider loaded does not know a digest attached in the period, which another provider settled before a swap, rather than count it as no claim (Base exit criterion 6)', async () => {
     const ctx = await boot({ digests: true })
     ctx.eventLog.append({ type: 'workflow.task.digest', runId: 'run-1', data: { taskId: 't1', state: 'attached', requestId: 'dig-of-the-other-provider', digest: `sha256:${'5'.repeat(64)}` } })
-    const { report } = await call(ctx, {})
+    const { report } = await call(ctx, afterNow())
     expect(report!.digests).toEqual({ attached: 1, bypassed: 0, claimsKept: 0, claimsDropped: 0, escalated: 0 })
     expect(report!.notes).toEqual(['1 digest(s) attached in the period are unknown to the digest provider loaded (another provider settled them before its row was swapped): their claims are not counted'])
   })
