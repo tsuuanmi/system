@@ -116,6 +116,63 @@ Work flows through two long-lived branches, `dev` and then `main`:
   ([releasing](releasing.md#cutting-a-release)).
 - **A fix to something live goes to `dev` first**, never straight to `main`.
 
+## Give work to System Workers
+
+A lead can give a change to System itself, as the coordination did on 2026-10-25: a board task
+that one run of [`algorithm-development`](../reference/workflow-templates.md#algorithm-development)
+serves per attempt. The [board](../design/board.md), the
+[workflow engine's board tasks](../design/workflow-engine.md#board-tasks), and
+[approvals](../design/approvals.md) are canonical; this is the path through them.
+
+1. **Propose** with MCP `board_propose`: the project, a `title`, a `goal`, the `acceptance`
+   criteria (name each validation command in one, exactly as the policy lists it, with its
+   `check`), `actionClass: workspace-write`, `template: algorithm-development`, and `writes`
+   `{ type: git-head, ref: <HEAD> }`. The worktree is cut from HEAD when the run starts, so
+   propose just before running, after merging what the task builds on
+   ([pilot](../operations/pilot.md#plan-the-work), [attempts](../design/board.md#attempts)).
+2. **Start an attempt** with MCP `run`: `template: algorithm-development`, `variant: docs` or
+   `tests` for docs or test work (none for code), and `task: { taskId }`, which claims the ready
+   task (CLI: `system run algorithm-development --variant docs --task <taskId> -`). The `input` is
+   the writing step's. Write it in two parts, "Develop step" and "Validation step", each saying
+   it binds only that step, so one step's orders never become another's. `validate:1` reads the
+   criteria from its brief, never the input, so a command not named in a criterion is not run
+   ([which inputs reach which step](../reference/workflow-templates.md#which-inputs-reach-which-step)).
+3. **What a step may run.** Every tool call passes the run's gate
+   ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)). Edits inside the
+   worktree are `workspace-write`. A command runs unasked only when its exact argv is in the
+   studio policy's `commands`; for this repository list `corepack pnpm check`,
+   `corepack pnpm test:affected`, and each `corepack pnpm gen:*` generator by its full name
+   ([change the autonomy policy](../operations/runbooks.md#change-the-autonomy-policy)). Any
+   other command waits on the approval queue in `develop:1`, and is denied, reported not run, in
+   `validate:1`, which has no session. A fixed read-only inspection command (`cat`, `rg`, `ls`,
+   `sed -n`, …) is a `read` only when every path in it is absolute; Codex Workers read through
+   such commands, so tell them to use absolute paths
+   ([how a call is classified](../design/approvals.md#how-a-call-is-classified)). The commands
+   need the worktree's offline setup
+   ([ADR-0058](../decisions/adr/0058-a-run-worktree-is-set-up-offline-before-its-agent-starts.md),
+   [runbook](../operations/runbooks.md#set-up-a-runs-worktree)).
+4. **Follow it**: `system explain <runId>` gives the task's admission, each step's route and
+   acceptance, the result's subject, and the report to the board; `system events --run <runId>`
+   (or `--type`) reads its events. MCP `board_task` gives the task's state and why it waits.
+5. **Answer a question.** A step that cannot finish without a person answers
+   `{"questions": [...]}`, and the task waits for input. Answer every question, by index, with
+   MCP `board_update` `answers`; the next attempt goes through the gate, its brief pointing at the
+   answers ([a question from a run](../design/workflow-engine.md#a-question-from-a-run)).
+
+After the run, under the studio policy, which requires `tests` and `lint` that the engine never
+reports itself, the board holds the review for the operator
+([a review held for the operator](../design/board.md#a-review-held-for-the-operator)):
+
+- **Accepted**, the task is `done`. The system commits the worktree on `system/run/<runId>` and
+  asks the operator to merge it into the repository's checked-out branch (keep that `dev`,
+  [above](#branches-dev-and-main)), one `merge` request that always asks ([ADR-0060](../decisions/adr/0060-an-accepted-result-lands-on-the-operators-merge-approval.md),
+  [landing](../design/workflow-engine.md#landing-an-accepted-result)).
+- **Rejected**, another attempt runs while attempts are left, as a new run that the lead starts.
+  Its brief points at the previous result; the operator's note reaches no brief, so the lead puts
+  why it was not accepted in the next input. Only an attempt that failed after its writing step,
+  for a reason that says nothing about the change, starts from that change
+  ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)).
+
 ## Data directory
 
 Runtime state lives under `<DSH_HOME>/system/` (default `~/.dsh/system/`), with
