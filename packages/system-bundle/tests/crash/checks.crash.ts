@@ -12,20 +12,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, onTestFinished } from 'vitest'
+import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 
 const HARNESS = fileURLToPath(new URL('./checks-harness.mjs', import.meta.url))
 
 type Message = Record<string, unknown>
-
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const CONFINES = !!findBwrap() || process.env.SYSTEM_REQUIRE_BWRAP === '1'
 
 /** One harness process, and the first message carrying each key. */
 function daemon(args: string[]): { child: ChildProcess; message: (key: string) => Promise<Message> } {
@@ -61,7 +52,8 @@ function daemon(args: string[]): { child: ChildProcess; message: (key: string) =
   }
 }
 
-describe.skipIf(!CONFINES)('crash injection while a run\'s required check runs (ADR-0063, INV-4)', () => {
+describe('crash injection while a run\'s required check runs (ADR-0063, INV-4)', () => {
+  needsBubblewrap()
   it('a daemon killed while the tests check runs leaves the run unaccepted; the restart never runs the check again: it is an error, pending, and the run is accepted once', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-checks-'))
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,6 +15,9 @@ const root = mkdtempSync(join(tmpdir(), 'cx-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 const runDir = join(root, 'run')
 const workspace = mkdtempSync(join(root, 'w-'))
+
+/** A path's real path on this host, as the confinement resolves it; undefined when it does not exist. */
+const real = (path: string): string | undefined => existsSync(path) ? realpathSync(path) : undefined
 
 const binds: Array<{ readOnly?: readonly string[]; writable?: readonly string[] }> = []
 const confinement = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => {
@@ -102,8 +105,13 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
     // Paths that do not exist on this host are skipped; no session gets a terminal, none reaches the operator's.
     expect(s.lastClient.program).toMatch(/^launcher:\/usr\/bin\/bwrap --die-with-parent --unshare-pid --new-session --dev-bind \/ \/ --proc \/proc .*-- \/usr\/bin\/codex$/)
-    if (existsSync('/dev/ptmx')) expect(s.lastClient.program).toContain('--ro-bind /dev/null /dev/ptmx')
-    if (existsSync('/dev/pts')) expect(s.lastClient.program).toContain('--tmpfs /dev/pts')
+    // Where /dev/ptmx leads decides the mounts: the device itself is masked by the null device; a link into /dev/pts (as under
+    // bubblewrap's own /dev, inside a run's check) is hidden with /dev/pts, which is masked whole.
+    const pts = real('/dev/pts')
+    const ptmx = real('/dev/ptmx')
+    if (pts) expect(s.lastClient.program).toContain(`--tmpfs ${pts}`)
+    if (ptmx && !(pts && (ptmx === pts || ptmx.startsWith(`${pts}/`)))) expect(s.lastClient.program).toContain(`--ro-bind /dev/null ${ptmx}`)
+    else expect(s.lastClient.program).not.toContain('--ro-bind /dev/null /dev/')
     // Its home is bound back writable; a read-only Worker's workspace read-only.
     expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w'] })
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'workspace-write' }, new AbortController().signal)

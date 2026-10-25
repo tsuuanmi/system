@@ -20,6 +20,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type RunCheck, type WorkRequirement } from '@tsuuanmi/system-workers'
 import type { Checked } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it } from 'vitest'
+import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { RunChecks, type RunChecksOptions } from '../src/checks.ts'
 import AgentWorkers, { type Config } from '../src/index.ts'
 import { loadSetups } from '../src/setup.ts'
@@ -29,16 +30,6 @@ const cleanups: Array<() => unknown> = []
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
-
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const CONFINES = !!findBwrap() || process.env.SYSTEM_REQUIRE_BWRAP === '1'
 
 const temp = (prefix: string): string => {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -164,7 +155,8 @@ const TESTS = 'node test.mjs'
 const LINT = 'node lint.mjs'
 
 describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_000 }, () => {
-  describe.skipIf(!CONFINES)('under the real bubblewrap', () => {
+  describe('under the real bubblewrap', () => {
+    needsBubblewrap()
     it('runs each check\'s configured command on the exact tree, confined, in the setup\'s environment: tests pass, lint fails by its exit code, recorded as check-run@1.0 (REQ-WF-15, INV-5, INV-13)', async () => {
       const repo = repository()
       const { ctx, write, check } = await boot(repo, { checks: { tests: TESTS, lint: LINT } }, [...SETUP, TESTS, LINT])

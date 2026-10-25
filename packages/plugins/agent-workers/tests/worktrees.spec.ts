@@ -9,6 +9,7 @@ import type { ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { captureGitSubject, SchemaError, SchemaRegistry, subjectId } from '@tsuuanmi/system-libs'
 import type { WorkerExecution } from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { createdMode } from '../../../agent-runtime-core/tests/host.ts'
 import AgentWorkers from '../src/index.ts'
 import { registerRunTools } from '../src/tools.ts'
 import { openDirectory } from '../src/worktrees.ts'
@@ -49,6 +50,8 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     writeFileSync(join(spec.workspace, `note-${basename(spec.workspace)}.txt`), `${spec.prompt}\n`)
     return 'done'
   }
+  /** The mode of a brief's file, written 0o444: what that mode becomes in this environment, never writable. */
+  const READ_ONLY = createdMode(0o444)
   const SANDBOXES: SandboxMode[] = ['read-only', 'workspace-write']
   const developer = (options: ConstructorParameters<typeof ScriptedAgent>[0] = {}) => new ScriptedAgent({ sandboxes: SANDBOXES, act: writes, ...options })
   const run = async (ctx: Context, id: string, key: string, runId?: string): Promise<WorkerExecution> => {
@@ -242,7 +245,8 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
     const done = await briefed(ctx, 'k-files', taskBrief(ctx, '# p1\n\n### fix add\n'), 'run_files')
     expect(done).toMatchObject({ status: 'completed' })
-    expect(seen[0]).toEqual({ text: '# p1\n\n### fix add\n', mode: 0o444 })
+    // Created read-only, 0o444 less this process's umask (0o400 in a check of a daemon run with umask 077).
+    expect(seen[0]).toEqual({ text: '# p1\n\n### fix add\n', mode: READ_ONLY })
     // The prompt names the file, since this source wrote it.
     expect(agent.runs[0]!.prompt).toContain('Files in your workspace, written by system before this run (read-only; edits are never read back):\n- .system/TASKS.md: the board of project p1')
     const workspace = agent.runs[0]!.workspace
@@ -284,7 +288,7 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
     expect(await briefed(ctx, 'k-first', taskBrief(ctx, '# p1\n\n### first\n'), 'run_again')).toMatchObject({ status: 'completed' })
     expect(await briefed(ctx, 'k-second', taskBrief(ctx, '# p1\n\n### second\n'), 'run_again')).toMatchObject({ status: 'completed' })
-    expect(seen).toEqual([{ text: '# p1\n\n### first\n', mode: 0o444 }, { text: '# p1\n\n### second\n', mode: 0o444 }])
+    expect(seen).toEqual([{ text: '# p1\n\n### first\n', mode: READ_ONLY }, { text: '# p1\n\n### second\n', mode: READ_ONLY }])
     const refused = await briefed(ctx, 'k-third', taskBrief(ctx, '# p1\n\n### third\n'), 'run_again')
     expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
     expect(refused.error!.message).toMatch(/TASKS\.md is not a plain file/)

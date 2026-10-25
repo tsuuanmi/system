@@ -1,10 +1,10 @@
-import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeProviderConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
+import { BWRAP, BWRAP_REFUSED, RUNS_CONFINED } from '../../../agent-runtime-core/tests/host.ts'
 import type { Confinement } from '@tsuuanmi/system-agent-runtime-core'
 import { AcpAgentRuntime, type AcpConfinement } from '../src/index.ts'
 
@@ -18,15 +18,6 @@ const passthrough: AcpConfinement = {
 }
 const runtime = (honoursPermissions = true, extra: Partial<ConstructorParameters<typeof AcpAgentRuntime>[0]> = {}, timing?: ConstructorParameters<typeof AcpAgentRuntime>[1], reads: AcpConfinement = passthrough) =>
   new AcpAgentRuntime({ name: 'scripted', command: process.execPath, args: [SCRIPTED], honoursPermissions, ...extra }, timing, reads)
-
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-const BWRAP = findBwrap()
 
 agentRuntimeProviderConformance('acp:scripted', () => runtime())
 
@@ -55,7 +46,8 @@ describe('acp: the client side enforces the policy', () => {
     await expect(none.run({ prompt: 'x', workspace, sandbox: 'read-only' }, signal())).rejects.toMatchObject({ kind: 'config_error' })
   })
 
-  it.skipIf(!BWRAP && process.env.SYSTEM_REQUIRE_BWRAP !== '1')('hides host state from the agent\'s own reads, not only from the reads it asks for (ADR-0024, REQ-WRK-6)', async () => {
+  it('hides host state from the agent\'s own reads, not only from the reads it asks for (ADR-0024, REQ-WRK-6)', async (context) => {
+    if (!RUNS_CONFINED) context.skip(`needs real bubblewrap: ${BWRAP_REFUSED}`)
     const reads: AcpConfinement = { confine: (bind) => ({ bwrap: BWRAP ?? 'bwrap', hide: [base], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }) }
     const look = async (path: string, r: AcpConfinement) => (await runtime(true, {}, undefined, r).run({ prompt: `look:${path}`, workspace, sandbox: 'read-only' }, signal())).text
     expect(await look(join(base, 'secret.txt'), passthrough)).toBe('look: present')

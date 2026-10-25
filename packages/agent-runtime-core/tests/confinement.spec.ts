@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,19 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import { type Confinement, confinedCommand, proveConfinement, writeLauncher } from '../src/index.ts'
+import { BWRAP, needsBubblewrap } from './host.ts'
 
 const PASSTHROUGH = fileURLToPath(new URL('../conformance/passthrough-bwrap.sh', import.meta.url))
 
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-const BWRAP = findBwrap()
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
 const OPTIONS = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc']
 /** Every confined command's temporary directory: its own tmpfs at /tmp, named by TMPDIR, TMP, and TEMP (T113). */
 const TEMP_ENV = ['--setenv', 'TMPDIR', '/tmp', '--setenv', 'TMP', '/tmp', '--setenv', 'TEMP', '/tmp']
@@ -110,7 +101,8 @@ describe('confinedCommand: the bubblewrap command line (ADR-0024)', () => {
   })
 })
 
-describe.skipIf(!BWRAP && !REQUIRED)('an agent child under the real bubblewrap cannot read host state (ADR-0024, REQ-WRK-6, INV-8)', () => {
+describe('an agent child under the real bubblewrap cannot read host state (ADR-0024, REQ-WRK-6, INV-8)', () => {
+  needsBubblewrap()
   const h = host()
   afterAll(() => rmSync(h.root, { recursive: true, force: true }))
   const confinement = (extra: Partial<Confinement> = {}): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [h.home, h.keyFile, h.vaultKey], readOnly: [h.tools], writable: [h.workerHome], ...extra })
