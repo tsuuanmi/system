@@ -330,6 +330,24 @@ describe('system usage and explain output', () => {
     ])
   })
 
+  it('shows what agent runs drew per kind and window, then per template step: clean draws counted, median and p90 in points, and what was left out (PROP-0015 E2)', () => {
+    const code = { kind: 'code', window: 'five-hour', draws: 12, median: 4, p90: 9, excluded: { confounded: 2, 'reset-crossing': 1, 'no-reading': 0 } }
+    const none = { kind: 'docs', window: 'five-hour', draws: 0, excluded: { confounded: 0, 'reset-crossing': 0, 'no-reading': 3 } }
+    const lines = formatUsage({
+      runs: [],
+      draws: { byKind: [code, none], byStep: [{ ...code, template: 'algorithm-development', step: 'develop' }, none], records: 18, unreadable: 1, unread: false },
+    })
+    expect(lines).toEqual([
+      'quota drawn per run, in percentage points of each window (18 records; 1 not valid, not counted):',
+      '  code · five-hour: 12 draws, median 4 points, p90 9 points (excluded: 2 confounded, 1 reset-crossing)',
+      '  docs · five-hour: no clean draw (excluded: 3 no-reading)',
+      'by template step:',
+      '  code · algorithm-development:develop · five-hour: 12 draws, median 4 points, p90 9 points (excluded: 2 confounded, 1 reset-crossing)',
+    ])
+    // None recorded: no section.
+    expect(formatUsage({ runs: [] })).toEqual([])
+  })
+
   it('prints a run\'s decision chain, step by step', () => {
     const lines = formatExplanation({
       runId: 'run_1', template: 'ask', status: 'completed', specHash: 'sha256:ab',

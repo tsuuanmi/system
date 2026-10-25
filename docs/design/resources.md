@@ -6,7 +6,8 @@
 > [PROP-0010](../proposals/0010-base-version.md),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#resource-management-and-token-optimization).
 > Records: [`usage-record@1.0`](../reference/schemas.md#usage-record),
-> [`limit-state@1.0`](../reference/schemas.md#limit-state).
+> [`limit-state@1.0`](../reference/schemas.md#limit-state),
+> [`quota-draw@1.0`](../reference/schemas.md#quota-draw).
 >
 > Defined in [`resources-core`](../../packages/resources-core/README.md); provided by
 > [`resources`](../../packages/plugins/resources/README.md) on `ctx.store`, with the MCP tools
@@ -184,6 +185,57 @@ choice, every route's order, and the roster's capacity now all read it.
   windows are not read into headroom
   ([read each account's quota](../operations/runbooks.md#read-each-accounts-quota)).
 - A per-template reserve and dispatch onto metered pools are not built (PROP-0014; D65: never).
+
+### Quota drawn per run
+
+> Proposal: [PROP-0015](../proposals/0015-right-worker-right-job.md) E2. Record:
+> [`quota-draw@1.0`](../reference/schemas.md#quota-draw). Implemented in the `agents` source
+> ([`agent-workers`](../../packages/plugins/agent-workers/README.md)), the rule in
+> [`libs`](../../packages/libs/README.md) (`drawEntries`, `drawFigures`), shown by `system usage`
+> and the [report](reports.md#what-it-counts). Differs from target: authoritative consumption in
+> units (`units-only`) is not recorded, since no runtime reports it; nothing reads the draws for a
+> start yet (E3's fit).
+
+For each run of a derived Worker on a declared pool, the `agents` source records what the run drew
+from each window of its account's pool, from the readings the ledger already holds:
+
+| When | What is kept |
+|---|---|
+| before the run is submitted | each window's latest reading (`pools()`), and the start of a watch of the other runs on the same account |
+| after the run, once the account's usage report after it was recorded ([above](#readings-from-an-accounts-usage-report)) | each window's latest reading again, and how many other runs on the account overlapped it |
+
+```mermaid
+flowchart LR
+  B["reading before<br/>(latest at submit)"] --> E{"same epoch?<br/>both shares known?"}
+  A["reading after<br/>(observed after the run ended)"] --> E
+  E -->|no share, no reading| N["no-reading, no draw"]
+  E -->|reset differs, none named,<br/>or share went down| R["reset-crossing, no draw"]
+  E -->|yes| O{"another run on the<br/>account overlapped?"}
+  O -->|yes| C["confounded: draw kept,<br/>out of the figures"]
+  O -->|no| K["clean: draw counts"]
+```
+
+- **One entry per window**, never one figure for the account. A draw is the rise of the used share
+  in **percentage points** of the window's allowance, so it compares with headroom
+  (`100 − used − reservePercent`).
+- **Same window epoch.** Both readings name the same reset, read as `accountQuotaOf` reads it (the
+  later of `resetsAt` and `cooldownUntil`). Otherwise the entry is `reset-crossing`, with no draw:
+  the epochs differ, either reading names no reset, or the share went down. A draw is never negative.
+- **Nothing is estimated** (rule 3 below). A window with no reading before, none observed after the
+  run ended (its report could not be read), or one with no used share is `no-reading`, with no draw.
+- **Confounded.** Another run on the same account in flight at any time from this run's reading
+  before to its reading after makes its draws `confounded` (`overlapping` counts them): kept, never
+  in a figure. The watch is in memory, as the runs are: a run a restart interrupted gets no reading
+  after, so no record, and nothing is replayed (INV-4).
+- **Recorded** as an `evidence` artifact under the run's workflow run and step, and one
+  `quota.draw` event whose data is the record. It names the run, Worker, account, pool, the kind of
+  work it was admitted for (`WorkRequirement.kind`) and the template step it served
+  (`WorkerStart.step`, from the engine's own record), its board task, and how it ended. Recording
+  never changes the run's outcome: a failure is logged.
+- **Shown** per kind and window, and per kind, template step, and window: the clean draws counted,
+  their median and 90th percentile (nearest rank), and the entries left out by state. `system
+  usage` (MCP `usage`, `draws`) reads the latest 1,000 records; the report reads the period's
+  (`mcp-report` 1.4, `usage.draws`).
 
 ## Counting
 

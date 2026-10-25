@@ -42,8 +42,8 @@ import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import {
-  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
-  type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
+  type AccountSetting, accountSettings, ASSIGNED, bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, currentProcess, DESCRIPTION, drawEntries, dshHome, LABEL, type LeaseProbe, type Liveness, LIVENESS_RULE, livenessOf, MAX_DESCRIPTION, MAX_LABEL,
+  type ProcessIdentity, processIdentity, processIdentityOf, type ProcessProbe, pooledTermsDecision, probeProcess, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown,
 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type PoolState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
@@ -55,6 +55,7 @@ import {
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
 import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
+import { Overlaps } from './overlaps.ts'
 import { Probes, refused } from './probes.ts'
 import { regenerationOf } from './regenerate.ts'
 import { ReportSchedule, type ReportTarget } from './reports.ts'
@@ -271,11 +272,19 @@ interface RunRow {
   liveness_freed?: string | null
   /** The `gate` decision of its worktree's setup (ADR-0058), when its repository has one. */
   setup_decision?: string | null
+  /** The kind of work it was admitted for (`WorkRequirement.kind`, ADR-0057), for what it drew. */
+  kind?: string | null
+  /** The workflow template and step it serves (`WorkerStart.step`), for what it drew. */
+  step_template?: string | null
+  step_node?: string | null
   created_at: string
   updated_at: string
 }
 
 const ID = /^[a-z][a-z0-9-]*$/
+/** A kind of work (`common@1` workKind) and an id (`common@1` id), as a quota draw names them. */
+const WORK_KIND = /^[a-z][a-z0-9-]{0,31}$/
+const DRAW_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const LEASE_TTL_MS = 60_000
 const PREFIX = 'agent:'
 const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
@@ -522,6 +531,8 @@ export class AgentWorkers extends Service {
   private readonly reports: ReportSchedule
   /** Each account whose last usage report could not be read: why, and when (for the roster); a report read clears it. */
   private readonly unreadReports = new Map<string, { why: string; at: string }>()
+  /** The runs in flight on each account, for whether a draw was confounded (PROP-0015 E2). */
+  private readonly overlaps = new Overlaps()
   private sweeping: Promise<SweepOutcome> | undefined
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
@@ -648,7 +659,14 @@ export class AgentWorkers extends Service {
       // The operator frees what a run that ended not known to be gone held, on their word that its agent is gone.
       version: 14,
       sql: 'ALTER TABLE agent_runs ADD COLUMN liveness_freed TEXT;',
-    }, CARRY_MIGRATION, FORK_MIGRATION, CHECKS_MIGRATION, DENIAL_MIGRATION])
+    }, CARRY_MIGRATION, FORK_MIGRATION, CHECKS_MIGRATION, DENIAL_MIGRATION, {
+      // What a run drew (PROP-0015 E2, quota-draw@1.0) names the kind of work it was admitted for and
+      // the template step it served, from the trusted requirement and the engine's start (INV-6).
+      version: 19,
+      sql: `ALTER TABLE agent_runs ADD COLUMN kind TEXT;
+      ALTER TABLE agent_runs ADD COLUMN step_template TEXT;
+      ALTER TABLE agent_runs ADD COLUMN step_node TEXT;`,
+    }])
     this.cutover = new Cutover(ctx)
     // Once the operator applied the move, the hand-named rows are refused: one implementation, no second path.
     const applied = config.workers?.length ? this.cutover.state() : undefined
@@ -1207,6 +1225,8 @@ export class AgentWorkers extends Service {
     const projectId = taskId !== null && typeof task?.projectId === 'string' ? task.projectId : null
     // Its files' text, resolved now like the prompt, so the egress check reads what the agent will (INV-12).
     const files = places && Array.isArray(task?.files) && task.files.length ? JSON.stringify(task.files.map((file) => this.fileOf(file))) : null
+    // The template step it serves, as the engine named it: kept only when both are ids.
+    const step = request.step && DRAW_ID.test(request.step.template) && DRAW_ID.test(request.step.node) ? request.step : undefined
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
@@ -1226,11 +1246,15 @@ export class AgentWorkers extends Service {
         classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
         workflow_run_id: request.runId ?? null, task_id: taskId, project_id: projectId, files,
         // The work it was admitted for, from the trusted requirement (INV-6): only a review member's step is ever replayed.
-        scope: request.requirement.scope ?? null, session_generation: generation, created_at: now(), updated_at: now(),
+        scope: request.requirement.scope ?? null, session_generation: generation,
+        // Its kind of work and template step, for what it draws (PROP-0015 E2): only well-formed ones, never guessed.
+        kind: request.requirement.kind !== undefined && WORK_KIND.test(request.requirement.kind) ? request.requirement.kind : null,
+        step_template: step?.template ?? null, step_node: step?.node ?? null,
+        created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
-        row.scope ?? null, generation, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, kind, step_template, step_node, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
+        row.scope ?? null, generation, row.kind ?? null, row.step_template ?? null, row.step_node ?? null, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -2015,6 +2039,17 @@ export class AgentWorkers extends Service {
    * brief names one and no run is asked to resume it.
    */
   private async submit(row: RunRow, worker: WorkerSpec, provider: AgentRuntimeProvider, spec: RunSpec, native: boolean, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined): Promise<RunResult> {
+    // What a run of a derived Worker on a declared pool draws (PROP-0015 E2): its pool's readings
+    // before it, taken before it is submitted, and the runs on its account it overlaps from now on.
+    const drawing = worker.derived && meter ? await this.beginDraw(row, meter) : undefined
+    try {
+      return await this.submitRun(row, worker, provider, spec, native, signal, lease, meter, deferral, drawing)
+    } finally {
+      drawing?.end()
+    }
+  }
+
+  private async submitRun(row: RunRow, worker: WorkerSpec, provider: AgentRuntimeProvider, spec: RunSpec, native: boolean, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined, drawing: Drawing | undefined): Promise<RunResult> {
     // Submitted from here on: the agent may act as soon as it starts. Its holder, this process, is
     // recorded with it, and the submission is its first activity (PROP-0013).
     const submittedAt = now()
@@ -2048,13 +2083,16 @@ export class AgentWorkers extends Service {
       const kind = toProviderError(failure).kind
       const metering = meteringOf(error)
       const durationMs = Date.now() - startedAt
+      const endedAt = now()
       const report = await reportAfter(kind)
       // How it ended, in plain words, for a fact of its usage (docs/design/resources.md#usage-the-ledger-cannot-count).
       const ending = deadline.aborted && !signal.aborted ? `it ran past its timeout of ${this.config.runTimeoutMs ?? 15 * 60_000} ms and was stopped`
         : signal.aborted ? this.stopOf(signal)
           : deferred ? `it stopped at a ${deferred.tool} call that waits for approval request ${deferred.requestId}`
             : `it failed (${kind})`
-      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', durationMs, report, ending) : false
+      const outcome = kind === 'aborted' ? 'aborted' : 'failed'
+      const limited = meter ? await this.account(row, worker, meter, metering, outcome, durationMs, report, ending) : false
+      if (drawing && meter) await this.finishDraw(row, meter, drawing, outcome, endedAt)
       // A limit hit that left no limited reading in the ledger is never retried there unseen (INV-2).
       if (kind === 'quota_exhausted' && !limited) {
         // The run's own outcome stays the limit, whatever recording it does.
@@ -2070,12 +2108,15 @@ export class AgentWorkers extends Service {
     // A run whose gate deferred a call did not finish, whatever its runtime reported (INV-2).
     const deferred = deferral()
     const durationMs = Date.now() - startedAt
+    const endedAt = now()
     if (deferred) {
       this.noteDeferral(row, deferred, lease)
       if (meter) await this.account(row, worker, meter, result, 'failed', durationMs, await reportAfter(undefined), `it stopped at a ${deferred.tool} call that waits for approval request ${deferred.requestId}`)
+      if (drawing && meter) await this.finishDraw(row, meter, drawing, 'failed', endedAt)
       throw waiting(row, deferred)
     }
     if (meter) await this.account(row, worker, meter, result, 'completed', durationMs, await reportAfter(undefined), 'it completed')
+    if (drawing && meter) await this.finishDraw(row, meter, drawing, 'completed', endedAt)
     return result
   }
 
@@ -2085,6 +2126,59 @@ export class AgentWorkers extends Service {
     const reason: unknown = signal.reason
     if (reason instanceof ProviderError) return `it was stopped: ${reason.message}`
     return 'it was stopped, its lease on the run lost'
+  }
+
+  /**
+   * Begin watching what a run draws (PROP-0015 E2): the runs on its account it overlaps from now on,
+   * then its pool's windows and their latest readings, the readings before it; none when the ledger
+   * cannot tell (each window then has no reading before). Never throws.
+   */
+  private async beginDraw(row: RunRow, meter: Meter): Promise<Drawing> {
+    const end = this.overlaps.begin(meter.account, row.run_id)
+    const before = await this.poolNow(meter)
+    return { before, startedAt: now(), end }
+  }
+
+  /** The run's pool now, its windows and their latest readings; undefined when the ledger cannot tell. */
+  private poolNow(meter: Meter): Promise<PoolState | undefined> {
+    return meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
+  }
+
+  /**
+   * Record what a run drew (PROP-0015 E2, docs/design/resources.md#quota-drawn-per-run), once its
+   * account's usage report after it was recorded: each window's last reading before the run and first
+   * after it (`drawEntries`), as a `quota-draw@1.0` `evidence` artifact and a `quota.draw` event whose
+   * data is the record. A window that reset, read no share, or went down has no draw; another run on
+   * the account while it ran marks it confounded. Never throws: the run's own outcome never depends on it.
+   */
+  private async finishDraw(row: RunRow, meter: Meter, drawing: Drawing, outcome: QuotaDraw['outcome'], endedAt: string): Promise<void> {
+    try {
+      const after = await this.poolNow(meter)
+      const overlapping = drawing.end()
+      const windows = (after ?? drawing.before)?.windows ?? []
+      if (!windows.length) {
+        this.ctx.logger.warn(`agent Workers: what ${row.run_id} on ${row.worker} drew is not recorded: the ledger gives pool ${meter.pool} no window`)
+        return
+      }
+      const record = quotaDraw({
+        runId: row.run_id, worker: row.worker, account: meter.account, pool: meter.pool,
+        ...(row.workflow_run_id ? { workflowRunId: row.workflow_run_id } : {}),
+        ...(row.step_template && row.step_node ? { template: row.step_template, step: row.step_node } : {}),
+        ...(row.kind ? { kind: row.kind } : {}), ...scopeOf(row),
+        outcome, startedAt: drawing.startedAt, endedAt, overlapping: Math.min(overlapping, 1000),
+        windows: drawEntries({ windows, before: drawing.before?.readings ?? [], after: after?.readings ?? [], startedAt: drawing.startedAt, endedAt, overlapping }),
+        observedAt: now(),
+      })
+      this.ctx.artifacts.put({
+        kind: 'evidence', bodySchema: record.schema, body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker },
+        runId: row.workflow_run_id ?? row.run_id, ...(row.workflow_run_id && row.step_node ? { nodeId: row.step_node } : {}),
+      })
+      const eventLog = this.ctx.get('eventLog')
+      if (!eventLog) throw new Error('no event log (ctx.eventLog) is loaded, so no surface can read it back')
+      eventLog.append({ type: QUOTA_DRAW_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.workflow_run_id && row.step_node ? { nodeId: row.step_node } : {}), data: { ...record } })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: what ${row.run_id} on ${row.worker} drew from pool ${meter.pool} could not be recorded: ${(error as Error).message}`)
+    }
   }
 
   /**
@@ -2611,6 +2705,13 @@ interface Meter {
   resources: Resources
   pool: string
   account: string
+}
+
+/** What a run's draw is watched with (PROP-0015 E2): its pool before it, when it started, and the end of its overlap watch (the other runs it overlapped). */
+interface Drawing {
+  before: PoolState | undefined
+  startedAt: string
+  end: () => number
 }
 
 /**

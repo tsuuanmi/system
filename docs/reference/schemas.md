@@ -647,6 +647,31 @@ guesses.
   [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json),
   [`usage-unknown.partial.json`](../../schemas/examples/usage-unknown.partial.json).
 
+### `quota-draw`
+
+- What one agent run of a derived Worker on a declared pool drew from each window of its account's
+  pool ([quota drawn per run](../design/resources.md#quota-drawn-per-run), PROP-0015 E2): the body
+  of an `evidence` artifact filed under the run's workflow run and step, and the data of the
+  `quota.draw` event that names them (the event's `runId` and `nodeId`). The record's `runId` is the
+  agent run, as its usage record names it; `kind` is the kind of work it was admitted for
+  (`WorkRequirement.kind`) and `template` and `step` the template step the engine started it for
+  (`WorkerStart.step`), each absent when there was none.
+- `windows` holds one entry per configured window of the pool, never one figure for the account.
+  `before` is the window's latest reading when the run was submitted (`startedAt`); `after` its
+  latest once the account's usage report after the run was recorded, observed at or after
+  `endedAt`. Each keeps the used share, its epoch (`resets`: the later of `resetsAt` and
+  `cooldownUntil`, as `accountQuotaOf` reads it), and `observedAt`.
+- `draw` is `after − before` of the used share, in percentage points of the window's allowance,
+  and only for `clean` and `confounded`. `reset-crossing`: the epochs differ, either reading names
+  no reset, or the share went down, so no draw, never a negative one. `no-reading`: a reading
+  before or after is missing, or gives no share. `confounded`: `overlapping` other runs on the same
+  account ran while this one did (from the reading before to the reading after), so the rise is not
+  its alone. `why` says each. Only `clean` draws enter a median or a percentile. Authoritative
+  consumption in units (PROP-0015's `units-only`) is not recorded: no runtime reports it today.
+- A reader validates the data and counts an entry that is not a valid record apart. Examples:
+  [`quota-draw.clean.json`](../../schemas/examples/quota-draw.clean.json),
+  [`quota-draw.excluded.json`](../../schemas/examples/quota-draw.excluded.json).
+
 ### `notification`
 
 - One notice the [notify](../design/notifications.md) plugin makes from one event-log entry: the
@@ -1109,6 +1134,12 @@ guesses.
   expire first (at most 64, `reviewsHeldOmitted` counting the rest), each by its task, project,
   title, `expiresAt`, and the pending checks its wait names. Unanswered by `expiresAt`, a review
   expires and its task waits for input (`review-expired`). A 1.2 report stays valid.
+- `mcp-report` 1.4 adds `usage.draws`, only when there is any: what the agent runs of the scope
+  recorded in the period drew from their accounts' windows ([`quota-draw`](#quota-draw)), per kind
+  and window (`byKind`) and per kind, template step, and window (`byStep`), each with the clean
+  draws counted, their `median` and `p90` in percentage points (absent with none), and the entries
+  left out by state (`excluded`), at most 256 of each list (`omitted` counting the rest). A 1.3
+  report stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:

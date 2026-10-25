@@ -229,12 +229,14 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('usage', {
     scope: 'client',
-    description: 'Recent runs and, per step, the Worker, tier, and quota class that served it, the tokens a model Worker reports, and usage the ledger could not count (usageUnknown, with why). A run\'s answer, results, and errors are in `result`.',
+    description: 'Recent runs and, per step, the Worker, tier, and quota class that served it, the tokens a model Worker reports, and usage the ledger could not count (usageUnknown, with why); and what agent runs drew from their accounts\' windows (draws: per kind and window, and per kind, template step, and window, the clean draws counted with their median and p90 in percentage points, and the entries left out by why). A run\'s answer, results, and errors are in `result`.',
     inputSchema: { limit: zod.number().int().min(1).max(500).optional().describe(`Runs, the most recent first (default ${USAGE_LIMIT})`) },
   }, async (args) => {
     const runs = w.usage((args.limit as number | undefined) ?? USAGE_LIMIT).map(usageView)
     const steps = runs.reduce((n, r) => n + r.nodes.length, 0)
-    return reply({ runs }, `${runs.length} recent run${runs.length === 1 ? '' : 's'}, ${steps} step${steps === 1 ? '' : 's'}`)
+    // What agent runs drew (PROP-0015 E2), only once any draw is recorded.
+    const draws = w.draws()
+    return reply({ runs, ...(draws ? { draws } : {}) }, `${runs.length} recent run${runs.length === 1 ? '' : 's'}, ${steps} step${steps === 1 ? '' : 's'}${draws ? `; ${draws.records} quota draw${draws.records === 1 ? '' : 's'} by kind and window` : ''}`)
   })
   // Dispatch (ADR-0064): the lead reads where it stands to plan; only the operator pauses or resumes it.
   c.mcp.tool('dispatch_status', {

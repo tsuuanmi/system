@@ -1,0 +1,40 @@
+{
+  "schema": "quota-draw@1.0",
+  "runId": "arun_01JBQ8A1B2C3D4E5F6G7H8J9K0",
+  "worker": "agent:codex.7b1e09d2.validator",
+  "account": "codex.7b1e09d2",
+  "pool": "codex-plan/codex.7b1e09d2",
+  "workflowRunId": "run_01JBQ7Y0A1B2C3D4E5F6G7H8J9",
+  "template": "algorithm-development",
+  "step": "validate",
+  "kind": "validation",
+  "outcome": "completed",
+  "startedAt": "2026-10-25T11:50:00Z",
+  "endedAt": "2026-10-25T12:14:02Z",
+  "overlapping": 1,
+  "windows": [
+    {
+      "window": "five-hour",
+      "seconds": 18000,
+      "before": { "usedPercentage": 72, "resets": "2026-10-25T12:00:00Z", "observedAt": "2026-10-25T11:49:30Z" },
+      "after": { "usedPercentage": 4, "resets": "2026-10-25T17:00:00Z", "observedAt": "2026-10-25T12:14:05Z" },
+      "state": "reset-crossing",
+      "why": "the window reset between the readings (2026-10-25T12:00:00.000Z, then 2026-10-25T17:00:00.000Z)"
+    },
+    {
+      "window": "seven-day",
+      "seconds": 604800,
+      "before": { "usedPercentage": 40, "resets": "2026-10-29T00:00:00Z", "observedAt": "2026-10-25T11:49:30Z" },
+      "after": { "usedPercentage": 43, "resets": "2026-10-29T00:00:00Z", "observedAt": "2026-10-25T12:14:05Z" },
+      "draw": 3,
+      "state": "confounded",
+      "why": "1 other run on the account overlapped it"
+    },
+    {
+      "window": "monthly",
+      "state": "no-reading",
+      "why": "no reading before the run"
+    }
+  ],
+  "observedAt": "2026-10-25T12:14:05Z"
+}

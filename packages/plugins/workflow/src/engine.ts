@@ -765,6 +765,8 @@ export class Engine {
           const started = source.start({
             key: executionKey(run.run_id, node, attempt),
             worker: admitted.worker.worker, brief, sessionId: spec.session.sessionId, runId: run.run_id,
+            // The template step it serves, from the engine's own record: a source may record it with what the run drew (PROP-0015 E2).
+            step: { template: run.template, node: node.node_id },
             requirement: record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({

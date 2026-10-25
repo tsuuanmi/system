@@ -1,0 +1,28 @@
+{
+  "schema": "quota-draw@1.0",
+  "runId": "arun_01JBQ7Z3K4M5N6P7Q8R9S0T1V2",
+  "worker": "agent:claude-code.3f9a2c41.developer",
+  "account": "claude-code.3f9a2c41",
+  "pool": "claude-plan/claude-code.3f9a2c41",
+  "workflowRunId": "run_01JBQ7Y0A1B2C3D4E5F6G7H8J9",
+  "template": "algorithm-development",
+  "step": "develop",
+  "kind": "code",
+  "projectId": "system",
+  "taskId": "task-265e95981b52",
+  "outcome": "completed",
+  "startedAt": "2026-10-25T09:00:04Z",
+  "endedAt": "2026-10-25T09:21:40Z",
+  "overlapping": 0,
+  "windows": [
+    {
+      "window": "five-hour",
+      "seconds": 18000,
+      "before": { "usedPercentage": 31, "resets": "2026-10-25T12:00:00Z", "observedAt": "2026-10-25T08:58:12Z" },
+      "after": { "usedPercentage": 40, "resets": "2026-10-25T12:00:00Z", "observedAt": "2026-10-25T09:21:43Z" },
+      "draw": 9,
+      "state": "clean"
+    }
+  ],
+  "observedAt": "2026-10-25T09:21:43Z"
+}

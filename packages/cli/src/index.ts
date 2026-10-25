@@ -15,7 +15,7 @@ import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
+import { type DrawFigure, drawFigureText, dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 const require = createRequire(import.meta.url)
@@ -1104,11 +1104,38 @@ interface UsageRun { runId: string; template: string; status: string; createdAt:
  * `system usage`: per request and step, the Worker, tier, and quota class that served it, the tokens a
  * model Worker spent, and a step whose usage the resource ledger could not count, with why.
  */
-export function formatUsage(usage: { runs: UsageRun[] }): string[] {
-  return usage.runs.flatMap((run) => [
-    `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
-    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
-  ])
+export function formatUsage(usage: { runs: UsageRun[]; draws?: UsageDraws }): string[] {
+  return [
+    ...usage.runs.flatMap((run) => [
+      `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
+      ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
+    ]),
+    ...formatDraws(usage.draws),
+  ]
+}
+
+/** What agent runs drew, as `system usage` gives it (`quota.draw`, PROP-0015 E2): figures per kind and window, then per template step. */
+interface UsageDraws {
+  byKind: DrawFigure[]
+  byStep: DrawFigure[]
+  records: number
+  unreadable: number
+  unread: boolean
+}
+
+/**
+ * The quota draws section of `system usage`: per kind and window, then per kind, template step, and
+ * window, the clean draws counted, their median and p90 in percentage points, and the entries left
+ * out by why; none when no draw is recorded.
+ */
+function formatDraws(draws: UsageDraws | undefined): string[] {
+  if (!draws) return []
+  const over = `${draws.records} record${draws.records === 1 ? '' : 's'}${draws.unread ? ', the latest only' : ''}${draws.unreadable ? `; ${draws.unreadable} not valid, not counted` : ''}`
+  return [
+    `quota drawn per run, in percentage points of each window (${over}):`,
+    ...draws.byKind.map((f) => `  ${drawFigureText(f)}`),
+    ...(draws.byStep.some((f) => f.step !== undefined) ? ['by template step:', ...draws.byStep.filter((f) => f.step !== undefined).map((f) => `  ${drawFigureText(f)}`)] : []),
+  ]
 }
 
 /** An execution whose liveness needs a look, as `explain` gives it (`ctx.workers.liveness`, PROP-0013). */

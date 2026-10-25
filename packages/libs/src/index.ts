@@ -23,3 +23,6 @@ export {
   countUnknownUsage, MAX_UNKNOWN_ENTRIES, MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, reconciledBy, type ScopeUnknownSources, type UnknownEntries, type UnknownRun, type UnknownUsageCount, type UnknownUsageSources,
   unknownUsageOf, USAGE_UNKNOWN_EVENT, USAGE_UNKNOWN_KINDS, type UsageUnknown, usageUnknown, type UsageUnknownKind, usageUnknownOf,
 } from './usage.ts'
+export {
+  DRAW_STATES, type DrawEntry, drawEntries, type DrawFigure, drawFigures, drawFigureText, type DrawReading, type DrawState, MAX_DRAW_WINDOWS, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDraw, quotaDrawOf,
+} from './draws.ts'

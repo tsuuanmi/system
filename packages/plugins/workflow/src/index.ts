@@ -29,15 +29,15 @@ import { retryHeldWakes, wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { leftOutOfTeams, teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
-import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageFilter } from './types.ts'
-import { explain, usage } from './views.ts'
+import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskLanding, TaskStartInput, TemplateStep, UsageDraws, UsageFilter } from './types.ts'
+import { draws, explain, usage } from './views.ts'
 
 export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
 export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
 export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
-export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
+export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -366,6 +366,14 @@ export class Workflow extends Service {
    */
   usage(limit = 50, filter: UsageFilter = {}): RunView[] {
     return usage(this.engine, limit, filter)
+  }
+
+  /**
+   * What agent runs drew from their accounts' windows, per kind and window and per template step
+   * (`quota.draw`, PROP-0015 E2; ./views.ts): the usage report's draws. Undefined when none is recorded.
+   */
+  draws(): UsageDraws | undefined {
+    return draws(this.engine)
   }
 
   /** The decision chain of a run, per node: egress, tier, route (or admission), acceptance (REQ-ART-3). */

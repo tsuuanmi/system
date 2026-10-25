@@ -14,14 +14,14 @@ import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type { ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
+import { QUOTA_DRAW_EVENT, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
 import { renderReport } from './render.ts'
-import { buildReport, type DecisionRead, type DigestRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
+import { buildReport, type DecisionRead, type DigestRead, type DrawRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
 export { duration, renderReport, whole } from './render.ts'
-export { buildReport, type DecisionRead, type DigestRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, type UnknownRead, within } from './report.ts'
+export { buildReport, type DecisionRead, type DigestRead, type DrawRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, type UnknownRead, within } from './report.ts'
 
 export const name = 'report'
 export const inject = ['artifacts', 'eventLog']
@@ -167,6 +167,17 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
     unknowns.push({ at: e.at, ...(e.runId !== undefined ? { runId: e.runId } : {}), fact, reconciled: reconciledBy(fact, reconciled.get(key)!) })
   }
   if (invalid) notes.push(`${invalid} ${USAGE_UNKNOWN_EVENT} entr${invalid === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record: not counted`)
+  // What the agent runs that ended in the period drew from their accounts' windows (PROP-0015 E2).
+  // An entry that is not a valid record is not counted, and said.
+  const draws: DrawRead[] = []
+  let invalidDraws = 0
+  for (const e of readEvents(ctx, { type: QUOTA_DRAW_EVENT, since: period.since })) {
+    if (Date.parse(e.at) >= until) continue
+    const record = quotaDrawOf(e.data)
+    if (!record) invalidDraws += 1
+    else if (within.draw(scope, { ...(e.runId !== undefined ? { runId: e.runId } : {}), record })) draws.push({ at: e.at, record })
+  }
+  if (invalidDraws) notes.push(`${invalidDraws} ${QUOTA_DRAW_EVENT} entr${invalidDraws === 1 ? 'y is' : 'ies are'} not a valid quota-draw@1.0 record: not counted`)
   const since = Date.parse(period.since)
   const events = [
     ...[...reportedAll, ...digestedAll].filter((e) => Date.parse(e.at) >= since),
@@ -199,7 +210,7 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
   const [first] = ctx.eventLog.query({ limit: 1 })
   if (first && first.seq > 1 && Date.parse(first.at) > since) notes.push(`the event log keeps entries from ${first.at} on (retention): attempts, remediation, batches, and digests before then are not counted`)
 
-  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, notes }, projectId)
+  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, draws, notes }, projectId)
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
@@ -213,11 +224,11 @@ const DESCRIPTION = 'The baseline report, from recorded data only (no model writ
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** The `report` tool: input and output checked against `mcp-report@1.3`; the text is the rendering. */
+/** The `report` tool: input and output checked against `mcp-report@1.4`; the text is the rendering. */
 export function registerTool(ctx: Context): void {
   ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
     try {
-      schemas.assertDef('mcp-report@1.3', 'report-input', args)
+      schemas.assertDef('mcp-report@1.4', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
@@ -228,7 +239,7 @@ export function registerTool(ctx: Context): void {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-report@1.3', 'report-output', made)
+      schemas.assertDef('mcp-report@1.4', 'report-output', made)
     } catch (error) {
       return refused(`report: the report made an output its schema refuses (a defect): ${(error as Error).message}`)
     }

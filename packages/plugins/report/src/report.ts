@@ -6,7 +6,7 @@
  */
 import type { ActionClass, ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask, Project, TaskState } from '@tsuuanmi/system-board-core'
-import type { UsageUnknown } from '@tsuuanmi/system-libs'
+import { type DrawFigure, drawFigures, type QuotaDraw, type UsageUnknown } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 
 export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
@@ -59,6 +59,9 @@ export interface DigestRead { kept?: number; dropped?: number; escalated: boolea
  */
 export interface UnknownRead { at: string; runId?: string; fact: UsageUnknown; reconciled: boolean }
 
+/** A `quota.draw` entry as the report reads it (PROP-0015 E2): when it was recorded, and its record. */
+export interface DrawRead { at: string; record: QuotaDraw }
+
 /**
  * What the report reads, already narrowed to its scope (one project, or every one): projects and
  * their tasks as the board holds them now, the queue's requests, the ledger's records observed in
@@ -78,6 +81,8 @@ export interface Sources {
   digests?: ReadonlyMap<string, DigestRead>
   /** The runs whose usage the ledger could not count (`usage.unknown`), recorded in the period; none when absent. */
   unknowns?: UnknownRead[]
+  /** What the agent runs that ended in the period drew (`quota.draw`); none when absent. */
+  draws?: DrawRead[]
   /** What could not be counted, found while reading. */
   notes: string[]
 }
@@ -107,6 +112,10 @@ export const within = {
   /** A run whose usage is unknown, as its record would be scoped, or by the workflow run its entry names. */
   unknown: (scope: Scope, u: Pick<UnknownRead, 'runId' | 'fact'>): boolean => scope.projectId === undefined || u.fact.projectId === scope.projectId
     || (u.fact.taskId !== undefined && scope.tasks.has(u.fact.taskId)) || scope.runs.has(u.fact.runId) || (u.runId !== undefined && scope.runs.has(u.runId)),
+  /** A run's quota draw, as its usage record would be scoped, or by the workflow run it served. */
+  draw: (scope: Scope, d: { runId?: string; record: QuotaDraw }): boolean => scope.projectId === undefined || d.record.projectId === scope.projectId
+    || (d.record.taskId !== undefined && scope.tasks.has(d.record.taskId)) || scope.runs.has(d.record.runId)
+    || (d.record.workflowRunId !== undefined && scope.runs.has(d.record.workflowRunId)) || (d.runId !== undefined && scope.runs.has(d.runId)),
   /** A task's event by its task; a run's by its run; a batch by the scope's requests it holds. */
   event: (scope: Scope, e: Recorded, requests: ReadonlySet<string>): boolean => {
     if (scope.projectId === undefined) return true
@@ -136,6 +145,11 @@ interface LivenessAttention { stalled: number; unknown: number; freed: number; h
 /** A review held for the operator as the report is made (`mcp-report@1.3`): its task, project, and when it expires unseen. */
 interface HeldReview { taskId: string; projectId: string; title: string; expiresAt: string; pendingChecks: string[] }
 
+/** What the agent runs of the period drew (`mcp-report@1.4`): the figures per kind and window, and per kind, template step, and window. */
+interface QuotaDraws { records: number; byKind: DrawFigure[]; byStep: DrawFigure[]; omitted?: number }
+/** Figures of each list one report lists (`mcp-report@1.4`); the rest are counted. */
+export const MAX_DRAW_FIGURES = 256
+
 /** The event-log entries of an agent run's liveness the report counts (PROP-0013). */
 export const LIVENESS_EVENTS = ['agent-workers.run.stalled', 'agent-workers.run.unknown', 'agent-workers.run.freed'] as const
 /** Held runs, and held reviews, one report lists (`mcp-report@1.2`, `@1.3`); the rest are counted. */
@@ -154,7 +168,8 @@ export interface Report {
   approvals: { asked: number; approved: number; rejected: number; expired: number; withdrawn: number; openNow: number; byClass: ClassCounts[]; wait?: { answered: number; medianSeconds: number; p90Seconds: number; maxSeconds: number } }
   /** `reviewsHeld` (1.3): the reviews held for the operator as the report is made, the soonest to expire first; only when there are any. */
   attention: { interruptions: number; batches: number; days: Day[]; threshold?: Attention; daysOver?: number; liveness?: LivenessAttention; reviewsHeld?: HeldReview[]; reviewsHeldOmitted?: number }
-  usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number }; unknown?: UnknownUsage }
+  /** `draws` (1.4): what agent runs drew per kind and window, and per template step; only when any was recorded. */
+  usage: { total: UsageTotals; pools: Array<UsageTotals & { pool: string }>; byOutcome: { completed: number; failed: number; aborted: number; unknown: number }; unknown?: UnknownUsage; draws?: QuotaDraws }
   digests: { attached: number; bypassed: number; claimsKept?: number; claimsDropped?: number; escalated?: number }
   baseline: { acceptedResults: number; interruptions: number; attempts: number; perAcceptedResult?: { tokens: number; costUsd: number; turns: number; interruptions: number; attempts: number } }
   notes: string[]
@@ -362,6 +377,18 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
       + `(${unknown.runs} recorded in the period: ${kinds}${unknown.reconciled ? `, ${unknown.reconciled} of them counted since` : ''}; system events --type usage.unknown)`)
   }
 
+  // Quota drawn per run (PROP-0015 E2): the records of the period, in the order they were recorded,
+  // each run once by its first; figures over clean draws only.
+  const drawn = (sources.draws ?? []).filter((d) => inPeriod(d.at))
+    .sort((a, b) => ms(a.at) - ms(b.at) || byKey<DrawRead>((d) => d.record.runId)(a, b)).map((d) => d.record)
+  let draws: QuotaDraws | undefined
+  if (drawn.length) {
+    const byKind = drawFigures(drawn, 'kind')
+    const byStep = drawFigures(drawn, 'step')
+    const omitted = Math.max(0, byKind.length - MAX_DRAW_FIGURES) + Math.max(0, byStep.length - MAX_DRAW_FIGURES)
+    draws = { records: new Set(drawn.map((d) => d.runId)).size, byKind: byKind.slice(0, MAX_DRAW_FIGURES), byStep: byStep.slice(0, MAX_DRAW_FIGURES), ...(omitted ? { omitted } : {}) }
+  }
+
   // Digests of task results: attached or bypassed, and how the attached ones fared.
   const settled = ofType('workflow.task.digest')
   const attached = settled.filter((e) => e.data?.['state'] === 'attached')
@@ -394,7 +421,7 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
     period, ...(projectId !== undefined ? { projectId } : {}), asOf: sources.asOf,
     projects: listed, ...(projects.length > MAX_PROJECTS ? { projectsOmitted: projects.length - MAX_PROJECTS } : {}),
     tasks, attempts, remediation, approvals, attention,
-    usage: { total, pools: [...pools.values()].sort(byKey((p) => p.pool)), byOutcome, ...(unknown ? { unknown } : {}) },
+    usage: { total, pools: [...pools.values()].sort(byKey((p) => p.pool)), byOutcome, ...(unknown ? { unknown } : {}), ...(draws ? { draws } : {}) },
     digests, baseline, notes: notes.slice(0, 16),
   }
 }

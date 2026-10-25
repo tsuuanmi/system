@@ -14,7 +14,7 @@ decides nothing, and no model takes part.
 - **What it reads**, through the definitions only: `ctx.board` (projects and their tasks now),
   `ctx.approvals` (every request, `list`), `ctx.resources` (the counted usage records observed in
   the period, `usage`), `ctx.eventLog` (`workflow.task.reported`, `workflow.task.digest`,
-  `workflow.graph.grown`, `workflow.gate.opened|closed`, `approvals.batched`, `usage.unknown`,
+  `workflow.graph.grown`, `workflow.gate.opened|closed`, `approvals.batched`, `usage.unknown`, `quota.draw`,
   `agent-workers.run.stalled|unknown|freed`, and, for a project, `workflow.node.started`),
   `ctx.artifacts` (the decisions those name), and `ctx.digests` when loaded (the claims of the
   digests attached, and which runs wrote them).
@@ -34,6 +34,12 @@ decides nothing, and no model takes part.
   has not counted a record of since (`resources.usage` by run and pool); and those runs in all, by
   kind, with how many were reconciled. Each field only when there is any; the rendering says them
   per pool and in a line of their own.
+- **Quota drawn per run** (PROP-0015 E2, `mcp-report` 1.4, `usage.draws`,
+  [resources](../../../docs/design/resources.md#quota-drawn-per-run)): the `quota.draw` records of
+  the period in scope, read back as `quota-draw@1.0` records, per kind and window and per kind,
+  template step, and window: the clean draws counted, their median and p90 in percentage points,
+  and the entries left out (`confounded`, `reset-crossing`, `no-reading`); at most 256 figures of
+  each list. Only when there is any; an entry that is not a valid record is counted in `notes`.
 - **Fails closed** (INV-2): with the board, the queue, or the ledger not loaded, it makes no report
   (`unavailable`), never a partial one; an unknown project is `unknown-project`. Bounded (INV-9): at
   most 100 000 entries of one event type, the ledger's own bound on the records of a period

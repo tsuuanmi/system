@@ -564,6 +564,19 @@ The **`agents` Worker source**: agent runtimes as Workers
     when it names neither); such an `ok` reading is not recorded, and is
     logged; a report's rejections are recorded first, so its own `ok` of a
     window it closes is not either. Its unmapped windows are logged once;
+  - **what the run drew** (PROP-0015 E2,
+    [quota drawn per run](../../../docs/design/resources.md#quota-drawn-per-run)):
+    for a derived Worker on a declared pool, each window's latest reading is
+    read before the run is submitted and again once the report after it is
+    recorded, and the run is watched for other runs on its account in flight
+    meanwhile (`src/overlaps.ts`). One `quota-draw@1.0` record, an `evidence`
+    artifact and a `quota.draw` event, gives per window the draw in
+    percentage points, or why there is none (`reset-crossing`, `no-reading`),
+    and marks it `confounded` when another run overlapped. It names the kind
+    of work (`WorkRequirement.kind`) and the template step (`WorkerStart.step`)
+    the run was started for, kept on the run (columns `kind`, `step_template`,
+    `step_node`, migration 19). A failure to record it is logged, and the run's
+    outcome stands;
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 

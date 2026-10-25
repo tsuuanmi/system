@@ -3,6 +3,7 @@
  * investor report): progress, results, attention, resources, the baseline, digests. Deterministic,
  * from the report alone; numbers are written without a locale.
  */
+import { drawFigureText } from '@tsuuanmi/system-libs'
 import type { Report } from './report.ts'
 
 /** A whole number with thousands separated by commas, whatever the host's locale. */
@@ -105,6 +106,12 @@ export function renderReport(report: Report): string {
     const k = u.unknown
     const kinds = [k.notReported ? `${whole(k.notReported)} not reported` : '', k.interrupted ? `${whole(k.interrupted)} interrupted` : '', k.refused ? `${whole(k.refused)} refused by the ledger` : '', k.failed ? `${whole(k.failed)} failed to record` : ''].filter(Boolean)
     lines.push(`- Usage the ledger could not count: ${plural(k.runs, 'run')} (${kinds.join(', ')}), ${whole(k.reconciled)} of them counted since; a cap counts the others as 0.`)
+  }
+  if (u.draws) {
+    // Quota drawn per run (PROP-0015 E2): clean draws only in a figure; what was left out, said.
+    lines.push(`- Quota drawn per run, in percentage points of each window (${plural(u.draws.records, 'run')}): ${u.draws.byKind.map((f) => drawFigureText(f)).join('; ')}.`)
+    const steps = u.draws.byStep.filter((f) => f.step !== undefined)
+    if (steps.length) lines.push(`- By template step: ${steps.map((f) => drawFigureText(f)).join('; ')}${u.draws.omitted ? `; and ${plural(u.draws.omitted, 'more figure')}` : ''}.`)
   }
 
   const b = report.baseline

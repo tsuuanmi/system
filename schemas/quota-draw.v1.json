@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:quota-draw:v1",
+  "title": "Quota draw",
+  "description": "Body of an `evidence` artifact, and the data of the `quota.draw` event that names it: what one agent run of a derived Worker on a declared pool drew from each window of its account's pool, from the window's last reading before the run and its first reading after it (design/resources.md, quota drawn per run; PROP-0015 E2). One entry per window, never one figure for the account. A draw is the rise of the window's used share in percentage points, recorded only when both readings give a used share and belong to the same window epoch (the same reset). Nothing is estimated: a missing reading leaves no draw, and a draw is never negative.",
+  "type": "object",
+  "required": ["schema", "runId", "worker", "account", "pool", "outcome", "startedAt", "endedAt", "overlapping", "windows", "observedAt"],
+  "properties": {
+    "schema": { "const": "quota-draw@1.0" },
+    "runId": {
+      "description": "The agent run (its execution id), as its usage record names it.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "account": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "pool": {
+      "description": "The account's pool the run drew on (`<template>/<account>`).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "workflowRunId": {
+      "description": "The workflow run the agent run belongs to, when it belongs to one.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "template": {
+      "description": "The workflow template of that run, as the engine started the step (`WorkerStart.step`).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "step": {
+      "description": "The template's step (node id) the run served.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "kind": {
+      "description": "The kind of work the run was admitted for (`WorkRequirement.kind`, ADR-0057), from the admitted spec, never from model text.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workKind"
+    },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "outcome": {
+      "description": "How the run ended.",
+      "enum": ["completed", "failed", "aborted"]
+    },
+    "startedAt": {
+      "description": "When the run was submitted to its runtime: the reading before is the window's latest at this time.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+    },
+    "endedAt": {
+      "description": "When the runtime returned: the reading after is the first one observed at or after this time (the account's usage report read after the run, ADR-0059).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+    },
+    "overlapping": {
+      "description": "How many other runs on the same account ran at some time between `startedAt` and `endedAt`. Above 0, every window's entry with a draw is `confounded`: the rise is not this run's alone.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "windows": {
+      "description": "One entry per configured window of the pool, in the pool's order.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "observedAt": {
+      "description": "When the record was made.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "reading": {
+      "description": "A window's reading as the ledger recorded it (`limit-state@1.0`): its used share, its epoch (the later of `resetsAt` and `cooldownUntil`, as `accountQuotaOf` reads it; absent when it names neither), and when it was observed.",
+      "type": "object",
+      "required": ["observedAt"],
+      "properties": {
+        "usedPercentage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "resets": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "description": "One window's draw. `state`: clean, a draw that counts in the figures; confounded, a draw while another run on the account overlapped (`overlapping`), kept but out of the figures; reset-crossing, no draw: the readings' epochs differ, either names no reset, or the used share went down; no-reading, no draw: a reading before or after is missing, or gives no used share.",
+      "type": "object",
+      "required": ["window", "state"],
+      "properties": {
+        "window": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "seconds": { "description": "The window's length, when it has one.", "type": "integer", "minimum": 1, "maximum": 31622400 },
+        "before": { "$ref": "#/$defs/reading" },
+        "after": { "$ref": "#/$defs/reading" },
+        "draw": {
+          "description": "The rise of the used share from `before` to `after`, in percentage points of the window's allowance (0 to 100).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "state": { "enum": ["clean", "confounded", "reset-crossing", "no-reading"] },
+        "why": {
+          "description": "Why the entry has no draw, or why it is confounded, in words.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      },
+      "if": { "properties": { "state": { "enum": ["clean", "confounded"] } } },
+      "then": {
+        "required": ["before", "after", "draw"],
+        "properties": {
+          "before": { "type": "object", "required": ["usedPercentage"], "properties": { "usedPercentage": true } },
+          "after": { "type": "object", "required": ["usedPercentage"], "properties": { "usedPercentage": true } },
+          "draw": true
+        }
+      },
+      "else": { "required": ["why"], "properties": { "why": true }, "not": { "required": ["draw"], "properties": { "draw": true } } },
+      "additionalProperties": false
+    }
+  }
+}

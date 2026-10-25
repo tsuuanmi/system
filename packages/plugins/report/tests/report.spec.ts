@@ -1,9 +1,9 @@
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
-import { SchemaRegistry, type UsageUnknown } from '@tsuuanmi/system-libs'
+import { type QuotaDraw, SchemaRegistry, type UsageUnknown } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import { describe, expect, it } from 'vitest'
-import { buildReport, type DecisionRead, duration, MAX_PROJECTS, type Period, periodOf, type Recorded, renderReport, ReportError, runsOf, type Sources, type UnknownRead, whole, within } from '../src/index.ts'
+import { buildReport, type DecisionRead, type DrawRead, duration, MAX_PROJECTS, type Period, periodOf, type Recorded, renderReport, ReportError, runsOf, type Sources, type UnknownRead, whole, within } from '../src/index.ts'
 
 // The baseline report's computation (docs/design/reports.md): pure, from what was read; the same
 // records and period give the same report.
@@ -323,6 +323,56 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
     // None: no such field, no such line.
     expect(buildReport(PERIOD, week(), 'p1').attention).not.toHaveProperty('liveness')
     expect(renderReport(buildReport(PERIOD, week(), 'p1'))).not.toContain('Agent runs')
+  })
+
+  it('shows the quota agent runs drew per kind and window and per template step, over clean draws only: a reset-crossing or confounded run counted apart (PROP-0015 E2)', () => {
+    const entry = (state: QuotaDraw['windows'][number]['state'], draw?: number): QuotaDraw['windows'][number] => (draw === undefined
+      ? { window: 'five-hour', state, why: state === 'reset-crossing' ? 'the window reset between the readings' : 'no reading after the run' }
+      : { window: 'five-hour', before: { usedPercentage: 10, resets: at(9), observedAt: at(0) }, after: { usedPercentage: 10 + draw, resets: at(9), observedAt: at(0, 13) }, draw, state })
+    const draw = (when: string, runId: string, kind: string, step: string | undefined, windows: QuotaDraw['windows'], extra: Partial<QuotaDraw> = {}): DrawRead => ({
+      at: when,
+      record: {
+        schema: 'quota-draw@1.0', runId, worker: 'agent:acc/dev', account: 'acc', pool: 'plan/acc', kind, ...(step ? { template: 'algorithm-development', step } : {}),
+        outcome: 'completed', startedAt: when, endedAt: when, overlapping: windows.some((w) => w.state === 'confounded') ? 1 : 0, windows, observedAt: when, ...extra,
+      },
+    })
+    const draws: DrawRead[] = [
+      draw(at(1), 'arun-d1', 'code', 'develop', [entry('clean', 4)], { projectId: 'p1' }),
+      draw(at(2), 'arun-d2', 'code', 'develop', [entry('clean', 8)], { taskId: 't1' }),
+      // The window reset during it: no draw, counted apart.
+      draw(at(3), 'arun-d3', 'code', 'develop', [entry('reset-crossing')], { workflowRunId: 'run-1' }),
+      // Another run on the account overlapped it: its draw of 20 is never in a figure.
+      draw(at(4), 'arun-d4', 'code', 'validate', [entry('confounded', 20)], { projectId: 'p1' }),
+      draw(at(4, 13), 'arun-d5', 'docs', undefined, [entry('clean', 2)], { projectId: 'p1' }),
+      // Outside the period, and outside the project.
+      draw(at(8), 'arun-d6', 'code', 'develop', [entry('clean', 50)], { projectId: 'p1' }),
+      draw(at(2), 'arun-d7', 'code', 'develop', [entry('clean', 30)], { projectId: 'p2' }),
+    ]
+    const scope = { projectId: 'p1', tasks: new Set(['t1']), runs: new Set(['run-1']) }
+    const report = buildReport(PERIOD, { ...week(), draws: draws.filter((d) => within.draw(scope, d)) }, 'p1')
+    expect(() => schemas.assertDef('mcp-report@1.4', 'report-output', report)).not.toThrow()
+    const none = { confounded: 0, 'reset-crossing': 0, 'no-reading': 0 }
+    expect(report.usage.draws).toEqual({
+      records: 5,
+      byKind: [
+        { kind: 'code', window: 'five-hour', draws: 2, median: 6, p90: 8, excluded: { ...none, confounded: 1, 'reset-crossing': 1 } },
+        { kind: 'docs', window: 'five-hour', draws: 1, median: 2, p90: 2, excluded: none },
+      ],
+      byStep: [
+        { kind: 'code', template: 'algorithm-development', step: 'develop', window: 'five-hour', draws: 2, median: 6, p90: 8, excluded: { ...none, 'reset-crossing': 1 } },
+        { kind: 'code', template: 'algorithm-development', step: 'validate', window: 'five-hour', draws: 0, excluded: { ...none, confounded: 1 } },
+        { kind: 'docs', window: 'five-hour', draws: 1, median: 2, p90: 2, excluded: none },
+      ],
+    })
+    const text = renderReport(report)
+    expect(text).toContain('- Quota drawn per run, in percentage points of each window (5 runs): code · five-hour: 2 draws, median 6 points, p90 8 points (excluded: 1 confounded, 1 reset-crossing); docs · five-hour: 1 draw, median 2 points, p90 2 points.')
+    expect(text).toContain('- By template step: code · algorithm-development:develop · five-hour: 2 draws, median 6 points, p90 8 points (excluded: 1 reset-crossing); code · algorithm-development:validate · five-hour: no clean draw (excluded: 1 confounded).')
+    // The same entries in another order give the same report; none gives no such field or line.
+    expect(buildReport(PERIOD, { ...week(), draws: [...draws].reverse().filter((d) => within.draw(scope, d)) }, 'p1')).toEqual(report)
+    expect(buildReport(PERIOD, week(), 'p1').usage).not.toHaveProperty('draws')
+    expect(renderReport(buildReport(PERIOD, week(), 'p1'))).not.toContain('Quota drawn')
+    // The studio report counts every one of the period, the other project's included.
+    expect(buildReport(PERIOD, { ...week(), draws }).usage.draws?.byKind[0]).toMatchObject({ kind: 'code', draws: 3, median: 8, p90: 30 })
   })
 
   it('shows the reviews held for the operator as the report is made, the soonest to expire first, with when each expires (T99 D6)', () => {

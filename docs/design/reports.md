@@ -4,7 +4,7 @@
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Proposals:
 > [PROP-0010](../proposals/0010-base-version.md) (B8: the baseline report, a weekly investor report),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#validation-plan) (the baseline).
-> Payload: [`mcp-report@1.3`](../reference/schemas.md#mcp-tool-report).
+> Payload: [`mcp-report@1.4`](../reference/schemas.md#mcp-tool-report).
 >
 > Implemented in [`report`](../../packages/plugins/report/README.md); differs from target: quota
 > lost at reset is not reported (the ledger's seam gives each window's latest reading only), and
@@ -29,7 +29,7 @@ and `since` to `days` (default 7) before it; at most 366 days. And a scope: one 
 | board | `ctx.board`: `projects`, `project`, `tasks` | projects and their tasks as they are now (`asOf`) |
 | approval queue | `ctx.approvals.list`, every state | each request: its class, requester, creation, batch, and resolution |
 | resource ledger | `ctx.resources.usage` over the period | the counted usage records observed in it (deduplicated by the ledger); and, for each run whose usage it could not count, whether it has counted a record of that run in its pool since |
-| event log | `ctx.eventLog.query` | `workflow.task.reported` (one per attempt that reached its task), `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened` and `closed`, `approvals.batched`, `usage.unknown` (a run whose usage the ledger could not count, [resources](resources.md#usage-the-ledger-cannot-count)), `agent-workers.run.stalled`, `run.unknown`, and `run.freed` (an agent run's liveness, [what the operator sees](agent-runtimes.md#what-the-operator-sees)); for a project, each of its runs' `workflow.node.started` |
+| event log | `ctx.eventLog.query` | `workflow.task.reported` (one per attempt that reached its task), `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened` and `closed`, `approvals.batched`, `usage.unknown` (a run whose usage the ledger could not count, [resources](resources.md#usage-the-ledger-cannot-count)), `quota.draw` (what an agent run drew from each window, [resources](resources.md#quota-drawn-per-run)), `agent-workers.run.stalled`, `run.unknown`, and `run.freed` (an agent run's liveness, [what the operator sees](agent-runtimes.md#what-the-operator-sees)); for a project, each of its runs' `workflow.node.started` |
 | decisions | `ctx.artifacts.get` | the acceptance decision of each done task and of each reported attempt |
 | digests | `ctx.digests.get`, when loaded | each attached digest's claims kept and dropped, escalation, and the runs that wrote it |
 
@@ -66,13 +66,15 @@ those requests.
 | reviews held for the operator | only where there is any (`mcp-report` 1.3, `attention.reviewsHeld`): the scope's tasks in review waiting `operator-review` as of `asOf`, the soonest to expire first, at most 64 (the rest counted), each with its title, its pending checks, and `expiresAt`; the rendering says how long each has left as of `asOf` (`expires in 3h`), since an unanswered review expires and its task waits for input that nothing revives (T99 D6) |
 | usage | the records observed in the period, per pool and in all: input tokens (cached input included), cache reads and writes, output tokens, turns, the runtime's own cost estimate; and the records by outcome |
 | usage a cap counts as 0 | per pool and in all, only where there is any (`mcp-report` 1.1): the records without token counts, without a cost, without turns, and the runs recorded in the period whose usage the ledger could not count and has not counted since (`unknownRuns`); and those runs in all (`usage.unknown`): each once per pool by its first entry's kind (not reported, interrupted, refused, failed), and how many the ledger has counted a record of since (reconciled) |
+| quota drawn per run | only where there is any (`mcp-report` 1.4, `usage.draws`; PROP-0015 E2): the `quota.draw` records of the period, each run once, per kind and window and per kind, template step, and window: the clean draws counted, their median and 90th percentile (nearest rank) in percentage points of the window, and the entries left out by state (`confounded`, `reset-crossing`, `no-reading`), which never enter a figure; at most 256 figures of each list. A draw belongs to a project as a run whose usage is unknown does: by the project, task, agent run, or workflow run it names |
 | digests | digests of task results that ended in the period: attached or bypassed; for those attached, the claims kept and dropped, and the escalations |
 | baseline | accepted results, interruptions, attempts; and, with an accepted result, per accepted result: tokens (input and output), cost, turns, interruptions, attempts |
 
 A missing number stays missing: a usage record with no token counts adds none, and the report says
 how many there were (`notes`), as it does for records without a cost or turns and for the runs whose
 usage the ledger could not count, so tokens and cost per accepted result are then lower bounds. A
-`usage.unknown` entry that is not a valid `usage-unknown@1.0` record is not counted, and said. An
+`usage.unknown` entry that is not a valid `usage-unknown@1.0` record is not counted, and said, as is
+a `quota.draw` entry that is not a valid `quota-draw@1.0` record. An
 event log trimmed by retention within the period is said too, as is a digest provider that is not
 loaded, and a digest the provider loaded does not know: another provider settled it before its row
 was swapped ([replacing the provider](digests.md#replacing-the-provider)), so its claims, and for a

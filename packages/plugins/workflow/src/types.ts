@@ -4,7 +4,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { UnreleasedHold } from '@tsuuanmi/system-board-core'
-import type { ContentId } from '@tsuuanmi/system-libs'
+import type { ContentId, DrawFigure } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Classification, RunLiveness, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { CallerOptions, NodeTemplate } from './spec.ts'
 
@@ -110,6 +110,23 @@ export interface UsageFilter {
 
 export interface UsageRunView extends Pick<RunView, 'runId' | 'template' | 'status' | 'sessionId' | 'createdAt' | 'updatedAt'> {
   nodes: Array<Omit<NodeView, 'result' | 'brief' | 'error'>>
+}
+
+/**
+ * What agent runs drew from their accounts' windows (`quota.draw`, PROP-0015 E2), as the MCP `usage`
+ * report shows it: over the latest records the log keeps, per kind and window and per kind, template
+ * step, and window, the clean draws counted with their median and 90th percentile in percentage
+ * points, and the entries left out by why (docs/design/resources.md#quota-drawn-per-run).
+ */
+export interface UsageDraws {
+  byKind: DrawFigure[]
+  byStep: DrawFigure[]
+  /** The records read, the latest first, at most `MAX_USAGE_DRAWS`. */
+  records: number
+  /** Entries that are not a valid `quota-draw@1.0` record, so no figure counts them. */
+  unreadable: number
+  /** Older records were in the log than were read. */
+  unread: boolean
 }
 
 export interface StartInput extends CallerOptions {

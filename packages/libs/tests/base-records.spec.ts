@@ -273,6 +273,41 @@ describe('usage-unknown@1.0', () => {
   })
 })
 
+describe('quota-draw@1.0', () => {
+  const clean = example('quota-draw.clean')
+  const excluded = example('quota-draw.excluded')
+  const entries = (record: Json): Json[] => record.windows as Json[]
+
+  it('names the run, its account and pool, how it ended, and one entry per window (design/resources.md, quota drawn per run)', () => {
+    expect(valid('quota-draw@1.0', clean)).toBe(true)
+    expect(valid('quota-draw@1.0', excluded)).toBe(true)
+    for (const key of ['runId', 'worker', 'account', 'pool', 'outcome', 'startedAt', 'endedAt', 'overlapping', 'windows', 'observedAt']) {
+      const { [key]: _, ...without } = clean
+      expect(valid('quota-draw@1.0', without), key).toBe(false)
+    }
+    expect(valid('quota-draw@1.0', { ...clean, windows: [] })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...clean, kind: 'Code Work' })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...clean, overlapping: -1 })).toBe(false)
+    // One figure for the account is never a draw.
+    expect(valid('quota-draw@1.0', { ...clean, draw: 9 })).toBe(false)
+  })
+
+  it('holds a draw only for a clean or confounded entry with both shares, and never a negative one', () => {
+    const [entry] = entries(clean)
+    expect(valid('quota-draw@1.0', { ...clean, windows: [{ ...entry, draw: -1 }] })).toBe(false)
+    const { draw: _, ...undrawn } = entry!
+    expect(valid('quota-draw@1.0', { ...clean, windows: [undrawn] })).toBe(false)
+    const { usedPercentage: __, ...shareless } = entry!.after as Json
+    expect(valid('quota-draw@1.0', { ...clean, windows: [{ ...entry, after: shareless }] })).toBe(false)
+    const [crossed, confounded, unread] = entries(excluded)
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [{ ...crossed, draw: 0 }] })).toBe(false)
+    const { why: ___, ...unexplained } = crossed!
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [unexplained] })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [{ ...unread, draw: 1 }] })).toBe(false)
+    expect(valid('quota-draw@1.0', { ...excluded, windows: [{ ...confounded, state: 'units-only' }] })).toBe(false)
+  })
+})
+
 describe('notification@1.0', () => {
   const opened = example('notification.approval-opened')
   const failed = example('notification.run-user-action')

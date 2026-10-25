@@ -198,6 +198,12 @@ export interface WorkerStart {
    * per run by it: the `agents` source gives a run a git worktree of its own.
    */
   runId?: string | undefined
+  /**
+   * The workflow template and the step (node id) of it this execution serves, when it serves one: set
+   * by the workflow engine from its own record, never from model text (INV-6). A source may record it
+   * with what the execution drew (the `agents` source's `quota-draw@1.0`, PROP-0015 E2).
+   */
+  step?: { template: string; node: string } | undefined
   /** The requirement the Worker was admitted for, and the decisions that admitted it. */
   requirement: WorkRequirement
   decisions: { tier: ArtifactRef; route: ArtifactRef }

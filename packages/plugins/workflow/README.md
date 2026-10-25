@@ -680,6 +680,12 @@ second execution path (INV-1).
     `usageUnknown`, the kind its Worker source recorded first in the run's
     `usage.unknown` entries
     ([resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
+    `draws()` gives what agent runs drew from their accounts' windows over
+    the latest 1,000 `quota.draw` records, per kind and window and per kind,
+    template step, and window (PROP-0015 E2,
+    [quota drawn per run](../../../docs/design/resources.md#quota-drawn-per-run));
+    the MCP `usage` tool adds it as `draws` once any is recorded. Each start
+    names its template step (`WorkerStart.step`) for it.
     The latest started first, at most `limit` (1 to 500). Since contract 1.7, an optional filter
     (`UsageFilter`): `status`, only runs in those states, whenever they started, so a run that has
     run for hours is never past the limit for being old; `changedSince`, only runs whose state
