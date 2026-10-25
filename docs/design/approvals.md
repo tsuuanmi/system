@@ -305,6 +305,35 @@ recorded as a `gate` decision of rule `agent-workers.tool-gate`. A denied or def
 appends an `agent-workers.tool.denied` or `agent-workers.tool.deferred` event; events carry
 ids, never the call's input.
 
+### Why a call was denied
+
+Every `agent-workers.tool.denied` event says why (T207), so a denial that repeats is seen and its
+cause fixed rather than asked again. Its data adds, to the agent run, the Worker, and the tool:
+`reason`, a stable code; `explanation`, the code's fixed plain sentence (at most 300 characters,
+never the call's input: the agent's own reason and the decision name the path or command);
+`workerKind`, the Worker's runtime; `actionClass`, once the call was classified; and `decision`,
+the decision behind it, also on the entry itself. A `gate` decision's outcome detail names the
+code too. The codes ([events reference](../reference/schemas.md#event)):
+
+| Code | The call |
+|---|---|
+| `metacharacter`, `empty-word` | a `Bash` word holds a shell metacharacter, or is empty; denied before the policy is asked |
+| `outside-workspace` | names a path outside the workspace, as written or on disk, or a `Glob` pattern that reaches out |
+| `git-data` | writes git's own data (`.git`) |
+| `unclassified-tool` | a tool the gate does not classify |
+| `unsupported-field` | an input field the gate does not classify, or one of another type |
+| `invalid-input`, `invalid-patch` | an input that is no object or names nothing where it must; a patch outside the grammar |
+| `policy-forbid` | the policy forbids its class |
+| `not-listed` | a command no line of the studio policy's commands list matches, under a policy that forbids every other command |
+| `request-rejected`, `request-expired`, `request-withdrawn`, `workflow-denied` | its request for exactly this call was rejected, expired, or withdrawn, or the engine denied it: denied for good in its session |
+| `request-mismatch`, `request-unreadable` | the request recorded for it is for another call, or cannot be read |
+| `no-session`, `run-stopped`, `review-member`, `no-approvals` | an `ask` with no session to resume; a run already stopped at a deferred call; a review member's run; no queue |
+| `unknown-checks`, `unknown-mode`, `gate-error` | a verdict the gate does not know, or a gate that failed |
+
+A code is never renamed or reused; a new cause gets a new code. Health's `tool-denials` check
+counts the denials of its window (`driftWindowHours`, default 24) by reason code per Worker kind
+per UTC day, an event from before the codes as `unrecorded`; it is a notice, never degraded.
+
 ### A deferred call
 
 - **The request** binds to the exact call (INV-5): subject `{ type: content, ref:
@@ -349,14 +378,22 @@ ids, never the call's input.
   input is a different call, with a request of its own.
 - **A run with no session** cannot be continued, so an `ask` there is denied, not deferred, and
   nothing is queued: the operator is never asked for an approval no run could use.
-- **Asking less.** A Worker whose sandbox writes its workspace is told, with every turn's prompt,
-  the calls its gate lets run unasked under the policy as it stands (`ctx.approvals.policy()`):
-  reading tools and the read-only inspection commands of the table above when `read` runs
-  unasked, writing tools when `workspace-write` does, and the studio policy's commands list, its
-  exact lines (at most 50 shown), when `workspace-write` runs unasked and `command` is not
-  forbidden (every command when `command` itself runs unasked). Nothing it names is a call the
-  policy asks about now; the gate still judges every call. With no queue, or a policy that cannot
-  be read, the prompt goes without it.
+- **Asking less.** Every Worker but a review member (whose gate allows no call) is given, with
+  every turn's prompt, one Tools section (T199, extended by T207) from its gate, its sandbox, and
+  the policy as it stands (`ctx.approvals.policy()`): its workspace path; for a read-only
+  sandbox, that no tool call writes a file (it is then given no writing tool and no commands
+  list); the calls its gate lets run unasked, reading
+  tools when `read` runs unasked (and the read-only inspection commands of the table above only
+  under a runtime that enforces clean shells, where the gate takes them for reads; elsewhere it
+  says no `Bash` command is a read), writing tools when `workspace-write` does, and the studio
+  policy's commands list, its exact lines (at most 50 shown), when `workspace-write` runs
+  unasked and `command` is not forbidden (every command when `command` itself runs unasked), or
+  that none runs unasked; that a word with a shell metacharacter or an empty word is refused,
+  and that a relative path makes no command a read; and whether an approval resumes the step
+  (the run has a session) or a call that would ask is denied at once (it has none). At most
+  4,000 characters: the commands list is cut first, its rest counted. Nothing it names as
+  unasked is a call the policy asks about now; the gate still judges every call. With no queue,
+  or a policy that cannot be read, the prompt goes without it.
 
 ### Where a Worker's gate leaves room
 

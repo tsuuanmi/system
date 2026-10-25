@@ -305,6 +305,8 @@ export class McpEndpoint extends McpTools {
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       // The notifier's outcomes, recorded as events: the surface reads them, never the plugin (docs/design/notifications.md#health).
       ...(eventLog ? { deliveries: ({ since, afterSeq, limit }: { since: string; afterSeq: number; limit: number }) => eventLog.query({ type: 'notify.delivery', since, afterSeq, limit }) } : {}),
+      // The agent Workers' tool denials, counted by reason code per Worker kind per day (T207).
+      ...(eventLog ? { denials: ({ since, afterSeq, limit }: { since: string; afterSeq: number; limit: number }) => eventLog.query({ type: 'agent-workers.tool.denied', since, afterSeq, limit }) } : {}),
       minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,
       driftWindowMs: (this.config.driftWindowHours ?? 24) * 60 * 60_000,
     })

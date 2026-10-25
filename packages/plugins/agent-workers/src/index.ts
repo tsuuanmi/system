@@ -1905,21 +1905,24 @@ export class AgentWorkers extends Service {
   }
 
   /**
-   * The turn with the calls its gate lets run unasked appended (gate.ts `unaskedNote`, the autonomy
-   * policy's exact lines), so the agent asks the operator less: only for a Worker whose sandbox
-   * writes its workspace (one that may run commands), never for a review member (its gate allows no
-   * call). Read from `ctx.approvals.policy()` now; with no queue, or one that cannot be read, the
-   * turn is sent as it is (logged), since the gate still decides every call. Appended before the
-   * egress check, which sees it.
+   * The turn with its Tools section appended (gate.ts `unaskedNote`, T199 and T207): the workspace,
+   * the calls its gate lets run unasked (the autonomy policy's exact lines), the gate's refusals,
+   * and whether an approval resumes the step, so the agent asks the operator less and is denied
+   * less: for every Worker, fit to its sandbox (a read-only one is told it writes nothing and given
+   * no writing tool or commands list), never for a review member (its gate allows no call). Read from `ctx.approvals.policy()` now, and the
+   * runtime's evidence of clean shells, as the gate reads it (a probe that fails: none); with no
+   * queue, or one that cannot be read, the turn is sent as it is (logged), since the gate still
+   * decides every call. Appended before the egress check, which sees it.
    */
   private async withUnasked(turn: Turn, row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
-    if (worker.sandbox !== 'workspace-write' || row.scope === REVIEW_MEMBER) return turn
+    if (row.scope === REVIEW_MEMBER) return turn
     const approvals = this.ctx.get('approvals')
     if (!approvals) return turn
     const workspace = worker.worktreePerRun && row.workflow_run_id && RUN_ID.test(row.workflow_run_id) ? this.worktrees.pathOf(worker.workspace, row.workflow_run_id) : worker.workspace
     try {
-      const note = unaskedNote(await approvals.policy(), workspace)
-      return note ? { ...turn, prompt: `${turn.prompt}\n\n${note}` } : turn
+      const shellReads = await this.evidence(worker, 'proven').then((evidence) => evidence.cleanShells === true, () => false)
+      const note = unaskedNote(await approvals.policy(), workspace, { shellReads, resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox })
+      return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
       this.ctx.logger.warn(`agent Workers: the autonomy policy could not be read for ${row.run_id}'s note of the calls that run unasked; it is sent without it: ${(error as Error).message}`)
       return turn
@@ -2006,7 +2009,7 @@ export class AgentWorkers extends Service {
     // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
     // Under the review-member profile, the gate denies every one.
     const gate = runGate(this.ctx, {
-      runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
+      runId: row.run_id, worker: row.worker, workerKind: worker.runtime, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
       classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : {}),
       // A shell command is taken for a read only where the runtime enforces shells that read no startup code (T198).
       shellReads: evidence.cleanShells === true,

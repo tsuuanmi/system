@@ -20,6 +20,46 @@ import type {} from '@tsuuanmi/system-event-log'
 import { contentId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 
+/**
+ * Why the gate denied a call (T207): a stable code, and the plain explanation of it each
+ * `agent-workers.tool.denied` event carries (at most {@link EXPLANATION_MAX} characters). The
+ * explanation is fixed per code, so an event never carries the call's input (a path, a command):
+ * the agent's own reason and the decision name those. A code is never renamed or reused; a new
+ * cause gets a new code (additive, ADR-0036).
+ */
+export const DENIAL_REASONS = {
+  'metacharacter': 'A Bash command word holds a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like). A command is words split on single spaces and never parsed by a shell, so such a word is denied before the policy is asked.',
+  'empty-word': 'A Bash command has an empty word: a doubled, leading, or trailing space. A command is words split on single spaces, so it is denied before the policy is asked.',
+  'outside-workspace': 'The call names a path that is not inside the run\'s workspace, as written or on disk (every symlink followed), or a Glob pattern that reaches outside it.',
+  'git-data': 'The call writes git\'s own data (a .git entry in its path): only a command the operator approved, or the operator, changes it.',
+  'unclassified-tool': 'The tool is not one the gate classifies, so no autonomy rule can judge it, and it is denied (INV-2).',
+  'unsupported-field': 'The tool input carries a field the gate does not classify, or a known field of another type, so it is denied.',
+  'invalid-input': 'The tool input is not an object, or names no path, file, command, patch, URL, or query where the tool needs one.',
+  'invalid-patch': 'The apply_patch patch does not read strictly in the patch grammar, so the files it touches are not known and it is denied.',
+  'policy-forbid': 'The autonomy policy forbids this action class.',
+  'not-listed': 'The command is not on the autonomy policy\'s commands list, and the policy forbids every other command.',
+  'request-rejected': 'The operator rejected the approval request for exactly this call, so it stays denied in this session.',
+  'request-expired': 'The approval request for exactly this call expired unanswered, so it stays denied in this session.',
+  'request-withdrawn': 'The approval request for exactly this call was withdrawn before a verdict (unanswered in time, its work ended, or the policy changed), so it stays denied in this session.',
+  'workflow-denied': 'The workflow engine denied exactly this call in this session (no verdict in time), so it stays denied.',
+  'request-mismatch': 'The approval request recorded for this call is for another call, so its verdict is not used.',
+  'request-unreadable': 'The approval request recorded for this call cannot be read from the queue.',
+  'no-session': 'The policy asks the operator about this call, and the run has no session a later run could continue once it is approved, so it cannot wait.',
+  'run-stopped': 'The run already stopped at a call that waits for the operator\'s approval: no further call runs in it.',
+  'review-member': 'A review member answers from the material in its prompt alone: its profile allows no tool call (ADR-0049).',
+  'no-approvals': 'No approval queue is loaded, and no tool call runs without its autonomy decision.',
+  'unknown-checks': 'The autonomy policy left checks pending that no rule can require, so the verdict is not one the gate knows.',
+  'unknown-mode': 'The autonomy policy gave a mode the gate does not know.',
+  'gate-error': 'The gate failed while it judged the call, so the call is denied.',
+} as const satisfies Record<string, string>
+/** A stable code of why the gate denied a call. */
+export type DenialReason = keyof typeof DENIAL_REASONS
+/** The characters an event's explanation holds at most. */
+export const EXPLANATION_MAX = 300
+
+/** A call {@link classify} does not classify: why, in words for the agent, and the stable code. */
+export interface Refusal { refused: string; reason: DenialReason }
+
 /** A tool call as an action the policy judges: its class, a command's argv, and what the operator is shown. */
 export interface ToolAction {
   class: ActionClass
@@ -352,40 +392,99 @@ const ANSWER = 'Approved: the next run of this session makes exactly this call. 
 /** At most this many of the policy's commands-list lines are shown to the agent (INV-9). */
 const NOTE_LINES = 50
 const NOTE_LINE_CHARS = 200
+/** The characters of a Worker's Tools section at most, whatever the policy lists (INV-9). */
+export const TOOLS_NOTE_MAX = 4000
+/** The characters of the workspace path the section names at most. */
+const NOTE_PATH_CHARS = 300
+
+/** What the Tools section knows of the run beyond the policy. */
+export interface ToolsNoteOptions {
+  /** The runtime enforces clean shells (T198): only then is a Bash inspection command a read. Absent: it is not. */
+  shellReads?: boolean | undefined
+  /** The run has a session a later run continues once a deferred call is approved. Absent: it has one. */
+  resumes?: boolean | undefined
+  /**
+   * The Worker's sandbox. `read-only`: no tool call it makes writes a file, so the section names
+   * no writing tool and no commands list, and says writing is unavailable. Absent: `workspace-write`.
+   */
+  sandbox?: 'read-only' | 'workspace-write' | undefined
+}
 
 /**
- * What a Worker that may run commands is told before its work (docs/design/approvals.md#a-deferred-call):
- * the tool calls its gate lets run without asking the operator under the autonomy policy as it
- * stands (`ctx.approvals.policy()`, the studio policy the gate judges by), so it asks less. Pure:
- * read from the policy's effective modes and its commands list, the exact lines, never a guess. A
- * call it does not name may still run (the gate decides each call); one it names is never one the
- * policy asks about now. Undefined when nothing runs unasked.
+ * The Tools section a Worker is told before its work, fit to its sandbox (a read-only one is told
+ * it writes nothing, and given no writing tool or commands list)
+ * (docs/design/approvals.md#a-deferred-call; T199, extended by T207): its workspace, the tool calls
+ * its gate lets run without asking the operator under the autonomy policy as it stands
+ * (`ctx.approvals.policy()`, the studio policy the gate judges by), the gate's own refusals (a
+ * shell metacharacter, an empty word, a path outside the workspace; a relative path in a Bash
+ * command is never a read), and whether an approval resumes the step. Pure: read from the policy's
+ * effective modes and its commands list, the exact lines, never a guess. A call it does not name
+ * may still run (the gate decides each call); one it names as unasked is never one the policy asks
+ * about now. A Bash inspection command is named as a read only where the runtime enforces clean
+ * shells, as the gate judges it. At most {@link TOOLS_NOTE_MAX} characters: the commands list is
+ * cut first, its rest counted.
  */
-export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; effective: ReadonlyArray<{ actionClass: ActionClass; mode: string }> }, workspace: string): string | undefined {
+export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; effective: ReadonlyArray<{ actionClass: ActionClass; mode: string }> }, workspace: string, options: ToolsNoteOptions = {}): string {
   const mode = (c: ActionClass): string => policy.effective.find((e) => e.actionClass === c)?.mode ?? 'ask'
   const unasked = (c: ActionClass): boolean => mode(c) === 'auto' || mode(c) === 'notify'
+  const ws = workspace.length > NOTE_PATH_CHARS ? `${workspace.slice(0, NOTE_PATH_CHARS - 1)}…` : workspace
+  const resumes = options.resumes !== false
+  const readOnly = options.sandbox === 'read-only'
   const lines: string[] = []
   if (unasked('read')) {
-    lines.push(`- Reading tools (Read, Glob, Grep, LS) on paths inside your workspace ${workspace}.`)
-    lines.push(`- Bash read-only inspection, every path absolute and inside ${workspace} (a relative path, or a form that names none, asks): cat, head, tail, wc, ls, stat, file, sed -n <a>,<b>p, rg, grep, and find without actions; and echo, pwd, true, false with no argument but echo's.`)
-  }
-  if (unasked('workspace-write')) lines.push(`- Writing tools (Write, Edit) on files inside ${workspace}, outside its .git.`)
-  if (unasked('command')) lines.push('- Any other Bash command.')
-  else if (mode('command') !== 'forbid' && unasked('workspace-write')) {
-    const studio = policy.policies[0]
-    const listed = (studio?.commands ?? []).filter((line) => line.length <= NOTE_LINE_CHARS)
-    if (listed.length) {
-      lines.push('- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):')
-      for (const line of listed.slice(0, NOTE_LINES)) lines.push(`  - ${line}`)
-      if (listed.length > NOTE_LINES) lines.push(`  - and ${listed.length - NOTE_LINES} more`)
+    lines.push(`- Reading tools (Read, Glob, Grep, LS) on paths inside your workspace ${ws}.`)
+    if (options.shellReads === true) {
+      lines.push(`- Bash read-only inspection, every path absolute and inside ${ws} (a relative path, or a form that names none, asks): cat, head, tail, wc, ls, stat, file, sed -n <a>,<b>p, rg, grep, and find without actions; and echo, pwd, true, false with no argument but echo's.`)
     }
   }
-  if (!lines.length) return undefined
-  return [
-    'Tool calls that run without asking the operator (the autonomy policy now):',
-    ...lines,
-    `A Bash command is words split on single spaces, never parsed by a shell: a word with a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like) is denied. Any other ${mode('command') === 'forbid' ? 'command is denied' : 'command waits for the operator; unanswered in time, or rejected, it is denied and you go on without it'}, so prefer the calls above.`,
-  ].join('\n')
+  if (unasked('workspace-write') && !readOnly) lines.push(`- Writing tools (Write, Edit) on files inside ${ws}, outside its .git.`)
+  const listing: string[] = []
+  if (unasked('command')) lines.push(readOnly ? '- Any other Bash command, under your read-only sandbox (it changes no file).' : '- Any other Bash command.')
+  // The gate runs a listed command unasked whatever the sandbox (a read-only one makes a writing command fail), so it is named here too.
+  else if (mode('command') !== 'forbid' && unasked('workspace-write')) {
+    const studio = policy.policies[0]
+    listing.push(...(studio?.commands ?? []).filter((line) => line.length <= NOTE_LINE_CHARS))
+  }
+  const bashReads = options.shellReads === true
+    ? ''
+    : ' Under this runtime no Bash command is a read (cat, ls, rg, and the like are commands, judged as one): read with the reading tools.'
+  // Whether an approval resumes the step is said whatever the command mode: a read or a write the
+  // policy asks about defers (and resumes) or is denied at once just as a command does.
+  const commandsForbidden = mode('command') === 'forbid'
+  const asking = commandsForbidden ? 'A call the policy asks the operator about' : 'Any other command'
+  const otherwise = (commandsForbidden ? 'Any other command is denied. ' : '') + (!resumes
+    ? `${asking} is denied at once: this run has no session an approval could resume.`
+    : `${asking} waits for the operator; unanswered in time, or rejected, it is denied and you go on without it, so prefer the calls above. An approval resumes this step: the run stops at that call, and once it is approved a later run of this session makes exactly that call.`)
+  const head = [
+    'Tools (your tool gate and the autonomy policy now):',
+    `- Workspace: ${ws}. A tool's path outside it is denied, and so is a write in its .git.`,
+    ...(readOnly ? ['- Your sandbox is read-only: no tool call writes a file (Write, Edit, and any command that changes one fail), so read, and answer with what you found.'] : []),
+    'Tool calls that run without asking the operator:',
+  ]
+  const tail = [
+    ...(lines.length || listing.length ? [] : ['- none now: every call asks the operator or is denied.']),
+    `Refused by the gate, never asked: a Bash command is words split on single spaces, never parsed by a shell, so a word with a shell metacharacter (; & | $ < > ( ) quotes * ? ~ and the like) or an empty word (a doubled, leading, or trailing space) is denied. Name every path in a Bash command absolute: the gate does not see the directory a command runs in, so a relative path makes no command a read.${bashReads}`,
+    otherwise,
+  ]
+  if (listing.length) {
+    // The commands list fills what the rest leaves of the bound, line by line, its rest counted.
+    const intro = '- Bash, exactly these commands, word for word (the autonomy policy\'s commands list; no other word, option, or argument):'
+    let budget = TOOLS_NOTE_MAX - [...head, ...lines, intro, ...tail].join('\n').length - 40
+    const shown: string[] = []
+    for (const line of listing.slice(0, NOTE_LINES)) {
+      if (line.length + 5 > budget) break
+      shown.push(`  - ${line}`)
+      budget -= line.length + 5
+    }
+    if (shown.length) {
+      lines.push(intro, ...shown)
+      if (listing.length > shown.length) lines.push(`  - and ${listing.length - shown.length} more`)
+    } else {
+      lines.push(`- Bash, ${listing.length} exact command(s) of the autonomy policy's commands list (not shown here).`)
+    }
+  }
+  const note = [...head, ...lines, ...tail].join('\n')
+  return note.length > TOOLS_NOTE_MAX ? `${note.slice(0, TOOLS_NOTE_MAX - 1)}…` : note
 }
 
 /** The part of a policy {@link unaskedNote} reads. */
@@ -481,14 +580,14 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  * assumed). Neither Codex (each call picks its shell and login mode) nor Claude Code (each command
  * sources its shell snapshot) reports it, so under either no shell command is a read.
  */
-export function classify(call: ToolCall, workspace: string, options: ClassifyOptions = {}): ToolAction | { refused: string } {
+export function classify(call: ToolCall, workspace: string, options: ClassifyOptions = {}): ToolAction | Refusal {
   const { tool } = call
   const input = call.input
-  if (!isObject(input)) return { refused: `the input of ${tool} is not an object` }
+  if (!isObject(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
   const fields = Object.hasOwn(FIELDS, tool) ? FIELDS[tool] : undefined
-  if (!fields) return { refused: `${tool} is not a tool the gate classifies` }
+  if (!fields) return { refused: `${tool} is not a tool the gate classifies`, reason: 'unclassified-tool' }
   const unknown = unknownField(input, fields)
-  if (unknown) return { refused: `${tool} ${unknown}` }
+  if (unknown) return { refused: `${tool} ${unknown}`, reason: 'unsupported-field' }
   const read = Object.hasOwn(READS, tool) ? READS[tool] : undefined
   if (read) {
     if (tool === 'Glob') {
@@ -497,43 +596,43 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
       const literal = typeof pattern === 'string' ? pattern.split(/[*?[{]/)[0]! : ''
       const dir = pattern === undefined || isAbsolute(literal) ? literal : base === undefined ? literal || '.' : `${base}${sep}${literal}`
       if (typeof pattern !== 'string' || pattern.split(/[\\/]/).includes('..') || !within(workspace, dir)) {
-        return { refused: `the Glob pattern ${JSON.stringify(pattern)} reaches outside the workspace` }
+        return { refused: `the Glob pattern ${JSON.stringify(pattern)} reaches outside the workspace`, reason: typeof pattern === 'string' ? 'outside-workspace' : 'invalid-input' }
       }
     }
     const where = input[read.field]
     if (where === undefined && !read.required) return { class: 'read', summary: clamp(`${tool} in the workspace`), consequences: `Reads inside the run's workspace. ${ANSWER}` }
-    if (typeof where !== 'string' || !within(workspace, where)) return { refused: `${tool} reads ${typeof where === 'string' ? where : 'no path'}, which is not inside the workspace` }
+    if (typeof where !== 'string' || !within(workspace, where)) return { refused: `${tool} reads ${typeof where === 'string' ? where : 'no path'}, which is not inside the workspace`, reason: typeof where === 'string' ? 'outside-workspace' : 'invalid-input' }
     return { class: 'read', summary: clamp(`${tool} ${where}`), consequences: `Reads ${where} inside the run's workspace. ${ANSWER}` }
   }
   const patchField = Object.hasOwn(PATCHES, tool) ? PATCHES[tool] : undefined
   if (patchField) {
     const patch = input[patchField]
-    if (typeof patch !== 'string') return { refused: `${tool} carries no patch` }
+    if (typeof patch !== 'string') return { refused: `${tool} carries no patch`, reason: 'invalid-input' }
     const files = patchFiles(patch)
-    if ('refused' in files) return { refused: `${tool}: ${files.refused}` }
+    if ('refused' in files) return { refused: `${tool}: ${files.refused}`, reason: 'invalid-patch' }
     const outside = files.find((f) => !within(workspace, f.path))
-    if (outside) return { refused: `${tool} changes ${outside.path}, which is not inside the workspace` }
+    if (outside) return { refused: `${tool} changes ${outside.path}, which is not inside the workspace`, reason: 'outside-workspace' }
     const git = files.find((f) => gitData(workspace, f.path))
-    if (git) return { refused: `${tool} changes ${git.path}, which is git's own data (.git): only an asked command or the operator changes it` }
+    if (git) return { refused: `${tool} changes ${git.path}, which is git's own data (.git): only an asked command or the operator changes it`, reason: 'git-data' }
     const touched = clamp(files.map((f) => `${f.op} ${f.path}`).join(', '))
     return { class: 'workspace-write', summary: clamp(`${tool}: ${touched}`), consequences: `Changes ${files.length === 1 ? 'one file' : `${files.length} files`} inside the run's workspace: ${touched}. ${ANSWER}` }
   }
   const write = Object.hasOwn(WRITES, tool) ? WRITES[tool] : undefined
   if (write) {
     const file = input[write]
-    if (typeof file !== 'string' || !within(workspace, file)) return { refused: `${tool} changes ${typeof file === 'string' ? file : 'no file'}, which is not inside the workspace` }
-    if (gitData(workspace, file)) return { refused: `${tool} changes ${file}, which is git's own data (.git): only an asked command or the operator changes it` }
+    if (typeof file !== 'string' || !within(workspace, file)) return { refused: `${tool} changes ${typeof file === 'string' ? file : 'no file'}, which is not inside the workspace`, reason: typeof file === 'string' ? 'outside-workspace' : 'invalid-input' }
+    if (gitData(workspace, file)) return { refused: `${tool} changes ${file}, which is git's own data (.git): only an asked command or the operator changes it`, reason: 'git-data' }
     return { class: 'workspace-write', summary: clamp(`${tool} ${file}`), consequences: `Changes ${file} inside the run's workspace. ${ANSWER}` }
   }
   if (tool === COMMAND) {
     const command = input.command
-    if (typeof command !== 'string' || command === '') return { refused: `${tool} names no command` }
+    if (typeof command !== 'string' || command === '') return { refused: `${tool} names no command`, reason: 'invalid-input' }
     const argv = command.split(' ')
     // Defence in depth: the policy forbids a metacharacter word too, but the gate never asks it about one.
     const empty = argv.indexOf('')
-    if (empty >= 0) return { refused: `${tool}: argv word ${empty + 1} is empty (a doubled, leading, or trailing space); a command is words split on single spaces` }
+    if (empty >= 0) return { refused: `${tool}: argv word ${empty + 1} is empty (a doubled, leading, or trailing space); a command is words split on single spaces`, reason: 'empty-word' }
     const unsafe = argv.findIndex((word) => SHELL_METACHARACTER.test(word))
-    if (unsafe >= 0) return { refused: `${tool}: argv word ${unsafe + 1} holds a shell metacharacter; a command is never parsed by a shell` }
+    if (unsafe >= 0) return { refused: `${tool}: argv word ${unsafe + 1} holds a shell metacharacter; a command is never parsed by a shell`, reason: 'metacharacter' }
     // A program is what its name says only in a shell enforced to read no startup code (T198): elsewhere a
     // function or an alias a startup file defined could run instead, so nothing is taken for a read.
     if (options.shellReads === true && noopCommand(argv)) return { class: 'read', summary: clamp(command), consequences: `Prints its words or the working directory, or nothing, and reads and changes nothing: ${clamp(command)}. ${ANSWER}` }
@@ -543,10 +642,10 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
   const send = Object.hasOwn(SENDS, tool) ? SENDS[tool] : undefined
   if (send) {
     const what = input[send]
-    if (typeof what !== 'string' || what === '') return { refused: `${tool} names no ${send}` }
+    if (typeof what !== 'string' || what === '') return { refused: `${tool} names no ${send}`, reason: 'invalid-input' }
     return { class: 'external-send', summary: clamp(`${tool}: ${what}`), consequences: `Sends this request out of this machine. ${ANSWER}` }
   }
-  return { refused: `${tool} is not a tool the gate classifies` }
+  return { refused: `${tool} is not a tool the gate classifies`, reason: 'unclassified-tool' }
 }
 
 /** The run a gate is for: where it works, who asked, and the classification of what it shows. */
@@ -554,6 +653,8 @@ export interface GateRun {
   /** The agent run (`arun_…`). */
   runId: string
   worker: string
+  /** The Worker's kind, its runtime (`claude-agent-sdk`, `codex-sdk`, …): its denials are counted by it (T207). */
+  workerKind?: string | undefined
   workspace: string
   /** The run's session: an approved call runs in a later run of it. */
   sessionId?: string | undefined
@@ -666,15 +767,25 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     try {
       ctx.get('eventLog')?.append({
         type: `agent-workers.tool.${kind}`, ...(run.workflowRunId ? { runId: run.workflowRunId } : {}), ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-        ...(decision ? { decision } : {}), data: { agentRun: run.runId, worker: run.worker, tool: call.tool.slice(0, 100), ...data },
+        ...(decision ? { decision } : {}),
+        data: { agentRun: run.runId, worker: run.worker, ...(run.workerKind ? { workerKind: run.workerKind.slice(0, 100) } : {}), tool: call.tool.slice(0, 100), ...data },
       })
     } catch (error) {
       ctx.logger.warn(`agent Workers: the ${kind} event of a ${call.tool} call in ${run.runId} was not appended: ${(error as Error).message}`)
     }
   }
 
+  /**
+   * The `agent-workers.tool.denied` event of a denial (T207): its stable reason code, the code's
+   * plain explanation (never the call's input), the action class when the call was classified, and
+   * the decision behind it, on the entry and in its data.
+   */
+  const deniedEvent = (call: ToolCall, reason: DenialReason, decision: ArtifactRef | undefined, data: { actionClass?: ActionClass; requestId?: string } = {}): void => {
+    event('denied', call, decision, { reason, explanation: DENIAL_REASONS[reason].slice(0, EXPLANATION_MAX), ...data, ...(decision ? { decision } : {}) })
+  }
+
   /** Deny by the gate's own rule, recorded as a `gate` decision (INV-13). */
-  const refuse = (call: ToolCall, why: string, inputs: ArtifactRef[] = []): ToolVerdict => {
+  const refuse = (call: ToolCall, why: string, reason: DenialReason, inputs: ArtifactRef[] = [], actionClass?: ActionClass): ToolVerdict => {
     const decision = ctx.artifacts.recordDecision({
       decisionType: 'gate', question: `May ${run.worker} make the ${call.tool} call it asked for in run ${run.runId}?`, inputs,
       candidates: [
@@ -682,16 +793,31 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
         { option: 'deny', selected: true, reasons: [why] },
         { option: 'defer', selected: false, reasons: ['not defer: nothing an operator answers would let this call run'] },
       ],
-      decider: RULE, outcome: { option: 'deny', detail: { agentRun: run.runId, tool: call.tool.slice(0, 100) } }, deterministic: true,
+      decider: RULE, outcome: { option: 'deny', detail: { agentRun: run.runId, tool: call.tool.slice(0, 100), reason } }, deterministic: true,
     }, { producer: { type: 'system', ref: 'agent-workers' }, ...(run.workflowRunId ? { runId: run.workflowRunId } : {}), classification: run.classification })
-    event('denied', call, decision.id as ArtifactRef)
+    deniedEvent(call, reason, decision.id as ArtifactRef, actionClass ? { actionClass } : {})
     return { decision: 'deny', reason: `${why} (decision ${decision.id})` }
   }
 
   /** Deny on the policy's own decision: it is the record. */
-  const denied = (call: ToolCall, action: ToolAction, verdict: AutonomyVerdict, why: string): ToolVerdict => {
-    event('denied', call, verdict.decision, { actionClass: action.class })
+  const denied = (call: ToolCall, action: ToolAction, verdict: AutonomyVerdict, why: string, reason: DenialReason): ToolVerdict => {
+    deniedEvent(call, reason, verdict.decision, { actionClass: action.class })
     return { decision: 'deny', reason: `${why} (decision ${verdict.decision})` }
+  }
+
+  /**
+   * Why the policy forbids a call: `not-listed` for a command whose argv no line of the studio
+   * policy's commands list matches word for word (with the `command` class forbidden, every other
+   * command is), else `policy-forbid`. A policy that cannot be read leaves it `policy-forbid`.
+   */
+  const forbidReason = async (approvals: Approvals, action: ToolAction): Promise<DenialReason> => {
+    if (action.class !== 'command' || !action.command) return 'policy-forbid'
+    try {
+      const commands = (await approvals.policy()).policies[0]?.commands ?? []
+      return commands.includes(action.command.join(' ')) ? 'policy-forbid' : 'not-listed'
+    } catch {
+      return 'policy-forbid'
+    }
   }
 
   /** Why the policy forbids it, from the decision it recorded. */
@@ -738,18 +864,19 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
       .get(`session:${run.sessionId}`, call.tool, inputHash) as RequestRow | undefined
     if (!prior) return {}
     const request: ApprovalRequest | undefined = await approvals.get(prior.request_id)
-    if (!request) return { verdict: refuse(call, `approval request ${prior.request_id} for this call cannot be read`, inputs) }
+    if (!request) return { verdict: refuse(call, `approval request ${prior.request_id} for this call cannot be read`, 'request-unreadable', inputs, action.class) }
     // INV-5: the request is for exactly this call, asked by this session's Worker, as the row records it.
     const other = mismatch(request, { ref: `agent-tool-call:${prior.run_id}:${call.tool}`, version: inputHash, actionClass: action.class, runId: prior.run_id, sessionId: run.sessionId })
-    if (other) return { verdict: refuse(call, `approval request ${request.requestId} is for another call than this one (its ${other} differs), so its verdict is not used`, inputs) }
+    if (other) return { verdict: refuse(call, `approval request ${request.requestId} is for another call than this one (its ${other} differs), so its verdict is not used`, 'request-mismatch', inputs, action.class) }
     if (request.state === 'rejected') {
-      const how = request.resolution?.cause === 'verdict' ? 'rejected by the operator' : request.resolution?.cause === 'expired' ? 'unanswered when it expired' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'
-      event('denied', call, request.resolution?.decision, { actionClass: action.class, requestId: request.requestId })
+      const cause = request.resolution?.cause
+      const how = cause === 'verdict' ? 'rejected by the operator' : cause === 'expired' ? 'unanswered when it expired' : 'withdrawn before a verdict (unanswered in time, its work ended, or the policy changed)'
+      deniedEvent(call, cause === 'verdict' ? 'request-rejected' : cause === 'expired' ? 'request-expired' : 'request-withdrawn', request.resolution?.decision, { actionClass: action.class, requestId: request.requestId })
       return { verdict: { decision: 'deny', reason: `approval request ${request.requestId} for exactly this call was ${how}, so it does not run; go on without it` } }
     }
     const denial = workflowDenial(call, inputHash)
     if (denial) {
-      event('denied', call, denial.decision, { actionClass: action.class, requestId: denial.requestId })
+      deniedEvent(call, 'workflow-denied', denial.decision, { actionClass: action.class, requestId: denial.requestId })
       return { verdict: { decision: 'deny', reason: `approval request ${denial.requestId} for exactly this call was denied (${denial.cause ?? 'no verdict in time'}${denial.decision ? `, decision ${denial.decision}` : ''}), so it does not run; go on without it` } }
     }
     return { prior, request }
@@ -757,7 +884,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
 
   /** An `ask`: the request already opened for this exact call in this session, or a new one. */
   const ask = async (approvals: Approvals, call: ToolCall, action: ToolAction, verdict: AutonomyVerdict): Promise<ToolVerdict> => {
-    if (!run.sessionId) return refuse(call, `the policy asks the operator about this ${action.class} call, and run ${run.runId} has no session a later run could continue once approved, so it cannot wait`, [verdict.decision])
+    if (!run.sessionId) return refuse(call, `the policy asks the operator about this ${action.class} call, and run ${run.runId} has no session a later run could continue once approved, so it cannot wait`, 'no-session', [verdict.decision], action.class)
     const scope = `session:${run.sessionId}`
     const inputHash = contentId(call.input)
     const { prior, request, verdict: decided } = await priorOf(approvals, call, action, [verdict.decision])
@@ -789,16 +916,16 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
   }
 
   const judge = async (call: ToolCall): Promise<ToolVerdict> => {
-    if (run.profile === 'review-member') return refuse(call, 'a review member answers from the material in its prompt alone: the review-member profile allows no tool call (ADR-0049)')
-    if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`)
+    if (run.profile === 'review-member') return refuse(call, 'a review member answers from the material in its prompt alone: the review-member profile allows no tool call (ADR-0049)', 'review-member')
+    if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`, 'run-stopped')
     const approvals = ctx.get('approvals')
-    if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision')
+    if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision', 'no-approvals')
     const action = classify(call, run.workspace, { shellReads: run.shellReads === true })
-    if ('refused' in action) return refuse(call, action.refused)
+    if ('refused' in action) return refuse(call, action.refused, action.reason)
     const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}) })
     switch (verdict.mode) {
       case 'forbid':
-        return denied(call, action, verdict, forbidden(action, verdict))
+        return denied(call, action, verdict, forbidden(action, verdict), await forbidReason(approvals, action))
       case 'auto':
       case 'notify':
       {
@@ -808,7 +935,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
         // (docs/design/approvals.md#a-verdict-is-not-yet-a-permission). Only a check a rule can
         // require may be pending; anything else is not a verdict this gate knows.
         const pending = verdict.failedChecks ?? []
-        if (pending.some((c) => !CHECKS.includes(c))) return refuse(call, `the autonomy policy left checks pending that no rule can require (${pending.join(', ')})`, [verdict.decision])
+        if (pending.some((c) => !CHECKS.includes(c))) return refuse(call, `the autonomy policy left checks pending that no rule can require (${pending.join(', ')})`, 'unknown-checks', [verdict.decision], action.class)
         // A call this session was denied stays denied, even once a newer policy lets its class or
         // argv run unasked (the denial is persisted: the queue's request, the engine's denial on its row).
         const { verdict: decided } = await priorOf(approvals, call, action, [verdict.decision])
@@ -822,7 +949,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
       case 'ask':
         return ask(approvals, call, action, verdict)
       default:
-        return refuse(call, `the autonomy policy gave a mode the gate does not know (${String(verdict.mode)})`, [verdict.decision])
+        return refuse(call, `the autonomy policy gave a mode the gate does not know (${String(verdict.mode)})`, 'unknown-mode', [verdict.decision], action.class)
     }
   }
 
@@ -833,7 +960,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
       } catch (error) {
         ctx.logger.warn(`agent Workers: the gate of ${run.runId} failed on a ${call.tool} call, which is denied: ${(error as Error).message}`)
         try {
-          return refuse(call, `the gate could not judge this call: ${(error as Error).message.slice(0, 200)}`)
+          return refuse(call, `the gate could not judge this call: ${(error as Error).message.slice(0, 200)}`, 'gate-error')
         } catch {
           return { decision: 'deny', reason: 'the gate could not judge this call, nor record why' }
         }

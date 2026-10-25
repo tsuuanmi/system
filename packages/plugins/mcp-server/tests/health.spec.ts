@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { MAX_UNKNOWN_ENTRIES } from '@tsuuanmi/system-libs'
-import { DETAIL_CHARS, type HealthSources, healthReport, NAMED_ITEMS } from '../src/health.ts'
+import { countDenials, DETAIL_CHARS, type HealthSources, healthReport, MAX_DENIALS, NAMED_ITEMS } from '../src/health.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'system-health-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
@@ -301,6 +301,41 @@ describe('host health (REQ-HOST-6)', () => {
   it('notes what retention removed recently, without degrading health', async () => {
     const events = (type: string) => (type === 'workflow.retention.swept' ? [{ data: { runs: 40, conversations: 12, retainRunsDays: 30 } }, { data: { runs: 2, conversations: 0, retainRunsDays: 30 } }] : [])
     expect(await check({ events }, 'retention')).toMatchObject({ state: 'ok', detail: expect.stringMatching(/^retention expired 42 run\(s\) and released 12 website conversation\(s\)/) })
+  })
+
+  it('counts the agent Workers\' tool denials by reason code per Worker kind per day, without degrading health (T207)', async () => {
+    const day1 = '2026-10-25T09:00:00.000Z'
+    const day2 = '2026-10-26T01:00:00.000Z'
+    const denial = (at: string, workerKind: string | undefined, reason: string | undefined) => ({ at, data: { agentRun: 'arun_1', worker: 'agent:dev', tool: 'Bash', ...(workerKind ? { workerKind } : {}), ...(reason ? { reason } : {}) } })
+    const entries = [
+      denial(day1, 'claude-agent-sdk', 'metacharacter'), denial(day1, 'claude-agent-sdk', 'metacharacter'), denial(day1, 'claude-agent-sdk', 'outside-workspace'),
+      denial(day1, 'codex-sdk', 'not-listed'), denial(day2, 'claude-agent-sdk', 'request-withdrawn'),
+      // From before T207: no kind, no code.
+      denial(day2, undefined, undefined),
+    ]
+    expect(countDenials(entries)).toEqual([
+      { day: '2026-10-25', workerKind: 'claude-agent-sdk', total: 3, reasons: { 'metacharacter': 2, 'outside-workspace': 1 } },
+      { day: '2026-10-25', workerKind: 'codex-sdk', total: 1, reasons: { 'not-listed': 1 } },
+      { day: '2026-10-26', workerKind: 'claude-agent-sdk', total: 1, reasons: { 'request-withdrawn': 1 } },
+      { day: '2026-10-26', workerKind: 'unrecorded', total: 1, reasons: { unrecorded: 1 } },
+    ])
+    const asked: string[] = []
+    const denials = (query: { since: string; afterSeq: number; limit: number }) => {
+      asked.push(query.since)
+      return paged(entries)(query)
+    }
+    const now = () => Date.parse('2026-10-26T12:00:00.000Z')
+    expect(await check({ denials, now }, 'tool-denials')).toEqual({
+      name: 'tool-denials', state: 'ok',
+      detail: '6 tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-25 claude-agent-sdk: 3 (2 metacharacter, 1 outside-workspace); 2026-10-25 codex-sdk: 1 (1 not-listed); '
+        + '2026-10-26 claude-agent-sdk: 1 (1 request-withdrawn); 2026-10-26 unrecorded: 1 (1 unrecorded). Why each: system events --type agent-workers.tool.denied (docs/design/approvals.md#why-a-call-was-denied)',
+    })
+    expect(asked[0]).toBe('2026-10-25T12:00:00.000Z')
+    expect(await check({ denials: paged([]), now }, 'tool-denials')).toEqual({ name: 'tool-denials', state: 'ok', detail: 'no tool call was denied in the last 1d' })
+    expect(await check({}, 'tool-denials')).toBeUndefined()
+    // Bounded: past MAX_DENIALS entries it says so, and still counts what it read.
+    const many = Array.from({ length: MAX_DENIALS + 5 }, () => denial(day2, 'codex-sdk', 'metacharacter'))
+    expect(await check({ denials: paged(many), now }, 'tool-denials')).toMatchObject({ state: 'ok', detail: expect.stringContaining(`more than ${MAX_DENIALS} tool call(s) denied in the last 1d, by day, Worker kind, and reason: 2026-10-26 codex-sdk: ${MAX_DENIALS} (${MAX_DENIALS} metacharacter) (only the first ${MAX_DENIALS} were read)`) })
   })
 
   it('is degraded by website conversations whose deletion failed every attempt (PROP-0004 Phase 5)', async () => {

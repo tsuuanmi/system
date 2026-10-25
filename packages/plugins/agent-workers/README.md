@@ -663,8 +663,11 @@ The **`agents` Worker source**: agent runtimes as Workers
     the queue's own decision for a resolved request, or a `gate` decision (rule
     `agent-workers.tool-gate`) where the gate decided without the policy; denied
     and deferred calls also append `agent-workers.tool.denied` and
-    `agent-workers.tool.deferred` (ids only, never the input). A gate that fails
-    denies the call.
+    `agent-workers.tool.deferred` (ids only, never the input). A denial's event
+    says why: a stable `reason` code, its fixed `explanation` (at most 300
+    characters), the `workerKind`, the `actionClass` once classified, and the
+    `decision` ([why a call was denied](../../../docs/design/approvals.md#why-a-call-was-denied)).
+    A gate that fails denies the call.
 
   The requests a gate opened are kept in `agent_tool_requests`: the session and
   exact call each is for, and when an approved one was used. Starting the later

@@ -672,6 +672,26 @@ guesses.
   [`quota-draw.clean.json`](../../schemas/examples/quota-draw.clean.json),
   [`quota-draw.excluded.json`](../../schemas/examples/quota-draw.excluded.json).
 
+### `event`
+
+- One event-log entry (`event@1.0`): its `data` is a small object each event type defines, and
+  changes only additively ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)):
+  a reader ignores a key it does not know, and treats one an older entry lacks as unrecorded.
+- `agent-workers.tool.denied`: an agent Worker's tool call its gate denied
+  ([why a call was denied](../design/approvals.md#why-a-call-was-denied)). `data`: `agentRun`,
+  `worker`, `tool`; since T207 also `reason` (a stable code: `metacharacter`, `empty-word`,
+  `outside-workspace`, `git-data`, `unclassified-tool`, `unsupported-field`, `invalid-input`,
+  `invalid-patch`, `policy-forbid`, `not-listed`, `request-rejected`, `request-expired`,
+  `request-withdrawn`, `workflow-denied`, `request-mismatch`, `request-unreadable`, `no-session`,
+  `run-stopped`, `review-member`, `no-approvals`, `unknown-checks`, `unknown-mode`, `gate-error`;
+  a code is never renamed or reused), `explanation` (the code's fixed plain sentence, at most 300
+  characters, never the call's input), `workerKind` (the Worker's runtime), `actionClass` (once
+  the call was classified), `requestId` (a denial on a request), and `decision` (the decision
+  behind it, as on the entry). An entry from before T207 has none of them.
+- `agent-workers.tool.deferred`, `.notified`, and `.checks-pending` carry `agentRun`, `worker`,
+  `tool`, and `actionClass` (and `workerKind` since T207); `deferred` adds `requestId`, the others
+  `pendingChecks` when checks are pending.
+
 ### `notification`
 
 - One notice the [notify](../design/notifications.md) plugin makes from one event-log entry: the
