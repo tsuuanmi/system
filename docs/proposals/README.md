@@ -103,6 +103,17 @@ accepted/implemented -> superseded
   same session, bounded and failing closed; and a liveness verdict under which a failed probe is
   never death and no automation sends input to a session blocked on an approval.
 
+- [PROP-0014: Dispatch by quota](0014-dispatch-by-quota.md), **proposed**. System starts ready
+  board tasks on free Workers by itself instead of waiting for the lead. A dispatch sweep in the
+  workflow engine takes the ready tasks of active projects by priority, then age. A new action
+  class `dispatch` gates each start: the shipped studio policy asks, so the operator approves by
+  button, and a project may set auto. The writing step's Worker is chosen among those routing
+  admits by a versioned quota score: headroom above a reserve kept for the operator, a window
+  about to reset used first, unknown readings after known ones, and metered pools last and only
+  inside a cap. Each choice records a reason on every candidate. Parallel runs are bounded per
+  account, per project, and in total, with one task per write subject. Starts are capped per
+  hour, and dispatch can be paused per project.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
