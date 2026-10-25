@@ -15,6 +15,16 @@ page never loaded, a confirmation only before a destructive move (**Stop run**, 
 to content** link first in the keyboard order, a visible focus, no motion under reduced motion, and
 prose capped at a readable line length on a full-width page.
 
+**Buttons** (T191), one implementation (`decision`) on every page: a button that decides is labelled
+by its concept's one wording, never by its effect: **Approve** / **Deny** on every approval (a
+request's card on Home and on the policy page, a Board card, a start awaiting approval, a run's
+plan; **Approve all N** / **Deny all N** for a batch), **Accept** / **Send back** on every review,
+**Confirm** / **Cancel** in every confirmation (stopping a run, a project's **Pause…**, **Resume…**,
+**Close…**, a ready task's **Start…**), and **Stop run**, **Retry failed step**, **Show change**,
+**Propose**. What it does (*merges the change*, *keeps the branch only*, *marks it done*, *sends it
+back for another attempt, if it has one left*, *stops this run: nothing more of it runs*) is its
+accessible description (`aria-describedby`), said beside it in words for every reader.
+
 - **Home**, a dashboard: what needs the operator's attention and they can act on (open approval
   requests, reviews held for them, runs that wait for their own move or failed outside the board
   since they last looked, each a label and its count, *Approvals · 3*, linked, then named one by one
@@ -60,7 +70,7 @@ prose capped at a readable line length on a full-width page.
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
   route, acceptance, recovery);
 - the answer;
-- the operator's **Approve / Reject plan**, **Vote** on a team's tie, **Stop run** (after a
+- the operator's **Approve / Deny** on a plan, **Vote** on a team's tie, **Stop run** (after a
   confirmation), and **Retry failed step**;
   a remediation fix whose plan is on the approval queue shows its request instead of the plan
   buttons, and is decided in the queue;
@@ -68,21 +78,21 @@ prose capped at a readable line length on a full-width page.
   ([approvals](../../../docs/design/approvals.md)) above the runs, under *3 approvals · next expiry
   in 12 min*: open requests by batch (*2 related requests*, **Approve all 2**, its id folded), each
   a card of one line (what is asked, for which task, *Expires in 12 min · No response: denied*, an
-  irreversible verdict as a chip) and two buttons, **Approve** and **Deny**, named by their effect
-  for assistive technology; everything else under the card's one closed **Details** (T186), kept
-  open through the refresh once opened: the request
+  irreversible verdict as a chip) and two buttons, **Approve** and **Deny**, each described by its
+  effect (*merges the change*, T191), with, on a `policy-change` request, **Show change** beside
+  them (the effective modes it moves and the record's diff, and, for a change the queue proposed
+  itself, that it did and why; never folded); everything else under the card's one closed
+  **Details** (T186), kept open through the refresh once opened: the request
   in plain words (what is asked, who asked by a readable name, what approving and denying change,
   *Expires in 12 min · No response: denied*, the exact subject behind **Exact subject**, and what a
   verdict does in words, its long hashes folded behind **details**; an accepted result's merge
   names its task and *not pushed*, asked by the run of that task, says what approving and denying
   do in words, and folds the branch, both heads, and the requester's own text with its paths and
   hashes; the request id, its exact expiry, and the requester's run, session, step, and change ids),
-  and the operator's **Approve / Deny** for one request or a whole batch, each with an optional
-  note. What a verdict did (what happens next,
+  and an optional note for the verdict; a batch's **Approve all N** / **Deny all N** have a note
+  for all. What a verdict did (what happens next,
   or not recorded and why, its record ids folded) stays above the page until dismissed
-  ([the page](../../../docs/reference/web-ui.md#approval-queue)); a `policy-change`
-  request shows the change it asks for (**Show change**: the effective modes it moves and the
-  record's diff, and, for a change the queue proposed itself, that it did and why). Without it the page shows the runs alone and the queue routes answer `503`;
+  ([the page](../../../docs/reference/web-ui.md#approval-queue)). Without it the page shows the runs alone and the queue routes answer `503`;
 - when `ctx.approvals` is present, the **autonomy policy** page (`?view=policy`): the set in force
   (*Active policy · Configuration* or *Active policy · Approved change*, the change id and hash
   folded), the modes as chips (*Automatic*, *Notify*, *Ask approval*, *Blocked*; what each means
@@ -107,8 +117,8 @@ prose capped at a readable line length on a full-width page.
   the checks still pending, its run, and
   until when it waits; what it changed (each file of its worktree's change, folded, read through
   `ctx.workers.changes`), what its reviewers said, and what its checks measured (the run's report),
-  with the checks still pending in warning (those recorded as failed apart from those not run); and the operator's **Accept / Send back**.
-  The card (T186) leads with one line, then the change (*3 files +19 −1*), each required check, and
+  with the checks still pending in warning (those recorded as failed apart from those not run); and the operator's **Accept / Send back**,
+  each described by what it does. The card (T186) leads with one line, then the change (*3 files +19 −1*), each required check, and
   each reviewer's verdict as chips, the warnings, and the two buttons; every long text (the diff,
   the findings, the report, why a check has no result, the exact result) is under its closed
   **Details**; then, once accepted,
@@ -209,7 +219,7 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 - **Bind:** on plain HTTP on a non-loopback host, `/ui` is not registered
   (`assertSafeBind`).
 - **Actions** take a JSON body only (a form post cannot reach them) and go to
-  the workflow engine as operator decisions. Approve and Reject send the plan
+  the workflow engine as operator decisions. A plan's Approve and Deny send the plan
   the page shows (`plan`, a `sha256:` id), so the engine decides only that plan
   (INV-5). A vote sends the tie decision the page shows, an option or
   `inconclusive`, and a rationale; it is recorded as the operator's.
@@ -268,7 +278,11 @@ that never loaded said with **Try again**. Its round 8 tests (T186) check that e
 one line and **Approve / Deny** only, every fact under its one **Details**, closed at first and
 opened by keyboard; that Tab reaches every button in sight; that *Since you last looked* and *Runs
 needing attention* show 5 rows and a **Show all N** that keeps every row through the refresh; and
-that each page header has one short sentence at most.
+that each page header has one short sentence at most. Its wording suite (T191) checks every
+decision's label (*Approve* / *Deny* on a request's card, a batch, and a run's plan; *Accept* /
+*Send back* on a review; *Confirm* / *Cancel* when stopping a run, pausing or closing a project,
+and starting a task), that each button's accessible description names what it does, and that no
+label still carries its effect.
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
 approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
@@ -287,7 +301,7 @@ and, with a browser, a review card led by its chips (the change, each check, the
 **Accept** and **Send back** then **Details** reached by Tab, and under them what changed (stat, files folded, show all), the verdict,
 the report, the checks not run in warning, and after Accept where the result stands; a workspace-write task's
 review held for the operator past its run's lease, listed with its pending checks, refused to a
-client token, bound to the subject shown, accepted to done; a rejection as another attempt; a
+client token, bound to the subject shown, accepted to done; a send-back as another attempt; a
 review that expires `review-expired`; and each required check with its state from the run's
 acceptance (passed and failed with their exit codes only on a record, not run and why, pending;
 never passed without a record), listed on the card, a failed check the board still holds pending

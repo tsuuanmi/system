@@ -11,6 +11,7 @@ import { canRunBrowser, testChrome } from '../../browser-patchright/tests/suppor
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import * as WebUi from '../src/index.ts'
 import { lanWebServer } from '../../../gateway-core/tests/lan.ts'
+import { decisionsIn, descriptionOf } from './wording.ts'
 
 const RUN = {
   runId: 'run_abc', template: 'investigate', status: 'running', specHash: 'sha256:00', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:01Z',
@@ -473,6 +474,17 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await third.innerText()).toContain('request apr-3')
     expect(await third.innerText()).toContain('Approve: allow this deploy · Deny: hold the task')
     expect(await page.locator('main').innerText()).not.toContain('null')
+    // T191: every decision is Approve / Deny (a batch's Approve all 2 / Deny all 2), its effect its accessible
+    // description, never its label.
+    const decisions = await decisionsIn(queue)
+    expect(decisions.map((d) => d.label)).toEqual(['Approve all 2', 'Deny all 2', 'Approve', 'Deny', 'Approve', 'Deny', 'Approve', 'Deny'])
+    for (const d of decisions) expect(d.description, d.label).not.toBe('')
+    expect(decisions.slice(0, 2).map((d) => d.description)).toEqual(['approves each request below as shown', 'denies each request below'])
+    const thirdDeny = third.getByRole('button', { name: 'Deny', exact: true })
+    expect(await descriptionOf(third.getByRole('button', { name: 'Approve', exact: true }))).toBe('allows this deploy')
+    expect(await descriptionOf(thirdDeny)).toBe('holds the task')
+    // The effect is said beside each button too, for every reader.
+    expect(await third.locator('.actions').innerText()).toMatch(/Approve\s+allows this deploy\s+Deny\s+holds the task/)
     await queue.getByRole('textbox', { name: 'Note for all (optional)' }).fill('ship it')
     await queue.getByRole('button', { name: 'Approve all 2' }).click()
     await expect.poll(() => approvals().calls.length).toBe(1)
@@ -484,7 +496,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('2 approved')
     expect(await page.locator('#outcome').innerText()).not.toContain('approval record')
     expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request apr-1 (approval record sha256:')
-    await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Deny: hold the task' }).click()
+    await thirdDeny.click()
     await expect.poll(() => approvals().calls.length).toBe(2)
     expect(approvals().calls[1]![0]).toEqual([{ requestId: 'apr-3', subject: QUEUE[2]!.subject, verdict: 'rejected' }])
     // A refused verdict is an alert that says why, and that nothing was decided.
@@ -498,7 +510,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    const approve = page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' })
+    const approve = page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve', exact: true })
     await expect.poll(() => approve.count()).toBe(1)
     // The next periodic refresh starts and waits on the queue's listing.
     let release!: () => void
@@ -525,13 +537,16 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     onTestFinished(() => browser.close())
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${token}`)
-    await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' }).click()
+    await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve', exact: true }).click()
     const alert = page.getByRole('alert')
     await expect.poll(() => alert.innerText()).toContain('Not recorded: your approval of Allow a deploy step: merge apr-3')
     expect(await alert.innerText()).toContain('the store is busy')
     expect(await alert.innerText()).toContain('Nothing was decided: the request is still open in the queue.')
     // The buttons are back for another try.
-    expect(await page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve: allow this deploy' }).isEnabled()).toBe(true)
+    const again = page.locator('article', { hasText: 'request apr-3' }).getByRole('button', { name: 'Approve', exact: true })
+    expect(await again.isEnabled()).toBe(true)
+    // Its label back, and still described by its effect (T191).
+    expect(await descriptionOf(again)).toBe('allows this deploy')
     // A periodic refresh does not take it away.
     const listed = approvals().lists
     await expect.poll(() => approvals().lists, { timeout: 10_000 }).toBeGreaterThan(listed)
@@ -749,17 +764,26 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByText('How it was decided (1)').click()
     expect(await page.getByText('proves reason').isVisible()).toBe(true)
     expect(await page.getByText('sha256:00').isVisible()).toBe(false)
-    // Stop ends the run, so it asks first: nothing is sent until Confirm stop, and Cancel sends nothing (T170).
-    expect(await page.getByText('Ends this run').count()).toBe(1)
-    await page.getByRole('button', { name: 'Stop run' }).click()
+    // The plan's verdicts are Approve / Deny, as every approval's, each described by its effect (T191).
+    expect(await decisionsIn(page.locator('main .panel', { hasText: 'Plan awaiting approval' }))).toEqual([
+      { label: 'Approve', description: 'the step goes on with this plan' }, { label: 'Deny', description: 'this plan does not run' }])
+    // Stop ends the run, so it asks first: nothing is sent until Confirm, and Cancel sends nothing (T170). Its
+    // label is Stop run, what it does its accessible description (T191).
+    const stop = page.getByRole('button', { name: 'Stop run' })
+    expect(await descriptionOf(stop)).toBe('ends this run, after you confirm')
+    expect(await page.getByText('ends this run, after you confirm').count()).toBe(1)
+    await stop.click()
     const confirm = page.getByRole('group', { name: 'Confirm stop' })
-    await expect.poll(() => confirm.innerText()).toContain('Stop this run? Nothing more of it runs.')
-    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('Confirm stop')
+    await expect.poll(() => confirm.innerText()).toContain('Stop this run?')
+    // The confirmation is Confirm / Cancel, as every confirmation's, each described by what it does.
+    expect(await decisionsIn(confirm)).toEqual([
+      { label: 'Confirm', description: 'stops this run: nothing more of it runs' }, { label: 'Cancel', description: 'the run goes on' }])
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('Confirm')
     await confirm.getByRole('button', { name: 'Cancel' }).click()
     expect(await confirm.count()).toBe(0)
     expect(workflow.calls).toEqual([])
     await page.getByRole('button', { name: 'Stop run' }).click()
-    await page.getByRole('button', { name: 'Confirm stop' }).click()
+    await page.getByRole('group', { name: 'Confirm stop' }).getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect.poll(() => workflow.calls).toEqual([['stop', 'run_abc', 'stopped from the web UI']])
   }, 60_000)
 
@@ -872,7 +896,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // The token leaves the address bar once read; absent sections leave no stray text.
     expect(new URL(page.url()).hash).toBe('')
     expect(await page.locator('main').innerText()).not.toContain('null')
-    await page.getByRole('button', { name: 'Approve plan' }).click()
+    await page.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(() => workflow.calls.length).toBe(1)
     expect(workflow.calls[0]![0]).toBe('approve')
     // The page approves the plan it shows (INV-5).

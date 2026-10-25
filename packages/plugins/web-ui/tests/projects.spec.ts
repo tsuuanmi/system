@@ -7,6 +7,7 @@ import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { type Booted, boot, OPERATOR, reviewed } from './store-backed.ts'
+import { decisionsIn, descriptionOf } from './wording.ts'
 
 // The operator's project moves end to end, through the web UI's API, over the store-backed board,
 // approval queue, and engine, under the bundle's own default studio policy
@@ -152,7 +153,9 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
       'request ' + approvalRequest, 'The board activates it on its next sweep, within a minute', 'Approve: activate project · Deny: abandon project']) expect(opened, said).toContain(said)
     expect(await card.locator('button.copy', { hasText: 'Copy request ID' }).getAttribute('data-copy')).toBe(approvalRequest)
     await card.getByRole('textbox', { name: 'Note (optional)' }).fill('go')
-    await card.getByRole('button', { name: 'Approve: activate project' }).click()
+    // Approve / Deny, each described by what it does to the project (T191).
+    expect(await decisionsIn(card)).toEqual([{ label: 'Approve', description: 'activates the project' }, { label: 'Deny', description: 'abandons the project' }])
+    await card.getByRole('button', { name: 'Approve', exact: true }).click()
     const outcome = page.locator('#outcome')
     await expect.poll(() => outcome.innerText()).toContain('Approved: Found project project p1 (charter version 1)')
     const request = await ctx.approvals.get(approvalRequest)
@@ -321,11 +324,13 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await asked.innerText()).toContain('Asked by the run of the task "Band the inner loop"')
     expect(await asked.innerText()).toContain('The accepted change of the task "Band the inner loop" is merged as one merge commit. Not pushed.')
     expect(await asked.innerText()).toContain('Not merged: the change stays on its branch; the task stays done.')
-    expect(await asked.getByRole('button', { name: 'Approve: merge change' }).count()).toBe(1)
-    expect(await asked.getByRole('button', { name: 'Deny: keep branch only' }).count()).toBe(1)
+    // Approve / Deny, each described by its effect, the same on Home's card and on the Board's (T191).
+    const merges = [{ label: 'Approve', description: 'merges the change' }, { label: 'Deny', description: 'keeps the branch only' }]
+    expect(await decisionsIn(asked)).toEqual(merges)
     // Approved by button on the Board card itself, on the request's exact subject (INV-5).
     await page.goto(`${origin}/ui/?view=board`)
-    await waiting.getByRole('button', { name: /^Approve: merge change/ }).click()
+    await expect.poll(() => decisionsIn(waiting)).toEqual(merges)
+    await waiting.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await ctx.approvals.get(request.requestId))?.state).toBe('approved')
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('Approved: ')
     expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
@@ -346,11 +351,17 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await page.locator('main').innerText()).toContain('project p1')
     expect(await page.locator('main').innerText()).not.toContain('null')
 
-    await page.getByRole('button', { name: 'Pause p1' }).click()
+    // Each move names what it does in its accessible description (T191); its confirmation is Confirm / Cancel.
+    const pause = page.getByRole('button', { name: 'Pause p1' })
+    expect(await pause.innerText()).toBe('Pause…')
+    expect(await descriptionOf(pause)).toBe('asks you to confirm, then no task of it starts until you resume it')
+    expect(await descriptionOf(page.getByRole('button', { name: 'Close p1' }))).toBe('asks you to confirm, then ends the project and cancels its open tasks')
+    await pause.click()
     const pausing = page.getByRole('group', { name: 'Confirm pause of p1' })
     await expect.poll(() => pausing.innerText()).toContain('no task of it is claimed or started')
+    expect(await decisionsIn(pausing)).toEqual([{ label: 'Confirm', description: 'pauses project p1, as listed above' }, { label: 'Cancel', description: 'nothing moves' }])
     expect((await ctx.board.project('p1'))?.state).toBe('active')
-    await pausing.getByRole('button', { name: 'Confirm pause' }).click()
+    await pausing.getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect.poll(async () => (await ctx.board.project('p1'))?.state).toBe('paused')
     await expect.poll(() => page.getByRole('button', { name: 'Resume p1' }).count()).toBe(1)
 
@@ -362,7 +373,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect((await ctx.board.project('p1'))?.state).toBe('paused')
     await page.getByRole('button', { name: 'Close p1' }).click()
     await page.getByRole('combobox', { name: 'Outcome of p1' }).selectOption('stopped')
-    await page.getByRole('button', { name: 'Confirm close' }).click()
+    await page.getByRole('group', { name: 'Confirm close of p1' }).getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect.poll(async () => (await ctx.board.project('p1'))?.closure?.outcome).toBe('stopped')
     await expect.poll(() => page.locator('main').innerText()).toContain('closed (stopped)')
     expect(await page.getByRole('button', { name: 'Close p1' }).count()).toBe(0)
@@ -487,12 +498,14 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const said = await confirming.innerText()
     expect(said).toMatch(/solo template · attempt 1 of \d+ · 1 step/)
     expect(said).toContain('Do solo: standard+ · reason')
-    // What a start does, and that nothing runs until Confirm start, folded under it (T171).
+    // What a start does, and that nothing runs until Confirm, folded under it (T171).
     expect(said).not.toContain('Nothing runs until you confirm')
     expect(await confirming.textContent()).toContain('Nothing runs until you confirm')
     expect(await confirming.textContent()).toContain('The run claims the task, which moves to Working')
     expect((await ctx.board.tasks({ projectId: 'p1', states: ['ready'] })).length).toBe(2)
-    await confirming.getByRole('button', { name: 'Confirm start' }).click()
+    // Confirm / Cancel, as every confirmation's, each described by what it does (T191).
+    expect(await decisionsIn(confirming)).toEqual([{ label: 'Confirm', description: 'starts the run now' }, { label: 'Cancel', description: 'nothing starts' }])
+    await confirming.getByRole('button', { name: 'Confirm', exact: true }).click()
     const outcome = page.locator('#outcome')
     await expect.poll(() => outcome.innerText()).toContain('Started: Write the release notes')
     expect(await outcome.innerText()).toMatch(/Run run_\w+ of the solo template claimed the task/)

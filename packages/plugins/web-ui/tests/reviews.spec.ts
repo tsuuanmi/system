@@ -8,6 +8,7 @@ import type { ArtifactRef } from '@tsuuanmi/system-board-core'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
 import { acceptanceOf, checkStates, requiredChecks } from '../src/index.ts'
 import { boot, bundlePolicies, OPERATOR, reviewed } from './store-backed.ts'
+import { decisionsIn } from './wording.ts'
 
 // End to end over the store-backed board, approval queue, and engine, under the bundle's own
 // default studio policy, with the operator's verdicts through the web UI's API. Only Worker
@@ -322,7 +323,12 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await pending.innerText()).toMatch(/^Checks not run: tests, lint\. Accepting counts them as passed — run them first\./)
     const wait = await page.evaluate(() => { const probe = document.createElement('span'); probe.style.color = 'var(--wait)'; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color })
     expect(await pending.evaluate((p) => getComputedStyle(p).color)).toBe(wait)
-    await card.getByRole('button', { name: 'Accept: mark it done' }).click()
+    // A review's verdicts are Accept / Send back, what each does their accessible description, said beside them (T191).
+    expect(await decisionsIn(card)).toEqual([
+      { label: 'Accept', description: 'marks it done' },
+      { label: 'Send back', description: 'sends it back for another attempt, if it has one left' }])
+    expect(await card.locator('.actions').innerText()).toMatch(/Accept\s+marks it done\s+Send back\s+sends it back for another attempt, if it has one left/)
+    await card.getByRole('button', { name: 'Accept', exact: true }).click()
     await expect.poll(async () => (await ctx.board.task(task.taskId))?.state).toBe('done')
     // Where the accepted result stands (ADR-0060), as its landing moves: committed on its branch, then its merge asked, linked.
     const landing = (value: Record<string, unknown>) => ctx.store.db.prepare('UPDATE workflow_tasks SET landing = ? WHERE run_id = ?').run(JSON.stringify({ branch: `system/run/${run.runId}`, at: new Date().toISOString(), ...value }), run.runId)

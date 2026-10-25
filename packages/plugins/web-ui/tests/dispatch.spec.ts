@@ -6,6 +6,7 @@ import { canRunBrowser, testChrome } from '../../browser-patchright/tests/suppor
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
 import { boot, OPERATOR } from './store-backed.ts'
+import { decisionsIn } from './wording.ts'
 
 // Home's "Starts awaiting approval" (ADR-0064, PROP-0014 D1) over the store-backed board, approval queue,
 // resource ledger, and engine, under the bundle's own studio policy (dispatch takes its default: ask).
@@ -62,12 +63,16 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     expect(said).toContain('Why this Worker?')
     expect(said).not.toContain('tier standard, agent-plan, known')
     expect(await go.textContent()).toMatch(/Why this Worker\?tier standard, agent-plan, known/)
-    // The request itself is in the queue too, described as a start: short labels in sight, the effect in each button's name (T186).
-    const queued = page.getByRole('region', { name: 'Approval queue' })
-    expect(await queued.getByRole('button', { name: 'Approve: start it' }).count()).toBe(1)
-    expect(await queued.getByRole('button', { name: 'Deny: do not start it' }).count()).toBe(1)
-    expect(await go.getByRole('button', { name: 'Approve the start of Write the release notes' }).innerText()).toBe('Approve')
-    await go.getByRole('button', { name: 'Approve the start of Write the release notes' }).click()
+    // The request itself is in the queue too, described as a start: Approve / Deny there and here, each
+    // described by what it does (T191).
+    const card = page.getByRole('region', { name: 'Approval queue' }).getByRole('article').filter({ hasText: 'Write the release notes' })
+    expect(await decisionsIn(card)).toEqual([{ label: 'Approve', description: 'starts it' }, { label: 'Deny', description: 'does not start it' }])
+    const start = go.getByRole('listitem', { name: 'Start of Write the release notes' })
+    const here = await decisionsIn(start)
+    expect(here.map((d) => d.label)).toEqual(['Approve', 'Deny'])
+    expect(here[0]!.description).toMatch(/^starts it on \S/)
+    expect(here[1]!.description).toBe('does not start it')
+    await start.getByRole('button', { name: 'Approve', exact: true }).click()
     await vi.waitFor(async () => expect((await ctx.approvals.list({ states: ['approved'] })).filter((r) => r.action.class === 'dispatch')).toHaveLength(1), { timeout: 15_000 })
     await ctx.workflow.sweepDispatch()
     await vi.waitFor(() => expect(workers.started.map((s) => s.worker)).toEqual(['w:max']), { timeout: 15_000 })

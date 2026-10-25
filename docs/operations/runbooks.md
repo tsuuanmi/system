@@ -2147,7 +2147,7 @@ rejected by the engine as another attempt, also without you.
    `git-head` subject the run's worktree, which is that exact tree
    ([worktree](#a-runs-worktree)). Run the pending checks there yourself: **your Accept applies
    whatever is pending**, since nothing else has run them on that tree.
-3. Add a note if you like, then press **Accept** or **Reject**. The page sends the exact subject it
+3. Add a note if you like, then press **Accept** or **Send back**. The page sends the exact subject it
    showed. A result that changed since, or a task no longer in review, is refused (`409`), nothing
    is decided, and an alert at the top of the page says why; it stays until you dismiss it.
 4. What happens:
@@ -2667,7 +2667,7 @@ engine did), the system lands it in the repository the Workers work in
    task under **Waiting for you** as **Accepted — waiting to merge into main: approve**, linked to
    the request (`/ui/?request=<id>`). It waits the policy's wait for `merge` (a day in the studio
    policy); unanswered, it counts as denied.
-3. **Approve: merge it.** Within `approvalPollSeconds` the branch is merged into the checked-out
+3. **Approve** merges it. Within `approvalPollSeconds` the branch is merged into the checked-out
    branch of the repository as one merge commit by the system (`git -C <repository> log -1`), and
    the card says **Accepted and merged into main as <commit>**. Nothing is pushed: push it yourself
    when you want it on the remote (`git -C <repository> push origin main`). **Deny** merges nothing:

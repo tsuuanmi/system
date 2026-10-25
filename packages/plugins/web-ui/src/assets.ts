@@ -40,6 +40,7 @@ a { color: var(--accent); }
 .panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
 button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; margin-right: 8px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+span.does { color: var(--muted); font-size: 13px; margin-right: 12px; }
 input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; min-width: 240px; }
 .muted { color: var(--muted); } code { font-size: 12px; } .answer { white-space: pre-wrap; }
 table.queue td:last-child { white-space: nowrap; }
@@ -114,6 +115,15 @@ export const APP_JS = `'use strict'
     }
     for (const child of children.flat(Infinity)) if (child !== null && child !== undefined) node.append(child instanceof Node ? child : String(child))
     return node
+  }
+  // A decision's button (T191), one implementation for every page: its label the concept's one wording
+  // (Approve / Deny on approvals, Accept / Send back on reviews, Confirm / Cancel on a confirmation, Stop run,
+  // Retry failed step, Propose), and what pressing it does its accessible description (aria-describedby),
+  // said beside it in words too, so no reader loses it. Returns [button, what it does].
+  let doesCount = 0
+  const decision = (label, consequence, props) => {
+    const id = 'does-' + (++doesCount)
+    return [el('button', Object.assign({ type: 'button' }, props, { 'aria-describedby': id }), label), el('span', { id, class: 'does' }, consequence)]
   }
   const api = async (path, body) => {
     const response = await fetch('/ui/api/' + path, body === undefined
@@ -509,14 +519,14 @@ export const APP_JS = `'use strict'
         approve: 'Project ' + name(id) + ' becomes active; ' + (proposed === undefined ? 'its proposed tasks go' : proposed + ' proposed task(s) go') + ' through the autonomy policy. No run starts by itself.',
         deny: 'Project ' + name(id) + ' is closed as abandoned, and ' + (open === undefined ? 'its open tasks are' : open + ' open task(s) are') + ' cancelled. Cannot be undone.',
         more: 'The board activates it on its next sweep, within a minute: the proposed tasks the policy allows become ready for a Worker to claim, the others are asked here.',
-        yes: 'Approve: activate project', no: 'Deny: abandon project',
+        yes: 'activates the project', no: 'abandons the project',
         next: 'The board activates project ' + name(id) + ' on its next sweep, within a minute: see it on the Board page.',
       } : {
         title: 'Amend the charter of project ' + name(id) + ' to version ' + version,
         subject: 'charter version ' + version + ' of project ' + id,
         approve: 'Charter version ' + version + ' replaces version ' + (version - 1) + ' of project ' + name(id) + '.',
         deny: 'The amendment is dropped: charter version ' + (version - 1) + ' stays in force.',
-        yes: 'Approve: adopt charter version ' + version, no: 'Deny: keep version ' + (version - 1),
+        yes: 'adopts charter version ' + version, no: 'keeps version ' + (version - 1),
         next: 'The board applies it on its next sweep, within a minute.',
       }
     } else if (task) {
@@ -526,28 +536,28 @@ export const APP_JS = `'use strict'
       const subject = taskOf(taskId) + projectText + ', attempt ' + (Number(attempt) + 1)
       d = reason.startsWith('funding') || r.action.class === 'funding' ? {
         title: 'Raise the budget of a task: ' + what.split('; ')[0], subject,
-        yes: 'Approve: raise the budget', no: 'Deny: keep the budget',
+        yes: 'raises the budget', no: 'keeps the budget',
         next: 'The board applies it to ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       } : reason === 'reconciliation-failed' ? {
         title: 'Go on after a failed reconciliation: ' + what, subject,
         approve: Task(taskId) + ' tries again: its next attempt goes through the autonomy policy for ' + r.action.class + '.',
         deny: Task(taskId) + ' does not go on: it waits for your input until it is cancelled or its wait expires.',
-        yes: 'Approve: try again', no: 'Deny: hold the task',
+        yes: 'tries again', no: 'holds the task',
         next: 'The board applies it to ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       } : {
         title: 'Allow a ' + r.action.class + ' step: ' + what, subject,
         approve: Task(taskId) + ' may do this ' + r.action.class + ' step: it becomes ready on the board\\'s next sweep (within a minute), for a Worker to claim.',
         deny: Task(taskId) + ' does not do it: it waits for your input until it is cancelled or its wait expires.',
-        yes: 'Approve: allow this ' + r.action.class, no: 'Deny: hold the task',
+        yes: 'allows this ' + r.action.class, no: 'holds the task',
         next: 'The board moves ' + taskOf(taskId) + ' on its next sweep, within a minute.',
       }
     } else if (call) {
-      d = { title: 'Allow a tool call: ' + r.action.summary, subject: 'the exact ' + call[2] + ' call of agent run ' + call[1], yes: 'Approve: allow this call', no: 'Deny: refuse this call',
+      d = { title: 'Allow a tool call: ' + r.action.summary, subject: 'the exact ' + call[2] + ' call of agent run ' + call[1], yes: 'allows this call', no: 'refuses this call',
         next: 'The agent run gets your answer the next time it asks.' }
     } else if (r.action.class === 'policy-change') {
       d = { title: r.action.summary, subject: 'the policy set this change would put in force',
         approve: 'The proposed policy set comes into force at once; open requests are judged again under it.', deny: 'Nothing changes: the policy in force stays.',
-        yes: 'Approve: put the change in force', no: 'Deny: keep the policy in force', next: 'See the Autonomy policy page.' }
+        yes: 'puts the change in force', no: 'keeps the policy in force', next: 'See the Autonomy policy page.' }
     } else if (r.action.class === 'merge' && r.requester.component === 'workflow') {
       const landing = /^landing:merge:([0-9a-f]+):([0-9a-f]+)$/.exec(r.subject.version || '')
       const served = runTask(r.requester.runId)
@@ -557,7 +567,7 @@ export const APP_JS = `'use strict'
         approve: what + ' is merged as one merge commit. Not pushed.',
         deny: 'Not merged: the change stays on its branch; the task stays done.',
         more: 'branch ' + ref + (landing ? ' at ' + landing[2].slice(0, 12) + ', onto the base at ' + landing[1].slice(0, 12) : '') + '. The run\\'s branch is merged within a few seconds of your approval, as one merge commit; a conflict or a moved branch changes nothing.',
-        yes: 'Approve: merge change', no: 'Deny: keep branch only',
+        yes: 'merges the change', no: 'keeps the branch only',
         next: 'The run\\'s branch is merged within a few seconds, as one merge commit; a conflict or a moved branch changes nothing. Nothing is pushed: see the task on the Board page.' }
     } else if (r.action.class === 'dispatch' && r.requester.component === 'workflow') {
       // A start System proposes (ADR-0064): the task, its attempt, and the Worker its summary names.
@@ -565,10 +575,10 @@ export const APP_JS = `'use strict'
       d = { title: r.action.summary, subject: 'attempt ' + (asked ? Number(asked[2]) + 1 : '?') + ' of ' + taskOf(r.requester.taskId) + projectText,
         approve: 'System starts that attempt on the Worker named, at its next look, while the task is still ready and that Worker still free.',
         deny: 'Nothing starts, and System does not ask again for this attempt; you or the lead may still start it from the Board.',
-        yes: 'Approve: start it', no: 'Deny: do not start it',
+        yes: 'starts it', no: 'does not start it',
         next: 'System starts the run at its next look, within a minute, on the Worker named: see it under Runs.' }
     } else if (r.action.class === 'remediation' && r.requester.component === 'workflow') {
-      d = { title: 'Run a fix: ' + r.action.summary, subject: 'plan ' + ref + ' of run ' + (r.requester.runId || '?'), yes: 'Approve: run the fix', no: 'Deny: do not run it',
+      d = { title: 'Run a fix: ' + r.action.summary, subject: 'plan ' + ref + ' of run ' + (r.requester.runId || '?'), yes: 'runs the fix', no: 'does not run it',
         next: 'The run goes on with your answer: see it under Runs.' }
     } else {
       d = { title: r.action.summary, subject: r.subject.type + ' ' + ref }
@@ -584,7 +594,8 @@ export const APP_JS = `'use strict'
     const served = runTask(r.requester.runId)
     const forWhat = task ? taskOf(task[1]) : r.requester.taskId ? taskOf(r.requester.taskId) : served ? 'the task "' + served.title + '"'
       : charter ? 'project ' + name(charter[1]) : call ? 'an agent run' : r.requester.projectId ? 'project ' + name(r.requester.projectId) : r.requester.runId ? 'a run' : null
-    return Object.assign({ yes: 'Approve', no: 'Deny', next: '' }, d, { by, ids, for: forWhat })
+    // yes and no: what approving and denying do, each button's accessible description (its label is Approve or Deny, T191).
+    return Object.assign({ yes: 'lets it go ahead as shown', no: 'refuses it', next: '' }, d, { by, ids, for: forWhat })
   }
 
   // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
@@ -640,15 +651,12 @@ export const APP_JS = `'use strict'
     }
     const card = (r) => {
       const d = described.get(r.requestId)
-      // Short labels in sight (T186); each button's name for assistive technology still says its effect ("Approve: activate project").
-      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': d.yes }, 'Approve')
-      const no = el('button', { type: 'button', 'aria-label': d.no }, 'Deny')
+      // Approve / Deny, what each does its accessible description (T191); the card is named by its title.
+      const [yes, yesDoes] = decision('Approve', d.yes, { class: 'primary' })
+      const [no, noDoes] = decision('Deny', d.no)
       const verdict = (v, clicked) => () => decide([{ requestId: r.requestId, subject: r.subject, verdict: v, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
-      // The request id names each button for assistive technology, after its visible label.
-      yes.setAttribute('aria-describedby', 'title-' + r.requestId)
-      no.setAttribute('aria-describedby', 'title-' + r.requestId)
       // A policy change shows what it changes: its effective modes and the record's diff (INV-5: the subject is its set's hash).
       const shown = el('div', {})
       const showChange = async () => {
@@ -668,8 +676,9 @@ export const APP_JS = `'use strict'
           el('span', { class: 'meta' }, d.for ? 'for ' + d.for + ' · ' : '', expires(r.expiresAt, 'denied')),
           irreversible ? chip(irreversible, 'warn') : null),
         // A policy change's own diff stays one press away, beside the verdict buttons: never folded away (T186).
-        el('div', { class: 'actions' }, yes, no,
-          r.action.class === 'policy-change' && r.requester.policyChangeId ? el('button', { type: 'button', onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }, 'Show change') : null),
+        // Show change has the policy page's wording, what it does its accessible description, as each verdict's (T191).
+        el('div', { class: 'actions' }, yes, yesDoes, no, noDoes,
+          r.action.class === 'policy-change' && r.requester.policyChangeId ? decision('Show change', 'shows what this request changes, below; decides nothing', { onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }) : null),
         shown,
         cardFold('request-' + r.requestId,
           el('p', {}, 'Asked by ' + d.by + ' · ', el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class')),
@@ -683,7 +692,6 @@ export const APP_JS = `'use strict'
               : r.action.consequences ? [el('dt', {}, 'What a verdict does'), el('dd', {}, folded(r.action.consequences, 'details'))]
               : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
               : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
-            el('dt', {}, 'Buttons'), el('dd', {}, d.yes + ' · ' + d.no),
             r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null,
             d.more ? [el('dt', {}, 'How it works'), el('dd', {}, d.more)] : null),
           el('div', { class: 'actions' }, noteFor(r.requestId, 'Note (optional)')),
@@ -704,20 +712,20 @@ export const APP_JS = `'use strict'
         : el('p', { class: 'muted' }, 'No approvals needed.'),
       batches.map((batch) => {
         if (!batch.batchId) return el('div', {}, batches.length > 1 ? el('h3', {}, 'Decided one by one') : null, batch.requests.map((r) => card(r)))
-        const yes = el('button', { class: 'primary' }, 'Approve all ' + batch.requests.length)
-        const no = el('button', {}, 'Deny all ' + batch.requests.length)
+        const [yes, yesDoes] = decision('Approve all ' + batch.requests.length, 'approves each request below as shown', { class: 'primary' })
+        const [no, noDoes] = decision('Deny all ' + batch.requests.length, 'denies each request below')
         const all = (v, clicked) => () => decide(batch.requests.map((r) => ({ requestId: r.requestId, subject: r.subject, verdict: v, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) })), noteOf(batch.batchId), batch.batchId, [yes, no], clicked)
         yes.addEventListener('click', all('approved', yes))
         no.addEventListener('click', all('rejected', no))
         return el('section', { class: 'panel', 'aria-label': 'Batch ' + batch.batchId },
           el('h3', {}, qty(batch.requests.length, 'related request'), whatIs('batch')),
-          el('div', { class: 'batch-actions' }, noteFor(batch.batchId, 'Note for all (optional)'), yes, no),
+          el('div', { class: 'batch-actions' }, noteFor(batch.batchId, 'Note for all (optional)'), yes, yesDoes, no, noDoes),
           fold('Batch ID', el('code', {}, batch.batchId), copyId('Copy batch ID', batch.batchId)),
           batch.requests.map((r) => card(r)))
       }))
   }
 
-  // The board's tasks in review, one card each: the operator's Accept or Reject names the exact
+  // The board's tasks in review, one card each: the operator's Accept or Send back names the exact
   // result shown (INV-5). Absent when no board runs.
   // Where an accepted result stands on its way into the repository (ADR-0060), in words, each pending step linked to where it is decided.
   const landingLine = (l) => l.state === 'asked' && l.requestId ? el('div', {}, 'Accepted — waiting to merge into ' + (l.base || 'its base') + ': ', decideLink(l.requestId, 'approve'))
@@ -873,17 +881,17 @@ export const APP_JS = `'use strict'
       try {
         const { task, decision } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: (notes.get(key) || '').trim() })
         notes.delete(key)
-        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Rejected: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep. When its result is a run\\'s worktree, the system commits it on the run\\'s branch and asks you here to merge it: see it under Accepted, on their way in.' : '; it goes back for another attempt if it has one left.')])
+        report(true, (verdict === 'accept' ? 'Accepted: ' : 'Sent back: ') + r.title, ['Recorded as your acceptance decision ' + decision + '. The task is now ' + task.state + (verdict === 'accept' ? '; tasks that depend on it become ready on the board\\'s next sweep. When its result is a run\\'s worktree, the system commits it on the run\\'s branch and asks you here to merge it: see it under Accepted, on their way in.' : '; it goes back for another attempt if it has one left.')])
       } catch (error) {
-        report(false, 'Not recorded: your ' + (verdict === 'accept' ? 'acceptance' : 'rejection') + ' of ' + r.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was decided: the task is still in review.'])
+        report(false, 'Not recorded: ' + (verdict === 'accept' ? 'Accept' : 'Send back') + ' on ' + r.title, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing was decided: the task is still in review.'])
       }
       buttons.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] })
       await refresh()
     }
     const card = (r, evidence) => {
-      // Short labels in sight (T186): Accept / Send back; each button's name says what it does.
-      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': 'Accept: mark it done', 'aria-describedby': 'review-title-' + r.taskId }, 'Accept')
-      const no = el('button', { type: 'button', 'aria-label': 'Send back: reject it for another attempt', 'aria-describedby': 'review-title-' + r.taskId }, 'Send back')
+      // Accept / Send back, what each does its accessible description (T191); the card is named by its title.
+      const [yes, yesDoes] = decision('Accept', 'marks it done', { class: 'primary' })
+      const [no, noDoes] = decision('Send back', 'sends it back for another attempt, if it has one left')
       yes.addEventListener('click', decide(r, 'accept', [yes, no], yes))
       no.addEventListener('click', decide(r, 'reject', [yes, no], no))
       const key = 'review-' + r.taskId
@@ -899,7 +907,7 @@ export const APP_JS = `'use strict'
         evidence && evidence.error ? evidenceView(evidence) : null,
         evidenceRead ? changeWarning(evidence.change, r.run && r.run.runId) : null,
         pendingWarning(r),
-        el('div', { class: 'actions' }, yes, no),
+        el('div', { class: 'actions' }, yes, yesDoes, no, noDoes),
         cardFold(key,
           r.goal ? el('p', {}, el('strong', {}, 'Asked: '), r.goal) : null,
           el('p', {}, el('span', { class: 'tag' }, r.actionClass), ' task ' + r.taskId, r.expiresAt ? ' · expires ' + absolute(r.expiresAt) : ''),
@@ -947,7 +955,7 @@ export const APP_JS = `'use strict'
     reauth_required: 'its account must sign in again', quota_exhausted: 'its account used up its quota', overloaded: 'the site was busy, or answered with its own error',
     timeout: 'it took longer than its limit', session_broken: 'its conversation broke off', provider_stalled: 'its Worker stopped answering', network: 'the network failed',
     challenge: 'the site asked for a human check', config_error: 'something is set up wrong', no_worker: 'no Worker could take it', stopped: 'you stopped it',
-    plan_rejected: 'its plan was rejected', budget_spent: 'its budget is spent', holder_lost: 'it lost its hold on the task', internal: 'the system failed inside',
+    plan_rejected: 'its plan was denied', budget_spent: 'its budget is spent', holder_lost: 'it lost its hold on the task', internal: 'the system failed inside',
   }
   // A failure's reason in plain words, from its kind and its disposition: the one function the run page and Home's
   // "Since you last looked" both lead with (T160); null when neither is known.
@@ -1092,8 +1100,9 @@ export const APP_JS = `'use strict'
     const name = (worker) => names.get(worker) || worker
     const item = (a) => {
       const r = requests.get(a.requestId)
-      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': 'Approve the start of ' + a.title }, 'Approve')
-      const no = el('button', { type: 'button', 'aria-label': 'Deny the start of ' + a.title }, 'Deny')
+      // Approve / Deny, as on its request's card (T191); the item is named by its task.
+      const [yes, yesDoes] = decision('Approve', 'starts it on ' + name(a.worker), { class: 'primary' })
+      const [no, noDoes] = decision('Deny', 'does not start it')
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
@@ -1102,7 +1111,7 @@ export const APP_JS = `'use strict'
         el('div', {}, el('strong', {}, a.title), el('span', { class: 'muted' }, ' · attempt ' + a.attempt + ' · ' + name(a.worker))),
         a.windows.map((w) => el('div', { class: 'window' }, w.used !== undefined ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(w.used), 'aria-hidden': 'true' }) : null, el('span', {}, goWindow(w)))),
         fold('Why this Worker?', el('div', {}, a.why), read.length ? el('div', { class: 'muted' }, read.join(' · ')) : null, el('div', { class: 'muted' }, 'project ' + a.projectId)),
-        el('div', { class: 'actions' }, yes, no, expires(r.expiresAt, 'denied'), ' ',
+        el('div', { class: 'actions' }, yes, yesDoes, no, noDoes, expires(r.expiresAt, 'denied'), ' ',
           el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, 'Review request')))
     }
     const last = dispatch.lastPass
@@ -1251,15 +1260,17 @@ export const APP_JS = `'use strict'
       : running.length ? running.map((n) => (stepWords(n.nodeId) || n.nodeId) + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ')
       : run.status
     // Stop ends the run: behind a confirmation, the one destructive move on this page (T170).
+    // Its confirmation is Confirm / Cancel, as every confirmation's (T191).
     const stopping = el('span', {})
-    const stop = el('button', {}, 'Stop run')
+    const [stop, stopDoes] = decision('Stop run', 'ends this run, after you confirm')
     stop.addEventListener('click', () => {
       confirming = true
-      const cancel = el('button', { onclick: () => { confirming = false; stopping.replaceChildren(); stop.focus() } }, 'Cancel')
-      const sure = el('button', { class: 'primary', onclick: () => { confirming = false; act('stop', () => ({ reason: 'stopped from the web UI' }))() } }, 'Confirm stop')
-      stopping.replaceChildren(el('span', { role: 'group', 'aria-label': 'Confirm stop' }, ' Stop this run? Nothing more of it runs. ', sure, cancel))
+      const [cancel, cancelDoes] = decision('Cancel', 'the run goes on', { onclick: () => { confirming = false; stopping.replaceChildren(); stop.focus() } })
+      const [sure, sureDoes] = decision('Confirm', 'stops this run: nothing more of it runs', { class: 'primary', onclick: () => { confirming = false; act('stop', () => ({ reason: 'stopped from the web UI' }))() } })
+      stopping.replaceChildren(el('span', { role: 'group', 'aria-label': 'Confirm stop' }, ' Stop this run? ', sure, sureDoes, cancel, cancelDoes))
       sure.focus()
     })
+    const [retry, retryDoes] = decision('Retry failed step', 'runs the failed step again; completed steps are kept', { class: 'primary', onclick: act('continue', () => ({})) })
     // What happened to it, in plain words (T141): where its worktree started (ADR-0061), a step sent again
     // after a site's own error (ADR-0062), and where its accepted result stands (ADR-0060).
     const carry = run.task && run.task.carry
@@ -1303,11 +1314,12 @@ export const APP_JS = `'use strict'
         el('p', {}, chip('Plan awaiting approval', 'warn'), ' · ' + stepName(run.blocked.nodeId)),
         fold('Plan id', el('code', {}, run.blocked.plan), copyId('Copy plan ID', run.blocked.plan)),
         el('div', { class: 'actions' }, el('label', { for: 'plan-note' }, 'Note (optional)', note),
-          el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),
-          el('button', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }, 'Reject plan'))) : null,
+          // Approve / Deny, as on every approval (T191).
+          decision('Approve', 'the step goes on with this plan', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }),
+          decision('Deny', 'this plan does not run', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }))) : null,
       run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions' },
-        run.status === 'running' ? [stop, el('span', { class: 'muted' }, 'Ends this run'), stopping] : null,
-        run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Retry failed step'), el('span', { class: 'muted' }, 'Completed steps kept')] : null) : null,
+        run.status === 'running' ? [stop, stopDoes, stopping] : null,
+        run.status === 'failed' ? [retry, retryDoes] : null) : null,
       // Where it is now, refreshed with the page: each running step on its Worker and for how long, its last event, and a stall.
       now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now', whatIs('step')),
         now.steps.map((st) => el('div', {}, (stepWords(st.nodeId) ? 'T' + stepWords(st.nodeId).slice(1) : 'Step ' + st.nodeId) + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
@@ -1382,14 +1394,16 @@ export const APP_JS = `'use strict'
         asked.length ? 'The approval requests of ' + asked.join(' and of ') + ' are withdrawn.' : 'No approval request waits on it.',
         'A closed project takes no task again. This cannot be undone.',
       ]
-      const confirmButton = el('button', { class: 'primary', onclick: send(p, action, () => (action === 'close' ? { outcome: outcome.value } : {})) }, 'Confirm ' + action)
-      const cancelButton = el('button', { onclick: () => { confirming = false; shown.replaceChildren() } }, 'Cancel')
+      // Confirm / Cancel, as every confirmation's (T191): Confirm described by what the move does, the list above it.
+      const [confirmButton, confirmDoes] = decision('Confirm', (action === 'pause' ? 'pauses ' : action === 'resume' ? 'resumes ' : 'closes ') + p.title + ', as listed above',
+        { class: 'primary', onclick: send(p, action, () => (action === 'close' ? { outcome: outcome.value } : {})) })
+      const [cancelButton, cancelDoes] = decision('Cancel', 'nothing moves', { onclick: () => { confirming = false; shown.replaceChildren() } })
       shown.replaceChildren(el('div', { class: 'panel', role: 'group', 'aria-label': 'Confirm ' + action + ' of ' + p.projectId },
         el('h3', {}, (action === 'pause' ? 'Pause ' : action === 'resume' ? 'Resume ' : 'Close ') + p.title),
         el('ul', {}, what.map((line) => el('li', {}, line))),
         action === 'close' && !refused ? el('p', {}, 'Outcome: ', outcome) : null,
-        refused ? null : confirmButton,
-        cancelButton))
+        refused ? null : [confirmButton, confirmDoes],
+        cancelButton, cancelDoes))
       ;(refused ? cancelButton : confirmButton).focus()
     }
     // A project's state at a glance, in words with counts (T141): what waits for the operator (reviews, answers,
@@ -1406,6 +1420,8 @@ export const APP_JS = `'use strict'
     }
     const moves = (p) => p.state === 'active' ? ['pause', 'close'] : p.state === 'paused' ? ['resume', 'close'] : []
     const label = { pause: 'Pause', resume: 'Resume', close: 'Close' }
+    // What each move does, its button's accessible description (T191); nothing moves before its confirmation.
+    const MOVE_DOES = { pause: 'asks you to confirm, then no task of it starts until you resume it', resume: 'asks you to confirm, then its tasks may start again', close: 'asks you to confirm, then ends the project and cancels its open tasks' }
     // What waits for the operator in each project, each linked to the card it is decided on.
     const q = await queue()
     const open = q && !q.error ? q.requests : []
@@ -1445,11 +1461,11 @@ export const APP_JS = `'use strict'
         fold('Details', 'project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ' · amendment ' + p.amendment + ' awaiting approval' : ''), copyId('Copy project ID', p.projectId))),
       glanceOf(p),
       stateOf(p),
-      moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))) : null)
+      moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => decision(label[m] + '…', MOVE_DOES[m], { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }))) : null)
     // What a waiting task needs, in the cross-page words (T171): Approval needed, Review needed, Input needed.
     const WAITS = {
       'approval-needed': 'Approval needed', 'budget-spent': 'Approval needed — budget spent', 'reconciliation-failed': 'Approval needed — run not settled',
-      'retries-spent': 'Input needed — attempts used up', question: 'Input needed — it asked a question', rejected: 'Input needed — rejected', 'review-expired': 'Input needed — review expired', 'operator-review': 'Review needed',
+      'retries-spent': 'Input needed — attempts used up', question: 'Input needed — it asked a question', rejected: 'Input needed — sent back', 'review-expired': 'Input needed — review expired', 'operator-review': 'Review needed',
     }
     // Where a done task's accepted result stands on its way into the repository (ADR-0060).
     // The operator starts a ready task's run, as the lead does (MCP run with task): behind a
@@ -1491,26 +1507,27 @@ export const APP_JS = `'use strict'
     const askOf = (requestId) => open.find((r) => r.requestId === requestId)
     const decideHere = (r) => {
       const d = q.described.get(r.requestId)
-      // Short labels in sight, as on Home's card; the name says the effect and the request (T186).
-      const yes = el('button', { type: 'button', class: 'primary', 'aria-label': d.yes + ' (' + d.title + ')' }, 'Approve')
-      const no = el('button', { type: 'button', 'aria-label': d.no + ' (' + d.title + ')' }, 'Deny')
+      // Approve / Deny, as on its card on Home (T191); the card is named by its task.
+      const [yes, yesDoes] = decision('Approve', d.yes, { class: 'primary' })
+      const [no, noDoes] = decision('Deny', d.no)
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
-      return el('div', { class: 'actions decide' }, yes, no)
+      return el('div', { class: 'actions decide' }, yes, yesDoes, no, noDoes)
     }
     const start = (t) => async () => {
       confirming = true
-      const close = el('button', { onclick: () => { confirming = false; shown.replaceChildren() } }, 'Cancel')
+      // Confirm / Cancel, as every confirmation's (T191).
+      const [close, closeDoes] = decision('Cancel', 'nothing starts', { onclick: () => { confirming = false; shown.replaceChildren() } })
       let preview
       try { preview = await api('tasks/' + encodeURIComponent(t.taskId) + '/start') } catch (error) {
         shown.replaceChildren(el('div', { class: 'panel bad', role: 'alert', 'aria-label': 'Cannot start ' + t.title },
-          el('h3', {}, 'It cannot start from here: "' + t.title + '"'), el('p', {}, error.message.replace(/^[a-z_]+: /, '')), close))
+          el('h3', {}, 'It cannot start from here: "' + t.title + '"'), el('p', {}, error.message.replace(/^[a-z_]+: /, '')), close, closeDoes))
         close.focus()
         return
       }
       const { task, steps } = preview
-      const yes = el('button', { class: 'primary' }, 'Confirm start')
+      const [yes, yesDoes] = decision('Confirm', 'starts the run now', { class: 'primary' })
       yes.addEventListener('click', async () => {
         yes.disabled = true
         close.disabled = true
@@ -1534,7 +1551,7 @@ export const APP_JS = `'use strict'
         fold('What happens on start', el('p', {}, 'The run claims the task, which moves to Working; each step runs in order on a Worker that can do it, and a step no free Worker can take waits for one.'),
           el('p', {}, 'Routing picks each step\\'s Worker when the run starts: the names above are likely, not promised.'),
           el('p', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
-        yes, close))
+        yes, yesDoes, close, closeDoes))
       // On a narrow screen the confirmation is far above the card pressed: bring it into sight.
       shown.scrollIntoView({ block: 'nearest' })
       yes.focus()
@@ -1982,7 +1999,9 @@ export const APP_JS = `'use strict'
         form,
         el('details', { class: 'advanced' }, el('summary', {}, 'Advanced: the record as JSON'), el('p', { class: 'muted' }, 'Every field of the record, as the form edits it; an edit here shows in the form once it is valid JSON. Nothing changes until you approve the change in the approval queue, and the whole set must load as a configuration would.'), editor),
         el('p', {}, note),
-        el('div', { class: 'actions' }, el('button', { onclick: showDiff }, 'Show change'), el('button', { class: 'primary', onclick: propose }, 'Propose')),
+        // What each does, its accessible description (T191): a proposal is decided by Approve / Deny on its card.
+        el('div', { class: 'actions' }, decision('Show change', 'shows what your edit changes, below; proposes nothing', { onclick: showDiff }),
+          decision('Propose', 'asks for your approval; nothing changes until you approve it', { class: 'primary', onclick: propose })),
         preview) : el('p', { class: 'muted' }, 'This approval queue changes its policy by configuration and a restart only.'),
       changes ? el('h3', {}, 'History') : null,
       changes && !changes.length ? el('p', { class: 'muted' }, 'No policy changes yet.') : null,

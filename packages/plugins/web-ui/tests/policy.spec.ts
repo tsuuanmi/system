@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { activeProject } from '../../workflow/conformance/workflow.ts'
 import { type Booted, boot, bundlePolicies, OPERATOR } from './store-backed.ts'
+import { decisionsIn, descriptionOf } from './wording.ts'
 
 // A policy change end to end, through the web UI's API, over the store-backed approval queue and
 // board under the bundle's own default studio policy (docs/design/approvals.md#a-policy-change).
@@ -223,6 +224,10 @@ describe('web UI: the policy page in a real browser', () => {
     await expect.poll(() => page.locator('pre.diff .add').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "forbid"')]))
     expect(await page.locator('pre.diff .del').allInnerTexts()).toEqual(expect.arrayContaining([expect.stringContaining('"mode": "ask"')]))
     await page.getByRole('textbox', { name: 'Note for the proposed change' }).fill('no merges for now')
+    // Show change and Propose name what they do in their accessible description (T191).
+    expect(await decisionsIn(page.getByRole('region', { name: 'Propose a change' }))).toEqual([
+      { label: 'Show change', description: 'shows what your edit changes, below; proposes nothing' },
+      { label: 'Propose', description: 'asks for your approval; nothing changes until you approve it' }])
     await page.getByRole('button', { name: 'Propose', exact: true }).click()
     await expect.poll(() => page.locator('#status').innerText()).toContain('proposed pch-')
     const [request] = await booted.ctx.approvals.list()
@@ -239,7 +244,12 @@ describe('web UI: the policy page in a real browser', () => {
     await expect.poll(() => queue.getByText('studio: merge').count()).toBeGreaterThan(0)
     expect(await queue.innerText()).toContain('ask → forbid')
     expect(await entry.innerText()).toContain('If approved: the proposed set replaces the set in force at once')
-    await entry.getByRole('button', { name: 'Approve: put the change in force' }).click()
+    // Show change names what it does too, by itself: decisionsIn lists only described buttons (T191).
+    expect(await descriptionOf(entry.getByRole('button', { name: `Show the change of ${request!.requestId}` }))).toBe('shows what this request changes, below; decides nothing')
+    expect(await decisionsIn(entry)).toEqual([
+      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' },
+      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' }])
+    await entry.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request!.requestId)
     expect(await page.locator('#outcome').innerText()).toContain('Approved: ')
@@ -284,7 +294,12 @@ describe('web UI: the policy page in a real browser', () => {
     expect(await row.innerText()).not.toContain(change.changeId)
     await row.getByRole('link', { name: 'Approval needed' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe(`request-${request.requestId}`)
-    await card.getByRole('button', { name: 'Approve: put the change in force' }).click()
+    // The same Approve / Deny as on Home, each described by its effect (T191).
+    expect(await descriptionOf(card.getByRole('button', { name: `Show the change of ${request.requestId}` }))).toBe('shows what this request changes, below; decides nothing')
+    expect(await decisionsIn(card)).toEqual([
+      { label: 'Show change', description: 'shows what this request changes, below; decides nothing' },
+      { label: 'Approve', description: 'puts the change in force' }, { label: 'Deny', description: 'keeps the policy in force' }])
+    await card.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     expect((await booted.ctx.approvals.policy()).set?.changeId).toBe(change.changeId)
     await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
