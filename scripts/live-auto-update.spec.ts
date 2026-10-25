@@ -5,7 +5,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { daemonEnv, standInUnit } from './systemd-stand-in.ts'
@@ -97,6 +97,22 @@ function pass(f: Fixture, extra: string[] = [], env: Record<string, string> = {}
 }
 
 const lines = (f: Fixture): string[] => readFileSync(f.log, 'utf8').trim().split('\n')
+
+/** A `dev` branch on the upstream, one commit ahead of main; the upstream is left on main. */
+function devBranch(f: Fixture): string {
+  f.git(f.upstream, 'checkout', '-q', '-b', 'dev')
+  writeFileSync(join(f.upstream, 'packages', 'cli', 'src', 'index.ts'), 'export const dev = 3\n')
+  f.git(f.upstream, 'commit', '-q', '-am', 'dev')
+  const head = f.git(f.upstream, 'rev-parse', 'HEAD')
+  f.git(f.upstream, 'checkout', '-q', 'main')
+  return head
+}
+
+/** What the check worktree's last fetch fetched (its FETCH_HEAD), or '' when it never fetched. */
+function fetchHead(f: Fixture): string {
+  const path = resolve(f.check, f.git(f.check, 'rev-parse', '--git-path', 'FETCH_HEAD'))
+  return existsSync(path) ? readFileSync(path, 'utf8') : ''
+}
 
 describe('live-auto-update.sh', () => {
   it('does nothing when the live checkout is at origin/main', () => {
@@ -214,5 +230,78 @@ describe('live-auto-update.sh', () => {
     expect(out).toContain('the live patch stays')
     expect(out).toContain('the daemon is not running: start it')
     expect(f.git(f.live, 'rev-parse', 'HEAD')).toBe(f.from)
+  })
+
+  it('--branch dev takes the live install to dev\'s head and never reads main', () => {
+    const f = fixture()
+    const dev = devBranch(f)
+    // No main on the upstream any more: a pass that fetched it would only wait.
+    f.git(f.upstream, 'checkout', '-q', 'dev')
+    f.git(f.upstream, 'branch', '-q', '-D', 'main')
+    // No daemon, as above: the target is built and dry-run, and --apply stops before anything changes.
+    const { status, output } = pass(f, ['--branch', 'dev'])
+    expect(output, output).toContain('stopped or rolled back (exit 1)')
+    expect(status).toBe(1)
+    expect(lines(f)).toHaveLength(1)
+    expect(lines(f).at(-1)).toMatch(new RegExp(` origin/dev stopped: the update to ${dev.slice(0, 12)} stopped or rolled back`))
+    expect(lines(f).at(-1)).not.toContain('origin/main')
+    expect(fetchHead(f)).toContain(dev)
+    expect(fetchHead(f)).toContain("branch 'dev' of")
+    expect(fetchHead(f)).not.toContain("'main'")
+    expect(f.git(f.check, 'rev-parse', 'HEAD')).toBe(dev)
+    expect(readFileSync(join(f.check, 'packages', 'cli', 'lib', 'build-commit'), 'utf8').trim()).toBe(dev)
+    const out = readFileSync(lines(f).at(-1)!.match(/\(output: (\S+)\)/)![1]!, 'utf8')
+    expect(out).toContain('Plan for --apply (this dry run changed nothing)')
+    const notes = readFileSync(f.pause, 'utf8')
+    expect(notes).toContain(`branch origin/dev, live ${f.from}, target ${dev}`)
+    expect(f.git(f.live, 'rev-parse', 'HEAD')).toBe(f.from)
+  })
+
+  it('--branch dev has nothing to do once the live install is at dev\'s head, though main is behind it', () => {
+    const f = fixture()
+    const dev = devBranch(f)
+    f.git(f.live, 'fetch', '-q', 'origin', 'dev')
+    f.git(f.live, 'checkout', '-q', '--detach', dev)
+    const { status, output } = pass(f, ['--branch', 'dev'])
+    expect(status, output).toBe(0)
+    expect(lines(f)).toHaveLength(1)
+    expect(lines(f).at(-1)).toMatch(new RegExp(` origin/dev current: the live install is at origin/dev ${dev.slice(0, 12)}$`))
+    expect(f.git(f.check, 'rev-parse', 'HEAD')).toBe(f.from)
+    expect(existsSync(f.pause)).toBe(false)
+  })
+
+  it('refuses a branch name that is not a plain one before anything runs', () => {
+    const f = fixture()
+    // A git that only records: a refused pass must never start one.
+    writeFileSync(join(f.bin, 'git'), `#!/bin/sh\necho "$*" >>${f.bin}/git-calls\nexit 99\n`)
+    chmodSync(join(f.bin, 'git'), 0o755)
+    const bad = ['', '-dev', '.dev', 'dev.', 'dev/', '/dev', 'a//b', 'dev..main', 'a/.b', 'a/-b', 'dev.lock', 'a.lock/b',
+      'HEAD', 'dev main', 'dev\nmain', 'dev~1', 'dev^', 'dev:main', '@{-1}', 'dev@{1}', 'dev*', 'dev?', '[dev]', 'dev\\x',
+      'dev;touch x', '$(id)', 'x'.repeat(201)]
+    for (const name of bad) {
+      const { status, output } = pass(f, ['--branch', name])
+      expect(status, `${JSON.stringify(name)}: ${output}`).toBe(2)
+      expect(output).toContain('not a plain branch name')
+      expect(output).toMatch(/^usage: scripts\/live-auto-update\.sh \[--branch <name>\]/m)
+    }
+    const missing = spawnSync('bash', [...args(f), '--branch'], { encoding: 'utf8', env: { ...process.env, PATH: `${f.bin}:${process.env.PATH}` } })
+    expect(missing.status).toBe(2)
+    expect(missing.stderr).toMatch(/^usage: /m)
+    expect(existsSync(join(f.bin, 'git-calls'))).toBe(false)
+    expect(existsSync(join(f.backups, 'auto-update'))).toBe(false)
+    expect(existsSync(f.pause)).toBe(false)
+  })
+
+  it('follows main by default, whatever other branches move', () => {
+    const f = fixture()
+    const dev = devBranch(f)
+    const { status, output } = pass(f)
+    expect(output, output).toContain('stopped or rolled back (exit 1)')
+    expect(status).toBe(1)
+    expect(lines(f).at(-1)).toMatch(new RegExp(` origin/main stopped: the update to ${f.target.slice(0, 12)} `))
+    expect(fetchHead(f)).toContain("branch 'main' of")
+    expect(fetchHead(f)).not.toContain(dev)
+    expect(f.git(f.check, 'rev-parse', 'HEAD')).toBe(f.target)
+    expect(readFileSync(f.pause, 'utf8')).toContain(`branch origin/main, live ${f.from}, target ${f.target}`)
   })
 })
