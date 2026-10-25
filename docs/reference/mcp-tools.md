@@ -514,6 +514,32 @@ Scope: `client`
 | `clientRequestId` | string |  | Retry-safe request key |
 | `waitSeconds` | integer |  | Seconds to wait for the request to settle (default 0) |
 
+## `dispatch_pause`
+
+Pause dispatch: System asks for and starts no ready task by itself until resumed; its open asks are withdrawn (an operator decision, kept across restarts).
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `reason` | string |  |  |
+
+## `dispatch_resume`
+
+Resume dispatch after a pause (an operator decision).
+
+Scope: `operator`
+
+No arguments.
+
+## `dispatch_status`
+
+Dispatch: whether System asks to start ready board tasks on free Workers by itself, its pause, the last pass with its reason for each ready task, each bound and its use, and the starts waiting for the operator's go.
+
+Scope: `client`
+
+No arguments.
+
 ## `drain`
 
 Drain the host before a stop or upgrade: admit no new run, and report the runs still executing. Call again to poll.

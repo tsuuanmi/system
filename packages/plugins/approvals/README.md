@@ -16,7 +16,9 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     sha256 of the canonical JSON of the project's effective policy set as loaded). The effective
     mode is the strictest of the studio's rule and the project's; a project policy constrains
     only the classes it names; a class the studio policy does not name takes the stricter
-    `default`; a class in `ALWAYS_ASK` is raised to at least `ask` whatever a rule says. An
+    `default`; a class in `ALWAYS_ASK` is raised to at least `ask` whatever a rule says (the
+    classes are `ACTION_CLASSES`, `dispatch` among them since ADR-0063, which the bundle's studio
+    policy names no rule for, so it asks by its `default`). An
     `auto` or `notify` rule names the checks of every applying policy that did not pass
     (`failedChecks`): that work goes back to the lead, never to the operator. A `command` whose
     argv equals a line of every applying commands list, word for word and with nothing more, is

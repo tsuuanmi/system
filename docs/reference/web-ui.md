@@ -54,6 +54,24 @@ again from now. When and each Worker's status then are kept in this browser only
 | `GET waiting?since=<ISO time>` | — | `{asOf, since?, requests, reviews, runs, count, partial?}`, each part `{value}` or `{unknown}` with why ([what waits for you](#what-waits-for-you)); `count` adds the known parts, and `partial` says a part is unknown or holds more than it read. An invalid `since` is `400` |
 | `GET activity?since=<ISO time>` | — | `{since, asOf, runs, tasks, expired}`, each part `{value, more?}` or `{unknown}` with why when it cannot be read (never empty in its place): the runs that ended since (`runId`, `template`, `status`, `at`, `taskId`, `error`), read by state and by when their state changed (`ctx.workflow.usage` with a filter, contract 1.7), so a run that started long ago is there; the board tasks that moved since into done, review, waiting, or cancelled, or whose accepted result moved on its way in (`taskId`, `title`, `project`, `state`, `at`, `waiting`, `run`, `landing`); and the requests that expired unanswered (`approvals.resolved` events of cause `expired`: `requestId`, `at`, `summary`), read newest first (`ctx.eventLog`, contract 1.1), at most 5 pages of 1,000. Each part lists at most 50, the latest first; `more` says it holds more than it lists, or that a read stopped at its bound before the end. A missing or invalid `since` is `400` |
 
+### Dispatch
+
+*Waiting for your go*, under *Waiting for you*, lists each start System proposes
+([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself), ADR-0063): the
+task's title, its attempt, the Worker's roster `name`, each window of its account as *5 h: used 12 %
+— reserve 20 % — resets 14:20 (read 14:05)* with a small bar, why that Worker in one line, until when
+it waits (unanswered by then, it counts as denied), and **Approve: start it** and **Deny**, which
+are the approval queue's verdicts on the request's exact subject (`POST approvals/decide`, INV-5); a
+link goes to the request's full card in the queue, where it is described as a start. It also says
+when dispatch is off (`dispatch.enabled: false`) or paused (since when, why, and `system dispatch
+resume`), names the approved starts waiting for their Worker, and folds *Why the ready tasks did not
+start at the last look*, each ready task the last pass looked at with its reason. It reads `GET
+dispatch` and the queue.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET dispatch` | — | `ctx.workflow.dispatchStatus()` (contract 1.9): `{enabled, settings, paused?, lastPass?, bounds, asks}`: the settings in force; the operator's pause (`since`, `reason`, `decision`); the last pass (`at`, `state` `ran`, `off`, `paused`, or `waiting` with its `reason`, what it `took`, each ready task it looked at with its `reason`, and how many `more`); each bound with how much of it is used (`running`, `openAsks`, per `projects`, `accounts`, and `repositories`, and the `engine`'s active runs against what dispatch may fill); and each live ask (`askId`, `taskId`, `title`, `projectId`, `attempt`, `state` `asking`, `asked`, `approved`, or `starting`, `worker`, `account`, `repository`, `requestId`, `why`, `windows` of `{pool, window, name, seconds, used, headroom, reserve, resets, observedAt}`, `approvedAt`, and its `decisions`) |
+
 ### What waits for you
 
 The one count of what waits for the operator and they can act on (T127), read by every page for

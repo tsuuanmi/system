@@ -127,6 +127,13 @@
   it is, and a Worker the operator gives kinds takes only work of those kinds. Kinds are
   configuration labels, never tool names, compared for equality only; admission fails closed when
   no Worker takes the kind ([ADR-0057](../decisions/adr/0057-route-work-by-kind.md)).
+- **REQ-WRK-12** The Worker of a dispatched task's writing step is chosen among the Workers
+  routing admits, by a versioned score over each account's windows as the resource ledger read
+  them: headroom is counted above the operator's reserve, a window about to reset comes first, an
+  unknown or stale reading is never capacity, and a metered pool is never chosen. Each choice
+  records a reason on every candidate
+  ([candidates](../design/routing.md#candidates-without-a-reservation),
+  [ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md)).
 - **REQ-WRK-16** A run is declared dead only when its holder and its runtime are both
   positively gone and no activity was seen within a bound; a failed probe, a failed lease
   renewal, or a signal never reported is not death
@@ -215,6 +222,15 @@
   only while the earlier tree is exactly what its writing step left and the repository's HEAD has
   not moved; the writing step builds on it and the review reviews the whole change. Anything else
   starts from HEAD. Each choice is a recorded decision.
+
+- **REQ-WF-15** A ready board task of an active project is started without a person or the lead
+  asking only under its project's `dispatch` mode, oldest first, within recorded bounds per
+  account, per project, per repository, and in total, and with a share of every window kept for the
+  operator; under `ask`, each start is one request bound to the task, its attempt, and the Worker,
+  asked once across restarts and started only as approved (an attempt the operator approved through
+  the board's gate counts as approved). Dispatch can be turned off and paused by the operator
+  ([ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md),
+  [dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself)).
 
 ## Artifacts and schemas (`REQ-ART`)
 

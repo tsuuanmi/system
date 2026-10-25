@@ -79,6 +79,13 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   Worker's source `reserve`s it, so the admission counts as `pending` until the caller
   calls `release()` on the admitted Worker (idempotent), once the work is started or
   will not be.
+- **Candidates (ADR-0063).** `candidates(requirement, options)` runs the same admission, under
+  the same lock, the `assignment` hold applied, and returns every Worker with its source and the
+  checks it fails, the sources that did not answer, the stored requirement, and the order after
+  tier this requirement gets (`quotaPreference` after `budget.preferQuota`, and `priority`). It
+  reserves nothing and records no decision: the workflow engine's dispatch pass, its caller,
+  records its own `dispatch.choice` decision over these
+  ([candidates](../../../docs/design/routing.md#candidates-without-a-reservation)).
 - **Decisions (INV-13).** The requirement is stored as an `objective` artifact
   (`work-requirement@1.0`, `@1.1` with a `scope`, or `@1.2` with a `kind`).
   - **Success:** a `tier` decision, and a `route` decision whose candidates are

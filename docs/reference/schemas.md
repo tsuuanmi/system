@@ -205,6 +205,19 @@ guesses.
   turn, and `conversation: new`). A site's own error that is not resent fails as before, at its own
   version, with a candidate `resend` saying why not. Example:
   [`decision.recovery-resend.json`](../../schemas/examples/decision.recovery-resend.json).
+- The dispatch pass's decisions ([ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md))
+  are existing types at their own versions, their rule ids new values: an `admission` (decider rule
+  `dispatch.select` version 1) whose candidates are the ready tasks a pass looked at, the one it
+  takes selected and every other with why, `detail` naming the `taskId`, `projectId`, `attempt` (the
+  attempts made), and the `order` (`age`); a `route` (rule `dispatch.choice` version 1, its `hash`
+  the sha256 of the quota settings it read) whose candidates are every Worker with its quota keys,
+  why it is not free, or routing's refusal, and the sources that did not answer, at most 255 (the
+  last counting the rest), its inputs the select decision, the stored requirement, and the policy's
+  `autonomy` decision, `detail` naming the `taskId`, `attempt`, `nodeId`, `score`
+  (`quota-score@1`), the `settings`, the request's `version`, the chosen Worker's `account`,
+  `repository`, and `windows`; a `gate` (rule `dispatch.approval`) whose outcome `board-approval`
+  names the board's approved request for the attempt (D62); and a `gate` (decider `operator`,
+  `dispatch.pause`) whose outcome `pause` or `run` is the operator's pause or resume.
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -689,6 +702,12 @@ guesses.
   ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). No record named it
   before, so the schema refuses it `auto` and `notify` from the start without tightening
   anything, and the record stays `@1.0`.
+- `dispatch` joined `common@1`'s action classes with PROP-0014's D1
+  ([ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md)):
+  System starting a ready board task's attempt by itself. It may be any mode (it is not a class
+  that always asks); a policy written before it names no rule for it and takes its `default`, so
+  the record stays `@1.0` and every reader in a decision path knows the value (it is in
+  `ACTION_CLASSES` and the board tools' vocabulary).
 - A project policy constrains only the classes it names. The effective mode of a class is the
   strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
   looser project rule has no effect. For a class neither names, it is the stricter of the two
@@ -742,6 +761,10 @@ guesses.
   class `policy-change`; every other request stays `@1.0`. Only the queue writes one: `request`
   refuses the requester `approvals` (`invalid`). Its subject is
   `{type: content, ref: autonomy-policy-set, version: <the proposed set's hash>}`.
+- A `dispatch` request (ADR-0063) stays `@1.0`: requester `workflow` with the task and project, its
+  subject `{type: content, ref: dispatch:<taskId>:attempt:<n>, version: quota-score@1:<sha256 of
+  the Worker and the score's inputs>}` (`n`, the attempts the task had made), so an approval binds
+  the task, the attempt, and the Worker; its `refs` name the `dispatch.choice` decision.
   Examples: [`approval-request.batched.json`](../../schemas/examples/approval-request.batched.json),
   [`approval-request.expired.json`](../../schemas/examples/approval-request.expired.json),
   [`approval-request.policy-change.json`](../../schemas/examples/approval-request.policy-change.json).

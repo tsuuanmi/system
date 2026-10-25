@@ -2631,6 +2631,58 @@ has the `workflow.landing` decisions under the run's last step):
 The repository's checkout is written only here, by a merge you approved at the exact SHAs shown.
 Never a force, a reset, a branch deletion, or a push.
 
+## Let System start ready work
+
+System asks to start ready board tasks by itself, each on a free Worker chosen by quota, and starts
+one only on your **Approve**
+([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself),
+[ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md)). It is
+on by default (`dispatch.enabled`), and the studio policy asks for `dispatch` (its `default: ask`).
+A Worker is free only when its account's quota is read and has room above your reserve, so it
+chooses none until:
+
+1. **Each account's windows are read**: pool templates for the agent runtimes and their window
+   names, as in [read each account's quota](#read-each-accounts-quota). A Worker whose account has
+   no pool, no reading, or a reading older than `quota.staleReadingSeconds` (30 min) is never free.
+2. **The quota settings suit you** (the `resources` row's `quota`): `reservePercent` (default 20) of
+   every window stays yours: System starts nothing that would draw into it, though a run that
+   crosses into it keeps going. A value out of its range refuses the row with its path.
+3. **The bounds suit you** (the `workflow` row's `dispatch`): at most `maxPerPass` (2) asks or
+   starts a pass (every `sweepSeconds`, 60), `maxOpenAsks` (4) waiting for you, one run per account
+   (`maxRunningPerAccount`), two per project, four per repository, eight in all, and four of
+   `maxActiveRuns` kept for you and the lead (`leaveRunsFree`). `system check` names a value out of
+   its range.
+
+Then, on Home, **Waiting for your go** lists each start: the task, its attempt, the Worker, each
+window of its account (`5 h: used 12 % — reserve 20 % — resets 14:20`), and why that Worker.
+**Approve: start it** starts it at the next pass (within a minute), on that Worker, while the task is
+still ready and the Worker free; past `approvedHoldMinutes` (30) waiting for the Worker, the
+approval is used for nothing and System asks again. **Deny**, or no answer by its expiry, and System
+does not ask again for that attempt: start it from the Board when you want it. A task the board's
+gate asked you about already (its class asks, and you approved the attempt) starts without a second
+button.
+
+- **Why did it not start my task?** `system dispatch` (or Home's *Why the ready tasks did not start
+  at the last look*) gives each ready task's reason at the last pass: a bound reached, the policy, no
+  free Worker (each Worker with why: busy, no reading, stale, at your reserve, metered), an ask
+  already open, a denied attempt. A task that names no template is never dispatched: start it with
+  a template.
+- **Why that Worker?** `system explain <runId>` on the run lists `dispatch.select`,
+  `dispatch.choice` (every Worker with its quota keys or why it lost), and the policy's verdict
+  first; the request's summary and `system dispatch` say it in one line.
+- **Not at all, or not in one project**: `dispatch.enabled: false` (a restart), or a policy rule
+  `dispatch: forbid` (the studio's, or a project's, through [a policy change](#change-the-autonomy-policy)).
+  In this version a rule `auto` or `notify` dispatches nothing: every start is asked.
+- **Metered pools** (an API key) are never chosen.
+
+### Pause and resume dispatch
+
+`system dispatch pause [reason…]` (MCP `dispatch_pause`) stops dispatch at once: its open asks are
+withdrawn from the queue, approved ones not yet started are used for nothing, and nothing more is
+asked or started by itself; your own and the lead's starts go on. It holds across restarts.
+`system dispatch resume` (MCP `dispatch_resume`) lets the next pass run at once. Each is recorded as
+your decision (`gate`, rule `dispatch.pause`); `system dispatch` and Home say since when and why.
+
 ## A task's next attempt starts from the previous attempt's work
 
 Seen as a board task's attempt whose developer starts with the change already in its worktree, the

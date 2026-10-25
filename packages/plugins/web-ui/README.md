@@ -14,7 +14,12 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   Both reads are bounded per request and read the newest first: the runs by state and by when
   their state changed (`ctx.workflow.usage` with a filter), however long ago they started, and the
   event log newest first (`ctx.eventLog`, contract 1.1), each part with `more` past its bound and
-  `{unknown}` with why when it cannot be read (T127);
+  `{unknown}` with why when it cannot be read (T127); and *Waiting for your go* (ADR-0063): each
+  start the dispatch pass proposes, with its task, attempt, Worker, each window of its account
+  (`5 h: used 12 % — reserve 20 % — resets 14:20`), and why that Worker, approved or denied there by
+  the queue's own verdict on the request's exact subject; whether dispatch is off or paused; the
+  approved starts waiting for their Worker; and, folded, why each ready task did not start at the
+  last look (`GET dispatch`, [the page](../../../docs/reference/web-ui.md#dispatch));
 
 - **Help** (`?view=help`): how System works in plain words, with links into the pages, and a
   glossary; a **?** beside each such word on the pages opens its sentence in place by keyboard or
@@ -224,6 +229,10 @@ requests expired) for the operator only, the Workers that could likely take a st
 running run's steps, last event, and a stall; and, with a browser, Home's *Since you last looked*
 until marked as seen, the waiting count in the window's title, the start's likely Workers, and a
 running run's page and Board card.
+[`tests/dispatch.spec.ts`](tests/dispatch.spec.ts): `GET dispatch` for the operator only (the
+settings, an ask with its Worker and windows, the bounds, the last pass); and, with a browser,
+Home's *Waiting for your go* naming the start with its Worker and quota line, starting it on
+**Approve**, and saying when dispatch is paused (over a resource ledger the harness adds).
 [`tests/projects.spec.ts`](tests/projects.spec.ts): the projects listed with their open tasks; a
 pause and a close refused to a client token, bound to the revision shown; a paused project whose
 ready task the engine does not run and whose proposed task is not gated, resumed and run to done;

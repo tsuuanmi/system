@@ -11,8 +11,10 @@
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)), its bundle row on over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
-> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts, and the operator
-> starts a ready task's run (as the lead does with MCP `run` and `task`), accepts or rejects a
+> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts, and its dispatch pass
+> asks the operator to start a ready task on a free Worker chosen by quota
+> ([dispatch](workflow-engine.md#dispatch-starting-ready-work-by-itself); the board reads nothing
+> new); the operator starts a ready task's run (as the lead does with MCP `run` and `task`), accepts or rejects a
 > review, and pauses, resumes, or closes a project, on `/ui`
 > ([`web-ui`](../../packages/plugins/web-ui/README.md)); differs from target: a budget is
 > enforced before each step of a run, never inside one, so a step in flight can overdraw its last

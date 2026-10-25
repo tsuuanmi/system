@@ -75,15 +75,16 @@ produces PRs.
 
 ## Dispatch by quota (PROP-0014)
 
-Proposed 2026-10-25, from the operator's request of that day; not yet reviewed. What each
-increment delivers is in [PROP-0014](0014-dispatch-by-quota.md#increments).
+Accepted by the operator on 2026-10-25 (D61 to D66), from the operator's request of that day. What
+each increment delivers is in [PROP-0014](0014-dispatch-by-quota.md#increments); each starts on the
+operator's go-ahead.
 
 | Increment | State | Delivers | Depends on |
 |---|---|---|---|
-| **D1** Ask to start, chosen by quota | proposed | the dispatch pass by age; the `dispatch` class at `ask`; the quota score and `candidates`; bounds per account, project, and in total; Home's *Waiting for your go* | — |
-| **D2** Starting by itself | proposed | `notify` and `auto` per project; hourly bounds; per-project pause; task `priority`; `startedBy` on the roster and Home | D1 |
-| **D3** Quota in every route | proposed | the score as a routing order key for every step, with its ADR | D1 |
-| **D4** Metered pools | proposed | dispatch onto metered pools inside a project cap | D2 |
+| **D1** Ask to start, chosen by quota | built (T153): the engine's [dispatch pass](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself) by age under the `dispatch` class ([ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md), accepted, D61): one request per start bound to the task, its attempt, and the Worker, adopted after a crash; an attempt approved through the board's gate needs no second button (D62); `quota-score@1` in `libs` and `candidates` on the router; a 20 % reserve of every window (`resources` 1.2 `quota()`, D63); bounds per account, project, repository (D64), in total, and open asks; never a metered pool (D65); a pause; MCP `dispatch_status`, `dispatch_pause`, `dispatch_resume`, `system dispatch`; Home's *Waiting for your go*; the crash suite kills the pass after its request and after its run's record. Open: the live day of D1 on one project ([validation plan](0014-dispatch-by-quota.md#validation-plan)) | the dispatch pass by age; the `dispatch` class at `ask`; the quota score and `candidates`; bounds per account, project, and in total; Home's *Waiting for your go* | — |
+| **D2** Starting by itself | accepted, not started (priority by the lead or the operator, D66) | `notify` and `auto` per project; hourly bounds; per-project pause; task `priority`; `startedBy` on the roster and Home | D1 |
+| **D3** Quota in every route | accepted, not started | the score as a routing order key for every step, with its ADR | D1 |
+| **D4** Metered pools | not to be built (D65: dispatch never starts work on a metered pool by itself) | — | — |
 
 ## Done and open milestones
 

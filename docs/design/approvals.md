@@ -25,7 +25,8 @@
 > remediation fix's gate asks it ([remediation on the queue](workflow-engine.md#remediation-on-the-approval-queue)),
 > an approved deferred call's session is continued
 > ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), an accepted result's merge is
-> asked as a `merge` request ([below](#a-landing)), and a plain run that wrote
+> asked as a `merge` request ([below](#a-landing)), a start its dispatch pass proposes as a
+> `dispatch` request ([below](#a-start-system-proposes)), and a plain run that wrote
 > records the checks still pending ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)).
 > Differs from target: with no queue loaded, remediation falls back to the operator's plan gate
 > (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a
@@ -85,6 +86,11 @@ request that never expires (INV-9).
   The schema refuses a policy that says so (for `remediation` and `merge`, which the schema
   predates, a load-time rule does), and the provider raises each of them to at least `ask`
   whatever a rule says.
+- `dispatch` ([ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md)):
+  System starting a ready board task's attempt with no person or lead asking for it
+  ([below](#a-start-system-proposes)). It is reversible (the run can be stopped, nothing lands
+  without `merge`), so it is not in `ALWAYS_ASK`. A policy that names no rule for it takes its
+  `default`: the bundle's studio policy names none and asks.
 - A failed required check sends the action back to the lead as work, not to the operator. A
   check nobody reported is not a failure: the board holds such a review for the operator's own
   acceptance ([board](board.md#required-checks-bind-at-acceptance)).
@@ -417,6 +423,34 @@ task's project. A merge always asks the operator, whatever the policy's mode for
   [PROP-0013](../proposals/0013-feedback-from-work.md#open-questions)'s open question 5: a policy
   that gives `merge` `auto` or `notify` is refused when loaded, and a proposed change that would is
   refused too.
+
+## A start System proposes
+
+The workflow engine's [dispatch pass](workflow-engine.md#dispatch-starting-ready-work-by-itself)
+([ADR-0063](../decisions/adr/0063-system-starts-ready-work-under-the-dispatch-action-class.md),
+accepted) judges `dispatch` with `check` for the task's project before it starts a ready task on the
+free Worker it chose.
+
+| Verdict | The start | Recorded |
+|---|---|---|
+| `forbid` | not dispatched in that project; the lead and the operator still start its tasks by hand | the `autonomy` decision; the pass's reason for the task |
+| `ask` | one request; started once it is approved, exactly as asked | the `autonomy` decision, the `dispatch.select` and `dispatch.choice` decisions, the request, the operator's `approval` decision |
+| `auto`, `notify` | not dispatched in D1: the queue takes a request only on `ask`, and D1 starts nothing without the operator (D2 honours them) | the `autonomy` decision; the pass's reason for the task |
+
+- **The request** binds to exactly that start (INV-5): subject `{ type: content, ref:
+  dispatch:<taskId>:attempt:<n>, version: quota-score@1:<sha256 of the Worker and the score's
+  inputs> }` (`n`, the attempts already made), class `dispatch`, requester `workflow` with the task
+  and project; its summary names the task, the attempt, the Worker, and each window it would draw on,
+  its consequences what each verdict does and why that Worker.
+- **Approved**, the run starts on that Worker while the task is still ready at that attempt and the
+  Worker free, within `dispatch.approvedHoldMinutes`; otherwise it is used for nothing and a new
+  choice asks again. Rejected or expired: nothing starts, and dispatch never asks again for that
+  attempt. Withdrawn on a policy change: put to the policy in force at the next pass. The engine
+  withdraws a request itself when the task moves on or dispatch is paused.
+- **The board's gate counts** (D62): an attempt the operator approved through the board's own
+  request on `board-task:<id>:attempt:<n>` starts with no `dispatch` request, a `gate` decision
+  (rule `dispatch.approval`) naming that approval.
+- With no queue loaded, nothing is dispatched (fail-closed rule 5).
 
 ## A policy change
 
