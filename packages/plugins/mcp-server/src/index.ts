@@ -19,7 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
+import { countedWhole, dshHome, ensurePrivateDir, registerSecretPath, SchemaRegistry, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
 import { type HealthReport, healthReport, type LivenessRead } from './health.ts'
@@ -280,7 +280,8 @@ export class McpEndpoint extends McpTools {
         unknownUsage: {
           pools: async () => (await resources.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
           entries: ({ since, afterSeq, limit }) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, since, afterSeq, limit }),
-          counted: async (runId: string, pool: string) => (await resources.usage({ runId, pool })).records.length > 0,
+          // A lower bound (`partial`) is no count of its run (INV-2).
+          counted: async (runId: string, pool: string) => countedWhole((await resources.usage({ runId, pool })).records),
         },
       } : {}),
       ...(turns?.conversations ? { undeleted: () => turns.conversations!({ state: 'failed' }) } : {}),

@@ -31,7 +31,7 @@ Claude Code Worker run through the Agent SDK may draw on a different pool than i
 
 ## Seam
 
-`ctx.resources` (`Resources` in `@tsuuanmi/system-resources-core`), contract 1.2:
+`ctx.resources` (`Resources` in `@tsuuanmi/system-resources-core`), contract 1.3:
 
 | Method | Does |
 |---|---|
@@ -39,7 +39,7 @@ Claude Code Worker run through the Agent SDK may draw on a different pool than i
 | `observe(reading)` | record a `limit-state` reading |
 | `reserve(request, at?)` | reserve before a run; records a `budget` decision |
 | `release(reservationId)` | release a reservation once the run's usage is recorded, or it never started |
-| `record(usage)` | record one unit's `usage-record`, deduplicated |
+| `record(usage)` | record one unit's `usage-record`, deduplicated; contract 1.3 ([ADR-0065](../decisions/adr/0065-a-cap-fails-closed-on-usage-the-ledger-could-not-count.md)): a `usage-record@1.1` with `partial` is a lower bound of its run, kept so, and a cap of its scope and pool is refused while the run has no whole record there |
 | `usage(filter?)` | the counted records and their totals per pool |
 | `declare?(source, accounts)` | optional, contract 1.1 ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): a Worker source's accounts, replacing what it declared before; one pool per [template](#pool-templates) and account; returns their ids |
 | `quota?()` | optional, contract 1.2 ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)): the operator's [quota settings](#quota-settings), as validated when the provider loaded |
@@ -292,15 +292,20 @@ case is visible and durable:
   estimates its usage. A run may get two (a stop aborted it before it reported anything, then the
   restart found it interrupted): readers count it once, by its first.
 - **A run with a lower bound counted** (it ended before its runtime's final count, and its runtime
-  reported some usage while it ran) gets its record of that lower bound and a `not-reported` fact
-  (`usage-unknown@1.1`) whose `partial` names that record. A partial report with no number above 0
-  gets no record: a reported 0 would read as known. Its own record never reconciles it (INV-2: a
-  lower bound is not its usage). A later `transcript` record of the same run is a duplicate of its
+  reported some usage while it ran) gets its record of that lower bound, `usage-record@1.1` whose
+  `partial` says why it is one, and a `not-reported` fact (`usage-unknown@1.1`) whose `partial`
+  names that record. A partial report with no number above 0 gets no record: a reported 0 would
+  read as known. Its own record never reconciles it (INV-2: a lower bound is not its usage). The
+  record says it is a lower bound itself, in the ledger's one write of it, so a crash or a failed
+  append before its fact never leaves it reading as the run's usage, through a restart too; a fact
+  that cannot be appended is logged, saying the record keeps the caps closed (health and the report,
+  which read the facts, then do not name the run). A later `transcript` record of the same run is a duplicate of its
   `runtime-result` one, so transcript reconciliation will have to replace the lower bound.
 - **A cap fails closed** (ADR-0065): the store-backed ledger refuses a reservation whose caps have
   a scope (a task, else a project) while a run of that scope, by its fact or else by its
-  reservation, has a fact in a capped pool and is not reconciled, naming each such run, its Worker,
-  and why in the `budget` decision. It refuses too when no event log is loaded, when more than
+  reservation, has a fact in a capped pool and is not reconciled, or has only lower bounds
+  (`partial`) counted in a capped pool, fact or none (at most 100 such runs named), naming each such
+  run, its Worker, and why in the `budget` decision. It refuses too when no event log is loaded, when more than
   10,000 `usage.unknown` entries are kept, or when an entry is not a valid record: whether such a
   run exists is then unknown. A request without caps, or caps without a scope, is not concerned. It
   holds for every pool kind; nothing reconciles a run until transcript reconciliation exists, so the
@@ -311,7 +316,7 @@ case is visible and durable:
   `usage-record@1.0`) that the fact names, with the ledger's failure. A fact that cannot be
   appended either (no event log, or the store failing) is logged.
 - **Reconciled:** a unit is reconciled once the ledger counts a usage record of its run in its
-  pool other than the lower bound its fact names, which is what transcript reconciliation will
+  pool that is not a lower bound (no `partial`; `countedWhole` in libs), which is what transcript reconciliation will
   write (`source: transcript`; a crashed run's record written before the crash counts too).
 - **Shown** in the [report](reports.md#what-it-counts) (per pool: the runs whose usage is unknown
   and not reconciled, the records without a figure; in all: each kind, and how many were

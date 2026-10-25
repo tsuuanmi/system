@@ -131,6 +131,10 @@ export function validateQuota(quota: Partial<QuotaSettings> | undefined): Readon
 }
 
 const invalid = (message: string): ResourcesError => new ResourcesError('invalid', message)
+/** SQL: the stored record (of the table `alias`, with its dot) is a whole count, not a lower bound (`usage-record@1.1`'s `partial`, ADR-0065). */
+const whole = (alias = ''): string => `json_extract(${alias}record, '$.partial') IS NULL`
+/** Runs with only a lower bound counted a refused reservation names at most (INV-9); past it, it says so. */
+export const MAX_LOWER_BOUND_RUNS = 100
 /** Milliseconds since the epoch of an RFC 3339 timestamp; refused (`invalid`) when it does not parse. */
 const epochMs = (value: string, name: string): number => {
   const ms = Date.parse(value)
@@ -455,7 +459,8 @@ export class StoreResources extends Resources {
     return this.ctx.store.transaction((db) => {
       // A duplicate is stored as an artifact too, but not counted.
       const ref = this.ctx.artifacts.put({
-        kind: 'receipt', bodySchema: 'usage-record@1.0', body: usage, classification: 'operator-shared', producer: PRODUCER,
+        // A lower bound (`usage-record@1.1`, `partial`) says so on the record itself, in the one transaction that counts it (ADR-0065).
+        kind: 'receipt', bodySchema: usage.schema, body: usage, classification: 'operator-shared', producer: PRODUCER,
         ...(usage.runId !== undefined ? { runId: usage.runId } : {}), ...(usage.runId !== undefined && usage.nodeId !== undefined ? { nodeId: usage.nodeId } : {}),
       }).id as ArtifactRef
       const duplicate = !!db.prepare('SELECT 1 FROM resource_usage WHERE source = ? AND request_id = ?').get(usage.source, usage.requestId)
@@ -582,7 +587,10 @@ export class StoreResources extends Resources {
    * Why the request's caps cannot be held, for usage the ledger could not count (INV-2, ADR-0065): a
    * run of the caps' scope (its task, else its project) whose usage the ledger could not count in a
    * capped pool, and has not counted since (its own lower bound never counts as counted), is unknown
-   * usage, which a cap never reads as 0. Each such run is named, with its Worker and why. With no
+   * usage, which a cap never reads as 0; so is a run of the scope whose only records in a capped
+   * pool are lower bounds (`partial`), with or without a fact: the record says it itself, so a
+   * crash or a failed append between the record and its fact leaves no gap. Each such run is
+   * named, with its Worker and why. With no
    * event log, or more `usage.unknown` entries than are read, or entries no reader can place, whether
    * there is one is unknown, and the caps are refused as well. A request without caps, or without a
    * scope (its caps bound its own lines only), is not concerned.
@@ -595,7 +603,8 @@ export class StoreResources extends Resources {
     const eventLog = this.ctx.get('eventLog')
     if (!eventLog) return [`the caps of ${named} cannot be held: no event log (ctx.eventLog) is loaded, so whether a run of ${scope.value} has usage the ledger could not count is unknown, and a cap never counts unknown usage as 0 (INV-2)`]
     const reservedFor = db.prepare('SELECT project_id, task_id FROM resource_reservations WHERE run_id = ? ORDER BY reserved_at DESC LIMIT 1')
-    const counted = db.prepare('SELECT 1 FROM resource_usage WHERE run_id = ? AND pool = ? LIMIT 1')
+    // Counted means a whole record: a lower bound (`partial`) never reconciles a run (INV-2).
+    const counted = db.prepare(`SELECT 1 FROM resource_usage WHERE run_id = ? AND pool = ? AND ${whole()} LIMIT 1`)
     const found = unknownUsageOf({
       entries: ({ afterSeq, limit }) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, afterSeq, limit }),
       counted: (runId, pool) => counted.get(runId, pool) !== undefined,
@@ -607,7 +616,33 @@ export class StoreResources extends Resources {
     const faults = found.runs.map((r) => `cap of ${r.pool} cannot be held: run ${r.runId}${r.worker ? ` on ${r.worker}` : ''} of ${scope.value} has usage the ledger could not count (${r.kind}${r.lowerBound ? ', only a lower bound counted' : ''}: ${r.reason})`)
     if (found.unread) faults.push(`the caps of ${named} cannot be held: more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries are kept, and only the first were read, so a run of ${scope.value} may have usage the ledger could not count`)
     if (found.unreadable) faults.push(`the caps of ${named} cannot be held: ${found.unreadable} usage.unknown entr${found.unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1 record, so its run and scope are unknown`)
+    // A run of the scope whose only records in a capped pool are lower bounds, whether or not a fact
+    // names it (a crash, or a failed append, between its record and its fact): the record says it.
+    const facts = new Set(found.runs.map((r) => `${r.pool}\0${r.runId}`))
+    const lower = this.lowerBounds(db, scope, [...pools])
+    for (const r of lower.runs) {
+      if (facts.has(`${r.pool}\0${r.runId}`)) continue
+      faults.push(`cap of ${r.pool} cannot be held: run ${r.runId}${r.worker ? ` on ${r.worker}` : ''} of ${scope.value} has usage the ledger could not count (only a lower bound counted: ${r.partial})`)
+    }
+    if (lower.more) faults.push(`the caps of ${named} cannot be held: more than ${MAX_LOWER_BOUND_RUNS} runs of ${scope.value} have only a lower bound counted; the first are named`)
     return faults
+  }
+
+  /**
+   * The runs of a scope with a lower bound (`usage-record@1.1`, `partial`) counted in one of `pools`
+   * and no whole record there, the first {@link MAX_LOWER_BOUND_RUNS} by when they were recorded
+   * (INV-9); `more` when there were more.
+   */
+  private lowerBounds(db: DatabaseSync, scope: { column: 'task_id' | 'project_id'; value: string }, pools: string[]): { runs: Array<{ pool: string; runId: string; worker?: string; partial: string }>; more: boolean } {
+    if (!pools.length) return { runs: [], more: false }
+    const rows = db.prepare(`SELECT u.pool AS pool, u.run_id AS run_id, MIN(u.seq) AS first, json_extract(u.record, '$.worker') AS worker, json_extract(u.record, '$.partial') AS partial
+      FROM resource_usage u WHERE u.${scope.column} = ? AND u.pool IN (${pools.map(() => '?').join(', ')}) AND u.run_id IS NOT NULL AND NOT ${whole('u.')}
+        AND NOT EXISTS (SELECT 1 FROM resource_usage w WHERE w.run_id = u.run_id AND w.pool = u.pool AND ${whole('w.')})
+      GROUP BY u.pool, u.run_id ORDER BY first LIMIT ${MAX_LOWER_BOUND_RUNS + 1}`).all(scope.value, ...pools) as Array<{ pool: string; run_id: string; worker: string | null; partial: string }>
+    return {
+      runs: rows.slice(0, MAX_LOWER_BOUND_RUNS).map((r) => ({ pool: r.pool, runId: r.run_id, ...(r.worker !== null ? { worker: r.worker } : {}), partial: r.partial })),
+      more: rows.length > MAX_LOWER_BOUND_RUNS,
+    }
   }
 
   /** What unexpired holds of the request's scope keep of a cap: a hold nobody released stops counting when it expires (INV-9). */

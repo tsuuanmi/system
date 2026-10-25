@@ -4,7 +4,8 @@
  * appends one `usage.unknown` event, its data a `usage-unknown@1.0` record (`@1.1` when it names the
  * `partial` record of a lower bound the ledger counted); the report, the host's health, and the
  * ledger's caps read them back. A unit stays unknown until the ledger counts a record of its run in
- * its pool other than its own lower bound (reconciled): until then a cap of its scope and pool fails
+ * its pool that is not a lower bound (reconciled; a lower bound's record says it is one,
+ * `usage-record@1.1`'s `partial`): until then a cap of its scope and pool fails
  * closed (INV-2, ADR-0065), never counting it as 0. Nothing here estimates usage.
  */
 import { SchemaRegistry } from './schemas.ts'
@@ -85,6 +86,16 @@ export function usageUnknownOf(data: unknown): UsageUnknown | undefined {
  */
 export function reconciledBy(fact: Pick<UsageUnknown, 'partial'>, counted: boolean): boolean {
   return counted && fact.partial === undefined
+}
+
+/**
+ * Whether the ledger's records of a run in a pool count it (`counted` for {@link reconciledBy}): one
+ * of them is a whole record, not a lower bound (`usage-record@1.1`'s `partial`). The record says it
+ * itself, so a lower bound whose fact was never appended (a crash, a failed append) never reconciles
+ * the run either (INV-2, ADR-0065).
+ */
+export function countedWhole(records: ReadonlyArray<{ partial?: unknown }>): boolean {
+  return records.some((r) => r.partial === undefined)
 }
 
 /** `usage.unknown` entries {@link countUnknownUsage} and {@link unknownUsageOf} read at most (INV-9): past it, they say so. */

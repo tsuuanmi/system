@@ -1,0 +1,24 @@
+{
+  "schema": "usage-record@1.1",
+  "requestId": "claude-agent-sdk:arun_7",
+  "source": "runtime-result",
+  "observedAt": "2026-10-23T11:20:00Z",
+  "account": "max",
+  "pool": "max.agents",
+  "worker": "agent:developer",
+  "runId": "arun_7",
+  "taskId": "task-0007",
+  "projectId": "proj-sparse-align",
+  "model": {
+    "request": "claude-sonnet-5-5"
+  },
+  "usage": {
+    "inputTokens": 4757,
+    "outputTokens": 53,
+    "cacheReadInputTokens": 4300
+  },
+  "turns": 2,
+  "durationMs": 41200,
+  "outcome": "aborted",
+  "partial": "Claude Code was stopped before its result message; counted from the usage its 2 assistant messages streamed, which leaves out the response in flight"
+}

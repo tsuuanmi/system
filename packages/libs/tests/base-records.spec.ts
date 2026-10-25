@@ -228,6 +228,19 @@ describe('usage-record@1.0 and limit-state@1.0', () => {
     expect(valid('usage-record@1.0', { ...usage, source: 'model-self-report' })).toBe(false)
   })
 
+  it('says on a record that it is a lower bound of its run, as 1.1 only, naming the run (INV-2: never read as its usage)', () => {
+    const lower = example('usage-record.lower-bound')
+    expect(valid('usage-record@1.1', lower)).toBe(true)
+    expect(lower).toMatchObject({ schema: 'usage-record@1.1', partial: expect.any(String) })
+    expect(valid('usage-record@1.1', { ...lower, schema: 'usage-record@1.0' })).toBe(false)
+    const { runId: _, ...unnamed } = lower
+    expect(valid('usage-record@1.1', unnamed)).toBe(false)
+    for (const partial of ['', 'x'.repeat(301)]) expect(valid('usage-record@1.1', { ...lower, partial })).toBe(false)
+    // A 1.1 record without one is a whole record, as a 1.0 one is.
+    const { partial: __, ...whole } = lower
+    expect(valid('usage-record@1.1', whole)).toBe(true)
+  })
+
   it('tolerates a reading without its percentage or reset, but a limit hit says until when', () => {
     const { usedPercentage: _, resetsAt: __, ...bare } = limit
     expect(valid('limit-state@1.0', bare)).toBe(true)

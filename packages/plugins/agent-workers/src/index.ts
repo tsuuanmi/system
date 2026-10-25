@@ -2296,9 +2296,10 @@ export class AgentWorkers extends Service {
    * `usage-unknown@1.0` record (docs/design/resources.md#usage-the-ledger-cannot-count): the run,
    * Worker, pool, board task, how it ended, and why. A cap counts the run as 0 until the ledger
    * counts a record of it. A fact that cannot be appended (no event log, the store failing) is
-   * logged, never dropped silently; the run's own outcome never depends on it.
+   * logged, never dropped silently, with what still holds the run unknown (`held`: a lower bound's
+   * own record, which says it is one); the run's own outcome never depends on it.
    */
-  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record' | 'partial'> = {}): void {
+  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record' | 'partial'> = {}, held?: string): void {
     try {
       const eventLog = this.ctx.get('eventLog')
       if (!eventLog) throw new Error('no event log (ctx.eventLog) is loaded')
@@ -2308,7 +2309,7 @@ export class AgentWorkers extends Service {
       })
       eventLog.append({ type: USAGE_UNKNOWN_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), data: { ...fact } })
     } catch (error) {
-      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} (pool ${meter.pool}) is unknown (${kind}: ${reason}), and that could not be recorded: ${(error as Error).message}`)
+      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} (pool ${meter.pool}) is unknown (${kind}: ${reason}), and that could not be recorded: ${(error as Error).message}${held ? `; ${held}` : ''}`)
     }
   }
 
@@ -2342,7 +2343,7 @@ export class AgentWorkers extends Service {
   /** A record the ledger refused, as an `evidence` artifact when it is a valid `usage-record@1.0`, so its numbers are not lost; else nothing. */
   private keep(row: RunRow, record: UsageRecord): ArtifactRef | undefined {
     try {
-      return this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'usage-record@1.0', body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker }, runId: row.run_id }).id as ArtifactRef
+      return this.ctx.artifacts.put({ kind: 'evidence', bodySchema: record.schema, body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker }, runId: row.run_id }).id as ArtifactRef
     } catch {
       return undefined
     }
@@ -2369,9 +2370,10 @@ export class AgentWorkers extends Service {
    * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
    * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
    * is reconciled later). A run that ended before its runtime's final count (`partial`: a stop, a
-   * timeout, a drain, a deferred call) is recorded with what the runtime did report, a lower bound,
-   * and stays a `not-reported` unit that names that record (`usage-unknown@1.1`): a lower bound
-   * never reconciles it, so a cap of its scope stays closed (INV-2, ADR-0065). A partial report with
+   * timeout, a drain, a deferred call) is recorded with what the runtime did report, a lower bound
+   * that says so on the record itself (`usage-record@1.1`, `partial`), and stays a `not-reported`
+   * unit that names that record (`usage-unknown@1.1`): a lower bound never reconciles it, so a cap
+   * of its scope stays closed (INV-2, ADR-0065), even when the fact is never appended. A partial report with
    * no number above 0 is no record: a reported 0 would read as known. `ending`: how the run ended,
    * in plain words. The run's own outcome never depends on the ledger: a refusal is logged.
    * `report`: what the account's usage report said after the run (ADR-0059), recorded after the run's
@@ -2392,7 +2394,9 @@ export class AgentWorkers extends Service {
     }
     const model = { ...(worker.model ? { request: worker.model } : {}), ...(metering?.model ? { response: metering.model } : {}) }
     const record: UsageRecord = {
-      schema: 'usage-record@1.0',
+      // A lower bound says so on its record (`@1.1`, `partial`), in the ledger's one write of it: a
+      // crash or a failed append before its fact never leaves it reading as the run's usage (INV-2).
+      schema: partial ? 'usage-record@1.1' : 'usage-record@1.0',
       // The runtime's own identity of its result, so another source of the same unit is a duplicate.
       requestId: `${worker.runtime}:${metering?.resultId ?? row.run_id}`,
       source: 'runtime-result', observedAt: now(), account: meter.account, pool: meter.pool, worker: row.worker, runId: row.run_id,
@@ -2400,12 +2404,13 @@ export class AgentWorkers extends Service {
       ...(Object.keys(model).length ? { model } : {}), ...usage,
       ...(metering?.turns !== undefined ? { turns: metering.turns } : {}), durationMs: Math.max(0, Math.round(durationMs)),
       ...(metering?.costUsd !== undefined ? { cost: { amount: metering.costUsd, currency: 'USD' as const, basis: 'runtime-estimate' as const } } : {}),
-      outcome,
+      outcome, ...(partial ? { partial } : {}),
     }
     const recorded = await meter.resources.record(record).catch((error: unknown) => this.unrecorded(row, meter, record, error))
     // A lower bound counted: the run stays unknown, named with what was counted and why it is partial.
     if (partial && recorded) {
-      this.unknownUsage(row, meter, 'not-reported', `${ending}; the ledger counted what its runtime reported while it ran (${figures(usage.usage, metering?.turns)}), a lower bound: ${partial}`, { outcome, partial: recorded.ref as ArtifactRef })
+      this.unknownUsage(row, meter, 'not-reported', `${ending}; the ledger counted what its runtime reported while it ran (${figures(usage.usage, metering?.turns)}), a lower bound: ${partial}`, { outcome, partial: recorded.ref as ArtifactRef },
+        'its record says it is a lower bound, so a cap of its scope and pool stays closed (INV-2); without the fact, health and the report do not name the run')
     }
     return limited
   }

@@ -71,9 +71,40 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 export const resourcesSuite = defineSuite<Boot>({
   seam: 'resources',
   // 1.1: pool templates and the optional `declare` (ADR-0052). 1.2: the optional `quota`, the
-  // operator's quota settings, each in its range (ADR-0064).
-  contract: '1.2',
+  // operator's quota settings, each in its range (ADR-0064). 1.3: a record that says it is a lower
+  // bound (`usage-record@1.1`, `partial`) keeps a cap of its scope refused (ADR-0065).
+  contract: '1.3',
   scenarios: [
+    scenario('lower-bound-record', 'takes a record that says it is a lower bound (`usage-record@1.1`, `partial`) and keeps that on it: it is counted, and a cap of its scope and pool is refused while its run has no whole record there, with nothing else recorded (INV-2, ADR-0065)', async (ctx) => {
+      await ctx.resources.observe(reading('max.programmatic', 'monthly'))
+      const cap: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 10 }]
+      const line: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 0.1 }]
+      const partial = 'the runtime was stopped before its result; counted from what it streamed'
+      const first = await ctx.resources.reserve({ runId: 'r1', taskId: 't1', lines: line, caps: cap }, T0)
+      expect(first.state).toBe('reserved')
+      const lower = await ctx.resources.record(usage('u1', { schema: 'usage-record@1.1', runId: 'r1', outcome: 'aborted', partial }))
+      expect(lower.duplicate).toBe(false)
+      expect(ctx.artifacts.get(lower.ref)).toMatchObject({ kind: 'receipt', bodySchema: 'usage-record@1.1', body: { schema: 'usage-record@1.1', partial } })
+      await ctx.resources.release(first.reservationId)
+      // Counted, as a lower bound: the record says so.
+      const counted = await ctx.resources.usage({ runId: 'r1' })
+      expect(counted.records).toMatchObject([{ schema: 'usage-record@1.1', requestId: 'u1', partial }])
+      expect(counted.totals).toMatchObject([{ pool: 'max.programmatic', records: 1, costUsd: 0.5 }])
+      // Within the cap by what is counted, and refused: a lower bound is never the run's usage.
+      const refused = await ctx.resources.reserve({ runId: 'r2', taskId: 't1', lines: line, caps: cap }, T0)
+      expect(refused.state).toBe('refused')
+      expect(refused.reasons.join(' ')).toContain('r1')
+      expect(budgetOf(ctx, refused).outcome.option).toBe('refused')
+      // Another task's cap, and the run's scope without caps, are not concerned.
+      expect((await ctx.resources.reserve({ runId: 'r3', taskId: 't2', lines: line, caps: cap }, T0)).state).toBe('reserved')
+      expect((await ctx.resources.reserve({ runId: 'r4', taskId: 't1', lines: line }, T0)).state).toBe('reserved')
+      // A lower bound names its run, and only a 1.1 record carries one.
+      expect(await failureOf(ctx.resources.record(usage('u2', { schema: 'usage-record@1.1', partial })))).toBe('invalid')
+      expect(await failureOf(ctx.resources.record(usage('u3', { runId: 'r5', partial })))).toBe('invalid')
+      // A whole record of the run in its pool reconciles it.
+      await ctx.resources.record(usage('u1-whole', { source: 'provider-usage', runId: 'r1', taskId: 't1', cost: { amount: 0.6, currency: 'USD', basis: 'runtime-estimate' } }))
+      expect((await ctx.resources.reserve({ runId: 'r6', taskId: 't1', lines: line, caps: cap }, T0)).state).toBe('reserved')
+    }, '1.3'),
     scenario('quota-settings', 'gives the operator\'s quota settings when it has them: each a whole number in its range, the defaults when none is configured (a 20 % reserve of every window, D63), and a copy no caller can change (ADR-0064)', async (ctx) => {
       // Optional: a provider without it leaves a caller unable to keep the operator's reserve.
       if (!ctx.resources.quota) return
@@ -345,6 +376,14 @@ export class FakeResources extends Resources {
       const wanted = request.lines.filter((l) => l.pool === cap.pool && l.unit === cap.unit).reduce((n, l) => n + l.amount, 0)
       if (used + held + wanted > cap.amount) reasons.push(`cap ${cap.amount} ${cap.unit} of ${cap.pool} would be exceeded: ${used} used, ${held} held, ${wanted} wanted`)
     }
+    // A run of the scope whose only records in a capped pool are lower bounds (contract 1.3): its usage is not known.
+    const capped = new Set((request.caps ?? []).map((c) => c.pool))
+    const lower = new Map<string, UsageRecord>()
+    for (const r of this.records) if (r.partial !== undefined && capped.has(r.pool) && inScope(r)) lower.set(`${r.pool}\0${r.runId}`, r)
+    for (const r of lower.values()) {
+      if (this.records.some((w) => w.partial === undefined && w.runId === r.runId && w.pool === r.pool)) continue
+      reasons.push(`cap of ${r.pool} cannot be held: run ${r.runId} has usage the ledger could not count (only a lower bound counted: ${r.partial})`)
+    }
     const state = reasons.length ? 'refused' : 'reserved'
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'budget', question: `May run ${request.runId} draw on its pools?`, inputs: [],
@@ -370,13 +409,14 @@ export class FakeResources extends Resources {
   async record(usage: UsageRecord): Promise<{ ref: ArtifactRef; duplicate: boolean }> {
     if (!this.configured.some((p) => p.pool === usage.pool && p.account === usage.account)) throw new ResourcesError('unknown-pool', `no configured pool ${usage.pool} of ${usage.account}`)
     try {
+      // `usage-record@1`: its 1.0 and 1.1.
       schemas.assert('usage-record@1.0', usage)
     } catch (error) {
       throw new ResourcesError('invalid', (error as Error).message)
     }
     const u = usage.usage
     if (u && u.inputTokens < (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0)) throw new ResourcesError('invalid', 'cached input exceeds the input it is part of')
-    const ref = this.ctx.artifacts.put({ kind: 'receipt', bodySchema: 'usage-record@1.0', body: usage, classification: 'operator-shared', producer: { type: 'system', ref: 'resources' }, ...(usage.runId ? { runId: usage.runId } : {}) }).id as ArtifactRef
+    const ref = this.ctx.artifacts.put({ kind: 'receipt', bodySchema: usage.schema, body: usage, classification: 'operator-shared', producer: { type: 'system', ref: 'resources' }, ...(usage.runId ? { runId: usage.runId } : {}) }).id as ArtifactRef
     const duplicate = this.records.some((r) => (r.source === usage.source && r.requestId === usage.requestId)
       || (usage.source === 'transcript' && usage.runId !== undefined && r.runId === usage.runId && r.source === 'runtime-result'))
     if (!duplicate) this.records.push({ ...(usage.runId ? this.scopes.get(usage.runId) : {}), ...structuredClone(usage) })

@@ -339,7 +339,8 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
   /** The lower bound counted for a run, and its fact: `not-reported`, naming that record, saying how the run ended. */
   const lowerBound = async (ctx: Context, runId: string, ending: RegExp, outcome: 'aborted' | 'failed' = 'aborted') => {
     const { records } = await ctx.resources.usage({ runId })
-    expect(records).toMatchObject([{ source: 'runtime-result', outcome, usage: STREAMED.usage, turns: 2, requestId: `scripted:${runId}` }])
+    // The record says itself that it is a lower bound, whatever happens to its fact.
+    expect(records).toMatchObject([{ schema: 'usage-record@1.1', source: 'runtime-result', outcome, usage: STREAMED.usage, turns: 2, requestId: `scripted:${runId}`, partial: STREAMED.partial }])
     const facts = unknowns(ctx).map((e) => e.data!)
     expect(facts).toHaveLength(1)
     expect(facts[0]).toMatchObject({ schema: 'usage-unknown@1.1', runId, kind: 'not-reported', outcome, partial: expect.stringMatching(/^sha256:/) })
@@ -382,6 +383,33 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     ])
     expect(String(facts[0]!['reason'])).toMatch(/^the host stopped while it ran, and stopped it \(a drain at stop or restart\); the ledger counted what its runtime reported while it ran \(4,757 input and 53 output tokens, 2 turns\), a lower bound: /)
     expect(second.ctx.artifacts.get(String(facts[0]!['partial']))).toMatchObject({ kind: 'receipt', body: { runId: started.id, outcome: 'aborted', usage: STREAMED.usage, turns: 2 } })
+  })
+
+  it('keeps a lower bound a lower bound when its fact cannot be appended: the record says so, the failure is logged, and a cap of its task stays refused (INV-2)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ holdMs: 30_000, stoppedMetering: STREAMED }), { workers: [metered()], runTimeoutMs: 300 }, undefined, LEDGER)
+    const append = ctx.eventLog.append.bind(ctx.eventLog)
+    ctx.eventLog.append = ((entry: Parameters<typeof append>[0]) => {
+      if (entry.type === 'usage.unknown') throw new Error('disk I/O error')
+      return append(entry)
+    }) as typeof ctx.eventLog.append
+    const warned = warnings(ctx)
+    const brief = ctx.artifacts.put({
+      kind: 'objective', bodySchema: 'brief@1.1', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: {
+        schema: 'brief@1.1', projectId: 'p1', taskId: 'task-1', attempt: 1, goal: 'look at it', acceptance: [{ id: 'a1', statement: 'it is looked at' }], artifacts: [],
+        instructions: [{ text: 'look at it' }], budget: { remaining: [] }, sandbox: { mode: 'read-only', network: 'allow-list', commands: false }, classification: 'operator-shared',
+      },
+    }).id as `sha256:${string}`
+    const source = ctx.workers.source('agents')!
+    const done = await source.wait(source.start({ key: 'k-lost', worker: 'agent:reviewer', brief, requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'timeout' } })
+    expect(unknowns(ctx)).toEqual([])
+    expect((await ctx.resources.usage({ runId: done.id })).records).toMatchObject([{ schema: 'usage-record@1.1', taskId: 'task-1', usage: STREAMED.usage, partial: STREAMED.partial }])
+    expect(warned).toContainEqual(expect.stringMatching(new RegExp(`the usage of ${done.id} on agent:reviewer \\(pool max\\.agents\\) is unknown \\(not-reported: .*\\), and that could not be recorded: disk I/O error; its record says it is a lower bound`)))
+    // Within the cap by what is counted, and refused: the record alone keeps it closed.
+    const next = await ctx.resources.reserve({ runId: 'next', taskId: 'task-1', lines: [{ pool: 'max.agents', unit: 'runs', amount: 1 }], caps: [{ pool: 'max.agents', unit: 'runs', amount: 10 }] })
+    expect(next.state).toBe('refused')
+    expect(next.reasons.join(' ')).toContain(done.id)
   })
 
   it('writes no record of a partial report with no number above 0, which would read as known: the run is not-reported, saying what its runtime said', async () => {

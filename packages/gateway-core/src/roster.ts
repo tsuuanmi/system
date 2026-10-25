@@ -8,7 +8,7 @@
  * (INV-8): an account's id, state, and the operator's label only.
  * @module
  */
-import { countUnknownUsage, MAX_UNKNOWN_ENTRIES, type QuotaSettings, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
+import { countedWhole, countUnknownUsage, MAX_UNKNOWN_ENTRIES, type QuotaSettings, SchemaRegistry, type UnknownUsageCount, USAGE_UNKNOWN_EVENT, type UsageUnknownKind } from '@tsuuanmi/system-libs'
 import { type Capacity, CAPACITY_BOUNDS, type CapacityStep, type CapacityTaskRead, formatCapacity, projectCapacity } from './capacity.ts'
 
 /** The schema of the roster (`mcp-roster@1.9`, `#/$defs/roster-output`). */
@@ -154,7 +154,7 @@ export interface RosterServices {
   } | undefined
   resources?: {
     pools(): Promise<RosterPool[]>
-    usage(filter: { runId: string; pool: string }): Promise<{ records: unknown[] }>
+    usage(filter: { runId: string; pool: string }): Promise<{ records: Array<{ partial?: unknown }> }>
     /** The operator's quota settings (the reserve), which capacity now's headroom reads; the defaults when absent. */
     quota?(): QuotaSettings
   } | undefined
@@ -664,7 +664,7 @@ export async function readRoster(services: RosterServices, options: { scope: Ros
   const unknownUsage = await read(!resources ? 'the resource ledger (ctx.resources) is not mounted' : !eventLog ? 'the event log (ctx.eventLog) is not mounted' : undefined, () => countUnknownUsage({
     pools: async () => (isKnown(pools) ? pools.value : await resources!.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
     entries: ({ since, afterSeq, limit }) => eventLog!.query({ type: USAGE_UNKNOWN_EVENT, since, afterSeq, limit }),
-    counted: async (runId, pool) => (await resources!.usage({ runId, pool })).records.length > 0,
+    counted: async (runId, pool) => countedWhole((await resources!.usage({ runId, pool })).records),
   }, now.getTime()))
   const runs = await read(workflow ? undefined : 'the workflow engine (ctx.workflow) is not mounted', () => {
     const page = workflow!.usage(ROSTER_BOUNDS.runs)

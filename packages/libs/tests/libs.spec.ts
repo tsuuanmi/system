@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, SchemaError, SchemaRegistry, canonicalJson, contentId, countUnknownUsage, dshHome, readOrCreateSecretFile, reconciledBy, unknownUsageOf, USAGE_UNKNOWN_EVENT,
+  MAX_UNKNOWN_REASON, NAMED_UNKNOWN_RUNS, SchemaError, SchemaRegistry, canonicalJson, contentId, countedWhole, countUnknownUsage, dshHome, readOrCreateSecretFile, reconciledBy, unknownUsageOf, USAGE_UNKNOWN_EVENT,
   type UsageUnknown, usageUnknown, usageUnknownOf,
 } from '../src/index.ts'
 
@@ -116,6 +116,14 @@ describe('usage the ledger could not count (usage-unknown@1.0)', () => {
     expect(reconciledBy(lower, true)).toBe(false)
     expect(reconciledBy(usageUnknown(fields), true)).toBe(true)
     expect(reconciledBy(usageUnknown(fields), false)).toBe(false)
+  })
+
+  it('reads as counted only a record that is not itself a lower bound (`partial`), so an interrupted fact is never reconciled by one (INV-2)', () => {
+    expect(countedWhole([])).toBe(false)
+    expect(countedWhole([{ partial: 'stopped before its result' }])).toBe(false)
+    expect(countedWhole([{ partial: 'stopped before its result' }, {}])).toBe(true)
+    // The restart found the run interrupted; its lower bound, written before the crash, is no count of it.
+    expect(reconciledBy(usageUnknown({ ...fields, kind: 'interrupted' }), countedWhole([{ partial: 'stopped before its result' }]))).toBe(false)
   })
 
   it('counts each open run once per pool, and names the latest with its Worker and its reason; a lower bound counted keeps it open', async () => {

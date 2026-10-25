@@ -430,6 +430,31 @@ describe('a cap and usage the ledger could not count (ADR-0065)', () => {
     expect(refused.reasons[0]).toContain('run arun_2 on agent:dev of t1 has usage the ledger could not count (not-reported, only a lower bound counted: it ran past its timeout of 300 ms and was stopped')
   })
 
+  it('keeps a cap refused on a lower bound whose fact was never appended (a crash between the writes), through a restart, naming the run and why from the record (INV-2)', async () => {
+    const first = await boot()
+    await ready(first)
+    const partial = 'Claude Code was stopped before its result message; counted from the usage its 2 assistant messages streamed'
+    const reserved = await first.resources.reserve({ runId: 'arun_3', taskId: 't1', lines: line(0.1) }, at(1))
+    await first.resources.record(usage('runtime:arun_3', { schema: 'usage-record@1.1', runId: 'arun_3', worker: 'agent:dev', outcome: 'aborted', partial }))
+    await first.resources.release(reserved.reservationId)
+    // The host stops here: no usage.unknown fact names the run.
+    expect(first.eventLog.query({ type: 'usage.unknown' })).toEqual([])
+    const expected = `cap of a.programmatic cannot be held: run arun_3 on agent:dev of t1 has usage the ledger could not count (only a lower bound counted: ${partial})`
+    expect((await first.resources.reserve({ runId: 'r1', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))).reasons).toEqual([expected])
+    await first.stop()
+    const second = await boot(first.dir)
+    await ready(second)
+    expect((await second.resources.usage({ runId: 'arun_3' })).records).toMatchObject([{ schema: 'usage-record@1.1', partial }])
+    const refused = await second.resources.reserve({ runId: 'r2', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))
+    expect(refused).toMatchObject({ state: 'refused', reasons: [expected] })
+    // The restart finds the run interrupted: its own lower bound does not reconcile that fact, and the run is named once.
+    unknownFact(second, 'arun_3', { kind: 'interrupted', outcome: 'failed', reason: 'the host stopped while it ran, so no result came' })
+    expect((await second.resources.reserve({ runId: 'r3', taskId: 't1', lines: line(0.1), caps: caps(5) }, at(1))).reasons)
+      .toEqual(['cap of a.programmatic cannot be held: run arun_3 on agent:dev of t1 has usage the ledger could not count (interrupted: the host stopped while it ran, so no result came)'])
+    // Another task's cap is not concerned.
+    expect((await second.resources.reserve({ runId: 'r4', taskId: 't2', lines: line(0.1), caps: caps(5) }, at(1))).state).toBe('reserved')
+  })
+
   it('refuses a scoped cap when no event log is loaded, or when an entry cannot be read: whether a run is unknown is itself unknown (INV-2)', async () => {
     const bare = await boot(undefined, undefined, false)
     await ready(bare)

@@ -14,7 +14,7 @@ import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type { ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { QUOTA_DRAW_EVENT, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
+import { countedWhole, QUOTA_DRAW_EVENT, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
 import { renderReport } from './render.ts'
@@ -162,8 +162,8 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
     }
     if (!within.unknown(scope, { ...(e.runId !== undefined ? { runId: e.runId } : {}), fact })) continue
     const key = `${fact.pool}\0${fact.runId}`
-    if (!reconciled.has(key)) reconciled.set(key, (await resources.usage({ runId: fact.runId, pool: fact.pool })).records.length > 0)
-    // A run's own lower bound (`partial`) is a record of it too, and never reconciles it (INV-2).
+    if (!reconciled.has(key)) reconciled.set(key, countedWhole((await resources.usage({ runId: fact.runId, pool: fact.pool })).records))
+    // A lower bound (`partial`, on its record or its fact) never reconciles a run (INV-2).
     unknowns.push({ at: e.at, ...(e.runId !== undefined ? { runId: e.runId } : {}), fact, reconciled: reconciledBy(fact, reconciled.get(key)!) })
   }
   if (invalid) notes.push(`${invalid} ${USAGE_UNKNOWN_EVENT} entr${invalid === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record: not counted`)
