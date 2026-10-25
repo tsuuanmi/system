@@ -2678,7 +2678,10 @@ has the `workflow.landing` decisions under the run's last step):
   branch as it is now. Commit or stash your changes, then approve the new request.
 - **A conflict:** the merge is aborted and the repository is as it was. Merge by hand:
   `git -C <repository> merge system/run/<runId>`, resolve, commit. Or reject the work and run the
-  task again on the new base.
+  task again on the new base. A conflict only in files the repository declares generated is
+  regenerated and merged instead ([regenerate generated files on a landing](#regenerate-generated-files-on-a-landing));
+  the message then says why it was not (another file conflicts, or a command failed or changed
+  another file).
 - **The repository has no branch checked out** (a detached HEAD), or another branch than the one
   asked about: check out the branch to merge into, and merge by hand.
 - **A run of it may still write the worktree** (it ended without being known to be gone): the commit
@@ -2963,3 +2966,74 @@ What a check that did not pass means:
 | `… did not run: source agents refused (busy) …` or `(moved)` | an agent run of the workflow run had not ended, or the tree changed after the last step: the result waits for you; check its worktree |
 
 A pending check is never failed: the review waits for you as before, and your Accept applies it.
+
+## Regenerate generated files on a landing
+
+With several tasks running on one repository at once, an accepted result's merge often conflicts
+only in files the repository generates (`system`: the traceability matrix, the configuration
+reference, the packages list, the plugin manifests), which every change regenerates. Declare them,
+and such a landing makes them again instead of refusing
+([landing a worktree](../design/agent-runtimes.md#landing-a-worktree), T166). The merge still
+happens only on your approval of its `merge` request.
+
+1. **The setup first.** The commands run in the run's worktree, in the environment the repository's
+   setup prepares and in its confinement (no network): [set up a run's worktree](#set-up-a-runs-worktree).
+2. **The generated files and their commands**, beside the setup in the `agent-workers` row of your
+   profile patch. For the `system` repository:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       worktreeSetup:
+         - repository: /home/me/src/system
+           commands: [ ... ]            # the setup, unchanged
+           views: [ ... ]
+           generated:
+             paths:
+               - docs/validation/traceability.md
+               - docs/reference/configuration.md
+               - docs/architecture/packages.md
+               - packages/*/plugin-manifest.json
+               - packages/plugins/*/plugin-manifest.json
+             commands:
+               - corepack pnpm gen:manifests
+               - corepack pnpm gen:reference
+               - corepack pnpm gen:packages
+               - corepack pnpm gen:traceability
+   ```
+
+   `paths`: 1 to 32 paths relative to the repository; a `*` stands for any characters within one
+   path segment (never a `/`), so `packages/*/plugin-manifest.json` is each package's manifest and
+   not a deeper one. `commands`: 1 to 16 command lines as the policy matches them (words split on
+   single spaces, no shell metacharacter, at most 200 characters), run in the order given. Neither
+   is part of the setup's hash: declaring them sets no worktree up again.
+3. **The policy.** A command runs only when the policy lets its exact argv run unasked: list each
+   line in the studio policy's `commands` ([change the autonomy policy](#change-the-autonomy-policy)).
+   One that would ask is not run, and the landing is refused, nothing put to you for it.
+4. `system check`, then restart.
+
+What a landing then does with a conflict: the repository's merge is aborted, as always, so its
+checkout is as it was. When every conflicted file is one of `paths`, the merge is made again in the
+run's worktree (detached at the approved base, the run's branch merged without a commit), each
+conflicted file taken from either side, and the commands run there. Only when they all exit 0 and
+change no file but the declared ones is the merge committed (one merge commit of the base and the
+run's head, by the system, with the landing's message), and only when the commands, run again on it,
+change nothing (the same tree on a repeat) is your branch fast-forwarded to it, still at the approved
+base and clean. The worktree is put back on its branch either way. `system explain <runId>` shows
+the merge decision naming the regenerated files and the commands, with their autonomy decisions
+among its inputs.
+
+When it is refused (the card says **Accepted — not merged:**, the reason ending "…and they were not
+regenerated: <why>; the repository is as it was", or naming the files that are not declared):
+
+| The reason says | Do |
+|---|---|
+| `of which <file> is not declared generated` | a real conflict: merge by hand, or reject and run the task again on the new base |
+| `the generated files' command n (…) exited with code c. Its output ended: …` | read the output: the merged sources may not build. Merge by hand and fix |
+| `the commands (…) changed <file>, which is not declared generated` | a command writes a file outside `paths`: declare it, or make the command write only the declared ones. A file it made is left untracked in the run's worktree |
+| `the commands (…) changed <file>, which git ignores` | a command writes an ignored file (a cache, a local configuration): make it write only the declared ones, or run it without that side effect |
+| `is not on <branch>, and it is left as it is: …` | the run's worktree was moved off its branch or holds uncommitted work; nothing of it was touched. Look at it, commit or remove what is yours, put it back on its branch, and approve the merge again, or merge by hand |
+| `a repeat of the commands changed <file> again` | a command is not deterministic (a date, an order): fix it so the same sources give the same file |
+| `the autonomy policy asks the operator about the generated files' command n` | list the command (step 3), then merge by hand or run the task again |
+| `was not set up under …'s setup as loaded now` | the setup changed after the run's worktree was made: merge by hand |
+| `the worktree … was removed` | the retention removed the run's worktree, where the commands run: merge by hand |

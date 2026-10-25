@@ -63,6 +63,27 @@ export interface WorktreeSetupConfig {
    * subject a check is judged on; what a check writes there is discarded when it ends.
    */
   checkScratch?: string[]
+  /**
+   * The repository's generated files and the commands that make them (T166): a landing whose merge
+   * conflicts only in these files regenerates them with the commands, in the run's worktree, in the
+   * setup's confinement, instead of refusing (./regenerate.ts).
+   */
+  generated?: WorktreeGeneratedConfig
+}
+
+/** Files a repository generates, and how (`worktreeSetup[].generated`). */
+export interface WorktreeGeneratedConfig {
+  /** Repository-relative paths; a `*` stands for any characters within one path segment (never a `/`). */
+  paths: string[]
+  /** The commands that regenerate them, in order, each its words split on single spaces (no shell). */
+  commands: string[]
+}
+
+/** A setup's generated files as loaded: the path patterns, and the commands as lines and argv. */
+export interface Generated {
+  paths: string[]
+  lines: string[]
+  commands: string[][]
 }
 
 /** A setup as loaded: every default filled in, its commands as argv, and the hash an approval binds to. */
@@ -79,10 +100,35 @@ export interface Setup {
   checkTimeoutSeconds: number
   /** The worktree's paths its checks see as fresh private writable directories (relative); not part of the hash either. */
   checkScratch: string[]
+  /** The repository's generated files, when declared; not part of the setup's hash, since the setup does not run their commands. */
+  generated?: Generated
+}
+
+/**
+ * Whether the repository-relative `path` is one `pattern` names: as many segments, each equal, a `*`
+ * in the pattern standing for any characters within its segment.
+ */
+export function generatedPath(patterns: readonly string[], path: string): boolean {
+  const segments = path.split('/')
+  return patterns.some((pattern) => {
+    const parts = pattern.split('/')
+    return parts.length === segments.length && parts.every((part, i) => new RegExp(`^${part.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`).test(segments[i]!))
+  })
+}
+
+/** Why a generated-file pattern is not one: a relative path, no `.`, `..`, or empty segment, no glob but `*`, never under `.git` or `.system`. */
+function patternProblem(pattern: unknown): string | undefined {
+  if (!RELATIVE(pattern)) return 'is not a relative path without ., .., or an empty segment'
+  const text = pattern as string
+  if (text.length > SETUP_LIMITS.commandChars) return `is longer than ${SETUP_LIMITS.commandChars} characters`
+  if (/[?[\]{}\\\n\r]/.test(text) || text.includes('**')) return 'holds a glob character other than a single * within a segment'
+  const first = text.split('/')[0]!
+  if (first === '.git' || first === '.system' || first === '*') return 'names .git, .system, or every top-level entry, which are never generated files'
+  return undefined
 }
 
 /** `commandChars` is the policy's own bound on a commands-list line (`autonomy-policy@1.0`): every setup command can be listed there. */
-export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800 } as const
+export const SETUP_LIMITS = { commands: 16, commandChars: 200, views: 8, entries: 32, defaultTimeoutSeconds: 600, maxTimeoutSeconds: 3600, copyBytes: 1024 ** 3, defaultCheckTimeoutSeconds: 1800, generatedPaths: 32 } as const
 /** How much of a failed command's output its run's error keeps (INV-9). */
 const OUTPUT_TAIL = 1500
 const RULE = { type: 'rule', id: 'agent-workers.worktree-setup', version: '1' } as const
@@ -166,10 +212,32 @@ export function loadSetups(setups: readonly WorktreeSetupConfig[] | undefined, w
     }
     const overlapping = checkScratch.find((p, i) => checkScratch.some((q, j) => i !== j && (p === q || p.startsWith(`${q}/`))))
     if (overlapping) fail(`${repository}: checkScratch names ${overlapping} and another that holds it, or names it twice`)
+    const generated = loadGenerated(repository, entry.generated)
     const definition = { repository, commands: [...lines], views, timeoutSeconds }
-    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkScratch: [...checkScratch] })
+    loaded.set(repository, { ...definition, lines: [...lines], commands: lines.map((line) => line.split(' ')), hash: contentId(definition), checks, checkTimeoutSeconds, checkScratch: [...checkScratch], ...(generated ? { generated } : {}) })
   }
   return loaded
+}
+
+/** A setup's `generated` as loaded, checked: 1 to 32 path patterns, distinct, and 1 to 16 commands a policy can match word for word. */
+function loadGenerated(repository: string, generated: WorktreeGeneratedConfig | undefined): Generated | undefined {
+  if (generated === undefined) return undefined
+  if (typeof generated !== 'object' || generated === null || Array.isArray(generated)) fail(`${repository}: generated holds paths and commands`)
+  const { paths, commands } = generated
+  // The config schema gives an omitted `generated` as an object with neither: none declared.
+  if (paths === undefined && commands === undefined) return undefined
+  if (!Array.isArray(paths) || !paths.length || paths.length > SETUP_LIMITS.generatedPaths) fail(`${repository}: generated.paths holds 1 to ${SETUP_LIMITS.generatedPaths} paths`)
+  for (const [i, pattern] of paths.entries()) {
+    const problem = patternProblem(pattern)
+    if (problem) fail(`${repository}: generated path ${i + 1} (${String(pattern)}) ${problem}`)
+  }
+  if (new Set(paths).size !== paths.length) fail(`${repository}: generated.paths names a path twice`)
+  if (!Array.isArray(commands) || !commands.length || commands.length > SETUP_LIMITS.commands) fail(`${repository}: generated.commands holds 1 to ${SETUP_LIMITS.commands} commands`)
+  for (const [i, line] of commands.entries()) {
+    const problem = lineProblem(line)
+    if (problem) fail(`${repository}: generated command ${i + 1} ${problem}`)
+  }
+  return { paths: [...paths], lines: [...commands], commands: commands.map((line) => line.split(' ')) }
 }
 
 /** The run a setup is for: the agent run that needs the worktree, and who and what it is. */

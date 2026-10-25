@@ -44,6 +44,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandStep, type WorkChange } from '@tsuuanmi/system-workers-core'
+import type { Regeneration } from './regenerate.ts'
 
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -116,6 +117,30 @@ export class WorktreeError extends Error {
 
 /** What a failed git said, as one line: its stderr without hints, else `fallback`. */
 const said = (stderr: string, fallback: string): string => stderr.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('hint:')).join(' ') || fallback
+
+/** Paths as a reason names them: the first ten, and how many more. */
+const named = (paths: readonly string[]): string => `${paths.slice(0, 10).join(', ')}${paths.length > 10 ? ` and ${paths.length - 10} more` : ''}`
+
+/** NUL-separated paths as git gives them with `-z`. */
+const zPaths = (text: string): string[] => text.split('\0').filter(Boolean)
+
+/** What a file is, as far as a change to it shows (never followed through a link): `gone` when it is not there. */
+function stamp(path: string): string {
+  try {
+    const s = lstatSync(path, { bigint: true })
+    return `${s.mode}:${s.size}:${s.ino}:${s.mtimeNs}:${s.ctimeNs}`
+  } catch {
+    return 'gone'
+  }
+}
+
+/**
+ * What a worktree's `.git` control file is: its {@link stamp} and the directory it points to. git
+ * reports it neither as changed nor as ignored, so a regeneration checks it on its own.
+ */
+function controlFile(path: string): string {
+  return `${stamp(join(path, '.git'))}|${pointer(path) ?? 'none'}`
+}
 
 /** The error of a git run in `dir` that failed: its subcommand, and why. */
 const failed = (dir: string, args: string[], why: string): WorktreeError => new WorktreeError(`git ${args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? ''} in ${dir}: ${why.slice(0, 300)}`)
@@ -442,8 +467,16 @@ export class Worktrees {
   private readonly queues = new Map<string, Promise<unknown>>()
   private version: [number, number] | undefined
 
-  /** `root` is where worktrees go: `<root>/<repository key>/<runId>`. */
-  constructor(private readonly ctx: Pick<Context, 'store' | 'artifacts' | 'logger'>, private readonly root: string) {}
+  /**
+   * `root` is where worktrees go: `<root>/<repository key>/<runId>`. `regeneration` names, for a
+   * repository (real path) and a worktree's stored setup hash, the files a landing may regenerate on a
+   * conflict and how (./regenerate.ts, T166); none, and every conflict refuses the merge.
+   */
+  constructor(
+    private readonly ctx: Pick<Context, 'store' | 'artifacts' | 'logger'>,
+    private readonly root: string,
+    private readonly regeneration?: (repository: string, setupHash: string | null) => Regeneration | undefined,
+  ) {}
 
   /**
    * Whether `workspace` can hold a worktree per run: the top level of a git working tree with a
@@ -1254,12 +1287,207 @@ export class Worktrees {
       }
       const after = (await git(repository, ['rev-parse', 'HEAD'])).trim()
       const left = (await git(repository, ['status', '--porcelain', '--untracked-files=no'])).trim()
-      const asWas = after === step.base.sha && !left ? 'the merge was aborted, and the repository is as it was' : `the merge was aborted, and ${repository} is not as it was (HEAD ${after}${left ? ', with changes' : ''}): look at it`
-      return { outcome: 'refused', cause: 'conflict', reason: `${row.branch} conflicts with ${base.branch} at ${base.sha}${conflicts.length ? ` in ${conflicts.slice(0, 10).join(', ')}${conflicts.length > 10 ? ` and ${conflicts.length - 10} more` : ''}` : ''}: ${asWas}` }
+      const restored = after === step.base.sha && !left
+      const asWas = restored ? 'the merge was aborted, and the repository is as it was' : `the merge was aborted, and ${repository} is not as it was (HEAD ${after}${left ? ', with changes' : ''}): look at it`
+      const conflict = `${row.branch} conflicts with ${base.branch} at ${base.sha}${conflicts.length ? ` in ${named(conflicts)}` : ''}`
+      // Conflicts only in files the repository declares generated: made again by its own commands, in the run's worktree (T166).
+      const regeneration = this.regeneration?.(repository, (row as WorktreeRow & { setup_hash?: string | null }).setup_hash ?? null)
+      if (restored && regeneration && conflicts.length) {
+        const other = conflicts.filter((path) => !regeneration.generated(path))
+        if (!other.length) return this.regenerate(row, step, regeneration, conflict)
+        return { outcome: 'refused', cause: 'conflict', reason: `${conflict}, of which ${named(other)} ${other.length === 1 ? 'is' : 'are'} not declared generated: ${asWas}` }
+      }
+      return { outcome: 'refused', cause: 'conflict', reason: `${conflict}: ${asWas}` }
     }
     const commit = (await git(repository, ['rev-parse', 'HEAD'])).trim()
     if (!(await this.contains(repository, commit, step.head))) return { outcome: 'refused', cause: 'failed', reason: `${base.branch} is at ${commit} after the merge, which does not hold ${step.head}; look at ${repository}` }
     return { outcome: 'merged', repository, branch: row.branch, head: step.head, base: step.base, commit, already: false }
+  }
+
+  /**
+   * The merge of `step`, whose only conflicts in the repository are in files it declares generated
+   * (T166), made in the run's worktree instead, where the setup installed what the repository's
+   * commands need; the repository was put back as it was before this is tried. In the worktree,
+   * intact, free of agent runs (INV-15), clean, on its branch at the approved head: detached at the
+   * approved base, the branch merged without a commit, each conflicted file (each one generated, or
+   * refused) taken from either side, then the commands run (./regenerate.ts). Only when they exit 0
+   * and change no file but generated ones (nor any file git ignores, nor the worktree's .git file) is the merge committed, as one merge commit of the base and
+   * the head by the system with the engine's message; then the commands run again on it and must
+   * change nothing (the same tree on a repeat). The base branch, still at the approved base and clean,
+   * is then fast-forwarded to that commit, so it gets exactly one merge commit, as without a conflict.
+   * The worktree is put back on its branch in every case (its work is committed there, so nothing of
+   * the run is lost); a file a refused command made outside the generated ones stays there, named.
+   * A worktree that cannot be put back refuses the landing, the base not moved.
+   * Anything else refuses, the repository as it was (INV-2). A restart that finds the worktree off its
+   * branch puts it back first, only when that is this landing's own merge and forcing it back loses
+   * nothing uncommitted ({@link unrecoverable}); else it refuses, the worktree left as it is. The base
+   * not yet moved, the merge is made again.
+   */
+  private async regenerate(row: WorktreeRow, step: Extract<LandStep, { step: 'merge' }>, regeneration: Regeneration, conflict: string): Promise<Landed> {
+    const refuse = (why: string): Landed => ({ outcome: 'refused', cause: 'conflict', reason: `${conflict}, only in files the repository declares generated, and they were not regenerated: ${why}; the repository is as it was` })
+    if (row.removed_at !== null || !existsSync(row.path)) return refuse(`the worktree ${row.path} of run ${row.workflow_run_id}, where they are made, was removed`)
+    if (!this.ctx.store.db.prepare(`SELECT 1 FROM agent_worktrees w WHERE repository = ? AND workflow_run_id = ? AND ${FREE}`).get(row.repository, row.workflow_run_id, null)) {
+      return refuse(`an agent run of workflow run ${row.workflow_run_id} is unfinished or not known to be gone, so it may still write ${row.path} (INV-15)`)
+    }
+    if (pointer(row.path) !== row.gitdir) return refuse(`the .git file of ${row.path} no longer points to the worktree's own directory ${row.gitdir}`)
+    const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
+    const onBranch = async (): Promise<boolean> => (await inside(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim() === `refs/heads/${row.branch}`
+    if (!(await onBranch())) {
+      // Put back (a forced checkout) only from this landing's own merge, and only when that loses nothing uncommitted.
+      const unsafe = await this.unrecoverable(row, step, regeneration, inside).catch((error: unknown) => `its state could not be read: ${(error as Error).message}`)
+      if (unsafe) return refuse(`${row.path} is not on ${row.branch}, and it is left as it is: ${unsafe}`)
+      await this.backOnBranch(row, inside).catch(() => undefined)
+    }
+    if (!(await onBranch())) return refuse(`${row.path} is not on ${row.branch}`)
+    const at = (await inside(['rev-parse', 'HEAD'])).trim()
+    if (at !== step.head) return refuse(`${row.path} is at ${at}, not at ${step.head} as approved`)
+    const pending = (await inside(['status', '--porcelain', '--untracked-files=all'])).trim()
+    if (pending) return refuse(`${row.path} holds uncommitted changes (${pending.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')})`)
+    let made: { commit: string; files: string[]; autonomy: string[] } | string
+    try {
+      made = await this.mergeIn(row, step, regeneration, inside)
+    } catch (error) {
+      made = (error as Error).message
+    }
+    // A worktree that cannot be put back (its .git file changed, say) refuses the landing: nothing is merged from it.
+    const back = await this.backOnBranch(row, inside).then(() => undefined, (error: unknown) => (error as Error).message)
+    if (back !== undefined) {
+      this.ctx.logger.warn(`agent Workers: the worktree ${row.path} could not be put back on ${row.branch} after its landing's regeneration: ${back}`)
+      return refuse(`${typeof made === 'string' ? `${made}; and ` : ''}the worktree ${row.path} could not be put back on ${row.branch} after the regeneration: ${back}`)
+    }
+    if (typeof made === 'string') return refuse(made)
+    // The base is checked again (the operator may have moved it), then moved only forward, to exactly that commit.
+    const base = await this.baseOf(row.repository)
+    if ('problem' in base) return { outcome: 'refused', cause: 'base-moved', reason: base.problem }
+    if (base.branch !== step.base.branch || base.sha !== step.base.sha) return { outcome: 'refused', cause: 'base-moved', reason: `${row.repository} has ${base.branch} at ${base.sha} now, not ${step.base.branch} at ${step.base.sha} as approved` }
+    const dirty = (await git(row.repository, ['status', '--porcelain', '--untracked-files=no'])).trim()
+    if (dirty) return { outcome: 'refused', cause: 'dirty', reason: `the working tree of ${row.repository} has uncommitted changes (${dirty.split('\n').slice(0, 5).map((l) => l.slice(3)).join(', ')}): commit or stash them, and nothing of yours is touched` }
+    try {
+      await git(row.repository, ['merge', '--ff-only', '--quiet', made.commit])
+    } catch (error) {
+      return { outcome: 'refused', cause: 'failed', reason: `${base.branch} could not be moved to the merge commit ${made.commit}, made with the generated files regenerated: ${(error as Error).message}` }
+    }
+    const commit = (await git(row.repository, ['rev-parse', 'HEAD'])).trim()
+    if (commit !== made.commit) return { outcome: 'refused', cause: 'failed', reason: `${base.branch} is at ${commit} after the merge, not at the merge commit ${made.commit}; look at ${row.repository}` }
+    this.ctx.logger.info(`agent Workers: ${row.branch} is merged into ${base.branch} as ${commit}, its conflicts only in generated files, regenerated (${named(made.files)})`)
+    return { outcome: 'merged', repository: row.repository, branch: row.branch, head: step.head, base: step.base, commit, already: false, regenerated: { files: made.files, commands: [...regeneration.lines], autonomy: made.autonomy } }
+  }
+
+  /** {@link regenerate}'s merge in the worktree: the merge commit, the files regenerated, and the policy's decisions; or why not. */
+  private async mergeIn(row: WorktreeRow, step: Extract<LandStep, { step: 'merge' }>, regeneration: Regeneration, inside: (args: string[]) => Promise<string>): Promise<{ commit: string; files: string[]; autonomy: string[] } | string> {
+    await inside(['checkout', '--quiet', '--detach', step.base.sha])
+    // Never committed by git itself: only once the generated files are made.
+    await inside(['merge', '--no-ff', '--no-commit', '--quiet', `refs/heads/${row.branch}`]).catch(() => undefined)
+    if (!(await inside(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).then(() => true, () => false))) return `git did not start the merge of ${row.branch} into ${step.base.sha} in ${row.path}`
+    const conflicts = zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U']))
+    const other = conflicts.filter((path) => !regeneration.generated(path))
+    if (other.length) return `in the worktree the merge also conflicts in ${named(other)}`
+    for (const path of conflicts) {
+      // Either side will do: the commands make the file again from the merged sources. A side that deleted it has none to take.
+      const taken = await inside(['checkout', '--theirs', '--', path]).then(() => true, () => inside(['checkout', '--ours', '--', path]).then(() => true, () => false))
+      if (!taken) return `neither side of ${path} could be taken`
+      await inside(['add', '--', path])
+    }
+    if (zPaths(await inside(['diff', '--name-only', '-z', '--diff-filter=U'])).length) return 'conflicts were left after a side of each was taken'
+    const index = (await inside(['write-tree'])).trim()
+    // The files git ignores, as they are before the commands: a command must not change them either.
+    const ignored = await this.ignoredFiles(row)
+    // The worktree's .git file, which git lists neither as changed nor as ignored: a command must not change it either.
+    const control = controlFile(row.path)
+    const ran = await regeneration.run(row.path)
+    if (!ran.ok) return ran.reason
+    if (controlFile(row.path) !== control) return `the commands (${regeneration.lines.join('; ')}) changed ${join(row.path, '.git')}, the worktree's git control file, which is not among the generated files of the merge`
+    const touched = await this.touched(inside)
+    const stray = touched.filter((path) => !regeneration.generated(path))
+    if (stray.length) return `the commands (${regeneration.lines.join('; ')}) changed ${named(stray)}, which ${stray.length === 1 ? 'is' : 'are'} not declared generated`
+    const strayIgnored = await this.ignoredChanged(row, ignored)
+    if (strayIgnored.length) return `the commands (${regeneration.lines.join('; ')}) changed ${named(strayIgnored)}, which git ignores, so ${strayIgnored.length === 1 ? 'it is' : 'they are'} not among the generated files of the merge`
+    if ((await inside(['write-tree'])).trim() !== index) return 'the commands changed the merge\'s index'
+    if (touched.length) await inside(['add', '--all', '--', ...touched])
+    await inside(['commit', '--quiet', '--no-verify', '-m', step.message.trimEnd()])
+    const commit = (await inside(['rev-parse', 'HEAD'])).trim()
+    const parents = (await inside(['log', '-1', '--format=%P', commit])).trim()
+    if (parents !== `${step.base.sha} ${step.head}`) return `the commit ${commit} made in ${row.path} has the parents ${parents || 'none'}, not ${step.base.sha} and ${step.head}`
+    // The same tree on a repeat: the commands make the files from what the commit holds, nothing else.
+    const again = await regeneration.run(row.path)
+    if (!again.ok) return `on a repeat, ${again.reason}`
+    if (controlFile(row.path) !== control) return `a repeat of the commands changed ${join(row.path, '.git')}, the worktree's git control file, which is not among the generated files of the merge`
+    const changed = await this.touched(inside)
+    if (changed.length) return `a repeat of the commands changed ${named(changed)} again, so they do not build the same tree`
+    const changedIgnored = await this.ignoredChanged(row, ignored)
+    if (changedIgnored.length) return `a repeat of the commands changed ${named(changedIgnored)}, which git ignores, so ${changedIgnored.length === 1 ? 'it is' : 'they are'} not among the generated files of the merge`
+    return { commit, files: [...new Set([...conflicts, ...touched])].sort(), autonomy: [...new Set([...ran.autonomy, ...again.autonomy])] }
+  }
+
+  /** The files of a worktree that differ from its index, and the untracked ones it does not ignore. */
+  private async touched(inside: (args: string[]) => Promise<string>): Promise<string[]> {
+    const changed = zPaths(await inside(['diff', '--name-only', '-z', '--no-ext-diff', '--no-textconv']))
+    const untracked = zPaths(await inside(['ls-files', '--others', '--exclude-standard', '-z']))
+    return [...new Set([...changed, ...untracked])].sort()
+  }
+
+  /**
+   * The untracked files of a worktree that git ignores, each with a stamp of what it is (its type and
+   * mode, size, inode, and change and modification times, never followed through a link): read as git
+   * lists them, never held whole as one output, since a worktree's ignored files (its dependencies) are many.
+   */
+  private async ignoredFiles(row: WorktreeRow): Promise<Map<string, string>> {
+    const files = new Map<string, string>()
+    await gitRead(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z'], fields((path) => {
+      if (path) files.set(path, stamp(join(row.path, path)))
+      return false
+    }))
+    return files
+  }
+
+  /** The ignored files of a worktree made, removed, or changed since `before` ({@link ignoredFiles}), sorted. */
+  private async ignoredChanged(row: WorktreeRow, before: ReadonlyMap<string, string>): Promise<string[]> {
+    const now = await this.ignoredFiles(row)
+    const changed = new Set<string>()
+    for (const [path, was] of before) if (now.get(path) !== was) changed.add(path)
+    for (const path of now.keys()) if (!before.has(path)) changed.add(path)
+    return [...changed].sort()
+  }
+
+  /**
+   * Why a worktree off its branch is not left by {@link regenerate}'s own merge, or would lose
+   * uncommitted work when forced back on its branch; undefined when putting it back is safe. Its own
+   * merge leaves it detached at the approved base (the merge maybe begun, of the approved head), or at
+   * the merge commit of the two the system made; and only the generated files and the files the merge
+   * took whole from the head may differ from that commit, nothing else, untracked included. Anything
+   * else (another branch, another commit, a change of a source file) is someone's, and kept.
+   */
+  private async unrecoverable(row: WorktreeRow, step: Extract<LandStep, { step: 'merge' }>, regeneration: Regeneration, inside: (args: string[]) => Promise<string>): Promise<string | undefined> {
+    if (pointer(row.path) !== row.gitdir) return `its .git file no longer points to the worktree's own directory ${row.gitdir}`
+    const ref = (await inside(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim()
+    if (ref) return `it has ${ref} checked out`
+    const head = (await inside(['rev-parse', 'HEAD'])).trim()
+    const merging = (await inside(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).catch(() => '')).trim()
+    const ours = async (): Promise<boolean> => {
+      if (head === step.base.sha) return !merging || merging === step.head
+      if (merging) return false
+      const [parents, author] = (await inside(['log', '-1', '--format=%P%n%an <%ae>', head])).split('\n')
+      return parents === `${step.base.sha} ${step.head}` && author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>`
+    }
+    if (!(await ours())) return `it is detached at ${head}${merging ? `, merging ${merging}` : ''}, which is not this landing's merge of ${step.head} into ${step.base.sha}`
+    const own = (paths: string[]): string[] => paths.filter((path) => !regeneration.generated(path))
+    const unstaged = own(zPaths(await inside(['diff', '--name-only', '-z', '--no-ext-diff', '--no-textconv'])))
+    const untracked = own(zPaths(await inside(['ls-files', '--others', '--exclude-standard', '-z'])))
+    let staged = own(zPaths(await inside(['diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-textconv', 'HEAD'])))
+    if (staged.length && merging) {
+      // A file the merge took whole from the head is the head's, and is there again on the branch.
+      const fromHead = new Set(own(zPaths(await inside(['diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-textconv', step.head]))))
+      staged = staged.filter((path) => fromHead.has(path))
+    }
+    const lost = [...new Set([...unstaged, ...untracked, ...staged])].sort()
+    return lost.length ? `it holds uncommitted changes outside the generated files (${named(lost)}), which a checkout of ${row.branch} would lose` : undefined
+  }
+
+  /** Put a worktree back on its branch after a regeneration: any merge in it aborted, its tracked files the branch's (its work is committed there). */
+  private async backOnBranch(row: WorktreeRow, inside: (args: string[]) => Promise<string>): Promise<void> {
+    if (pointer(row.path) !== row.gitdir) throw new WorktreeError(`the .git file of ${row.path} no longer points to the worktree's own directory ${row.gitdir}`)
+    if (await inside(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).then(() => true, () => false)) await inside(['merge', '--abort']).catch(() => undefined)
+    await inside(['checkout', '--quiet', '--force', row.branch, '--'])
   }
 
   /** The repository's checked-out branch and its head: where a landing merges into. */

@@ -312,7 +312,14 @@ worktreeSetup:
 - **Checked at load:** a setup for a repository no `worktreePerRun` Worker works in, two for one
   repository, a command a policy could not list (empty word, shell metacharacter, over 200
   characters), more than 16 commands, or a view with a relative path, a name that is not plain, or
-  a path that climbs is refused (`config_error`).
+  a path that climbs is refused (`config_error`). So is a `generated` declaration with no path or
+  more than 32, a path that is absolute, climbs, holds a glob character but a `*` within a segment,
+  or starts at `.git`, `.system`, or `*`, a path named twice, or 0 or more than 16 commands, or a
+  command a policy could not list.
+- **Generated files** (`generated: { paths, commands }`, optional, T166): the files the repository
+  generates and the commands that make them, which a landing whose merge conflicts only in them
+  runs in the run's worktree, in this confinement and views, instead of refusing
+  ([landing a worktree](#landing-a-worktree)). Like the checks, not part of the setup's hash.
 
 What the setup writes stays in the worktree. Files the repository ignores (`node_modules/`) are not
 in the run's subject, and go with the worktree at its retention. A worktree carried from an earlier
@@ -381,6 +388,37 @@ at a time per repository, as every worktree change:
   of the branch, the system its author, hooks off as for every git call. A base that already holds
   the head is found merged (a restart). A conflict is aborted (`git merge --abort`) and the
   repository checked to be as it was. Nothing is forced, reset, deleted, or pushed.
+- **A conflict only in generated files** (T166): when the repository's setup declares generated
+  files (`worktreeSetup[].generated`: path patterns, a `*` within one segment, and the commands that
+  make them) and every conflicted path is one of them, the merge, aborted in the repository as
+  above, is made again in the run's worktree, where the setup installed what the commands need:
+  only while it is intact, no agent run of its workflow run is unfinished or not known to be gone
+  (INV-15), and it is clean, on its branch, at the approved head. Detached at the approved base, the
+  branch is merged with `--no-commit`; a conflict outside the declared paths there refuses; each
+  conflicted file is taken from either side (the run's, else the base's) and staged. The commands
+  then run in order, each judged by the autonomy policy as a `command` with its exact argv and run
+  only when the policy allows it unasked, in the setup's confinement (the host read-only but the
+  worktree and the setup's private views, no network) within the setup's deadline, and only in a
+  worktree its setup prepared under the definition loaded now. They must exit 0, change no file
+  but declared ones (git's diff of the files against the index, and the untracked files git does
+  not ignore), and leave the index as it was; the changed files are staged and the merge committed
+  by the system with the engine's message, its parents checked to be the base and the head. The
+  commands then run again on that commit and must change nothing (the same tree on a repeat). The
+  base, checked again to be the approved branch at the approved commit with clean tracked files, is
+  fast-forwarded (`git merge --ff-only`) to that commit: one merge commit, as without a conflict.
+  The answer is `merged` with `regenerated` (the files, the commands, and the autonomy decisions
+  they ran on), and the engine's merge decision names them (INV-13). The worktree is put back on
+  its branch in every case (`git merge --abort`, then `git checkout --force <branch>`: its work is
+  committed there); a file a refused command made outside the declared paths stays there, untracked,
+  named in the refusal. A conflict elsewhere, a command not allowed, failing, or changing another
+  file (a file git ignores included: the ignored files are listed with their size, inode, and
+  times before the commands, and any made, removed, or changed refuses), a repeat that changes
+  anything, or a base that moved refuses as a conflict does, the repository as it was (INV-2). A
+  restart that finds the worktree off its branch puts it back first only when it is this landing's
+  own merge (detached at the approved base, merging the approved head or not yet, or at the
+  system's merge commit of the two) and nothing outside the declared paths is uncommitted there but
+  files the merge took whole from the head; anything else refuses, the worktree left as it is. The
+  base not yet moved, the merge is made again.
 
 So the repository's main working tree is written only by a merge the operator approved, or the
 policy allowed, at the exact SHAs it was asked on. The worktree itself stays until the retention

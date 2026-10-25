@@ -435,6 +435,21 @@ The **`agents` Worker source**: agent runtimes as Workers
     aborted (`git merge --abort`), its files named, and the repository checked to be as it was
     (`conflict`); a merge git refuses before starting changes nothing (`failed`). Never a force, a
     reset, a branch deletion, or a push.
+  - a conflict only in generated files (`worktreeSetup[].generated`, [`src/regenerate.ts`](src/regenerate.ts),
+    T166, [runbook](../../../docs/operations/runbooks.md#regenerate-generated-files-on-a-landing)):
+    a repository's setup may declare `generated: { paths, commands }` (1 to 32 repository-relative
+    paths, a `*` matching within one segment; 1 to 16 command lines as above; outside the setup's
+    hash). When every conflicted file is one of them, the merge, aborted in the repository, is made
+    again in the run's worktree (intact, free, clean, on its branch at the head): detached at the
+    base, `git merge --no-ff --no-commit`, each conflicted file taken from either side, then the
+    commands run in order, each only when the policy lets its argv run unasked, in the setup's
+    confinement and views (`confineIn`), within the setup's deadline, in a worktree set up under
+    the setup loaded now. They must exit 0, change only declared files, and leave the index; the
+    merge is committed (parents the base and the head), the commands run again and must change
+    nothing, and the base, checked again, is fast-forwarded to that commit (`merged` with
+    `regenerated`: the files, the commands, their autonomy decisions). The worktree goes back on
+    its branch (`merge --abort`, `checkout --force`) in every case. Anything else is `conflict`
+    (or `base-moved`, `dirty`), the repository as it was.
 - **A run's change** (`changes` on the `workers` seam, T122,
   [design](../../../docs/design/agent-runtimes.md#a-runs-change-for-the-operators-review)): for each
   worktree it holds of a workflow run, read only, what it holds against the commit it forked from

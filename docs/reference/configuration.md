@@ -105,6 +105,9 @@
 | `worktreeSetup[].checks.lint` | string |  | The command of the lint check |
 | `worktreeSetup[].checkTimeoutSeconds` | number (1…3600) | `1800` | Each check's deadline |
 | `worktreeSetup[].checkScratch` | string[] | `[]` | Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner's cache (node_modules/.vite); the checks see the rest of the worktree read-only |
+| `worktreeSetup[].generated` | object | `{}` | The repository's generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run's worktree in this setup's confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166) |
+| `worktreeSetup[].generated.paths` | string[] | `[]` | 1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json |
+| `worktreeSetup[].generated.commands` | string[] | `[]` | 1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked |
 
 ## `approvals`
 

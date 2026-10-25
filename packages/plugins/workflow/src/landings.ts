@@ -245,10 +245,16 @@ export class TaskLandings {
   }
 
   private merged(row: TaskRow, landing: TaskLanding, landed: Extract<Landed, { outcome: 'merged' }> & { source: string }, inputs: ArtifactRef[], why: string): TaskLanding {
-    const decision = this.decide(row, 'merge', `Is board task ${row.task_id}'s accepted result merged into ${landing.base!.branch}?`, [...(landing.decisions ?? []).slice(-1), ...inputs], [
-      { option: 'merge', selected: true, reasons: [why, landing.approval ? `on ${landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'} (decision ${landing.approval})` : 'no merge was needed'] },
-      { option: 'refuse', selected: false, reasons: ['not refuse: the branch and the base were where the approval saw them, and the merge met no conflict'] },
-    ], { step: 'merge', source: landed.source, branch: landing.branch, head: landing.head, base: landing.base, commit: landed.commit, already: landed.already, ...(landing.requestId ? { requestId: landing.requestId } : {}) })
+    const regenerated = landed.regenerated
+    // A conflict only in files the repository declares generated, made again by its commands (T166): named, and their commands' autonomy decisions among the inputs (INV-13).
+    const remade = regenerated ? [
+      `it conflicted only in files the repository declares generated, regenerated: ${regenerated.files.join(', ')}`,
+      `by the repository's commands (${regenerated.commands.join('; ')}), which exited 0, changed no other file, and changed nothing on a repeat`,
+    ] : []
+    const decision = this.decide(row, 'merge', `Is board task ${row.task_id}'s accepted result merged into ${landing.base!.branch}?`, [...(landing.decisions ?? []).slice(-1), ...inputs, ...((regenerated?.autonomy ?? []) as ArtifactRef[])], [
+      { option: 'merge', selected: true, reasons: [why, ...remade, landing.approval ? `on ${landing.requestId ? `the operator's approval of request ${landing.requestId}` : 'the autonomy policy'} (decision ${landing.approval})` : 'no merge was needed'] },
+      { option: 'refuse', selected: false, reasons: [regenerated ? 'not refuse: the branch and the base were where the approval saw them, and the merge met conflicts only in generated files, which were regenerated' : 'not refuse: the branch and the base were where the approval saw them, and the merge met no conflict'] },
+    ], { step: 'merge', source: landed.source, branch: landing.branch, head: landing.head, base: landing.base, commit: landed.commit, already: landed.already, ...(regenerated ? { regenerated: { files: regenerated.files, commands: regenerated.commands } } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}) })
     const done: TaskLanding = { ...landing, state: 'merged', commit: landed.commit, decisions: [...(landing.decisions ?? []), decision], at: now() }
     delete done.reason
     this.e.ctx.logger.info(`workflow: board task ${row.task_id}'s accepted result (run ${row.run_id}) is in ${landing.base!.branch} of ${landing.repository} at ${landed.commit}; nothing is pushed`)

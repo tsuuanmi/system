@@ -56,6 +56,7 @@ import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MA
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Probes, refused } from './probes.ts'
+import { regenerationOf } from './regenerate.ts'
 import { ReportSchedule, type ReportTarget } from './reports.ts'
 import {
   type AgentAssignmentConfig, type AgentProviderConfig, type AgentRoleConfig, checkProviders, DEFAULT_LIMIT_READ_SECONDS, type DerivedWorker, deriveWorkers, kindsProblem, MAX_CONCURRENT_PER_ACCOUNT,
@@ -138,7 +139,7 @@ export interface AgentWorkerConfig {
 type WorkerSpec = AgentWorkerConfig & { derived?: DerivedWorker['derived'] }
 
 export type { AgentAssignmentConfig, AgentProviderConfig, AgentRoleConfig } from './roles.ts'
-export type { WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
+export type { WorktreeGeneratedConfig, WorktreeSetupConfig, WorktreeSetupView } from './setup.ts'
 export type { MigrationPlan } from './migrate.ts'
 
 /** What `system account migrate` gives (`mcp-agent-accounts` `account-migrate-output`). */
@@ -475,6 +476,11 @@ export class AgentWorkers extends Service {
       }).description('The command of each check a policy can require, run by a workflow run on its result\'s exact tree in this setup\'s confinement, only when the autonomy policy allows it unasked (T151)'),
       checkTimeoutSeconds: z.natural().min(1).max(3600).default(1800).description('Each check\'s deadline'),
       checkScratch: z.array(z.string()).description('Paths inside the worktree (relative, each ignored by git and holding nothing tracked) its checks see as fresh private writable directories, such as a test runner\'s cache (node_modules/.vite); the checks see the rest of the worktree read-only'),
+      // An omitted object comes back as {}: read as none declared when loaded (src/setup.ts).
+      generated: z.object({
+        paths: z.array(z.string()).description('1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json'),
+        commands: z.array(z.string()).description('1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked'),
+      }).description('The repository\'s generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run\'s worktree in this setup\'s confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166)'),
     })).default([]).description('Per repository, the setup of a workflow run\'s new worktree: commands the autonomy policy allows, run confined (the host read-only but the worktree, no network) before any agent run works in it; one not allowed, or that fails, fails the run at start (ADR-0058)'),
   }) as unknown as z<Config>
 
@@ -528,7 +534,8 @@ export class AgentWorkers extends Service {
     this.accounts = configured.accounts
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     const worktreeRoot = config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees')
-    this.worktrees = new Worktrees(ctx, worktreeRoot)
+    // A landing whose merge conflicts only in a repository's declared generated files makes them again, in the setup's confinement (T166).
+    this.worktrees = new Worktrees(ctx, worktreeRoot, (repository, setupHash) => regenerationOf(ctx, this.setups, join(worktreeRoot, '.setup'), repository, setupHash))
     // A setup is for the worktrees of a repository a worktreePerRun Worker works in; any other is refused at load.
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
