@@ -44,11 +44,12 @@ declare module '@deepseek-ai/cordis' {
 
 /**
  * What this code would refuse in a configuration, before a host starts on it (`system check`): each
- * configured template that fails its check, with why. Empty when the configuration is fine.
+ * configured template that fails its check, with why, and an option under `teams` it does not know
+ * (a misspelt `excludeWorkers` would leave nothing out of teams). Empty when the configuration is fine.
  */
 export function checkConfig(config: Config = {}): string[] {
   const schemas = new SchemaRegistry()
-  return Object.entries(config.templates ?? {}).flatMap(([name, nodes]) => {
+  const templates = Object.entries(config.templates ?? {}).flatMap(([name, nodes]) => {
     try {
       checkTemplate(name, nodes, schemas)
       return []
@@ -56,6 +57,8 @@ export function checkConfig(config: Config = {}): string[] {
       return [`template ${name}: ${(error as Error).message}`]
     }
   })
+  const teams = Object.keys(config.teams ?? {}).filter((key) => key !== 'excludeWorkers').map((key) => `teams.${key} is not an option; teams takes excludeWorkers`)
+  return [...templates, ...teams]
 }
 
 export class Workflow extends Service {
@@ -87,6 +90,9 @@ export class Workflow extends Service {
     maxWaitingRuns: z.natural().default(16).description('Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused'),
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
     allowSameFamily: z.boolean().default(false).description('When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035)'),
+    teams: z.object({
+      excludeWorkers: z.array(z.string().pattern(/^\S{1,200}$/)).max(64).default([]).description('Worker ids and account ids (as system roster lists them) that no team member joins on, the first member included: a Worker id leaves out that Worker, an account id every Worker naming it, each with every other Worker on its account. They still take every other node, and a member already in its conversation keeps it'),
+    }).description('Team membership (docs/design/teams.md#workers-left-out-of-teams)'),
     retainRunsDays: z.natural().default(30).description('Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session\'s latest run always stays'),
     maxLimitWaitHours: z.number().min(0).max(720).default(24).description('Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),

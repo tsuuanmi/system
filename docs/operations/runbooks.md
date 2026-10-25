@@ -781,6 +781,57 @@ Two team members then share one account, each in its own conversation. The team'
 two families, turn the row back on and sign the account in; `allowSameFamily` can stay on, since
 a second family is used whenever one is admitted.
 
+## Keep a Worker out of teams
+
+To keep a website account (or any Worker) out of brainstorm and review teams while it still
+takes single asks and research, for example while the site is unstable
+([Workers left out of teams](../design/teams.md#workers-left-out-of-teams)):
+
+1. `system roster` lists every Worker id and, for a Worker on an account, its account id. Pick
+   the Worker ids or account ids to leave out. A Worker id leaves out every other Worker of its
+   account too (a website account's other tiers, an agent account's other roles); an account id
+   leaves out every Worker on it; a model Worker is left out by its own id.
+2. Add them on the `workflow` row of `cordis.patch.yml` (a targeted patch replaces the row's whole
+   config: keep its other settings):
+
+   ```yaml
+   - id: workflow
+     config:
+       allowSameFamily: true
+       teams:
+         excludeWorkers: [gemini-main]
+   ```
+
+3. `system check` (it refuses an option under `teams` it does not know), then restart
+   (`system shutdown`, then `system start`).
+4. Check: start a `system brainstorm "…"`, then `system explain <runId>`: each member's `route`
+   line names another Worker, and the route decision gives each Worker left out the reason `left
+   out of teams by the operator's teams.excludeWorkers`.
+
+- **What the team runs on instead.** Members still differ by provider family, so another family
+  must be admitted for each member: with a website left out, another provider's website, an API
+  model Worker of the same family as the one left out (a model entry's `family`), or for a review
+  an agent Worker under the review-member profile. When none is admitted, the member fails as
+  `config_error`, and the message says that your exclusion leaves too few families; with
+  `allowSameFamily` on, the members share one family's accounts instead.
+- **Which one it gets** is routing's order among the Workers admitted: the lowest tier, then the
+  quota class in `quotaPreference` order (default `subscription-chat`, `local`, `agent-plan`,
+  `metered`), then the least busy, then `priority` ([routing](../design/routing.md#algorithm)). So
+  by default a review member's step goes to an agent Worker under the review-member profile
+  (`agent-plan`) before an API model Worker (`metered`). For reviews on the API model, set
+  `quotaPreference: [subscription-chat, local, metered, agent-plan]` on the `workers` row: it
+  reorders every step where a `metered` and an `agent-plan` Worker are both admitted, and the
+  agent Worker stays the next choice when the model is not admitted.
+- **An API model Worker as a member.** Its `maxTokens` (default 4096) bounds the whole answer,
+  thinking included. A review member writes its findings after reading the material, and on
+  2026-10-23 a Gemini API member's review answer stopped mid-reasoning at about 14,000 characters,
+  with no findings JSON, so its step was rejected. Raise that catalog entry's `maxTokens` (for
+  example to 16384) before teams use it ([API and local models](#api-and-local-models)); a longer
+  answer also takes longer, within `callTimeoutMs`.
+- **Teams in flight** keep the members they formed with: a member already in its conversation
+  stays on its Worker. Start the run again to form the team under the option.
+- **Undo:** remove the entries (or the `teams` key), `system check`, restart.
+
 ## A review member fails on a website
 
 A team member's step (`review:m<k>:propose`, `brainstorm:m<k>:propose`, a ballot, or a debate) fails on a website Worker, or
@@ -874,7 +925,9 @@ case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
 - **`team review needs N provider families, one per member; M is ready`**: fewer families are ready
   than the team has members (Workers ready or busy that prove the step): see
   [one provider family](#one-provider-family). With enough of them the message does not say this,
-  and the admission's own reasons are why.
+  and the admission's own reasons are why. `M is ready outside the operator's
+  teams.excludeWorkers, which leaves K more out of teams`: your own exclusion leaves too few
+  ([keep a Worker out of teams](#keep-a-worker-out-of-teams)).
 
 ## Pool a provider's accounts
 

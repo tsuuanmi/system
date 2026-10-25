@@ -219,7 +219,7 @@ second execution path (INV-1).
     exactly one plan; with several waiting, the call is refused and lists them,
     so a plan that arrived later is never approved unseen.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
-- **Teams (REQ-TEAM-1, 2, 4..7, [design](../../../docs/design/teams.md)).**
+- **Teams (REQ-TEAM-1, 2, 4..8, [design](../../../docs/design/teams.md)).**
   - A template node with `team: { kind: brainstorm | review, members (2-5,
     default 2), debateRounds (0-2, default 1) }` is unrolled at admission:
     - `id:m<k>:propose` per member, with no peer text (the independent-first
@@ -314,6 +314,15 @@ second execution path (INV-1).
     how many are ready; otherwise the admission's own reasons are why, and a
     member over every other family's input bound fails as `invalid_input`,
     naming the bound to change.
+  - No member, the first included, joins on a Worker the operator's
+    `teams.excludeWorkers` leaves out (a Worker id or an account id, each with
+    every other Worker on its account): each routes only to the Workers listed
+    then, less those, and its route decision gives each one left out the reason
+    `left out of teams by the operator's teams.excludeWorkers`.
+    `allowSameFamily` never lifts it. When it leaves fewer families ready than
+    the team has members, the member's message says so; the Workers still take
+    every other node, and a member already in its conversation keeps it
+    ([Workers left out of teams](../../../docs/design/teams.md#workers-left-out-of-teams)).
   - When the run finishes, its members' leftover mail is acknowledged.
   - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
     readable with `explain` and `result`; `continue` and `supersede` refuse it

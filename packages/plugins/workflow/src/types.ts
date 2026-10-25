@@ -410,6 +410,12 @@ export interface Config {
    */
   allowSameFamily?: boolean
   /**
+   * Team membership: `excludeWorkers` names Workers (by Worker id) and accounts (by account id)
+   * that no team member joins on, with every other Worker on their accounts; they stay available
+   * for every other node (docs/design/teams.md#workers-left-out-of-teams).
+   */
+  teams?: { excludeWorkers?: string[] }
+  /**
    * Hours a node refused only for assigned accounts' limits may wait for their reset, in all from
    * its first wait (default 24; 0 never waits); past it, it fails `quota_exhausted` (ADR-0052, INV-9).
    */
