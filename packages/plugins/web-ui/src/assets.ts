@@ -9,9 +9,11 @@ export const PAGE = `<!doctype html>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header><h1><a href="/ui/" id="home">system</a></h1><nav aria-label="Pages"><a href="/ui/" id="home-link">Home</a> <a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a> <a href="/ui/?view=help" id="help-link">Help</a></nav><span id="status" role="status"></span></header>
+<a class="skip" href="#main">Skip to content</a>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav aria-label="Pages"><a href="/ui/" id="home-link">Home</a> <a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=workers" id="workers-link">Workers</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a> <a href="/ui/?view=help" id="help-link">Help</a></nav><span id="status" aria-live="off"></span></header>
+<div id="stale" class="stale" role="status" hidden></div>
 <div id="outcome"></div>
-<main id="main"></main>
+<main id="main" tabindex="-1"></main>
 <script src="/ui/app.js"></script>
 </body>
 </html>
@@ -67,8 +69,21 @@ pre.diff { font-size: 12px; overflow-x: auto; border: 1px solid var(--line); bor
 pre.diff .add, .stat .add, .files .add { color: var(--ok); } pre.diff .del, .stat .del, .files .del { color: var(--bad); } pre.diff .hunk { color: var(--muted); } pre.diff.file { margin: 4px 0; } pre.report { white-space: pre-wrap; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-wrap: anywhere; } ul.files, ul.verdicts { list-style: none; padding: 0; margin: 4px 0; } ul.files li { margin: 2px 0; } ul.verdicts ul { margin: 4px 0 4px 16px; padding: 0; list-style: none; } .evidence h4 { margin: 12px 0 4px; } p.pending-checks { color: var(--wait); border-left: 3px solid var(--wait); padding-left: 8px; }
 button.why { padding: 0 6px; margin: 0 2px; font-size: 12px; line-height: 1.5; border-radius: 9px; color: var(--muted); font-weight: 400; vertical-align: baseline; } button.why[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
 .explain-note { font-size: 13px; font-weight: 400; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; display: inline; } .explain-note[hidden] { display: none; }
-.help-contents ul { padding-left: 18px; } ol.flow li { margin: 4px 0; } dl.glossary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; } dl.glossary dt { font-weight: 600; } dl.glossary dt:focus { outline: 2px solid var(--accent); outline-offset: 2px; } dl.glossary dd { margin: 0; }
-@media (max-width: 640px) { dl.glossary { grid-template-columns: 1fr; } dl.glossary dd { margin-bottom: 6px; } }
+.help-contents ul { padding-left: 18px; } ol.flow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 0; padding: 0; list-style: none; } ol.flow > li { margin: 0; } ol.flow > li:not(:last-child)::after { content: '→'; margin: 0 8px; color: var(--muted); } ol.flow > li > details[open] { max-width: 40ch; }
+dl.glossary { margin: 8px 0; } dl.glossary dt { margin-top: 2px; } dl.glossary dt:focus { outline: 2px solid var(--accent); outline-offset: 2px; } dl.glossary dt button.term { border: 0; padding: 2px 0; margin: 0; font-weight: 600; color: inherit; } dl.glossary dt button.term::before { content: '▸ '; color: var(--muted); } dl.glossary dt button.term[aria-expanded="true"]::before { content: '▾ '; } dl.glossary dd { margin: 0 0 6px 16px; } dl.glossary [hidden] { display: none; }
+/* Shared building blocks (T172): a status chip (word, colour, and symbol), a count, a relative time with its exact time on focus, a fold, and a copy button. */
+.chip { display: inline-block; border: 1px solid currentColor; border-radius: 10px; padding: 0 8px; font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap; vertical-align: baseline; } .chip .glyph { font-size: 10px; }
+.chip.ok { color: var(--ok); } .chip.warn { color: var(--wait); } .chip.bad { color: var(--bad); } .chip.info { color: var(--accent); } .chip.idle { color: var(--muted); }
+.glance .n, .qty .n { font-weight: 600; } time.rel { white-space: nowrap; } time.rel:focus::after { content: ' (' attr(data-exact) ')'; color: var(--muted); }
+details.fold { margin: 4px 0; } details.fold > summary { font-size: 13px; } details.fold[open] > summary { margin-bottom: 4px; } details.fold.inline { display: inline-block; margin: 0 0 0 6px; vertical-align: top; }
+button.copy { padding: 0 6px; margin: 0 0 0 6px; font-size: 12px; color: var(--muted); } code.copied { margin-left: 6px; }
+.stale { margin: 0; padding: 8px 24px; border-bottom: 1px solid var(--wait); color: var(--wait); font-weight: 600; } .stale[hidden] { display: none; }
+.loading { color: var(--muted); } .skip { position: absolute; left: -9999px; top: 8px; } .skip:focus { left: 8px; z-index: 1; background: var(--bg); padding: 4px 8px; }
+main p, main li, main dd, p.lead { max-width: 80ch; } ul.plain { list-style: none; padding-left: 0; } .status-line .chip { margin-right: 4px; }
+summary:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) { .loading { animation: pulse 1.2s ease-in-out infinite alternate; } }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 code.exact { display: block; overflow-wrap: anywhere; } .window { color: var(--muted); } .window.limited { color: var(--wait); font-weight: 600; } .window meter, li.capacity meter { width: 64px; height: 10px; margin-right: 8px; vertical-align: middle; } li.capacity .no-bar { display: inline-block; width: 64px; margin-right: 8px; } ul.capacities { list-style: none; padding: 0; margin: 6px 0; } li.capacity { margin: 2px 0; } section.account { margin: 20px 0; } section.account > h3 { margin-bottom: 4px; } section.account > h3 .muted { font-weight: 400; } .quota { margin: 4px 0 8px; } details.facts { margin-top: 6px; } details.facts dl { margin-top: 4px; } .panel.worker h4 { margin: 0 0 4px; } input.number { min-width: 0; width: 9em; } textarea.lines { min-height: 96px; } table.modes select { max-width: 100%; } details.advanced { margin: 8px 0; }
 @media (max-width: 640px) { header nav a { margin-right: 8px; } #status { flex-basis: 100%; margin-left: 0; font-size: 12px; } main { padding: 12px; } .card .actions button { width: 100%; } table:not(.queue):not(.modes) th:nth-child(n+4), table:not(.queue):not(.modes) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } .request dl { grid-template-columns: 1fr; } .request dt { margin-top: 4px; } }
 `
@@ -102,6 +117,37 @@ export const APP_JS = `'use strict'
     const value = await response.json().catch(() => ({}))
     if (!response.ok) throw Object.assign(new Error(value.error || response.statusText), { status: response.status })
     return value
+  }
+  // The shared building blocks (T172), one implementation each, used by every page.
+  // A status chip: a word, a colour, and a symbol of its own shape, so it is never told by colour alone.
+  const GLYPH = { ok: '●', warn: '▲', bad: '■', info: '◆', idle: '○' }
+  const chip = (word, tone) => el('span', { class: 'chip ' + (GLYPH[tone] ? tone : 'idle') }, el('span', { class: 'glyph', 'aria-hidden': 'true' }, GLYPH[tone] || GLYPH.idle), ' ', word)
+  // A number with its unit: "1 task", "3 tasks"; qtyView sets the number apart.
+  const unit = (n, one, many) => n === 1 ? one : (many || one + 's')
+  const qty = (n, one, many) => n + ' ' + unit(n, one, many)
+  const qtyView = (n, one, many) => el('span', { class: 'qty' }, el('span', { class: 'n' }, String(n)), ' ' + unit(n, one, many))
+  // A fold for an explanation or a technical fact: closed by default, never deleted.
+  const fold = (summary, ...body) => el('details', { class: 'fold' }, el('summary', {}, summary), el('div', { class: 'fold-body' }, body))
+  // A copy button for an id or a hash: the value is behind it, never the first thing in a row. Without a
+  // clipboard the value is shown beside it, selected, to copy by hand.
+  const copyId = (label, value) => {
+    const button = el('button', { type: 'button', class: 'copy', 'data-copy': value, title: value }, label)
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(value)
+        button.textContent = 'Copied'
+        setTimeout(() => { button.textContent = label }, 2000)
+      } catch {
+        if (button.nextElementSibling && button.nextElementSibling.classList.contains('copied')) return
+        const code = el('code', { class: 'copied' }, value)
+        button.after(code)
+        const range = document.createRange()
+        range.selectNodeContents(code)
+        const selection = window.getSelection()
+        if (selection) { selection.removeAllRanges(); selection.addRange(range) }
+      }
+    })
+    return button
   }
   // A line diff of two texts (longest common subsequence), as lines prefixed '+ ', '- ', or '  '. Bounded by the policy body (128 KiB).
   const lineDiff = (before, after) => {
@@ -139,7 +185,7 @@ export const APP_JS = `'use strict'
     : seconds % 3600 === 0 ? seconds / 3600 + (seconds === 3600 ? ' hour' : ' hours') : seconds + ' seconds'
   const changeView = (change) => el('div', { class: 'panel' },
     el('p', {}, el('strong', {}, change.policy.id + (change.previous ? ' version ' + change.previous.version + ' → ' + change.policy.version : ' (new, version ' + change.policy.version + ')')),
-      el('span', { class: 'muted' }, ' · ' + change.changeId + ' · request ' + change.requestId)),
+      copyId('Copy change ID', change.changeId), copyId('Copy request ID', change.requestId)),
     change.note ? el('p', {}, change.note) : null,
     // A change the queue proposed itself says so, and why: never the operator's own proposal (INV-6).
     change.origin ? el('p', {}, el('strong', {}, 'Proposed by the queue, not by you: '), 'you approved ', el('code', {}, change.origin.shape.command),
@@ -171,14 +217,14 @@ export const APP_JS = `'use strict'
   document.addEventListener('pointercancel', release, true)
   document.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') press() }, true)
   document.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') release() }, true)
-  // Every page opens with its title and, in one line, what it is for.
+  // Every page opens with its title and, in a few words, what it is for.
   const PAGES = {
-    home: ['Home', 'What waits for your verdict, what needs a look, how the Workers are doing, and the latest runs.'],
-    board: ['Board', 'Every project and its open tasks, and who works on them; pause, resume, or close a project.'],
-    workers: ['Workers', 'Every account and its Workers: what each is for, what it does now, how much quota is left, and until when one rests.'],
-    policy: ['Autonomy policy', 'Which actions run on their own, which ask you first, and the changes proposed to that.'],
-    run: ['Run', 'One run: what it answered, its steps in order, and what you can do with it.'],
-    help: ['How System works', 'Who does the work, how a task goes from idea to merged, what waits for you and why, and what to do when something is stuck.'],
+    home: ['Home', 'Your next actions and recent activity.'],
+    board: ['Board', 'Projects and tasks.'],
+    workers: ['Workers', 'Availability, quota, and current work.'],
+    policy: ['Autonomy policy', 'Control which actions need approval.'],
+    run: ['Run', 'Result and progress.'],
+    help: ['How System works', 'Find an answer or look up a term.'],
   }
   // The words a person meets on these pages, each in one plain sentence (T126): the Help page lists
   // them, and every place that shows one has a "?" that opens its sentence in place, by click, tap, or
@@ -199,23 +245,24 @@ export const APP_JS = `'use strict'
     attempt: ['attempt', 'An attempt is one try at a task or a step; one that fails can be tried again, up to its limit.'],
     review: ['review', 'A review is a finished task\\'s result waiting for you: you accept it, or send it back for another try.'],
     checks: ['checks', 'Checks are the tests and lint the policy wants passed; one nothing ran counts as passed if you accept.'],
-    landing: ['on its way in', 'An accepted result goes into the code in two moves: it is saved on its run\\'s own branch, then merged once you approve.'],
+    landing: ['merge progress', 'An accepted result goes into the code in two moves: it is saved on its run\\'s own branch, then merged once you approve.'],
     merge: ['merge', 'A merge brings an accepted change into the main line of the code; nothing merges without your yes.'],
     branch: ['branch', 'A branch is a separate line of changes in the code; each run works on its own, apart from yours.'],
     approval: ['approval request', 'An approval request is a question the system asks you before it does something it may not do alone.'],
-    'action-class': ['action class', 'An action class is the kind of thing a request is about, such as a merge, a deploy, or a command.'],
+    'action-class': ['action type', 'An action type is the kind of thing a request is about, such as a merge, a deploy, or a command.'],
     batch: ['batch', 'A batch is a group of related requests you can approve or deny together.'],
     policy: ['autonomy policy', 'The autonomy policy says which actions run on their own, which tell you after, which ask you first, and which never run.'],
-    mode: ['mode', 'A mode is what the policy does with an action: auto runs it, notify runs it then tells you, ask waits for you, forbid never runs it.'],
-    'always-ask': ['always asks', 'Some actions always ask you, whatever the policy says: anything that cannot be undone, spends money, or merges code.'],
+    mode: ['mode', 'A mode is what the policy does with an action: Automatic runs it, Notify runs it then tells you, Ask approval waits for you, Blocked never runs it.'],
+    'always-ask': ['always requires approval', 'Some actions always require your approval, whatever the policy says: anything that cannot be undone, spends money, or merges code.'],
     'policy-change': ['policy change', 'A policy change is a proposed new autonomy policy; it applies only once you approve it.'],
     quarantine: ['quarantined', 'A quarantined account is held back because its sign-in is not the one that was set up; it takes no work until that is checked.'],
     stalled: ['stalled', 'A stalled run showed no activity for longer than its limit; nothing is sent to it, and Stop run ends it.'],
     held: ['not known to be gone', 'A run not known to be gone may still be working somewhere; what it holds stays held until it is freed.'],
     derived: ['derived', 'A derived line is what the system could tell about a Worker when no one wrote what it is for.'],
-    team: ['team', 'A team is two or more Workers, each of another provider, that answer one step on their own and then vote; you can keep a Worker out of teams in the configuration.'],
-    carry: ['started from earlier work', 'When a task\\'s attempt fails after its code was already changed, the next attempt starts from that change instead of doing it again.'],
-    resend: ['sent again', 'When a website answers a team member\\'s question with its own error instead of an answer, the question is sent once more, in a new conversation; never twice.'],
+    team: ['team', 'A team is two or more Workers, each of another provider, that answer one step on their own and then vote; you can exclude a Worker from teams in the configuration.'],
+    carry: ['continued from earlier work', 'When a task\\'s attempt fails after its code was already changed, the next attempt starts from that change instead of doing it again.'],
+    resend: ['retried after a service error', 'When a website answers a team member\\'s question with its own error instead of an answer, the question is sent once more, in a new conversation; never twice.'],
+    stale: ['stale', 'Shown data is stale when the last refresh failed: the page keeps what it read before, says when it read it, and tries again every 5 seconds.'],
   }
   const openTerms = new Set()
   let explained = 0
@@ -242,55 +289,95 @@ export const APP_JS = `'use strict'
   const pageLink = (name, text) => el('a', { href: '/ui/?view=' + name, onclick: (e) => { e.preventDefault(); document.getElementById(name + '-link').click() } }, text)
   const homeLink = (text) => el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, text)
   const termLink = (key, text) => el('a', { href: '#term-' + key, onclick: (e) => { e.preventDefault(); focusTerm(key) } }, text || GLOSSARY[key][0])
+  // A link straight to a term opens its definition (a search that hides it is cleared) and focuses it.
   const focusTerm = (key) => {
     const target = document.getElementById('term-' + key)
     if (!target) return
+    const search = document.getElementById('glossary-search')
+    if (search && search.value) { search.value = ''; filterTerms('') }
+    openTerm(key, true)
     history.replaceState(null, '', '?view=help#term-' + key)
     target.scrollIntoView({ block: 'center' })
     target.focus({ preventScroll: true })
   }
+  const openTerm = (key, open) => {
+    const definition = document.getElementById('def-' + key)
+    const button = document.querySelector('#term-' + key + ' button.term')
+    if (!definition || !button) return
+    definition.hidden = !open
+    button.setAttribute('aria-expanded', String(open))
+  }
+  // The glossary's search: a term shows when its word or its sentence holds what is typed.
+  const filterTerms = (query) => {
+    const q = query.trim().toLowerCase()
+    let shown = 0
+    for (const [key, [word, sentence]] of Object.entries(GLOSSARY)) {
+      const term = document.getElementById('term-' + key)
+      if (!term) continue
+      const hit = !q || word.toLowerCase().includes(q) || sentence.toLowerCase().includes(q)
+      term.hidden = !hit
+      if (!hit) document.getElementById('def-' + key).hidden = true
+      else if (term.querySelector('button.term').getAttribute('aria-expanded') === 'true') document.getElementById('def-' + key).hidden = false
+      if (hit) shown++
+    }
+    const none = document.getElementById('glossary-none')
+    if (none) none.hidden = shown > 0
+  }
   function helpView() {
     const section = (id, title, ...body) => el('section', { class: 'panel help', id, 'aria-labelledby': id + '-title' }, el('h3', { id: id + '-title' }, title), body)
+    // Each answer is folded under its question or state: the section's navigation stays in sight (T171).
+    const item = (summary, ...body) => el('li', {}, fold(summary, body))
+    const search = el('input', { id: 'glossary-search', type: 'search', 'aria-label': 'Search terms', placeholder: 'Search terms', oninput: () => filterTerms(search.value) })
+    const term = (key, word, sentence) => {
+      const button = el('button', { type: 'button', class: 'term', 'aria-expanded': 'false', 'aria-controls': 'def-' + key }, word)
+      button.addEventListener('click', () => openTerm(key, button.getAttribute('aria-expanded') !== 'true'))
+      return [el('dt', { id: 'term-' + key, tabindex: '-1' }, button), el('dd', { id: 'def-' + key, hidden: '' }, sentence)]
+    }
     show(pageHead('help'),
       el('nav', { class: 'help-contents', 'aria-label': 'On this page' }, el('ul', {},
-        [['help-workers', 'Who does the work'], ['help-flow', 'How a task goes from idea to merged'], ['help-waits', 'What waits for you, and why'], ['help-policy', 'What runs without asking'], ['help-stuck', 'When something is stuck'], ['help-glossary', 'Words used here']]
+        [['help-workers', 'Workers'], ['help-flow', 'Task lifecycle'], ['help-waits', 'Your decisions'], ['help-policy', 'Autonomy'], ['help-stuck', 'Troubleshooting'], ['help-glossary', 'Glossary']]
           .map(([id, text]) => el('li', {}, el('a', { href: '#' + id, onclick: (e) => { e.preventDefault(); const t = document.getElementById(id); t.scrollIntoView({ block: 'start' }); t.querySelector('h3').setAttribute('tabindex', '-1'); t.querySelector('h3').focus({ preventScroll: true }) } }, text))))),
-      section('help-workers', 'Who does the work',
-        el('p', {}, 'The work is done by ', termLink('worker', 'Workers'), ': AI helpers, each one ', termLink('account', 'account'), ' of a tool set up for one ', termLink('role', 'role'), ', such as developing or reviewing. The Workers of one account share its ', termLink('quota', 'quota'), '.'),
-        el('p', {}, 'When an account has used its quota for the current ', termLink('window', 'window'), ' (5 hours, say), its Workers are ', termLink('resting', 'resting'), ': they take no work until the time shown, then come back by themselves. You do nothing.'),
-        el('p', {}, 'Some steps are done by a ', termLink('team', 'team'), ': Workers of different providers answer on their own, then vote. A Worker you keep out of teams still takes every other step; its card says ', el('em', {}, 'Kept out of teams by you'), '.'),
-        el('p', {}, 'See every account, its quota, and what each Worker does now on ', pageLink('workers', 'Workers'), '; Home shows each account\\'s quota in one line.')),
-      section('help-flow', 'How a task goes from idea to merged',
-        el('ol', { class: 'flow' },
-          el('li', {}, el('strong', {}, 'Proposed. '), 'The lead proposes a ', termLink('task', 'task'), ' in a ', termLink('project', 'project'), ' whose charter you approved.'),
-          el('li', {}, el('strong', {}, 'Ready. '), 'Once what it depends on is done and the ', termLink('policy', 'autonomy policy'), ' allows it, it is ready.'),
-          el('li', {}, el('strong', {}, 'Start. '), 'You press Start on its card on the ', pageLink('board', 'Board'), ', or the lead starts it. Its ', termLink('run', 'run'), ' begins.'),
-          el('li', {}, el('strong', {}, 'Working. '), 'Each ', termLink('step', 'step'), ' runs on a free Worker: for code, it changes the code on its own ', termLink('branch', 'branch'), ', another Worker reviews it, and a third runs the tests.'),
-          el('li', {}, el('strong', {}, 'Review. '), 'The result waits for you on ', homeLink('Home'), ': what changed, what the reviewer said, and what the ', termLink('checks', 'checks'), ' measured.'),
-          el('li', {}, el('strong', {}, 'You accept, '), 'or send it back for another ', termLink('attempt', 'attempt'), '.'),
-          el('li', {}, el('strong', {}, 'Merge request. '), 'An accepted change is saved on its branch, and the system asks you to ', termLink('merge', 'merge'), ' it.'),
-          el('li', {}, el('strong', {}, 'You approve, '), 'and it is merged into the main line of the code. Nothing is pushed anywhere.'))),
-      section('help-waits', 'What waits for you, and why',
-        el('p', {}, 'Home lists what waits for you, and the window\\'s title counts it: ', el('em', {}, '(3) system'), '.'),
-        el('ul', {},
-          el('li', {}, el('strong', {}, 'Requests. '), 'An ', termLink('approval', 'approval request'), ' asks your yes or no before something the policy does not let run alone. Each button says what it does. Unanswered by its time, a request counts as no.'),
-          el('li', {}, el('strong', {}, 'Reviews. '), 'A finished task waits for you to accept it or send it back. Unanswered by its time, the task waits for input.'),
-          el('li', {}, el('strong', {}, 'Runs that need a look. '), 'A run that waits for your vote or your approval of its plan, or a run outside the board that failed since you last marked Home as seen, says why and what you can do. A board task\\'s failed run is the board\\'s: it decides the next attempt.')),
+      section('help-workers', 'Workers',
+        el('p', {}, termLink('worker', 'Workers'), ' develop, review, and test tasks. Workers on one ', termLink('account', 'account'), ' share its ', termLink('quota', 'quota'), '.'),
+        el('p', {}, 'Quota resets automatically. ', termLink('resting', 'Resting'), ' Workers return at the shown time.'),
+        el('ul', { class: 'plain' },
+          item('Accounts and roles', 'Each Worker is one account of a tool set up for one ', termLink('role', 'role'), ', such as developing or reviewing. When an account has used its quota for the current ', termLink('window', 'window'), ' (5 hours, say), its Workers take no work until the time shown, then come back by themselves.'),
+          item('Teams and exclusions', 'Some steps are done by a ', termLink('team', 'team'), ': Workers of different providers answer independently, then vote. A Worker excluded from teams still takes every other step; its card says ', el('em', {}, 'Excluded from teams'), '.')),
+        el('p', {}, 'Every account, its quota, and what each Worker does now: ', pageLink('workers', 'Workers'), '.')),
+      section('help-flow', 'Task lifecycle',
+        el('ol', { class: 'flow', 'aria-label': 'Proposed, Ready, Working, Review, Accepted, Merged' },
+          item('Proposed', 'The lead proposes a ', termLink('task', 'task'), ' in a ', termLink('project', 'project'), ' whose charter you approved. A project shows on the Board once the lead proposes its charter, and starts once you approve it on Home.'),
+          item('Ready', 'Once what it depends on is done and the ', termLink('policy', 'autonomy policy'), ' allows it, it is ready. Start: you press Start on its card on the ', pageLink('board', 'Board'), ', or the lead starts it, and its ', termLink('run', 'run'), ' begins.'),
+          item('Working', 'Each ', termLink('step', 'step'), ' runs on a free Worker: for code, it changes the code on its own ', termLink('branch', 'branch'), ', another Worker reviews it, and a third runs the tests.'),
+          item('Review', 'The result waits for you on ', homeLink('Home'), ': what changed, what the reviewer said, and what the ', termLink('checks', 'checks'), ' measured. You accept it, or send it back for another ', termLink('attempt', 'attempt'), '.'),
+          item('Accepted', 'An accepted change is saved on its branch, and the system asks you to approve its ', termLink('merge', 'merge'), '.'),
+          item('Merged', 'Once you approve, it is merged into the main line of the code. Nothing is pushed anywhere.'))),
+      section('help-waits', 'Your decisions',
+        el('p', {}, 'Home lists what needs your attention, and the window\\'s title counts it: ', el('em', {}, '(3) system'), '.'),
+        el('ul', { class: 'plain' },
+          item('Approvals: allow or deny an action', 'An ', termLink('approval', 'approval request'), ' asks your yes or no before something the policy does not let run alone; a run, the board, or a Worker asks it. Each button says what it does. No response by its time: denied.'),
+          item('Reviews: accept or send back work', 'When a Worker finishes a task, its result waits for you to accept it or send it back. No response by its time: the task waits for input.'),
+          item('Runs: approve a plan, break a tie, or inspect a failure', 'A run that waits for your vote or your approval of its plan, or a run outside the board that failed since you last marked Home as seen, says why and what you can do. A board task\\'s failed run is the board\\'s: it decides the next attempt. A tied vote with no response ends inconclusive.')),
         el('p', {}, '“Since you last looked” on Home tells what happened while you were away.')),
-      section('help-policy', 'What runs without asking',
-        el('p', {}, 'The ', termLink('policy', 'autonomy policy'), ' gives each kind of action a ', termLink('mode', 'mode'), ': ', el('strong', {}, 'auto'), ' runs on its own, ', el('strong', {}, 'notify'), ' runs then tells you, ', el('strong', {}, 'ask'), ' waits for you, ', el('strong', {}, 'forbid'), ' never runs.'),
-        el('p', {}, 'Some actions ', termLink('always-ask', 'always ask'), ' you, whatever the policy says: a merge, a deploy, sending anything out, deleting data, spending, and changing the policy itself.'),
-        el('p', {}, 'Change it on the ', pageLink('policy', 'Autonomy policy'), ' page: a change is a request too, and applies only once you approve it.')),
-      section('help-stuck', 'When something is stuck',
-        el('ul', {},
-          el('li', {}, el('strong', {}, 'A run failed. '), 'Open it from Home: it says why. ', el('em', {}, 'Continue run'), ' tries the failed step again; the finished steps are kept.'),
-          el('li', {}, el('strong', {}, 'A task is tried again. '), 'Its next run says under ', el('em', {}, 'What happened'), ' whether it ', termLink('carry', 'started from the earlier work'), ' or started over, and whether a step was ', termLink('resend', 'sent again'), '.'),
-          el('li', {}, el('strong', {}, 'A run seems to do nothing. '), 'Its page says its last event and how long ago. A ', termLink('stalled', 'stalled'), ' run is flagged; ', el('em', {}, 'Stop run'), ' ends it.'),
-          el('li', {}, el('strong', {}, 'Nothing starts. '), 'On ', pageLink('workers', 'Workers'), ', see whether a Worker is free, or resting until when. On the ', pageLink('board', 'Board'), ', a ready task waits for Start.'),
-          el('li', {}, el('strong', {}, 'An account is quarantined or signed out. '), 'Its Workers take no work: ask whoever set up the system to sign it in again or check it (', termLink('quarantine', 'quarantined'), ').'),
-          el('li', {}, el('strong', {}, 'A task waits for input. '), 'It used its attempts, or asked a question: its card on the Board says which.'))),
-      el('section', { class: 'panel help', id: 'help-glossary', 'aria-labelledby': 'help-glossary-title' }, el('h3', { id: 'help-glossary-title' }, 'Words used here'),
-        el('dl', { class: 'glossary' }, Object.entries(GLOSSARY).sort((a, b) => a[1][0].localeCompare(b[1][0])).flatMap(([key, [word, sentence]]) => [el('dt', { id: 'term-' + key, tabindex: '-1' }, word), el('dd', {}, sentence)]))))
+      section('help-policy', 'Autonomy',
+        table(['Mode', 'What it does'], [['Automatic', 'Runs on its own'], ['Notify', 'Runs, then tells you'], ['Ask approval', 'Waits for your approval'], ['Blocked', 'Never runs']].map(([m, what]) => el('tr', {}, el('td', {}, el('strong', {}, m)), el('td', {}, what))), 'modes'),
+        el('p', {}, 'Each action type has a ', termLink('mode', 'mode'), ' in the ', termLink('policy', 'autonomy policy'), '. Some actions ', termLink('always-ask', 'always require approval'), '. ', pageLink('policy', 'Open Policy')),
+        el('ul', { class: 'plain' },
+          item('Which actions always require approval', 'A merge, a deploy, sending anything out, deleting data, spending, and changing the policy itself, whatever the policy says.'),
+          item('Changing the policy', 'A change is a request too: it applies only once you approve it.'))),
+      section('help-stuck', 'Troubleshooting',
+        el('ul', { class: 'plain' },
+          item('Run failed', 'Open it from Home: it says why. ', el('em', {}, 'Retry failed step'), ' runs the failed step again; completed steps are kept.'),
+          item('Task retried', 'Its next run says under ', el('em', {}, 'What happened'), ' whether it ', termLink('carry', 'continued from the earlier work'), ' or started over, and whether a step was ', termLink('resend', 'retried after a service error'), '.'),
+          item('Run stalled', 'Its page says its last event and how long ago. A ', termLink('stalled', 'stalled'), ' run is flagged; ', el('em', {}, 'Stop run'), ' ends it.'),
+          item('Nothing starts', 'On ', pageLink('workers', 'Workers'), ', see whether a Worker is free, or resting until when. On the ', pageLink('board', 'Board'), ', a ready task waits for Start.'),
+          item('Account unavailable', 'A ', termLink('quarantine', 'quarantined'), ' or signed-out account\\'s Workers take no work: ask whoever set up the system to sign it in again or check it.'),
+          item('Task needs input', 'It used its attempts, or asked a question: its card on the Board says which.'),
+          item('Page says stale', 'The last refresh failed: the page shows what it read before, and when (', termLink('stale', 'stale'), '). It tries again every 5 seconds.'))),
+      el('section', { class: 'panel help', id: 'help-glossary', 'aria-labelledby': 'help-glossary-title' }, el('h3', { id: 'help-glossary-title' }, 'Glossary'),
+        el('p', {}, search),
+        el('dl', { class: 'glossary' }, Object.entries(GLOSSARY).sort((a, b) => a[1][0].localeCompare(b[1][0])).flatMap(([key, [word, sentence]]) => term(key, word, sentence))),
+        el('p', { id: 'glossary-none', class: 'muted', hidden: '' }, 'No term matches.')))
     const wanted = /^#term-([a-z-]+)$/.exec(location.hash)
     if (wanted) setTimeout(() => focusTerm(wanted[1]), 0)
   }
@@ -302,9 +389,11 @@ export const APP_JS = `'use strict'
     refresh()
   }
 
-  // Idle capacity, and the step that puts it to work.
-  const capacityText = (free, ready) => (free === undefined ? 'How many Workers are free is unknown now' : free + (free === 1 ? ' Worker free' : ' Workers free')) + ' · ' + ready + (ready === 1 ? ' task ready' : ' tasks ready')
-    + (ready ? '. A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.' : '.')
+  // Idle capacity in numbers; how a ready task gets a Worker is folded beside the Board's Start (startHelp).
+  const capacityText = (free, ready) => (free === undefined ? 'Free Workers unknown' : qty(free, 'Worker') + ' free') + ' · ' + qty(ready, 'task') + ' ready'
+  const startHelp = () => fold('How a ready task starts', 'A ready task starts when you press Start on its card or the lead runs it: the run claims the task, and a Worker that can do it takes it.')
+  // An error state with its one next action; the page also tries again by itself every 5 seconds.
+  const errorState = (text) => el('div', { class: 'panel bad error-state' }, el('p', { class: 'state failed' }, text), el('button', { type: 'button', onclick: () => refresh() }, 'Try again'))
   const pageHead = (page, title, runId) => [el('h2', { class: 'page', 'data-page': page === 'run' ? 'run:' + runId : page }, title || PAGES[page][0]), el('p', { class: 'lead' }, PAGES[page][1])]
   // The page the address names now: what a render must be of to be shown.
   function shownPage() { return view === 'policy' || view === 'board' || view === 'workers' || view === 'help' ? view : current ? 'run:' + current : 'home' }
@@ -318,7 +407,7 @@ export const APP_JS = `'use strict'
     const dismiss = el('button', { onclick: () => outcome.replaceChildren() }, 'Dismiss')
     outcome.replaceChildren(el('div', { class: 'panel' + (ok === 'pending' ? '' : ok ? ' ok' : ' bad'), role: ok === false ? 'alert' : 'status' },
       el('h3', { class: ok === 'pending' ? 'state running' : ok ? 'state completed' : 'state failed' }, title),
-      lines.filter(Boolean).map((line) => el('p', {}, line)),
+      lines.filter(Boolean).map((line) => line instanceof Element ? line : el('p', {}, line)),
       dismiss))
     outcome.scrollIntoView({ block: 'nearest' })
   }
@@ -331,7 +420,11 @@ export const APP_JS = `'use strict'
     const span = m < 1 ? 'less than a minute' : m < 60 ? m + ' min' : m < 48 * 60 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' days'
     return past ? span + ' ago' : 'in ' + span
   }
-  const ago = (iso) => el('time', { datetime: iso, title: absolute(iso) }, relative(iso))
+  // A relative time (the shared building block): its exact time on hover (title) and on keyboard focus.
+  const ago = (iso) => el('time', { class: 'rel', datetime: iso, title: absolute(iso), 'data-exact': absolute(iso), tabindex: '0' }, relative(iso))
+  // A deadline: when it expires, marked within the hour, and what no response means.
+  const expires = (iso, noResponse) => el('span', { class: 'expiry ' + (Date.parse(iso) - Date.now() < 3600000 ? 'soon' : 'muted') },
+    Date.parse(iso) > Date.now() ? 'Expires ' : 'Expired ', ago(iso), noResponse ? ' · No response: ' + noResponse : '')
 
   // Every pending decision links to the card it is decided on (an approval request's, on Home).
   let focusRequest = new URLSearchParams(location.search).get('request')
@@ -383,10 +476,10 @@ export const APP_JS = `'use strict'
       d = founding ? {
         title: 'Found project ' + name(id) + ' (charter version 1)',
         subject: 'charter version 1 of project ' + id,
-        approve: 'Project ' + name(id) + ' becomes active with this charter. On the board\\'s next sweep (within a minute) '
-          + (proposed === undefined ? 'its proposed tasks go' : proposed + ' proposed task(s) go') + ' through the autonomy policy: the ones it allows become ready for a Worker to claim, the others are asked here. Nothing runs by itself.',
-        deny: 'Project ' + name(id) + ' is closed as abandoned, and ' + (open === undefined ? 'its open tasks are' : open + ' open task(s) are') + ' cancelled. This cannot be undone.',
-        yes: 'Approve: activate project ' + id, no: 'Deny: abandon project ' + id,
+        approve: 'Project ' + name(id) + ' becomes active; ' + (proposed === undefined ? 'its proposed tasks go' : proposed + ' proposed task(s) go') + ' through the autonomy policy. No run starts by itself.',
+        deny: 'Project ' + name(id) + ' is closed as abandoned, and ' + (open === undefined ? 'its open tasks are' : open + ' open task(s) are') + ' cancelled. Cannot be undone.',
+        more: 'The board activates it on its next sweep, within a minute: the proposed tasks the policy allows become ready for a Worker to claim, the others are asked here.',
+        yes: 'Approve: activate project', no: 'Deny: abandon project',
         next: 'The board activates project ' + name(id) + ' on its next sweep, within a minute: see it on the Board page.',
       } : {
         title: 'Amend the charter of project ' + name(id) + ' to version ' + version,
@@ -427,11 +520,14 @@ export const APP_JS = `'use strict'
         yes: 'Approve: put the change in force', no: 'Deny: keep the policy in force', next: 'See the Autonomy policy page.' }
     } else if (r.action.class === 'merge' && r.requester.component === 'workflow') {
       const landing = /^landing:merge:([0-9a-f]+):([0-9a-f]+)$/.exec(r.subject.version || '')
-      const what = runTask(r.requester.runId) ? 'The accepted change of the task "' + runTask(r.requester.runId).title + '"' : 'The accepted change'
-      d = { title: r.action.summary, subject: 'branch ' + ref + (landing ? ' at ' + landing[2].slice(0, 12) + ', onto the base at ' + landing[1].slice(0, 12) : ''),
-        approve: what + ' is merged into the main line of the code, as one merge commit. Nothing is pushed anywhere.',
-        deny: 'Nothing is merged: the change stays on its own branch, and the task stays done.',
-        yes: 'Approve: merge it', no: 'Deny: do not merge',
+      const served = runTask(r.requester.runId)
+      const what = served ? 'The accepted change of the task "' + served.title + '"' : 'The accepted change'
+      // The task first, "not pushed" in sight; the branch and both heads folded (T171).
+      d = { title: r.action.summary, subject: (served ? 'the accepted change of "' + served.title + '"' : 'the accepted change on its run\\'s branch') + ' · not pushed',
+        approve: what + ' is merged as one merge commit. Not pushed.',
+        deny: 'Not merged: the change stays on its branch; the task stays done.',
+        more: 'branch ' + ref + (landing ? ' at ' + landing[2].slice(0, 12) + ', onto the base at ' + landing[1].slice(0, 12) : '') + '. The run\\'s branch is merged within a few seconds of your approval, as one merge commit; a conflict or a moved branch changes nothing.',
+        yes: 'Approve: merge change', no: 'Deny: keep branch only',
         next: 'The run\\'s branch is merged within a few seconds, as one merge commit; a conflict or a moved branch changes nothing. Nothing is pushed: see the task on the Board page.' }
     } else if (r.action.class === 'dispatch' && r.requester.component === 'workflow') {
       // A start System proposes (ADR-0064): the task, its attempt, and the Worker its summary names.
@@ -447,12 +543,14 @@ export const APP_JS = `'use strict'
     } else {
       d = { title: r.action.summary, subject: r.subject.type + ' ' + ref }
     }
+    // Who asked, by a readable name; the run, session, step, and change ids it gave are folded with the request's (T171).
     const by = r.requester.component === 'board' ? 'the board' + (r.requester.taskId ? ', for ' + taskOf(r.requester.taskId) : '') + projectText
-      : r.requester.component === 'worker' ? 'agent run ' + (r.requester.runId || '?') + (r.requester.sessionId ? ' (session ' + r.requester.sessionId + ')' : '')
-      : r.requester.component === 'workflow' ? (runTask(r.requester.runId) ? 'the run of the task "' + runTask(r.requester.runId).title + '"' : 'run ' + (r.requester.runId || '?') + (r.requester.nodeId ? ', step ' + r.requester.nodeId : ''))
-      : r.requester.component === 'approvals' ? 'the approval queue, for policy change ' + (r.requester.policyChangeId || '?') + ' (Show change says who proposed it)'
+      : r.requester.component === 'worker' ? 'an agent run'
+      : r.requester.component === 'workflow' ? (runTask(r.requester.runId) ? 'the run of the task "' + runTask(r.requester.runId).title + '"' : 'a run' + (r.requester.nodeId ? ' (' + (stepWords(r.requester.nodeId) || 'step ' + r.requester.nodeId) + ')' : ''))
+      : r.requester.component === 'approvals' ? 'the approval queue, for a policy change (Show change says who proposed it)'
       : r.requester.component + projectText
-    return Object.assign({ yes: 'Approve', no: 'Deny', next: '' }, d, { by })
+    const ids = [['run', r.requester.runId], ['session', r.requester.sessionId], ['step', r.requester.nodeId], ['task', r.requester.taskId], ['policy change', r.requester.policyChangeId]].filter(([, v]) => v)
+    return Object.assign({ yes: 'Approve', no: 'Deny', next: '' }, d, { by, ids })
   }
 
   // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
@@ -489,13 +587,16 @@ export const APP_JS = `'use strict'
         const recorded = results.filter((r) => !r.refused)
         for (const v of verdicts) notes.delete(v.requestId)
         if (batchId && !refused.length) notes.delete(batchId)
+        // What happens next first, each failure with why; the request and record ids folded (T171).
         const lines = results.map((r) => {
           const v = verdicts.find((x) => x.requestId === r.requestId)
-          return r.refused ? 'Not recorded: ' + lost(v) + ' (request ' + r.requestId + '): ' + (REFUSED[r.refused] || r.refused)
-            : (many ? what(v) + '. ' : '') + 'Recorded as your verdict on request ' + r.requestId + ' (approval record ' + r.approval + '). ' + (v.verdict === 'approved' ? described.get(r.requestId).next : 'Nothing of it goes ahead.')
+          return r.refused ? 'Not recorded: ' + lost(v) + ': ' + (REFUSED[r.refused] || r.refused)
+            : (many ? what(v) + ' — ' : '') + (v.verdict === 'approved' ? described.get(r.requestId).next : 'Nothing of it goes ahead.')
         })
-        report(!refused.length, refused.length ? (many ? recorded.length + ' recorded, ' + refused.length + ' not recorded' : 'Not recorded: ' + lost(verdicts[0]))
-          : many ? recorded.length + ' verdicts recorded' : what(verdicts[0]), lines)
+        const ids = fold('Record IDs', results.map((r) => el('div', {}, r.refused ? 'Request ' + r.requestId + ': not recorded (' + r.refused + ').' : 'Recorded as your verdict on request ' + r.requestId + ' (approval record ' + r.approval + ').')))
+        const word = VERB[verdicts[0].verdict].toLowerCase()
+        report(!refused.length, refused.length ? (many ? recorded.length + ' ' + word + ' · ' + refused.length + ' not recorded' : 'Not recorded: ' + lost(verdicts[0]))
+          : many ? recorded.length + ' ' + word : what(verdicts[0]), lines.concat([ids]))
       } catch (error) {
         report(false, 'Not recorded: ' + (many ? 'your ' + verdicts.length + ' verdicts' : lost(verdicts[0])),
           ['The server refused the call (' + (error.status || 'no answer') + '): ' + error.message + '.', 'Nothing was decided: ' + (many ? 'the requests are' : 'the request is') + ' still open in the queue.'])
@@ -505,7 +606,6 @@ export const APP_JS = `'use strict'
     }
     const card = (r) => {
       const d = described.get(r.requestId)
-      const soon = Date.parse(r.expiresAt) - Date.now() < 3600000
       const yes = el('button', { class: 'primary' }, d.yes)
       const no = el('button', {}, d.no)
       const verdict = (v, clicked) => () => decide([{ requestId: r.requestId, subject: r.subject, verdict: v, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) }], undefined, undefined, [yes, no], clicked)
@@ -525,8 +625,9 @@ export const APP_JS = `'use strict'
       }
       return el('article', { class: 'panel request', id: 'request-' + r.requestId, tabindex: '-1', 'aria-labelledby': 'title-' + r.requestId },
         el('h3', { id: 'title-' + r.requestId }, d.title),
-        el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class'), ' Asked by ' + d.by + ' · request ' + r.requestId + ' · ',
-          el('span', { class: soon ? 'soon' : '' }, (Date.parse(r.expiresAt) > Date.now() ? 'expires ' : 'expired ') + relative(r.expiresAt) + ' — ' + absolute(r.expiresAt)), '; unanswered by then, it counts as denied.'),
+        // Who asked, its action type, and when it expires with what no response means; the ids and the exact time folded below (T171).
+        el('p', { class: 'meta' }, el('span', { class: 'tag' }, r.action.class), whatIs(r.action.class === 'policy-change' ? 'policy-change' : r.action.class === 'merge' ? 'merge' : 'action-class'), ' Asked by ' + d.by + ' · ',
+          expires(r.expiresAt, 'denied')),
         el('dl', {},
           d.title === r.action.summary ? null : [el('dt', {}, 'Request'), el('dd', {}, folded(r.action.summary, 'details'))],
           el('dt', {}, 'About'), el('dd', {}, d.subject, el('details', {}, el('summary', {}, 'Exact subject'), el('code', {}, subjectText(r.subject)))),
@@ -537,9 +638,12 @@ export const APP_JS = `'use strict'
             : d.approve ? [el('dt', {}, 'If you approve'), el('dd', {}, d.approve), el('dt', {}, 'If you deny'), el('dd', {}, d.deny)]
             : [el('dt', {}, 'What a verdict does'), el('dd', { class: 'muted' }, 'The requester did not say. Approving lets it go ahead with exactly what is shown; denying refuses it.')],
           r.action.recommendation ? [el('dt', {}, 'Recommended'), el('dd', {}, r.action.recommendation === 'approve' ? 'approve' : 'deny')] : null),
+        d.more ? fold('How it works', d.more) : null,
         r.action.class === 'policy-change' && r.requester.policyChangeId ? el('p', {}, el('button', { onclick: showChange, 'aria-label': 'Show the change of ' + r.requestId }, 'Show change')) : null,
         shown,
-        el('div', { class: 'actions' }, noteFor(r.requestId, 'Note with your verdict on this request (optional)'), yes, no))
+        el('div', { class: 'actions' }, noteFor(r.requestId, 'Note (optional)'), yes, no),
+        fold('Technical details', el('div', {}, 'request ' + r.requestId, copyId('Copy request ID', r.requestId)), el('div', {}, 'expires ' + absolute(r.expiresAt)),
+          d.ids.map(([k, v]) => el('div', {}, k + ' ' + v))))
     }
     return { batches, requests, described, card, decide, noteFor, noteOf }
   }
@@ -547,23 +651,23 @@ export const APP_JS = `'use strict'
   async function approvals(q) {
     if (!q) return null
     if (q.error) return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
-      el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. What waits for you is unknown; the page tries again every 5 seconds.'))
+      el('p', { class: 'state failed' }, 'The approval queue could not be read: ' + q.error.message + '. Approvals unknown; retrying every 5 s.'))
     const { batches, requests, card, decide, noteFor, noteOf } = q
     const earliest = requests.reduce((min, r) => !min || r.expiresAt < min ? r.expiresAt : min, undefined)
     return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals', whatIs('approval')),
-      requests.length ? el('p', {}, requests.length + (requests.length === 1 ? ' request waits' : ' requests wait') + ' for your verdict; the first expires ' + relative(earliest) + '.')
-        : el('p', { class: 'muted' }, 'No request waits for your verdict. When a run, the board, or a Worker needs your yes or no before it goes on, its request appears here.'),
+      requests.length ? el('p', {}, qtyView(requests.length, 'approval'), ' · next expiry ', el('span', { class: Date.parse(earliest) - Date.now() < 3600000 ? 'soon' : '' }, relative(earliest)))
+        : el('p', { class: 'muted' }, 'No approvals needed.'),
       batches.map((batch) => {
         if (!batch.batchId) return el('div', {}, batches.length > 1 ? el('h3', {}, 'Decided one by one') : null, batch.requests.map((r) => card(r)))
-        const yes = el('button', { class: 'primary' }, 'Approve all ' + batch.requests.length + ' in this batch')
-        const no = el('button', {}, 'Deny all ' + batch.requests.length + ' in this batch')
+        const yes = el('button', { class: 'primary' }, 'Approve all ' + batch.requests.length)
+        const no = el('button', {}, 'Deny all ' + batch.requests.length)
         const all = (v, clicked) => () => decide(batch.requests.map((r) => ({ requestId: r.requestId, subject: r.subject, verdict: v, ...(noteOf(r.requestId) ? { note: noteOf(r.requestId) } : {}) })), noteOf(batch.batchId), batch.batchId, [yes, no], clicked)
         yes.addEventListener('click', all('approved', yes))
         no.addEventListener('click', all('rejected', no))
         return el('section', { class: 'panel', 'aria-label': 'Batch ' + batch.batchId },
-          el('h3', {}, 'Batch ' + batch.batchId + ': ' + batch.requests.length + ' related requests', whatIs('batch')),
-          el('p', { class: 'muted' }, 'Decide them together with the buttons below, or each on its own.'),
-          el('div', { class: 'batch-actions' }, noteFor(batch.batchId, 'Note for every request of this batch (optional)'), yes, no),
+          el('h3', {}, qty(batch.requests.length, 'related request'), whatIs('batch')),
+          el('div', { class: 'batch-actions' }, noteFor(batch.batchId, 'Note for all (optional)'), yes, no),
+          fold('Batch ID', el('code', {}, batch.batchId), copyId('Copy batch ID', batch.batchId)),
           batch.requests.map((r) => card(r)))
       }))
   }
@@ -583,10 +687,12 @@ export const APP_JS = `'use strict'
   const carryLine = (c) => {
     const from = c.from ? 'attempt ' + c.from.attempt : 'the previous attempt'
     const link = c.from ? [' (', runLink({ runId: c.from.runId }, 'its run'), ')'] : []
-    return c.state === 'carried' ? el('li', {}, 'It started from the work ' + from + ' left', link, ': that change was already in its worktree' + (c.commit ? ', saved as ' : ''), c.commit ? el('code', {}, c.commit.slice(0, 12)) : null,
-      ', so its writing step built on it instead of starting over.', whatIs('carry'))
-      : c.state === 'due' ? el('li', {}, 'It starts from the work ' + from + ' left', link, ', before its first step.', whatIs('carry'))
-        : el('li', {}, 'It started over from the code' + (c.from ? ': the work ' + from + ' left was not reused' : ''), link, (c.reason ? ', because ' + c.reason.replace(/\\.$/, '') : '') + '.', whatIs('carry'))
+    // The outcome in a line; the worktree and commit mechanics folded (T171).
+    return c.state === 'carried' ? el('li', {}, 'Continued from ' + from, link, whatIs('carry'),
+      fold('Details', 'That change was already in its worktree' + (c.commit ? ', saved as ' : ''), c.commit ? el('code', {}, c.commit.slice(0, 12)) : null, '; its writing step built on it instead of starting over.'))
+      : c.state === 'due' ? el('li', {}, 'Continues from ' + from, link, ' · before its first step', whatIs('carry'))
+        : el('li', {}, 'Started over' + (c.reason ? ' — ' + c.reason.replace(/\\.$/, '') : ''), link, whatIs('carry'),
+          fold('Details', c.from ? 'The work ' + from + ' left was not reused: it started from the code.' : 'It started from the code.'))
   }
 
   // What the operator reads before a review verdict (T122): the run's change, each reviewer's
@@ -746,15 +852,18 @@ export const APP_JS = `'use strict'
     return section
   }
 
-  // A run's steps in one line: how many completed, and the steps that failed, wait, or run, by name.
+  // A run's progress in one line: "2/3 steps", then the steps that failed, wait, or run, by name.
   const stepsText = (run) => {
-    const named = (state) => run.nodes.filter((n) => n.state === state).map((n) => n.nodeId)
+    const named = (state) => run.nodes.filter((n) => n.state === state).map((n) => stepWords(n.nodeId) || n.nodeId)
     const list = (ids) => ids.slice(0, 2).join(', ') + (ids.length > 2 ? ' and ' + (ids.length - 2) + ' more' : '')
     const done = named('COMPLETED').length
-    const parts = [done + ' of ' + run.nodes.length + ' completed']
+    const parts = [done + '/' + run.nodes.length + ' steps']
     for (const [state, word] of [['FAILED', 'failed'], ['BLOCKED', 'waiting'], ['RUNNING', 'running']]) if (named(state).length) parts.push(word + ': ' + list(named(state)))
-    return parts.join('; ')
+    return parts.join(' · ')
   }
+  // A run's state as a chip: Running, Completed, Failed, or Needs your attention (T171's one wording per concept).
+  const RUN_STATE = { running: ['Running', 'info'], completed: ['Completed', 'ok'], failed: ['Failed', 'bad'] }
+  const runChip = (run) => run.blocked ? chip('Needs your attention', 'warn') : chip(...(RUN_STATE[run.status] || [run.status, 'idle']))
   // What a failure asks of the operator, in words.
   const DISPOSITION = { USER_ACTION: 'it needs you', BACKOFF: 'it is tried again later', CODE_FIX: 'it needs a fix in the code or configuration', NONE: 'nothing more happens' }
   // What a failure's kind means, in words, before the system's own message (T141).
@@ -781,9 +890,10 @@ export const APP_JS = `'use strict'
     return t ? 'the team\\'s count of the votes' : null
   }
   const runLink = (run, text) => el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, text || run.runId)
-  // Why a run needs the operator's look, or nothing when it does not.
-  const needsLook = (run) => run.blocked ? (run.blocked.kind === 'tie' ? 'its team tied and waits for your deciding vote' : run.blocked.kind === 'tool-call' ? 'a Worker\\'s tool call waits for your verdict' : run.blocked.approvalRequest ? 'its fix waits for your verdict' : 'its plan waits for your approval')
-    : run.status === 'failed' ? 'it failed: ' + (run.error ? failureText(run.error) : 'no reason was recorded') : null
+  // Why a run needs the operator's attention, as a label and, for a failure, its reason in plain words; or nothing.
+  const lookOf = (run) => run.blocked ? [run.blocked.kind === 'tie' ? 'Team vote tied' : run.blocked.kind === 'tool-call' ? 'Tool call awaiting approval' : run.blocked.approvalRequest ? 'Fix awaiting approval' : 'Plan awaiting approval', '']
+    : run.status === 'failed' ? ['Run failed', run.error ? failureText(run.error) : 'no reason was recorded'] : null
+  const needsLook = (run) => { const l = lookOf(run); return l ? l[0] + (l[1] ? ' — ' + l[1] : '') : null }
   const RECENT = 15
   // Things "Waiting for you" names one per line; past them it says how many more, and where.
   const WAITING_NAMED = 5
@@ -883,23 +993,25 @@ export const APP_JS = `'use strict'
   const stalledOf = (r) => 'value' in r.stalled && r.stalled.value ? el('div', { class: 'state failed', role: 'alert' }, 'Stalled since ' + clockOf(r.stalled.value.since) + ': no activity past its source\\'s bound. Stop run ends it.') : null
 
 
-  // Home's "Waiting for your go" (ADR-0064): each start System proposes, with its Worker and the quota it
+  // Home's "Starts awaiting approval" (ADR-0064): each start System proposes, with its Worker and the quota it
   // would draw on, approved or denied by the queue's own verdict on the request's exact subject (INV-5);
   // whether dispatch is off or paused; and, folded, why each ready task did not start at the last look.
   const dispatchOf = async () => { try { return await api('dispatch') } catch (error) { return error.status === 404 || error.status === 503 ? null : { error } } }
-  const goWindow = (w) => (w.seconds ? span(w.seconds) : w.window) + ': used ' + (w.used === undefined ? 'unknown' : w.used + ' %') + ' — reserve ' + w.reserve + ' %'
-    + (w.resets ? ' — resets ' + clockOf(w.resets) : '') + (w.observedAt ? ' (read ' + clockOf(w.observedAt) + ')' : '')
+  const goWindow = (w) => (w.seconds ? span(w.seconds) : w.window) + ' · used ' + (w.used === undefined ? 'unknown' : w.used + ' %') + ' · reserve ' + w.reserve + ' %'
+    + (w.resets ? ' · resets ' + clockOf(w.resets) : '')
   const goView = (dispatch, q, names, jump) => {
     if (!dispatch) return null
-    const panel = (...parts) => el('section', { class: 'panel', 'aria-label': 'Waiting for your go' }, el('h3', {}, 'Waiting for your go'), ...parts)
+    const panel = (...parts) => el('section', { class: 'panel', 'aria-label': 'Starts awaiting approval' }, el('h3', {}, 'Starts awaiting approval'), ...parts)
     if (dispatch.error) return panel(el('p', { class: 'state failed' }, 'The starts System proposes could not be read: ' + dispatch.error.message + '.'))
     const requests = new Map(q && !q.error ? q.requests.map((r) => [r.requestId, r]) : [])
     const asked = dispatch.asks.filter((a) => a.state === 'asked' && a.requestId && requests.has(a.requestId))
     // Without the queue no verdict can be given here: the starts it waits on are named, never shown as none.
     const unread = !q || q.error ? dispatch.asks.filter((a) => a.state === 'asked') : []
     const approved = dispatch.asks.filter((a) => a.state === 'approved' || a.state === 'starting')
-    const state = !dispatch.enabled ? el('p', { class: 'muted' }, 'Dispatch is off (dispatch.enabled: false): System proposes no start by itself.')
-      : dispatch.paused ? el('p', { class: 'soon' }, 'Dispatch is paused since ' + when(dispatch.paused.since) + (dispatch.paused.reason ? ': ' + dispatch.paused.reason : '') + '. System proposes no start until you resume it (system dispatch resume).')
+    // Off or paused in a few words (a pause's reason kept in sight); the setting and the command that resumes it folded (T171).
+    const state = !dispatch.enabled ? [el('p', { class: 'muted' }, 'Automatic starts off'), fold('How to turn them on', 'Dispatch is off (dispatch.enabled: false) in the configuration: System proposes no start by itself.')]
+      : dispatch.paused ? [el('p', { class: 'soon' }, 'Automatic starts paused' + (dispatch.paused.reason ? ' · ' + dispatch.paused.reason : '') + ' · since ' + when(dispatch.paused.since)),
+        fold('How to resume', 'System proposes no start until you resume it: system dispatch resume.')]
         : null
     const name = (worker) => names.get(worker) || worker
     const item = (a) => {
@@ -909,23 +1021,23 @@ export const APP_JS = `'use strict'
       const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
       yes.addEventListener('click', verdict('approved', yes))
       no.addEventListener('click', verdict('rejected', no))
+      const read = a.windows.filter((w) => w.observedAt).map((w) => (w.seconds ? span(w.seconds) : w.window) + ' read ' + clockOf(w.observedAt))
       return el('li', { class: 'go', 'aria-label': 'Start of ' + a.title },
-        el('div', {}, el('strong', {}, '"' + a.title + '"'), ', attempt ' + a.attempt + ', on ' + name(a.worker), el('span', { class: 'muted' }, ' · project ' + a.projectId)),
+        el('div', {}, el('strong', {}, a.title), el('span', { class: 'muted' }, ' · attempt ' + a.attempt + ' · ' + name(a.worker))),
         a.windows.map((w) => el('div', { class: 'window' }, w.used !== undefined ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(w.used), 'aria-hidden': 'true' }) : null, el('span', {}, goWindow(w)))),
-        el('div', { class: 'muted' }, 'Why this Worker: ' + a.why),
-        el('div', { class: 'actions' }, yes, no,
-          el('span', { class: Date.parse(r.expiresAt) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' Unanswered by ' + clockOf(r.expiresAt) + ', it counts as denied. '),
-          el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, 'the request')))
+        fold('Why this Worker?', el('div', {}, a.why), read.length ? el('div', { class: 'muted' }, read.join(' · ')) : null, el('div', { class: 'muted' }, 'project ' + a.projectId)),
+        el('div', { class: 'actions' }, yes, no, expires(r.expiresAt, 'denied'), ' ',
+          el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, 'Review request')))
     }
     const last = dispatch.lastPass
-    const reasons = last && last.tasks.length ? el('details', {}, el('summary', {}, 'Why the ready tasks did not start at the last look (' + relative(last.at) + ')'),
-      el('ul', {}, last.tasks.map((t) => el('li', {}, '"' + t.title + '": ' + t.reason))), last.more ? el('p', { class: 'muted' }, last.more + ' more ready task(s) not listed.') : null)
-      : last && last.reason ? el('p', { class: 'muted' }, 'At the last look (' + relative(last.at) + '): ' + last.reason + '.') : null
+    const reasons = last && last.tasks.length ? fold('Why ready tasks did not start (' + relative(last.at) + ')',
+      el('ul', {}, last.tasks.map((t) => el('li', {}, '"' + t.title + '": ' + t.reason))), last.more ? el('p', { class: 'muted' }, qty(last.more, 'more ready task') + ' not listed.') : null)
+      : last && last.reason ? el('p', { class: 'muted' }, 'Last look (' + relative(last.at) + '): ' + last.reason + '.') : null
     return panel(state,
-      unread.length ? el('p', { class: 'state failed' }, 'The approval queue could not be read, so these starts cannot be decided here now: ' + unread.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.')
-        : asked.length ? el('ul', { class: 'goes' }, asked.map(item))
-          : el('p', { class: 'muted' }, 'No start waits for your go. When System finds a ready task and a free Worker with quota to spare, it asks here before it starts it.'),
-      approved.length ? el('p', {}, approved.length + ' approved start(s) wait for their Worker to be free: ' + approved.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.') : null,
+      unread.length ? el('p', { class: 'state failed' }, 'Approvals unreadable, so these starts cannot be decided here now: ' + unread.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.')
+        : asked.length ? el('ul', { class: 'goes plain' }, asked.map(item))
+          : el('p', { class: 'muted' }, 'No starts awaiting approval.'),
+      approved.length ? el('p', {}, qty(approved.length, 'approved start') + ' waiting for a free Worker: ' + approved.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.') : null,
       reasons)
   }
 
@@ -959,53 +1071,61 @@ export const APP_JS = `'use strict'
       total > Math.min(items.length, WAITING_NAMED) ? el('li', { class: 'muted' }, 'and ' + (total - Math.min(items.length, WAITING_NAMED)) + ' more: ', more) : null) : null
     const requestNames = q && !q.error ? [...q.requests].sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : 1)).map((r) => [el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, q.described.get(r.requestId).title), expiry(r.expiresAt)]) : []
     const reviewNames = reviewed && reviewed.held ? reviewed.held.map((r) => [el('a', { href: '#review-' + r.taskId, onclick: jump('review-' + r.taskId) }, r.title), el('span', { class: 'muted' }, ' · project ' + (r.project.title || r.project.projectId)), expiry(r.expiresAt)]) : []
-    const runNames = look.map((run) => [runLink(run, (run.task && titles.get(run.task.taskId)) || (/^[aeiou]/.test(run.template) ? 'an ' : 'a ') + run.template + ' run'), el('span', { class: 'muted' }, ' · ' + needsLook(run))])
+    // A run by its task's title, else its template.
+    const runTitle = (run, article) => (run.task && titles.get(run.task.taskId)) || (article ? (/^[aeiou]/.test(run.template) ? 'an ' : 'a ') : '') + run.template + ' run'
+    const runNames = look.map((run) => [runLink(run, runTitle(run, true)), el('span', { class: 'muted' }, ' · ' + needsLook(run))])
+    // Each group a label and its count (T171: "Approvals · 3"), its names under it.
+    const firstReview = part('reviews').firstExpires
     const waiting = [
-      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, asked + (asked === 1 ? ' request waits' : ' requests wait') + ' for your verdict'),
-        nameList(requestNames, asked, el('a', { href: '#approvals', onclick: jump('approvals') }, 'see every request'))) : null,
-      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, toReview + (toReview === 1 ? ' task waits' : ' tasks wait') + ' for your review'
-        + (part('reviews').firstExpires ? '; the first held for you expires ' + relative(part('reviews').firstExpires) : '')),
-        nameList(reviewNames, toReview, el('a', { href: '#reviews', onclick: jump('reviews') }, 'see every review'))) : null,
-      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, look.length + (look.length === 1 ? ' run needs' : ' runs need') + ' a look' + (part('runs').more ? ', and more' : '')),
-        nameList(runNames, look.length, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'see every run'))) : null,
-      unread.length ? el('li', { class: 'unknown' }, 'What else waits is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
+      asked ? el('li', {}, el('a', { href: '#approvals', onclick: jump('approvals') }, 'Approvals · ' + asked),
+        nameList(requestNames, asked, el('a', { href: '#approvals', onclick: jump('approvals') }, 'See all'))) : null,
+      toReview ? el('li', {}, el('a', { href: '#reviews', onclick: jump('reviews') }, 'Reviews · ' + toReview),
+        firstReview ? el('span', { class: Date.parse(firstReview) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' · first expires ' + relative(firstReview)) : null,
+        nameList(reviewNames, toReview, el('a', { href: '#reviews', onclick: jump('reviews') }, 'See all'))) : null,
+      look.length ? el('li', {}, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'Runs needing attention · ' + look.length + (part('runs').more ? '+' : '')),
+        nameList(runNames, look.length, el('a', { href: '#needs-look', onclick: jump('needs-look') }, 'See all'))) : null,
+      unread.length ? el('li', { class: 'unknown' }, 'What else needs you is unknown: ' + unread.map((name) => part(name).unknown).join('; ')) : null,
     ].filter(Boolean)
     const c = roster && roster.counts
-    // A source still describing its Workers for the first time: the counts are so far.
+    // A source still describing its Workers for the first time: the counts are incomplete.
     const describing = roster && roster.sources && 'value' in roster.sources ? roster.sources.value.filter((s) => s.describing).map((s) => s.source) : []
+    // The Worker a run is on now (the running step's, else the last that had one).
+    const workerOf = (run) => { const n = run.nodes.find((x) => x.state === 'RUNNING' && x.worker) || [...run.nodes].reverse().find((x) => x.worker); return n ? names.get(n.worker) || n.worker : undefined }
     show(pageHead('home'),
-      el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
-        waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now. A request, a review, or a run that needs you appears here as it comes.')),
+      el('section', { class: 'panel', 'aria-label': 'Needs your attention' }, el('h3', {}, 'Needs your attention'),
+        waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'You’re all caught up.')),
       goView(dispatch, q, names, jump),
       since,
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
         c ? el('p', {}, c.busy + ' working · ' + c.ready + ' free · ' + c.resting + ' resting · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
-          + (describing.length ? ' (so far: ' + describing.join(', ') + ' still describing its Workers)' : '') + ' ',
-          el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'see each Worker'))
-          : el('p', { class: 'muted' }, 'The Workers could not be read now.'),
+          + (describing.length ? ' · counts incomplete: ' + describing.join(', ') + ' loading' : '') + ' ',
+          el('a', { href: '/ui/?view=workers', onclick: (e) => { e.preventDefault(); document.getElementById('workers-link').click() } }, 'Open Workers'))
+          : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.'),
         // Each account's capacity in one line, its 5 h bar beside it (the CEO's view of what is left).
         roster && 'value' in roster.workers && accountsOf(roster.workers.value).some((g) => g.account)
           ? el('ul', { class: 'capacities', 'aria-label': 'Capacity of each account' }, accountsOf(roster.workers.value).filter((g) => g.account).map(capacityLine)) : null,
         // Right now by name, from the same capacity summary the Workers page renders (T152), by the same function (T160).
         roster && roster.now && 'value' in roster.workers && roster.workers.value.length
           ? glanceView(roster.now, readyNow(roster.now) !== undefined ? readyNow(roster.now) : ready, roster.workers.value) : null,
-        ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'see the board')) : null),
+        ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', el('a', { href: '/ui/?view=board', onclick: (e) => { e.preventDefault(); document.getElementById('board-link').click() } }, 'Open Board')) : null),
       queued ? (queued.id = 'approvals', queued.setAttribute('tabindex', '-1'), queued) : null,
       reviewed ? (reviewed.setAttribute('tabindex', '-1'), reviewed) : null,
-      look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs that need a look' }, el('h2', {}, 'Runs that need a look'),
-        look.map((run) => el('article', { class: 'panel request', 'aria-label': 'Run ' + run.runId },
-          el('h3', {}, run.template + ' run ', runLink(run)),
-          el('p', {}, 'Started ', ago(run.createdAt), ': ' + needsLook(run) + '.'),
-          el('p', {}, runLink(run, run.status === 'failed' ? 'Open it to continue it or let it be' : 'Open it to decide'))))) : null,
+      // Task title first, the reason as a chip, one action; the run id behind its copy button (T171).
+      look.length ? el('section', { id: 'needs-look', tabindex: '-1', 'aria-label': 'Runs needing attention' }, el('h2', {}, 'Runs needing attention'),
+        look.map((run) => el('article', { class: 'panel request', 'aria-label': runTitle(run) },
+          el('h3', {}, runTitle(run)),
+          el('p', {}, chip(lookOf(run)[0], run.status === 'failed' ? 'bad' : 'warn'), lookOf(run)[1] ? ' ' + lookOf(run)[1] : '', el('span', { class: 'muted' }, ' · started '), ago(run.createdAt)),
+          el('p', {}, runLink(run, 'Open run'), copyId('Copy run ID', run.runId))))) : null,
       el('h2', {}, 'Recent runs'),
-      // Each run by its task's title (else its template), its steps with the Worker of each by its display name (T124).
-      runs.length ? table(['Run', 'Status', 'Steps and their Workers', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
-        el('td', {}, el('div', {}, runLink(run, run.task && titles.get(run.task.taskId) ? titles.get(run.task.taskId) : run.template + ' run')), el('div', { class: 'muted' }, run.runId + (run.task ? ' · ' + run.template : ''))),
-        el('td', { class: 'nowrap state ' + run.status }, run.status, run.blocked ? el('div', { class: 'muted' }, run.blocked.kind === 'tie' ? 'tied: waits for your vote' : 'waits for approval') : null),
-        el('td', {}, el('div', {}, stepsText(run)), run.nodes.filter((n) => n.worker).map((n) => el('div', { class: 'muted' }, n.nodeId + ': ' + (names.get(n.worker) || n.worker)))),
+      // Each run by its task's title (else its template), its state, its progress and current Worker; every step's Worker, its template, and its id folded (T124, T171).
+      runs.length ? table(['Run', 'Status', 'Progress', 'Started'], runs.slice(0, RECENT).map((run) => el('tr', {},
+        el('td', {}, runLink(run, runTitle(run))),
+        el('td', { class: 'nowrap' }, runChip(run)),
+        el('td', {}, el('div', {}, stepsText(run), workerOf(run) ? el('span', { class: 'muted' }, ' · ' + workerOf(run)) : null),
+          fold('Steps', run.nodes.filter((n) => n.worker).map((n) => el('div', { class: 'muted' }, n.nodeId + ': ' + (names.get(n.worker) || n.worker))), el('div', { class: 'muted' }, 'template ' + run.template + ' · run ' + run.runId), copyId('Copy run ID', run.runId))),
         el('td', { class: 'nowrap muted' }, ago(run.createdAt)),
-      ))) : el('p', { class: 'muted' }, 'No run yet. A run appears here once one starts: when you press Start on a ready task on the Board, or the lead or a client asks for one.'),
-      runs.length > RECENT ? el('p', { class: 'muted' }, (runs.length - RECENT) + ' older run(s) are not listed here; open one by its link, or ask with system status.') : null)
+      ))) : el('p', { class: 'muted' }, 'No runs yet · ', pageLink('board', 'Open Board')),
+      runs.length > RECENT ? el('p', { class: 'muted' }, qty(runs.length - RECENT, 'older run') + ' not listed; open one by its link, or ask with system status.') : null)
     if (focusRequest) {
       const id = focusRequest
       focusRequest = null
@@ -1038,7 +1158,7 @@ export const APP_JS = `'use strict'
       try { await api('runs/' + encodeURIComponent(runId) + '/' + action, body()) } catch (error) {
         report(false, 'Not done: ' + action + ' of run ' + runId, ['The server refused it (' + (error.status || 'no answer') + '): ' + error.message + '. Nothing changed.'])
       }
-      await detail(runId).catch((error) => { status.textContent = 'could not refresh: ' + error.message })
+      await detail(runId).catch((error) => { say('could not refresh: ' + error.message) })
     }
     const note = el('input', { id: 'plan-note' })
     const rationale = el('input', { id: 'vote-rationale' })
@@ -1047,12 +1167,22 @@ export const APP_JS = `'use strict'
     const decisions = new Map((explain ? explain.nodes : []).map((n) => [n.nodeId, n.decisions]))
     const failed = run.nodes.find((n) => n.state === 'FAILED')
     const running = run.nodes.filter((n) => n.state === 'RUNNING')
-    // The run in one sentence: what it is, when it started, and where it is.
-    const sentence = run.status === 'completed' ? 'It finished: every step is done.'
-      : run.status === 'failed' ? 'It failed' + (failed ? ' at step ' + failed.nodeId : '') + ': ' + (run.error ? failureText(run.error) : failed && failed.error ? failureText(failed.error) : 'no reason was recorded') + '.'
-      : run.blocked ? 'It waits for you: ' + needsLook(run) + '.'
-      : running.length ? 'It is running: ' + running.map((n) => (stepWords(n.nodeId) || 'step ' + n.nodeId) + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ') + '.'
-      : 'It is ' + run.status + '.'
+    // Where it is, after its state chip: the current step and Worker, a failure's reason in plain words, or what it waits on.
+    const where = run.status === 'completed' ? 'every step done'
+      : run.status === 'failed' ? (failed ? 'at ' + (stepWords(failed.nodeId) || failed.nodeId) + ': ' : '') + (run.error ? failureText(run.error) : failed && failed.error ? failureText(failed.error) : 'no reason was recorded')
+      : run.blocked ? needsLook(run)
+      : running.length ? running.map((n) => (stepWords(n.nodeId) || n.nodeId) + (n.worker ? ' on ' + nameOf(n.worker) : '')).join(', ')
+      : run.status
+    // Stop ends the run: behind a confirmation, the one destructive move on this page (T170).
+    const stopping = el('span', {})
+    const stop = el('button', {}, 'Stop run')
+    stop.addEventListener('click', () => {
+      confirming = true
+      const cancel = el('button', { onclick: () => { confirming = false; stopping.replaceChildren(); stop.focus() } }, 'Cancel')
+      const sure = el('button', { class: 'primary', onclick: () => { confirming = false; act('stop', () => ({ reason: 'stopped from the web UI' }))() } }, 'Confirm stop')
+      stopping.replaceChildren(el('span', { role: 'group', 'aria-label': 'Confirm stop' }, ' Stop this run? Nothing more of it runs. ', sure, cancel))
+      sure.focus()
+    })
     // What happened to it, in plain words (T141): where its worktree started (ADR-0061), a step sent again
     // after a site's own error (ADR-0062), and where its accepted result stands (ADR-0060).
     const carry = run.task && run.task.carry
@@ -1061,61 +1191,72 @@ export const APP_JS = `'use strict'
       carry ? carryLine(carry) : null,
       ...resent.map((nodeId) => {
         const node = run.nodes.find((x) => x.nodeId === nodeId)
-        return el('li', {}, (stepWords(nodeId) ? 'T' + stepWords(nodeId).slice(1) : 'Step ' + nodeId) + ': the site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker'
-          + (node && node.state === 'FAILED' ? '. It failed again, and is never sent a third time.' : '.'), whatIs('resend'))
+        return el('li', {}, (stepWords(nodeId) ? 'T' + stepWords(nodeId).slice(1) : 'Step ' + nodeId) + ': retried once after a service error.'
+          + (node && node.state === 'FAILED' ? ' Retry failed; no further automatic resend.' : ''), whatIs('resend'),
+          fold('Details', 'The site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker; never a third time.'))
       }),
       // The run view's landing names its base as {branch, sha}; a card's names the branch.
       run.task && run.task.landing && run.task.landing.state !== 'none' ? el('li', {}, landingLine(Object.assign({}, run.task.landing, { base: run.task.landing.base && run.task.landing.base.branch }))) : null,
     ].filter(Boolean)
+    // A step's readable name; its id is folded (T171).
+    const stepName = (nodeId) => stepWords(nodeId) || nodeId
+    const blockedIds = (b) => fold('Details', el('div', {}, 'step ' + b.nodeId), b.approvalRequest ? el('div', {}, 'request ', el('code', {}, b.approvalRequest), copyId('Copy request ID', b.approvalRequest)) : null,
+      b.until ? el('div', {}, 'until ' + absolute(b.until)) : null)
     show(
-      pageHead('run', served ? 'Run of "' + served.title + '"' : 'Run ' + run.runId, run.runId),
-      served ? el('p', { class: 'muted' }, 'Task "' + served.title + '" of project ' + served.project + (carry && carry.from ? ' · attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '') + ' · run ' + run.runId) : null,
-      el('p', {}, el('span', { class: 'state ' + run.status }, run.status), ' · ' + run.template + ' run, started ', ago(run.createdAt), ', last changed ', ago(run.updatedAt), '. ' + sentence),
+      // Headed by its task's title (else its template); its project and attempt below, its id behind a copy button (T171).
+      pageHead('run', served ? served.title : run.template + ' run', run.runId),
+      el('p', { class: 'muted' }, served ? served.project + (carry && carry.from ? ' · Attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '') : 'No board task', copyId('Copy run ID', run.runId)),
+      el('p', { class: 'status-line' }, runChip(run), ' ' + where, el('span', { class: 'muted' }, ' · started '), ago(run.createdAt)),
       happened.length ? el('section', { class: 'panel', 'aria-label': 'What happened' }, el('h3', {}, 'What happened'), el('ul', {}, happened)) : null,
       tie ? el('div', { class: 'panel' },
-        el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + relative(tie.until) + ' (' + absolute(tie.until) + ') it waits for your deciding vote, then ends inconclusive.'),
+        el('p', {}, chip('Team vote tied', 'warn'), ' · Decide within ' + relative(tie.until).replace(/^in /, ''), el('span', { class: 'muted' }, ' · No response: inconclusive')),
         el('ul', {}, tie.options.map((o) => el('li', {}, el('strong', {}, o.option + ': '), o.summary))),
         el('div', { class: 'actions' }, el('label', { for: 'vote-rationale' }, 'Why (required)', rationale),
           tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
-          el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive'))) : null,
+          el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive')),
+        fold('Details', 'The team tied at ' + stepName(tie.nodeId) + ' (' + tie.nodeId + '); it waits for your deciding vote until ' + absolute(tie.until) + ', then ends inconclusive.')) : null,
       run.blocked && run.blocked.kind === 'tool-call' ? el('div', { class: 'panel' },
-        el('p', {}, 'Step ', run.blocked.nodeId, '\\'s Worker stopped at a tool call that waits for your verdict on approval request ', el('code', {}, run.blocked.approvalRequest),
-          ', until ' + relative(run.blocked.until) + ' (' + absolute(run.blocked.until) + '). Approved, the step goes on in the same session and makes that call once; rejected or unanswered, this attempt ends.'),
-        el('p', {}, decideLink(run.blocked.approvalRequest, 'Decide it'))) : null,
+        el('p', {}, chip('Tool call awaiting approval', 'warn'), run.blocked.until ? [' · ', expires(run.blocked.until)] : null, ' · ', decideLink(run.blocked.approvalRequest, 'Review request')),
+        el('p', { class: 'muted' }, 'Approve: continue; deny or expire: end this attempt.'),
+        fold('How it works', 'The step\\'s Worker stopped at a tool call. Approved, the step goes on in the same session and makes that call once.'), blockedIds(run.blocked)) : null,
       run.blocked && !tie && run.blocked.kind !== 'tool-call' && run.blocked.approvalRequest ? el('div', { class: 'panel' },
-        el('p', {}, 'The fix at ', run.blocked.nodeId, ' waits for your verdict on approval request ', el('code', {}, run.blocked.approvalRequest),
-          run.blocked.until ? ', until ' + relative(run.blocked.until) + ' (' + absolute(run.blocked.until) + ')' : '', '. '),
-        el('p', {}, decideLink(run.blocked.approvalRequest, 'Decide it'))) : null,
+        el('p', {}, chip('Fix awaiting approval', 'warn'), run.blocked.until ? [' · ', expires(run.blocked.until)] : null, ' · ', decideLink(run.blocked.approvalRequest, 'Review request')),
+        blockedIds(run.blocked)) : null,
       run.blocked && !tie && !run.blocked.approvalRequest ? el('div', { class: 'panel' },
-        el('p', {}, 'Step ', run.blocked.nodeId, ' waits for your approval of its plan before it runs. ', el('details', {}, el('summary', {}, 'Plan id'), el('code', {}, run.blocked.plan))),
+        el('p', {}, chip('Plan awaiting approval', 'warn'), ' · ' + stepName(run.blocked.nodeId)),
+        fold('Plan id', el('code', {}, run.blocked.plan), copyId('Copy plan ID', run.blocked.plan)),
         el('div', { class: 'actions' }, el('label', { for: 'plan-note' }, 'Note (optional)', note),
           el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),
           el('button', { onclick: act('approve', () => ({ verdict: 'rejected', note: note.value, plan: run.blocked.plan })) }, 'Reject plan'))) : null,
       run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions' },
-        run.status === 'running' ? [el('button', { onclick: act('stop', () => ({ reason: 'stopped from the web UI' })) }, 'Stop run'), el('span', { class: 'muted' }, 'ends it now: nothing more of it runs')] : null,
-        run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Continue run'), el('span', { class: 'muted' }, 'runs its failed step again as a new attempt; the steps that are done are kept')] : null) : null,
+        run.status === 'running' ? [stop, el('span', { class: 'muted' }, 'Ends this run'), stopping] : null,
+        run.status === 'failed' ? [el('button', { class: 'primary', onclick: act('continue', () => ({})) }, 'Retry failed step'), el('span', { class: 'muted' }, 'Completed steps kept')] : null) : null,
       // Where it is now, refreshed with the page: each running step on its Worker and for how long, its last event, and a stall.
       now ? el('section', { class: 'panel', 'aria-label': 'Now' }, el('h3', {}, 'Now', whatIs('step')),
         now.steps.map((st) => el('div', {}, (stepWords(st.nodeId) ? 'T' + stepWords(st.nodeId).slice(1) : 'Step ' + st.nodeId) + (st.worker ? ' on ' + nameOf(st.worker) : '') + (st.since ? ', for ' + relative(st.since).replace(/ ago$/, '') : '') + (st.attempt > 1 ? ' (attempt ' + st.attempt + ')' : ''))),
         el('div', { class: 'muted' }, lastText(now)), stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
       moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
       run.answer ? el('div', { class: 'panel' }, el('h3', {}, 'Answer'), el('pre', { class: 'answer' }, run.answer))
-        : el('p', { class: 'muted' }, run.status === 'completed' ? 'It gave no answer text.' : 'No answer yet: it comes when the last step is done.'),
+        : el('p', { class: 'muted' }, run.status === 'completed' ? 'No answer text.' : 'No answer yet.'),
       evidence && (evidence.error || ('value' in evidence.change && (evidence.change.value.changes.length || evidence.change.value.unread.length)) || ('value' in evidence.assessments && evidence.assessments.value.length) || landing)
-        ? el('section', { class: 'panel request', 'aria-label': 'What it changed' }, el('h3', {}, 'What it changed, and what its reviewers said'), landing && !(run.task && run.task.landing) ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
+        ? el('section', { class: 'panel request', 'aria-label': 'Changes and reviews' }, el('h3', {}, 'Changes and reviews'), landing && !(run.task && run.task.landing) ? landingLine(landing) : null, evidenceView(evidence, false)) : null,
       el('h3', {}, 'Steps'),
+      // Each step by its readable name, its state, and its Worker; its id and an earlier attempt's error folded, a current failure in sight (T171).
       el('ol', { class: 'timeline' }, run.nodes.map((n) => {
         const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
         const made = decisions.get(n.nodeId) || []
         return el('li', { class: 'step' },
-          el('div', {}, el('strong', {}, stepWords(n.nodeId) || n.nodeId), stepWords(n.nodeId) ? el('span', { class: 'muted' }, ' (' + n.nodeId + ')') : null, ' ', el('span', { class: 'state ' + cls }, word),
+          el('div', {}, el('strong', {}, stepName(n.nodeId)), ' ', el('span', { class: 'state ' + cls }, word),
             n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (names.has(n.worker) ? '' : ' · ' + (n.tier || n.minTier) + ' tier') + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : el('span', { class: 'muted' }, ' · needs ' + (/^[aeiou]/.test(n.minTier) ? 'an ' : 'a ') + n.minTier + ' tier Worker')),
           // An earlier attempt's error on a step that goes on is history, never shown as its failure now.
-          n.error ? (n.state === 'FAILED' ? el('div', { class: 'state failed' }, failureText(n.error)) : el('div', { class: 'muted' }, 'An earlier attempt failed: ' + failureText(n.error))) : null,
+          n.error && n.state === 'FAILED' ? el('div', { class: 'state failed' }, failureText(n.error)) : null,
+          n.error && n.state !== 'FAILED' ? fold('Attempt history', el('div', { class: 'muted' }, 'An earlier attempt failed: ' + failureText(n.error))) : null,
+          stepWords(n.nodeId) ? fold('Step ID', el('code', {}, n.nodeId)) : null,
           made.length ? el('details', {}, el('summary', {}, 'How it was decided (' + made.length + ')'),
             made.map((d) => el('div', {}, el('strong', {}, d.type + ': '), d.outcome, el('span', { class: 'muted' }, ' — ' + d.reasons.join('; '))))) : null)
       })),
-      el('details', {}, el('summary', {}, 'Technical details'), el('p', { class: 'muted' }, 'Template ' + run.template + ' · spec ', el('code', {}, run.specHash), run.sessionId ? ' · session ' + run.sessionId : '')),
+      fold('Technical details', el('p', { class: 'muted' }, 'Template ' + run.template + ' · last changed ', ago(run.updatedAt), ' · spec ', el('code', {}, run.specHash), run.sessionId ? ' · session ' + run.sessionId : ''),
+        el('p', { class: 'muted' }, 'run ', el('code', {}, run.runId))),
     )
   }
 
@@ -1130,12 +1271,12 @@ export const APP_JS = `'use strict'
   async function boardView() {
     let projects
     try { ({ projects } = await api('projects')) } catch (error) {
-      show(pageHead('board'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The board is not running, so there are no projects to show.' : 'The board could not be read: ' + error.message + '. The page tries again every 5 seconds.'))
+      show(pageHead('board'), error.status === 503 ? el('p', { class: 'muted' }, 'The board is not running, so there are no projects to show.') : errorState('The board could not be read: ' + error.message + '.'))
       return
     }
     const count = (p, states) => states.reduce((n, s) => n + (p.open[s] || 0), 0)
     const shown = el('div', {})
-    const settle = async () => { confirming = false; await boardView().catch((error) => { status.textContent = 'could not refresh: ' + error.message }) }
+    const settle = async () => { confirming = false; await boardView().catch((error) => { say('could not refresh: ' + error.message) }) }
     const send = (p, action, body) => async () => {
       try {
         const { project, decision } = await api('projects/' + encodeURIComponent(p.projectId) + '/' + action, Object.assign({ revision: p.revision }, body()))
@@ -1176,13 +1317,15 @@ export const APP_JS = `'use strict'
     }
     // A project's state at a glance, in words with counts (T141): what waits for the operator (reviews, answers,
     // approvals, merges), what works, what is ready, and what is proposed.
+    // A project's state as counts (T171: "Needs you 3 · Working 1 · Ready 1 · Proposed 0"); what needs you, by kind, on demand.
     const glanceOf = (p) => {
       const merges = (p.tasks || []).filter((t) => t.state === 'done' && t.landing && t.landing.state === 'asked').length
       const yours = [[p.open.review, 'review'], [p.open['waiting-for-approval'], 'approval'], [p.open['waiting-for-input'], 'answer'], [merges, 'merge']].filter(([n]) => n)
       const total = yours.reduce((n, [k]) => n + k, 0)
-      return el('p', { class: 'glance', 'aria-label': 'State of ' + p.title },
-        el('strong', {}, total ? 'Waiting for you: ' + total : 'Nothing waits for you'), total ? ' (' + yours.map(([n, w]) => n + ' ' + w + (n === 1 ? '' : 's')).join(', ') + ')' : '',
-        ' · Working: ' + count(p, ['claimed', 'running']) + ' · Ready: ' + (p.open.ready || 0) + ' · Proposed: ' + (p.open.proposed || 0))
+      const counted = (label, n, cls) => el('span', { class: cls || '' }, label + ' ', el('span', { class: 'n' }, String(n)))
+      return [el('div', { class: 'glance', 'aria-label': 'State of ' + p.title },
+        counted('Needs you', total, total ? 'soon' : ''), ' · ', counted('Working', count(p, ['claimed', 'running'])), ' · ', counted('Ready', p.open.ready || 0), ' · ', counted('Proposed', p.open.proposed || 0)),
+        total ? fold('What needs you', yours.map(([n, w]) => qty(n, w)).join(', ')) : null]
     }
     const moves = (p) => p.state === 'active' ? ['pause', 'close'] : p.state === 'paused' ? ['resume', 'close'] : []
     const label = { pause: 'Pause', resume: 'Resume', close: 'Close' }
@@ -1191,11 +1334,15 @@ export const APP_JS = `'use strict'
     const open = q && !q.error ? q.requests : []
     const charterOf = (p) => open.find((r) => r.action.class === 'charter' && r.subject.ref.startsWith('project:' + p.projectId + ':charter:'))
     const asksOf = (p) => open.filter((r) => r.requester.component === 'board' && r.requester.projectId === p.projectId && r.requester.taskId)
+    // What of it needs the operator: a chip each, linked to its card; past three task approvals, the rest folded.
     const stateOf = (p) => {
       const charter = charterOf(p)
+      const asks = asksOf(p)
+      const links = (list) => list.flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])
       return el('div', {},
-        charter ? el('div', {}, p.state === 'proposed' ? 'Its charter waits for your verdict: ' : 'Its amendment waits for your verdict: ', decideLink(charter.requestId, 'decide it')) : null,
-        asksOf(p).length ? el('div', {}, asksOf(p).length + ' task(s) wait for your approval: ', asksOf(p).flatMap((r, i) => [i ? ', ' : '', decideLink(r.requestId, q.described.get(r.requestId).title)])) : null)
+        charter ? el('div', {}, chip(p.state === 'proposed' ? 'Charter approval needed' : 'Amendment approval needed', 'warn'), ' ', decideLink(charter.requestId, 'Review request')) : null,
+        asks.length ? el('div', {}, chip(qty(asks.length, 'task approval'), 'warn'), ' ', links(asks.slice(0, 3)),
+          asks.length > 3 ? fold((asks.length - 3) + ' more', links(asks.slice(3))) : null) : null)
     }
     // Who works on a task: the Worker the engine runs its run's step on, by its name, and since when.
     let roster = null
@@ -1215,20 +1362,25 @@ export const APP_JS = `'use strict'
     const ready = shownProjects.reduce((n, p) => n + (p.open.ready || 0), 0)
     const head = (p) => el('article', { class: 'panel request', 'aria-labelledby': 'project-' + p.projectId },
       el('h3', { id: 'project-' + p.projectId }, p.title),
-      el('p', { class: 'meta' }, el('span', { class: 'tag' }, p.state), ' project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ', amendment ' + p.amendment + ' waits' : '') + ' · ' + count(p, OPEN) + ' open task(s)' + (p.closure ? ' · closed (' + p.closure.outcome + ')' : '')),
+      // Its state as a chip and its open tasks; its id and charter version folded (T171).
+      el('div', { class: 'meta' }, chip(p.closure ? 'closed (' + p.closure.outcome + ')' : p.state, p.state === 'active' ? 'ok' : p.state === 'paused' ? 'warn' : 'idle'), ' · ' + qty(count(p, OPEN), 'open task'),
+        p.amendment ? ' · Amendment awaiting approval' : '',
+        fold('Details', 'project ' + p.projectId + ' · charter version ' + p.charter.version + (p.amendment ? ' · amendment ' + p.amendment + ' awaiting approval' : ''), copyId('Copy project ID', p.projectId))),
       glanceOf(p),
       stateOf(p),
       moves(p).length ? el('div', { class: 'actions' }, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))) : null)
+    // What a waiting task needs, in the cross-page words (T171): Approval needed, Review needed, Input needed.
     const WAITS = {
-      'approval-needed': 'waits for your approval', 'budget-spent': 'its budget is spent: waits for your funding verdict', 'reconciliation-failed': 'its run could not be settled: waits for your verdict',
-      'retries-spent': 'used all its attempts: waits for input', question: 'asked a question: waits for an answer', rejected: 'was rejected: waits for input', 'review-expired': 'its review expired', 'operator-review': 'waits for your review',
+      'approval-needed': 'Approval needed', 'budget-spent': 'Approval needed — budget spent', 'reconciliation-failed': 'Approval needed — run not settled',
+      'retries-spent': 'Input needed — attempts used up', question: 'Input needed — it asked a question', rejected: 'Input needed — rejected', 'review-expired': 'Input needed — review expired', 'operator-review': 'Review needed',
     }
     // Where a done task's accepted result stands on its way into the repository (ADR-0060).
     // The operator starts a ready task's run, as the lead does (MCP run with task): behind a
     // confirmation that says what runs and on which kind of Worker, bound to the task and template shown.
-    const needs = (step) => step.source ? 'the system reads it itself, on no Worker'
-      : (step.team ? 'a team of ' + step.team.members + ' Workers, each of another provider, each' : 'a Worker') + ' of ' + step.tier + ' tier or above that can ' + step.capabilities.join(', ')
-        + (step.kind ? ', for ' + step.kind + ' work' : '') + (step.plans ? '; it plans further steps, which may ask for your approval' : '')
+    // A step's requirement as a short label (T171: "standard+ · reason"): its tier or above, what it must do, its kind of work.
+    const needs = (step) => step.source ? 'read by the system, on no Worker'
+      : (step.team ? 'team of ' + step.team.members + ', each of another provider · ' : '') + step.tier + '+ · ' + step.capabilities.join(', ')
+        + (step.kind ? ' · ' + step.kind : '') + (step.plans ? ' · plans further steps, which may ask for your approval' : '')
     // Who would likely take a step now, by display name with its account's 5 h quota, from the Workers
     // that can do it (the preview's): routing decides when the run starts, so it reads "likely".
     const entries = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w]) : [])
@@ -1254,7 +1406,9 @@ export const APP_JS = `'use strict'
       const step = preview.steps.find((s) => !s.source)
       const w = step && step.workers
       if (!w || !('free' in w) || !w.free.length) return step ? likely(step) : null
-      return el('div', { class: 'likely' }, 'Likely goes to: ' + nameOf(w.free[0]) + (w.free.length > 1 ? ' (or ' + (w.free.length - 1) + ' other' + (w.free.length > 2 ? 's' : '') + ')' : ''))
+      // The likely Worker in sight, the alternatives folded (T171).
+      return el('div', { class: 'likely' }, 'Likely Worker: ' + nameOf(w.free[0]),
+        w.free.length > 1 ? el('details', { class: 'fold inline' }, el('summary', {}, '+' + qty(w.free.length - 1, 'other')), w.free.slice(1).map((id) => el('div', {}, nameOf(id)))) : null)
     }
     // A request the queue lists, decided on the card with its own buttons (approve by button, T141).
     const askOf = (requestId) => open.find((r) => r.requestId === requestId)
@@ -1295,12 +1449,13 @@ export const APP_JS = `'use strict'
       })
       shown.replaceChildren(el('div', { class: 'panel', role: 'group', 'aria-label': 'Confirm start of ' + t.title },
         el('h3', {}, 'Start "' + t.title + '"'),
-        el('ul', {},
-          el('li', {}, 'It runs the ' + task.template + ' template for this task, its attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ': the run claims the task, which moves to Working.', whatIs('attempt')),
-          el('li', {}, steps.length === 1 ? 'Its step, and the kind of Worker it runs on:' : 'Its ' + steps.length + ' steps, in order, and the kind of Worker each runs on:', whatIs('tier'),
-            el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step) + '.', likely(step))))),
-          el('li', {}, (idle === undefined ? 'How many Workers are free is unknown now' : idle + (idle === 1 ? ' Worker is' : ' Workers are') + ' free now') + '; a step no free Worker can take waits for one.'),
-          el('li', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
+        // What runs in numbers and labels, the likely Worker of each step in sight; the mechanics and assurances folded (T171).
+        el('p', {}, el('span', { class: 'tag' }, task.template + ' template'), ' · attempt ' + (task.attempts.count + 1) + ' of ' + task.attempts.max + ' · ' + qty(steps.length, 'step'), whatIs('attempt'), whatIs('tier')),
+        el('ol', {}, steps.map((step) => el('li', {}, step.objective + ': ' + needs(step), likely(step)))),
+        el('p', { class: 'muted' }, idle === undefined ? 'Free Workers unknown' : qty(idle, 'Worker') + ' free now'),
+        fold('What happens on start', el('p', {}, 'The run claims the task, which moves to Working; each step runs in order on a Worker that can do it, and a step no free Worker can take waits for one.'),
+          el('p', {}, 'Routing picks each step\\'s Worker when the run starts: the names above are likely, not promised.'),
+          el('p', {}, 'Nothing runs until you confirm. Once it runs, its page has Stop run.')),
         yes, close))
       // On a narrow screen the confirmation is far above the card pressed: bring it into sight.
       shown.scrollIntoView({ block: 'nearest' })
@@ -1313,19 +1468,20 @@ export const APP_JS = `'use strict'
         el('strong', {}, t.title),
         boardProject === 'all' && projects.length > 1 ? el('div', { class: 'muted' }, p.title) : null,
         el('div', { class: 'muted' }, 'Changed ', ago(since), ' · ', el('span', { class: 'tag' }, t.actionClass)),
-        t.state === 'proposed' ? el('div', {}, 'Waits for its dependencies and the autonomy policy') : null,
-        t.state === 'ready' ? el('div', {}, t.template ? 'Ready to start: a ' + t.template + ' run' : 'Ready; it names no template, so the lead starts it') : null,
+        // A label each, the lifecycle explained once in Help (T171).
+        t.state === 'proposed' ? el('div', { class: 'muted' }, 'Pending prerequisites') : null,
+        t.state === 'ready' ? el('div', {}, t.template ? el('span', { class: 'tag' }, t.template + ' template') : el('span', { class: 'muted' }, 'No template: the lead starts it')) : null,
         t.state === 'ready' && previews.has(t.taskId) ? goesTo(previews.get(t.taskId)) : null,
         t.state === 'ready' ? el('div', { class: 'actions' }, el('button', { onclick: start(t), 'aria-label': 'Start ' + t.title }, 'Start…')) : null,
         t.state === 'claimed' || t.state === 'running' ? el('div', { class: 'taken' }, run ? run.name + ', ' + ('value' in run.since ? relative(run.since.value).replace(/ ago$/, '') : 'since an unknown time') : t.state === 'claimed' ? 'Claimed; no step runs yet' : 'Running; its Worker is not known now') : null,
         (t.state === 'running' || t.state === 'claimed') && t.run && moving.runs && moving.runs.get(t.run.runId) ? [el('div', { class: 'muted' }, lastText(moving.runs.get(t.run.runId))), stalledOf(moving.runs.get(t.run.runId))] : null,
-        t.state === 'review' ? el('div', {}, 'Waits for a review: ', el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'review it')) : null,
-        t.waiting && t.state.startsWith('waiting') ? el('div', {}, (WAITS[t.waiting.reason] || t.waiting.reason) + ' ', t.waiting.approvalRequest && !askOf(t.waiting.approvalRequest) ? decideLink(t.waiting.approvalRequest, 'decide its approval') : null, el('span', { class: 'muted' }, ' · the wait ends ' + relative(t.waiting.expiresAt))) : null,
-        t.landing ? (t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? el('div', {}, 'Accepted — waiting for you to merge it into ' + (t.landing.base || 'its base') + ':') : landingLine(t.landing)) : null,
+        t.state === 'review' ? el('div', {}, chip('Review needed', 'warn'), ' ', el('a', { href: '/ui/', 'aria-label': 'Review ' + t.title, onclick: (e) => { e.preventDefault(); go(); setTimeout(() => { const r = document.getElementById('reviews'); if (r) { r.scrollIntoView({ block: 'start' }); r.focus({ preventScroll: true }) } }, 300) } }, 'Review')) : null,
+        t.waiting && t.state.startsWith('waiting') ? el('div', {}, chip(WAITS[t.waiting.reason] || t.waiting.reason, 'warn'), ' ', t.waiting.approvalRequest && !askOf(t.waiting.approvalRequest) ? decideLink(t.waiting.approvalRequest, 'Review request') : null, ' ', expires(t.waiting.expiresAt)) : null,
+        t.landing ? (t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? el('div', {}, chip('Merge approval needed', 'warn'), ' · into ' + (t.landing.base || 'its base')) : landingLine(t.landing)) : null,
         // Approve by button where the operator sees it (T141): the request's own verdict buttons, on its exact subject.
         t.waiting && t.waiting.approvalRequest && askOf(t.waiting.approvalRequest) ? decideHere(askOf(t.waiting.approvalRequest)) : null,
         t.landing && t.landing.state === 'asked' && t.landing.requestId && askOf(t.landing.requestId) ? decideHere(askOf(t.landing.requestId)) : null,
-        t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'open its run')) : null)
+        t.run ? el('div', {}, el('a', { href: '?run=' + encodeURIComponent(t.run.runId), onclick: (e) => { e.preventDefault(); go(t.run.runId) }, 'aria-label': 'Open the run of ' + t.title }, 'Open run')) : null)
     }
     // A done task whose merge waits for the operator is also shown where the operator looks for what waits (ADR-0060).
     const waitsToMerge = (t) => t.state === 'done' && t.landing && t.landing.state === 'asked'
@@ -1341,22 +1497,24 @@ export const APP_JS = `'use strict'
     const folded = (name, states) => {
       const cards = tasksIn(states)
       return el('details', { class: 'column' }, el('summary', {}, name + ' (' + (cards.length + moreIn(states)) + ')'),
-        cards.length ? el('div', { class: 'cards' }, cards.map(([p, t]) => cardOf(p, t))) : el('p', { class: 'muted' }, name === 'Done' ? 'None yet. A task you accept is done, and listed here.' : 'None. A task is cancelled when its project is closed, or when you or the lead cancel it.'))
+        cards.length ? el('div', { class: 'cards' }, cards.map(([p, t]) => cardOf(p, t))) : el('p', { class: 'muted' }, name === 'Done' ? 'None yet.' : 'None.'))
     }
     const idle = roster ? roster.counts.ready : undefined
+    // Each empty state one short line; how tasks move between columns is in Help's Task lifecycle (T171).
     show(
       pageHead('board'),
-      projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet. A project appears here when the lead proposes its charter, and starts once you approve it on Home.'),
+      projects.length ? null : el('p', { class: 'muted' }, 'No projects yet · ', pageLink('help', 'How projects start')),
       projects.length ? el('p', {}, el('label', { for: 'board-project' }, 'Show ', pick)) : null,
       projects.length ? el('p', { 'aria-label': 'Capacity' }, capacityText(idle, ready), whatIs('task')) : null,
+      projects.length && ready ? startHelp() : null,
       shownProjects.map(head),
       shown,
       projects.length ? el('div', { class: 'kanban' },
-        column('Proposed', ['proposed'], 'None proposed. The lead proposes a project\\'s tasks; each waits here for what it depends on and for the policy.'),
-        column('Ready', ['ready'], 'None ready. A proposed task becomes ready once what it depends on is done and the policy allows it.'),
-        column('Working', ['claimed', 'running'], 'Nothing runs now. A ready task moves here when you press Start, or the lead starts it.'),
-        column('Review', ['review'], 'Nothing to review. A task moves here when its run finishes, for you to accept or send back.'),
-        column('Waiting for you', ['waiting-for-input', 'waiting-for-approval'], 'Nothing waits for you. A task moves here when it needs your approval, an answer, or a merge.')) : null,
+        column('Proposed', ['proposed'], 'No proposed tasks'),
+        column('Ready', ['ready'], 'No ready tasks'),
+        column('Working', ['claimed', 'running'], 'No active tasks'),
+        column('Review', ['review'], 'No reviews'),
+        column('Needs your attention', ['waiting-for-input', 'waiting-for-approval'], 'Nothing needs you')) : null,
       projects.length ? el('div', { class: 'folded' }, folded('Done', ['done']), folded('Cancelled', ['cancelled'])) : null)
   }
 
@@ -1379,13 +1537,15 @@ export const APP_JS = `'use strict'
   // give stays unknown, with why.
   const ISO_TIME = /\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d(?::\\d\\d(?:\\.\\d+)?)?(?:Z|[+-]\\d\\d:\\d\\d)/g
   const clocked = (text) => text.replace(ISO_TIME, (iso) => Number.isNaN(Date.parse(iso)) ? iso : clockOf(iso))
+  // "5 h · used 42 % · resets 14:20" (T171); when it was read is under the account's details (readTimes).
   const windowLine = (win, label) => {
     const limited = win.state === 'limited'
-    if (!('value' in win.used) && /^no reading yet/.test(win.used.unknown)) return label + ': ' + clocked(win.used.unknown)
-    return label + ': ' + (limited ? 'at its limit, ' : '') + ('value' in win.used ? 'used ' + win.used.value + ' %' : 'used unknown (' + win.used.unknown + ')')
-      + ' — resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
-      + (win.observedAt ? ' (read ' + clockOf(win.observedAt) + ')' : '')
+    if (!('value' in win.used) && /^no reading yet/.test(win.used.unknown)) return label + ' · ' + clocked(win.used.unknown)
+    return label + ' · ' + (limited ? 'at its limit · ' : '') + ('value' in win.used ? 'used ' + win.used.value + ' %' : 'used unknown (' + win.used.unknown + ')')
+      + ' · resets ' + ('value' in win.resets ? clockOf(win.resets.value) : 'unknown (' + win.resets.unknown + ')')
   }
+  // When each window of these pools was last read, for the details: "5 h read 09:29; 7 d read 09:29".
+  const readTimes = (pools) => pools.flatMap((p) => p.windows.filter((w) => w.observedAt).map((w) => (pools.length > 1 ? p.pool + ' ' : '') + (w.seconds ? span(w.seconds) : w.id) + ' read ' + clockOf(w.observedAt))).join('; ')
   // A pool's windows, the ones at their limit first, each named by its length ("5 h"; its id when it has none, or beside a twin).
   const windowsView = (p) => {
     const named = (win) => win.seconds ? span(win.seconds) + (p.windows.filter((w) => w.seconds === win.seconds).length > 1 ? ' (' + win.id + ')' : '') : win.id
@@ -1439,16 +1599,17 @@ export const APP_JS = `'use strict'
       pick && 'value' in pick.win.used ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(pick.win.used.value), 'aria-hidden': 'true' }) : el('span', { class: 'no-bar', 'aria-hidden': 'true' }),
       el('span', {}, g.name + ': ' + ([resting ? restingText(resting) : null,
         pick ? span(pick.win.seconds) + ' ' + (pick.win.state === 'limited' ? 'at its limit, ' : '') + ('value' in pick.win.used ? 'used ' + pick.win.used.value + ' %' + ('value' in pick.win.resets ? ', resets ' + clockOf(pick.win.resets.value) : '') : /^no reading yet/.test(pick.win.used.unknown) ? 'no reading yet' : 'used unknown') : null,
-      ].filter(Boolean).join('; ') || (poolsOf(g) ? 'no quota is tracked for it' : 'its quota is unknown'))))
+      ].filter(Boolean).join('; ') || (poolsOf(g) ? 'quota not tracked' : 'quota unknown'))))
   }
-  // A Worker's status in plain words, with the reason; one that blocks work is never folded.
+  // A Worker's status in the cross-page words (T171): Free, Working · 1/2 slots, Resting until 14:20, Unavailable — why,
+  // Quarantined — why; a reason that blocks work is never folded.
   const statusOf = (w) => {
     const a = w.availability
-    if (a.state === 'busy') return a.slots !== undefined ? 'Working: ' + a.running + ' of ' + a.slots + ' slot(s) in use' + (a.running < a.slots ? '; it still takes work' : '; it takes no more until one ends') : 'Working'
-    if (a.state === 'ready') return 'Free: it takes work now'
+    if (a.state === 'busy') return a.slots !== undefined ? 'Working · ' + a.running + '/' + a.slots + ' slots' + (a.running < a.slots ? ' · ' + qty(a.slots - a.running, 'slot') + ' free' : '') : 'Working'
+    if (a.state === 'ready') return 'Free'
     if (a.state === 'resting') return isKnown(a.until) ? 'Resting until ' + clockOf(a.until.value) + ' (' + relative(a.until.value) + ')' : 'Resting: no reset is known (' + a.until.unknown + ')'
-    if (a.state === 'unavailable') return 'Unavailable: ' + textOf(a.reason)
-    return 'Quarantined: its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + (a.detail ? ' (' + a.detail + ')' : '') + ', since ' + when(a.since)
+    if (a.state === 'unavailable') return 'Unavailable — ' + textOf(a.reason)
+    return 'Quarantined — its account ' + ({ changed: 'signed in as someone else', ambiguous: 'could not be told apart from another', duplicate: 'is the same person as another', unverified: 'is not verified' }[a.reason] || a.reason) + (a.detail ? ' (' + a.detail + ')' : '') + ', since ' + when(a.since)
   }
   // One step it runs, in words (T141): the task by its title, else the run's template and the step; for how long. The roster's own sentence stays in its details.
   const doingText = (i) => {
@@ -1488,19 +1649,28 @@ export const APP_JS = `'use strict'
   const glanceView = (now, ready, workers) => {
     const keptOut = new Set((workers || []).filter((w) => w.teams && isKnown(w.teams)).map((w) => w.worker))
     const has = (k) => isKnown(k) && k.value.items.length > 0
-    const said = (k, line) => !isKnown(k) ? 'unknown (' + k.unknown + ').' : k.value.items.length ? k.value.items.map(line).join('; ') + (k.value.more ? '; and ' + k.value.more + ' more' : '') : 'none.'
-    const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left, resets ' + clockOf(q.resetsAt) : 'no quota tracked'
+    const SHOWN = 3
+    // "Label: N — a; b; c" (T171): a count first, the names that need acting on after it, past the first three folded;
+    // what could not be read is unknown with why, never 0.
+    const row = (label, k, line, extra) => {
+      if (!isKnown(k)) return el('li', {}, el('strong', {}, label + ': '), el('span', { class: 'unknown' }, 'unknown (' + k.unknown + ')'), extra)
+      const items = k.value.items
+      const named = (list) => list.map((x, i) => [i ? '; ' : '', line(x)])
+      return el('li', {}, el('strong', {}, label + ': '), String(items.length + (k.value.more || 0)),
+        items.length ? [' — ', named(items.slice(0, SHOWN)), items.length > SHOWN ? fold((items.length - SHOWN) + ' more', named(items.slice(SHOWN))) : null, k.value.more ? ' · ' + k.value.more + ' not listed' : null] : null, extra)
+    }
+    const quota = (q) => q ? q.left + ' % of ' + (q.seconds ? span(q.seconds) : q.window) + ' left, resets ' + clockOf(q.resetsAt) : 'quota not tracked'
     const likely = (t) => isKnown(t.likely) ? (t.likely.value ? 'likely ' + t.likely.value.name : 'no Worker that takes work now can take it') : 'its Worker is unknown (' + t.likely.unknown + ')'
     const stalled = now.stalled
     return el('section', { class: 'panel', 'aria-label': 'Right now' }, el('h3', {}, 'Right now'),
       el('ul', {},
-        el('li', {}, el('strong', {}, 'Free: '), has(now.free) ? [said(now.free, (f) => f.name + ' (' + quota(f.quota) + (keptOut.has(f.worker) ? '; kept out of teams by you: free for other steps, not for team work' : '') + ')'), ready ? ['. ' + ready + (ready === 1 ? ' task is' : ' tasks are') + ' ready: start one on the ', pageLink('board', 'Board'), '.'] : '.'] : said(now.free)),
-        has(now.quotaUnknown) ? el('li', {}, el('strong', {}, 'Quota unknown, not counted free: '), said(now.quotaUnknown, (u) => u.name + ' (' + u.why + ')')) : null,
-        el('li', {}, el('strong', {}, 'Stalled: '), has(stalled) ? [stalled.value.items.map((s, i) => [i ? '; ' : '', s.name + ' ', s.runId ? runOpen(s.runId) : null]), stalled.value.more ? '; and ' + stalled.value.more + ' more' : null, whatIs('stalled')] : said(stalled),
-          isKnown(stalled) && stalled.value.unread ? el('span', { class: 'unknown' }, ' ' + stalled.value.unread) : null),
-        el('li', {}, el('strong', {}, 'No quota left: '), said(now.noQuota, (n) => n.name + (isKnown(n.until) ? ' until ' + clockOf(n.until.value) + ' (' + relative(n.until.value) + ')' : ', no reset known'))),
-        has(now.cannotWork) ? el('li', {}, el('strong', {}, 'Cannot work: '), said(now.cannotWork, (w) => w.name + ' (' + w.reason + ')')) : null,
-        has(now.ready) ? el('li', {}, el('strong', {}, 'Ready: '), said(now.ready, (t) => '"' + t.title + '": ' + likely(t))) : null))
+        row('Free', now.free, (f) => f.name + ' (' + quota(f.quota) + (keptOut.has(f.worker) ? '; excluded from teams: free for other steps, not team work' : '') + ')', has(now.free) && ready ? [' · ' + qty(ready, 'task') + ' ready: ', pageLink('board', 'Open Board')] : null),
+        has(now.quotaUnknown) ? row('Quota unknown, not counted free', now.quotaUnknown, (u) => u.name + ' (' + u.why + ')') : null,
+        row('Stalled', stalled, (s) => [s.name + ' ', s.runId ? runOpen(s.runId) : null], [has(stalled) ? whatIs('stalled') : null,
+          isKnown(stalled) && stalled.value.unread ? el('span', { class: 'unknown' }, ' ' + stalled.value.unread) : null]),
+        row('No quota left', now.noQuota, (n) => n.name + (isKnown(n.until) ? ' until ' + clockOf(n.until.value) + ' (' + relative(n.until.value) + ')' : ', no reset known')),
+        has(now.cannotWork) ? row('Cannot work', now.cannotWork, (w) => w.name + ' (' + w.reason + ')') : null,
+        has(now.ready) ? row('Ready', now.ready, (t) => '"' + t.title + '": ' + likely(t)) : null))
   }
   async function workersView() {
     const roster = await api('roster')
@@ -1515,8 +1685,8 @@ export const APP_JS = `'use strict'
       el('p', { class: 'state ' + w.availability.state }, statusOf(w), w.availability.state === 'resting' ? whatIs('resting') : w.availability.state === 'quarantined' ? whatIs('quarantine') : null),
       doingOf(w),
       w.limits.length ? el('div', {}, w.limits.map((l) => el('div', { class: 'state resting' }, l.capability + ' is held off until ' + clockOf(l.until) + ' (' + relative(l.until) + ')'))) : null,
-      // The operator's own choice (D58): said where they look for the Worker, never folded.
-      w.teams && isKnown(w.teams) ? el('p', { class: 'teams' }, el('strong', {}, 'Kept out of teams by you: '), 'it is never a team member; it takes every other step.', whatIs('team')) : null,
+      // The operator's own choice (D58): a chip where they look for the Worker, never folded; what it means is behind its "?".
+      w.teams && isKnown(w.teams) ? el('p', { class: 'teams' }, chip('Excluded from teams', 'info'), whatIs('team')) : null,
       detailsOf([
         ['Worker id', el('code', {}, w.worker)],
         isKnown(w.work) && w.work.value.items.length ? ['Steps, as recorded', el('div', {}, w.work.value.items.map((i) => el('div', {}, i.summary)))] : null,
@@ -1527,6 +1697,7 @@ export const APP_JS = `'use strict'
         ['Account', isKnown(w.account) ? recordText(w.account.value) : el('span', { class: 'unknown' }, 'unknown (' + w.account.unknown + ')')],
         ['Serves', w.tier + ' tier, ' + w.quotaClass + ', ' + w.locality + '; provider ' + w.provider + ', family ' + textOf(w.family) + ', role ' + textOf(w.role, (r) => r === null ? 'none' : r)],
         inAccount ? null : ['Quota', isKnown(w.pools) ? (w.pools.value.length ? el('div', {}, poolsView(w.pools.value)) : 'no pool on its account') : el('span', { class: 'unknown' }, 'unknown (' + w.pools.unknown + ')')],
+        !inAccount && isKnown(w.pools) && readTimes(w.pools.value) ? ['Quota read', readTimes(w.pools.value)] : null,
         ['Load', textOf(w.load, (l) => l.running + ' of ' + l.slots + ' running, ' + l.queued + ' queued, ' + l.pending + ' routed and not started')],
       ]))
     // An account once: its name, its Workers' roles, what stops it (resting, signed out, quarantined, one person on two accounts), and its quota.
@@ -1536,15 +1707,18 @@ export const APP_JS = `'use strict'
       const pools = poolsOf(g)
       const unknownPools = g.workers.find((w) => !isKnown(w.pools))
       return el('section', { class: 'account', 'aria-label': 'Account ' + g.name },
-        el('h3', {}, g.name, el('span', { class: 'muted' }, ': ' + g.workers.map((w) => cut(w.name)[1]).join(', ')), whatIs('account')),
+        // Its name and how many Workers; their roles are their cards' headings, and listed under its details (T171).
+        el('h3', {}, g.name, el('span', { class: 'muted' }, ' · ' + qty(g.workers.length, 'Worker')), whatIs('account')),
         a.limitUntil ? el('p', { class: 'state resting' }, 'Its account is ' + restingText(a.limitUntil)) : null,
         record && record.status !== 'ready' ? el('p', { class: 'state ' + (record.status === 'quarantined' || record.status === 'signed-out' ? 'unavailable' : 'unknown') }, 'Its account is ' + record.status.replace('-', ' ') + (record.quarantine ? ' (' + record.quarantine.reason + (record.quarantine.detail ? ': ' + record.quarantine.detail : '') + ')' : '')) : null,
         record && record.sameAs ? el('p', { class: 'state failed' }, 'Signed in as the same person as ' + record.sameAs.join(', ')) : null,
         pools && pools.length ? el('div', { class: 'quota' }, el('div', { class: 'muted' }, 'Quota', whatIs('quota')), poolsView(pools, !!a.limitUntil)) : null,
-        pools && !pools.length ? el('p', { class: 'muted' }, 'No quota is tracked for this account: what it has left is not shown.') : null,
+        pools && !pools.length ? el('p', { class: 'muted' }, 'Quota not tracked') : null,
         detailsOf([
           ['Account', recordText(a)],
+          ['Roles', g.workers.map((w) => cut(w.name)[1]).join(', ')],
           pools ? (pools.length ? null : ['Quota', 'no pool on its account']) : ['Quota', el('span', { class: 'unknown' }, 'unknown (' + (unknownPools ? unknownPools.pools.unknown : 'not read') + ')')],
+          pools && readTimes(pools) ? ['Quota read', readTimes(pools)] : null,
         ]),
         g.workers.map((w) => card(w, true)))
     }
@@ -1557,17 +1731,19 @@ export const APP_JS = `'use strict'
       el('p', { 'aria-label': 'Worker counts' }, counts.join(' · ') + (roster.unlisted ? ' · ' + roster.unlisted + ' more not listed' : '')),
       now && isKnown(roster.workers) && roster.workers.value.length ? glanceView(now, ready, roster.workers.value) : null,
       ready === undefined ? null : el('p', { 'aria-label': 'Capacity' }, capacityText(c.ready, ready)),
-      el('p', { class: 'muted' }, 'Read ', ago(roster.asOf), '; the page refreshes every 5 seconds.'),
       isKnown(roster.sources) ? null : el('p', { class: 'unknown' }, 'Worker sources: unknown (' + roster.sources.unknown + ')'),
+      // A source that has not answered: its impact on the counts in sight, a blocking reason too; its times folded (T171).
       unheard.length ? el('div', {}, unheard.map((s) => s.describing
-        ? el('p', { class: 'muted' }, 'The Worker source ' + s.source + ' is still describing its Workers: its first read since it started has not landed (' + relative(s.at) + '). Its Workers are not listed yet, so the counts above are so far.')
-        : el('p', { class: 'state failed' }, 'The Worker source ' + s.source + ' was ' + s.state + ' ' + relative(s.at) + (s.detail ? ': ' + s.detail : '') + '. Its Workers are not listed.'))) : null,
+        ? el('div', { class: 'muted' }, s.source + ' loading — counts incomplete', fold('Details', 'Its first read since it started has not landed (' + relative(s.at) + '); its Workers are not listed yet.'))
+        : el('div', { class: 'state failed' }, s.source + ' unavailable — counts incomplete' + (s.detail ? ': ' + s.detail : ''), fold('Details', 'It was ' + s.state + ' ' + relative(s.at) + '; its Workers are not listed.')))) : null,
+      // When the roster was read, beside the page's own "updated" line in the header.
+      fold('Roster read', ago(roster.asOf)),
       isKnown(roster.workers) ? (roster.workers.value.length ? (() => {
         const groups = accountsOf(roster.workers.value)
         const lone = groups.filter((g) => !g.account)
         return el('div', {}, groups.filter((g) => g.account).map(accountView),
           lone.length ? el('section', { class: 'account', 'aria-label': 'Workers of no account' }, el('h3', {}, 'Workers of no account'), lone.map((g) => card(g.workers[0], false))) : null)
-      })() : el('p', { class: 'muted' }, 'No Worker is set up yet. A Worker appears here once an account is signed in and given a role in the configuration (see Help).')) : el('p', { class: 'unknown' }, 'The Workers are unknown (' + roster.workers.unknown + ').'))
+      })() : el('p', { class: 'muted' }, 'No Workers set up yet · ', pageLink('help', 'How Workers work'))) : el('p', { class: 'unknown' }, 'The Workers are unknown (' + roster.workers.unknown + ').'))
   }
 
   // The autonomy policy in force, its history, and a proposed change with its diff. A proposal is
@@ -1575,7 +1751,7 @@ export const APP_JS = `'use strict'
   async function policyView() {
     let value
     try { value = await api('policy') } catch (error) {
-      show(pageHead('policy'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The approval queue is not running, so there is no autonomy policy to show.' : 'The policy could not be read: ' + error.message + '. Reload the page to try again.'))
+      show(pageHead('policy'), error.status === 503 ? el('p', { class: 'muted' }, 'The approval queue is not running, so there is no autonomy policy to show.') : errorState('The policy could not be read: ' + error.message + '.'))
       return
     }
     const { set, policies, effective, changes, proposals } = value
@@ -1609,19 +1785,23 @@ export const APP_JS = `'use strict'
       input.addEventListener('input', () => onvalue(input.value === '' ? undefined : Number(input.value)))
       return el('label', { for: id }, label, input)
     }
-    const modeText = { auto: 'auto: it runs on its own', notify: 'notify: it runs, then tells you', ask: 'ask: it waits for your approval', forbid: 'forbid: it never runs' }
-    const WHY = { merge: 'an accepted result lands only on your approval', 'external-send': 'it cannot be undone', deploy: 'it cannot be undone', 'delete-data': 'it cannot be undone', spend: 'it is your decision', charter: 'it is your decision', funding: 'it is your decision', 'policy-change': 'it is your decision', remediation: 'a fix that writes, or a lost run going on, is yours to allow', promotion: 'the system never approves its own change' }
+    // Each mode by its display name (T171); the stored value (auto, notify, ask, forbid) is under About modes and in the JSON.
+    const MODE = { auto: 'Automatic', notify: 'Notify', ask: 'Ask approval', forbid: 'Blocked' }
+    const modeChip = (m) => chip(MODE[m] || m, m === 'auto' ? 'ok' : m === 'notify' ? 'info' : m === 'ask' ? 'warn' : m === 'forbid' ? 'bad' : 'idle')
+    const WHY ={ merge: 'an accepted result lands only on your approval', 'external-send': 'it cannot be undone', deploy: 'it cannot be undone', 'delete-data': 'it cannot be undone', spend: 'it is your decision', charter: 'it is your decision', funding: 'it is your decision', 'policy-change': 'it is your decision', remediation: 'a fix that writes, or a lost run going on, is yours to allow', promotion: 'the system never approves its own change' }
     const buildForm = () => {
       const p = draft
       const studio = p.scope !== 'project'
       const ruleOf = (c) => (p.rules || []).find((r) => r.actionClass === c)
       const modeRow = (c) => {
         const rule = ruleOf(c)
-        if (fixed.has(c)) return el('tr', {}, el('td', {}, c), el('td', {}, el('strong', {}, rule && rule.mode === 'forbid' ? 'forbid' : 'ask')),
-          el('td', { class: 'muted' }, 'always asks, whatever a rule says: ' + (WHY[c] || 'the queue always asks for it') + (rule && rule.mode === 'forbid' ? '; forbidden here (change it under Advanced)' : ''), whatIs('always-ask')))
+        // A class that always asks: "Approval required" (or "Blocked" prominently when the record forbids it), why on demand.
+        if (fixed.has(c)) return el('tr', {}, el('td', {}, c), el('td', {}, el('strong', {}, rule && rule.mode === 'forbid' ? 'Blocked' : 'Approval required')),
+          el('td', { class: 'muted' }, rule && rule.mode === 'forbid' ? el('div', { class: 'state failed' }, 'Blocked here; change it under Advanced') : null,
+            el('details', { class: 'fold inline' }, el('summary', {}, 'Why always'), 'It always asks, whatever a rule says: ' + (WHY[c] || 'the queue always asks for it') + '.'), whatIs('always-ask')))
         const select = el('select', { id: 'mode-' + c, 'aria-label': 'Mode of ' + c },
-          el('option', { value: '' }, studio ? 'not named: the default (' + p.default + ')' : 'not named: as the studio'),
-          ['auto', 'notify', 'ask', 'forbid'].map((m) => el('option', { value: m }, m)))
+          el('option', { value: '' }, studio ? 'Use default (' + MODE[p.default] + ')' : 'Use studio policy'),
+          ['auto', 'notify', 'ask', 'forbid'].map((m) => el('option', { value: m }, MODE[m])))
         select.value = rule ? rule.mode : ''
         select.addEventListener('change', () => edit((d) => {
           const kept = (d.rules || []).filter((r) => r.actionClass !== c)
@@ -1630,13 +1810,14 @@ export const APP_JS = `'use strict'
           buildForm()
           document.getElementById('mode-' + c).focus()
         }))
+        // Only what the select does not say: the checks its rule requires, and its requests' expiry (T171).
         return el('tr', {}, el('td', {}, el('label', { for: 'mode-' + c }, c)), el('td', {}, select),
-          el('td', { class: 'muted' }, rule ? modeText[rule.mode] + (rule.requires && rule.requires.length ? ', once ' + rule.requires.join(', ') + ' pass' : '') + (rule.expiresSeconds ? '; its requests wait ' + hours(rule.expiresSeconds) + ' h' : '') : studio ? 'no rule: ' + modeText[p.default] : 'no rule: the studio policy decides'))
+          el('td', { class: 'muted' }, rule ? [rule.requires && rule.requires.length ? 'Requires: ' + rule.requires.join(', ') : null, rule.expiresSeconds ? 'Expires: ' + hours(rule.expiresSeconds) + ' h' : null].filter(Boolean).join(' · ') : ''))
       }
-      const fallback = el('select', { id: 'policy-default', 'aria-label': 'Mode of a class no rule names' }, el('option', { value: 'ask' }, 'ask'), el('option', { value: 'forbid' }, 'forbid'))
+      const fallback = el('select', { id: 'policy-default', 'aria-label': 'Default mode' }, el('option', { value: 'ask' }, MODE.ask), el('option', { value: 'forbid' }, MODE.forbid))
       fallback.value = p.default
       fallback.addEventListener('change', () => edit((d) => { d.default = fallback.value; buildForm(); document.getElementById('policy-default').focus() }))
-      const commands = el('textarea', { id: 'policy-commands', class: 'lines', 'aria-label': 'Commands judged as workspace writes, one per line', spellcheck: 'false' })
+      const commands = el('textarea', { id: 'policy-commands', class: 'lines', 'aria-label': 'Workspace-write commands, one per line', spellcheck: 'false' })
       commands.value = (p.commands || []).join('\\n')
       commands.addEventListener('input', () => edit((d) => {
         const lines = commands.value.split('\\n').map((l) => l.trim()).filter(Boolean)
@@ -1647,22 +1828,23 @@ export const APP_JS = `'use strict'
       if (project) project.addEventListener('input', () => edit((d) => { d.projectId = project.value.trim(); if (!selected()) d.id = project.value.trim() + '.policy' }))
       const batch = p.batch || {}
       form.replaceChildren(
-        el('p', {}, el('strong', {}, p.id), ' · ' + (selected() ? 'version ' + selected().version + ' → ' + p.version + ' (the next version, raised for you)' : 'a new project policy, version ' + p.version),
+        el('p', {}, el('strong', {}, p.id), ' · ' + (selected() ? 'Version ' + selected().version + ' → ' + p.version : 'New project policy · Version ' + p.version),
           project ? el('span', {}, ' · ', el('label', { for: 'policy-project' }, 'project ', project)) : null),
-        table(['Action class', 'Mode', 'What it means'], classes.map(modeRow), 'modes'),
+        table(['Action type', 'Mode', 'Notes'], classes.map(modeRow), 'modes'),
         el('div', { class: 'batch-actions' },
-          studio ? el('label', { for: 'policy-default' }, 'A class no rule names', fallback) : null,
-          number('Requests wait (hours)', 'policy-expiry', hours(p.expiry.defaultSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { defaultSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
-          number('At most (hours)', 'policy-expiry-max', hours(p.expiry.maxSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { maxSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
-          number('Batch: at most (requests)', 'policy-batch-size', batch.maxSize === undefined ? '' : String(batch.maxSize), (n) => edit((d) => {
+          studio ? el('label', { for: 'policy-default' }, 'Default mode', fallback) : null,
+          number('Request expiry (h)', 'policy-expiry', hours(p.expiry.defaultSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { defaultSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
+          number('Maximum expiry (h)', 'policy-expiry-max', hours(p.expiry.maxSeconds), (h) => edit((d) => { d.expiry = Object.assign({}, d.expiry, { maxSeconds: h === undefined ? undefined : Math.round(h * 3600) }) })),
+          number('Batch size (requests)', 'policy-batch-size', batch.maxSize === undefined ? '' : String(batch.maxSize), (n) => edit((d) => {
             const next = Object.assign({}, d.batch, { maxSize: n })
             if (next.maxSize === undefined && next.maxWaitSeconds === undefined) delete d.batch; else d.batch = next
           }), { step: '1' }),
-          number('Batch: shown after (minutes)', 'policy-batch-wait', batch.maxWaitSeconds === undefined ? '' : minutes(batch.maxWaitSeconds), (m) => edit((d) => {
+          number('Batch delay (min)', 'policy-batch-wait', batch.maxWaitSeconds === undefined ? '' : minutes(batch.maxWaitSeconds), (m) => edit((d) => {
             const next = Object.assign({}, d.batch, { maxWaitSeconds: m === undefined ? undefined : Math.round(m * 60) })
             if (next.maxSize === undefined && next.maxWaitSeconds === undefined) delete d.batch; else d.batch = next
           }))),
-        el('label', { for: 'policy-commands' }, 'Commands judged as workspace writes, one per line, matched word for word', commands))
+        el('label', { for: 'policy-commands' }, 'Workspace-write commands', commands),
+        fold('How commands match', 'One command per line; a command a Worker runs is judged a workspace write when it matches a line word for word.'))
     }
     const fill = () => {
       const p = selected()
@@ -1690,42 +1872,51 @@ export const APP_JS = `'use strict'
       if (proposed === undefined) return
       try {
         const { change, request } = await api('policy/propose', { policy: proposed, note: note.value })
-        status.textContent = 'proposed ' + change.changeId + ': decide request ' + request.requestId + ' in the approval queue'
-        report(true, 'Proposed: ' + change.policy.id + ' version ' + change.policy.version, ['Recorded as change ' + change.changeId + '. Nothing changes yet: it waits for your verdict on request ' + request.requestId + ', shown at the top of this page and on Home.'])
+        say('proposed ' + change.changeId + ': decide request ' + request.requestId + ' in the approval queue')
+        report(true, 'Proposed: ' + change.policy.id + ' version ' + change.policy.version, ['Approval needed — nothing changes until you approve it, at the top of this page or on Home.',
+          fold('Record IDs', el('div', {}, 'Recorded as change ' + change.changeId + '; request ' + request.requestId + '.'))])
         await policyView()
       } catch (error) { preview.replaceChildren(el('p', { class: 'state failed', role: 'alert' }, 'Not proposed: ' + error.message)) }
     }
     const when = (t) => t ? ago(t) : '-'
     show(
       pageHead('policy'),
-      askedCards.length ? el('section', { 'aria-label': 'Changes waiting for your verdict' },
-        el('h3', {}, askedCards.length === 1 ? 'A change waits for your verdict' : askedCards.length + ' changes wait for your verdict'),
-        el('p', { class: 'muted' }, 'A change applies only once you approve it, here or on Home.'),
+      askedCards.length ? el('section', { 'aria-label': 'Changes awaiting approval' },
+        el('h3', {}, 'Changes awaiting approval · ' + askedCards.length),
         askedCards) : null,
-      set ? el('p', {}, set.source === 'store' ? 'In force: the change ' + set.changeId + ' you approved, kept while the configuration it came from is unchanged.' : 'In force: the configuration.',
-        el('details', {}, el('summary', {}, 'Exact set'), el('code', {}, set.hash), set.configHash ? el('div', { class: 'muted' }, 'configuration ', el('code', {}, set.configHash)) : null)) : null,
-      el('p', { class: 'muted' }, 'auto: it runs on its own · notify: it runs, then tells you · ask: it waits for your approval on Home · forbid: it never runs.', whatIs('mode')),
-      table(['Action class'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => el('td', {}, (e.effective.find((x) => x.actionClass === c) || {}).mode || '-')))), 'queue'),
+      // The source of the policy in force in two words; its change id, what keeps it, and the hashes folded (T171).
+      set ? el('div', {}, el('p', {}, 'Active policy · ' + (set.source === 'store' ? 'Approved change' : 'Configuration')),
+        el('details', { class: 'fold' }, el('summary', {}, 'Exact set'),
+          set.source === 'store' ? el('div', {}, 'The change ', el('code', {}, set.changeId), ' you approved, kept while the configuration it came from is unchanged.', copyId('Copy change ID', set.changeId)) : el('div', {}, 'The configuration in force.'),
+          el('div', {}, 'set ', el('code', {}, set.hash)), set.configHash ? el('div', { class: 'muted' }, 'configuration ', el('code', {}, set.configHash)) : null)) : null,
+      el('p', {}, ['auto', 'notify', 'ask', 'forbid'].map((m) => [modeChip(m), ' ']), whatIs('mode')),
+      fold('About modes', 'Automatic: it runs on its own · Notify: it runs, then tells you · Ask approval: it waits for your approval on Home · Blocked: it never runs. Stored as auto, notify, ask, and forbid.'),
+      table(['Action type'].concat(columns), classes.map((c) => el('tr', {}, el('td', {}, c), effective.map((e) => {
+        const m = (e.effective.find((x) => x.actionClass === c) || {}).mode
+        return el('td', m ? { title: m } : {}, m ? MODE[m] || m : '-')
+      }))), 'queue'),
       el('h3', {}, 'Policies'),
       table(['Policy', 'Scope', 'Version'], policies.map((p) => el('tr', {}, el('td', {}, el('code', {}, p.id)), el('td', {}, p.scope + (p.projectId ? ' ' + p.projectId : '')), el('td', {}, String(p.version))))),
       proposals ? el('section', { class: 'panel', 'aria-label': 'Propose a change' },
         el('h3', {}, 'Propose a change'),
-        el('p', { class: 'muted' }, 'Change the modes, commands, or numbers below, see the change, then propose it. Nothing changes until you approve it in the approval queue; the whole set must load as a configuration would.'),
+        el('p', { class: 'muted' }, 'Preview your changes, then submit for approval.'),
         el('p', {}, el('label', {}, 'Policy ', pick)),
         form,
-        el('details', { class: 'advanced' }, el('summary', {}, 'Advanced: the record as JSON'), el('p', { class: 'muted' }, 'Every field of the record, as the form edits it; an edit here shows in the form once it is valid JSON.'), editor),
+        el('details', { class: 'advanced' }, el('summary', {}, 'Advanced: the record as JSON'), el('p', { class: 'muted' }, 'Every field of the record, as the form edits it; an edit here shows in the form once it is valid JSON. Nothing changes until you approve the change in the approval queue, and the whole set must load as a configuration would.'), editor),
         el('p', {}, note),
         el('div', { class: 'actions' }, el('button', { onclick: showDiff }, 'Show change'), el('button', { class: 'primary', onclick: propose }, 'Propose')),
         preview) : el('p', { class: 'muted' }, 'This approval queue changes its policy by configuration and a restart only.'),
       changes ? el('h3', {}, 'History') : null,
-      changes && !changes.length ? el('p', { class: 'muted' }, 'No change was proposed yet. A change you propose below, or one the queue suggests after you approved the same command often, appears here with where it stands.') : null,
-      changes && changes.length ? table(['Change', 'Policy', 'State', 'Proposed', 'In force from', 'Effect'], changes.map((c) => el('tr', {},
-        el('td', {}, el('code', {}, c.changeId)),
+      changes && !changes.length ? el('p', { class: 'muted' }, 'No policy changes yet.') : null,
+      // Each change by its policy and version, its state as a chip, and when; its effect counted, its id behind a copy button (T171).
+      changes && changes.length ? table(['Policy', 'State', 'Proposed', 'In force from', 'Effect'], changes.map((c) => el('tr', {},
         el('td', {}, c.policy.id + ' ' + (c.previous ? c.previous.version + ' → ' : '') + c.policy.version + (c.origin ? ' (proposed by the queue)' : '')),
-        el('td', { class: 'state' }, c.state === 'asked' ? decideLink(c.requestId, 'waiting for your verdict') : c.state + (c.declined ? ' (' + c.declined.cause + ')' : '')),
+        el('td', { class: 'nowrap' }, c.state === 'asked' ? decideLink(c.requestId, 'Approval needed')
+          : chip(c.state + (c.declined ? ' (' + c.declined.cause + ')' : ''), c.state === 'applied' ? 'ok' : c.state === 'declined' ? 'bad' : 'idle')),
         el('td', { class: 'muted' }, when(c.proposedAt)),
         el('td', { class: 'muted' }, c.applied ? [when(c.applied.at), c.retired ? [' until ', when(c.retired.at)] : null] : '-'),
-        el('td', {}, c.effect.length ? c.effect.map((e) => (e.projectId || 'studio') + ' ' + e.actionClass + ' ' + e.from + '→' + e.to).join('; ') : '-'),
+        el('td', {}, c.effect.length ? fold(qty(c.effect.length, 'action') + ' changed', c.effect.map((e) => el('div', {}, (e.projectId || 'studio') + ' ' + e.actionClass + ' ' + e.from + '→' + e.to))) : '-',
+          copyId('Copy change ID', c.changeId)),
       ))) : null,
       changes && changes.length ? el('details', {}, el('summary', {}, 'Diffs'), changes.map(changeView)) : null)
     fill()
@@ -1773,12 +1964,55 @@ export const APP_JS = `'use strict'
     }
     document.title = badge() + 'system — ' + PAGES[page][0] + (current ? ' ' + current : '')
   }
+  // Production states (T170): a skeleton while a page first loads; "updated 12 s ago" in the header, ticking without
+  // being announced; and, when a refresh fails over a page already shown, a stale banner that says when the data
+  // shown was read. A page that never loaded shows its error with one next action, Try again.
+  const stale = document.getElementById('stale')
+  let readAt = 0
+  // A message in the header ("proposed …", "could not refresh: …") stays until the next refresh that succeeds.
+  const say = (text) => { status.textContent = text; status.dataset.message = '1' }
+  const freshness = () => {
+    if (status.dataset.message || !readAt) return
+    const s = Math.max(0, Math.round((Date.now() - readAt) / 1000))
+    const text = 'updated ' + (s < 60 ? s + ' s' : Math.round(s / 60) + ' min') + ' ago'
+    if (status.textContent !== text) status.textContent = text
+  }
+  setInterval(freshness, 1000)
+  // Whether the page the address names is on screen, read whole at least once.
+  const pageShown = () => { const head = main.querySelector('[data-page]'); return !!head && head.dataset.page === shownPage() && !head.dataset.failed }
   async function refresh() {
     mark()
     // Help reads nothing from the server: it shows with or without a token.
-    if (view === 'help') { helpView(); if (token) waits = await readWaiting(); mark(); return }
+    if (view === 'help') { stale.hidden = true; helpView(); if (token) waits = await readWaiting(); mark(); return }
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
-    try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = 'could not refresh: ' + error.message + '; the page tries again every 5 seconds' }
+    const want = shownPage()
+    if (!pageShown() && !main.querySelector('.loading')) {
+      stale.hidden = true
+      main.setAttribute('aria-busy', 'true')
+      main.replaceChildren(el('p', { class: 'loading' }, 'Loading…'))
+    }
+    try {
+      await (view === 'policy' ? policyView() : view === 'board' ? boardView() : view === 'workers' ? workersView() : current ? detail(current) : list())
+      readAt = Date.now()
+      stale.hidden = true
+      delete status.dataset.message
+      freshness()
+    } catch (error) {
+      if (want === shownPage()) {
+        if (pageShown()) {
+          const text = 'Stale: the last refresh failed (' + error.message + '). Showing what was read at ' + new Date(readAt).toLocaleTimeString() + '; trying again every 5 s.'
+          if (stale.textContent !== text) stale.textContent = text
+          stale.hidden = false
+        } else {
+          const failed = errorState('This page could not be loaded: ' + error.message + '.')
+          failed.dataset.page = want
+          failed.dataset.failed = '1'
+          main.replaceChildren(failed)
+        }
+        say('could not refresh: ' + error.message)
+      }
+    }
+    main.removeAttribute('aria-busy')
     // Home reads what waits as it renders; any other page reads the same.
     if (view || current) waits = await readWaiting()
     mark()

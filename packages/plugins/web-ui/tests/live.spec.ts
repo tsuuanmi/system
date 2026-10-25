@@ -232,9 +232,11 @@ describe('web UI: since you last looked, who would take a step, and a run as it 
     await expect.poll(() => page.title()).toBe('(1) system — Home')
     await since.getByRole('button', { name: 'Mark as seen' }).click()
     await expect.poll(() => since.innerText()).toContain('Nothing happened that needs you.')
-    // Recent runs: by the task's title, each step with its Worker's display name.
+    // Recent runs: by the task's title, its state as a chip, its progress and current Worker in sight; each step with its Worker's display name folded (T171).
     const recent = page.locator('table tr', { hasText: 'Research the hosting options' })
-    expect(await recent.innerText()).toMatch(/solo: Conformance · \w+ · \w+/)
+    expect(await recent.innerText()).toMatch(/Running/)
+    expect(await recent.innerText()).toMatch(/0\/1 steps · running: solo · Conformance · \w+ · \w+/)
+    expect(await recent.textContent()).toMatch(/solo: Conformance · \w+ · \w+/)
 
     // The Board: the start names who would likely take it; the running card its last event, then a stall.
     await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: 'Board' }).click()

@@ -315,7 +315,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await accepted.getByRole('link', { name: 'approve', exact: true }).getAttribute('href')).toBe('/ui/?request=apr-merge-1')
     // The run's page shows the same change and where it stands.
     await accepted.getByRole('link', { name: 'open its run' }).click()
-    const panel = page.getByRole('region', { name: 'What it changed' })
+    const panel = page.getByRole('region', { name: 'Changes and reviews' })
     await expect.poll(() => panel.count()).toBe(1)
     // Where it stands is said once, under What happened, in the run's own words (T141).
     const happened = page.getByRole('region', { name: 'What happened' })
