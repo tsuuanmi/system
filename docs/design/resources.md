@@ -132,6 +132,13 @@ its own use, with no plan written into configuration:
 - **Pools come from enrollment, as now.** A newly enrolled account assigned a role is declared, so
   it gets `<template>/<accountId>`, and its first report fills its windows. Two Claude Code accounts
   on different plans read different shares from their own reports; nothing is configured per plan.
+- **A Claude Code account is judged by its five-hour window only** (the operator, D70,
+  2026-10-25). Its usage report gives no seven-day reading (the field is null server-side), and a
+  spent seven-day quota shows as an unusable five-hour window, so the five-hour window alone tells
+  whether the account can work. A window that is never read is never headroom: a Claude pool
+  template that declares a seven-day window has a window with no reading, so its pools fail closed
+  and dispatch never picks a Claude account (the live patch declared one until 2026-10-25). Its
+  template declares `five-hour` only, and its provider entry maps `five_hour` only.
 - **Fail closed.** A report never opens a window that a `limited` reading closed before the later
   of that reading's reset and cooldown (without end when it names neither; rule 2 below): that
   `ok` reading is not recorded, and is logged. A report that cannot be read, or is on a runtime

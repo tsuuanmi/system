@@ -1272,8 +1272,8 @@ read.
    periodic read covers derived Workers' accounts only. A hand-named Worker's account is read only
    once after a run that hit a limit, for its reset.
 2. **Give the runtime a pool template and map its window names** (the `resources` row's
-   `templates`, the provider entry's `pool` and `windows`). For Claude Code, the five-hour and
-   seven-day windows (D55):
+   `templates`, the provider entry's `pool` and `windows`). For Claude Code, the five-hour window
+   only (D70, 2026-10-25):
 
    ```yaml
    - id: resources
@@ -1284,18 +1284,22 @@ read.
            kind: interactive
            windows:
              - { id: five-hour, kind: rolling, seconds: 18000 }
-             - { id: seven-day, kind: rolling, seconds: 604800 }
    - id: agent-workers
      config:
        providers:
-         - { provider: claude-agent-sdk, slots: 2, pool: claude-plan, windows: { five_hour: five-hour, seven_day: seven-day }, limitReadSeconds: 600 }
+         - { provider: claude-agent-sdk, slots: 2, pool: claude-plan, windows: { five_hour: five-hour }, limitReadSeconds: 600 }
    ```
+
+   Do not declare or map a seven-day window for Claude Code. Its usage report gives no seven-day
+   reading (null server-side), and a spent seven-day quota already shows as an unusable five-hour
+   window. A declared window that is never read is never headroom: every Claude pool stays closed,
+   and dispatch never picks a Claude account. The live patch declared one until 2026-10-25.
 
    The runtimes' window names, which `windows` maps:
 
    | Runtime | Its windows |
    |---|---|
-   | Claude Code | `five_hour`, `seven_day`, `seven_day_oauth_apps`, and a weekly window per model family, `seven_day_<family>` (the names its `rate_limit_event` uses too; the daemon's log names each window a report gives that `windows` does not map) |
+   | Claude Code | `five_hour`, the only one to map (D70). Its report also names `seven_day`, `seven_day_oauth_apps`, and a weekly window per model family, `seven_day_<family>` (the names its `rate_limit_event` uses too), but gives no seven-day reading; the daemon's log names each window a report gives that `windows` does not map |
    | Codex | each window by its length in minutes: `300m` (five hours), `10080m` (a week), as the account reports them |
    | Antigravity CLI | each bucket's `id`, as `HOME=<home> agy --print=/usage --output-format json` lists them under `command.data.groups[].buckets[]` |
 
@@ -2445,8 +2449,8 @@ It only proposes: nothing changes until you approve its request, like any
 
 Only a Worker with a `pool` is metered ([agent Workers](../../packages/plugins/agent-workers/README.md)).
 The bundle's `resources` row configures no pool, so until you configure one a Worker that names a
-pool is unavailable, and one that names none is never limited. A pool with two rolling windows,
-and a Worker that draws on it:
+pool is unavailable, and one that names none is never limited. A pool with a rolling window, and a
+Worker that draws on it (a Claude Code account is judged by its five-hour window only, D70):
 
 ```yaml
 - id: resources
@@ -2458,12 +2462,11 @@ and a Worker that draws on it:
         unknown: available        # a window with no reading yet leaves the pool open
         windows:
           - { id: five-hour, kind: rolling, seconds: 18000 }
-          - { id: seven-day, kind: rolling, seconds: 604800 }
 - id: agent-workers
   config:
     workers:
       - { id: claude-dev, runtime: claude-agent-sdk, workspace: /home/me/project, sandbox: workspace-write, tier: standard,
-          pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
+          pool: max.agents, account: max, windows: { five_hour: five-hour } }
 ```
 
 Without `unknown: available`, a window nobody has read yet fails the pool closed, and a closed pool
