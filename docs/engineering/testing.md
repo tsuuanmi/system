@@ -277,7 +277,13 @@ a root [`package.json`](../../package.json) script:
 1. `pnpm check`:
    - `check:docs` ([`scripts/check-docs.ts`](../../scripts/check-docs.ts)):
      every `docs/**` directory has exactly one `README.md`, no `topic.md` sits
-     beside `topic/`, and every relative Markdown link and anchor resolves;
+     beside `topic/`, and every relative Markdown link and anchor resolves; and no
+     tracked text file holds an unresolved git conflict marker
+     ([`scripts/check-conflicts.ts`](../../scripts/check-conflicts.ts)), named by file and
+     line. A line of exactly seven `<`, `|` (diff3's base), or `>`, alone or followed by a
+     space and a label, is always a marker. A line of exactly seven `=` is one only when a
+     `<` marker comes before it in the same file; alone it is a Markdown setext heading
+     underline. A file holding a NUL byte is binary and skipped;
    - `check:secrets` ([`scripts/check-secrets.ts`](../../scripts/check-secrets.ts)):
      no tracked text file holds a credential, by the scan `egress` applies to
      outgoing payloads (secretlint's recommended rules plus the shapes they miss,

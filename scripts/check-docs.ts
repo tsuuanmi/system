@@ -1,7 +1,9 @@
-// Documentation structure and link checks (docs/engineering/testing.md#ci-gates).
+// Documentation structure and link checks, and conflict markers in any tracked text file
+// (docs/engineering/testing.md#ci-gates).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, normalize, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkConflicts } from './check-conflicts.ts'
 
 export interface DocProblem {
   kind: 'missing-readme' | 'duplicate-entry' | 'broken-link' | 'broken-anchor'
@@ -81,5 +83,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const problems = checkDocs(root)
   for (const p of problems) console.error(`${p.kind}: ${p.file}: ${p.detail}`)
   console.log(`docs: ${problems.length} problem(s)`)
-  process.exit(problems.length ? 1 : 0)
+  // Conflict markers in any tracked text file, not only docs (scripts/check-conflicts.ts).
+  const conflicts = checkConflicts(root)
+  for (const c of conflicts) console.error(`conflict-marker: ${c.file}:${c.line}: ${c.marker}`)
+  console.log(`conflict markers: ${conflicts.length} finding(s)`)
+  process.exit(problems.length || conflicts.length ? 1 : 0)
 }
