@@ -188,11 +188,13 @@ absence of automation leaks are properties of the real browser.
   waiting out the production default.
 - The turn runtime's and the workflow engine's browser specs are split by theme the same way
   (turns: asks, sessions, sign-in, routing, limits, the session-bound login profile, the ChatGPT
-  one, kept tabs, a site's notice or check; workflow: static DAGs, acceptance, plans, plan
-  approval, the operator's stop and supersede, deletion, team votes, ties and their deciding vote,
-  runs that wait on a vote, review findings, where a member runs and what it may be sent,
-  provider families), each file on
-  its own Xvfb through its
+  one, kept tabs, a site's notice or check, a turn across a restart, a restarted turn that must
+  wait and its cancel, the runtime's bounds and stop, the conversation ledger, a conversation kept
+  or failing to delete; workflow: static DAGs, acceptance, plans, plan approval, the operator's
+  stop and supersede, deletion, failures, restarts, retention, explain and MCP, re-plans, team
+  votes, ties and their deciding vote, runs that wait on a vote, review findings, where a member
+  runs and what it may be sent, provider families, a member woken by a message, one that needs a
+  peer's input, one handed off to a new conversation), each file on its own Xvfb through its
   package's `tests/stack.ts`. Those stacks do not pace page opens (the drivers' `pageGapMs` and the
   runtime's `providerPageGapMs` are 0); the browser pool's own tests show the spacing.
 - They need Xvfb and a modern Chrome. The tests choose Chrome with the
@@ -213,7 +215,14 @@ absence of automation leaks are properties of the real browser.
 
 `pnpm test` runs the whole suite, at most 32 test files at once, one per CPU but one on a smaller
 host ([`vitest.config.ts`](../../vitest.config.ts)): vitest's own default of one per CPU ran every
-file at once on a 256-CPU host, where in-process tests passed their bounds. Every workspace
+file at once on a 256-CPU host, where in-process tests passed their bounds. Its wall time is the
+longer of its slowest file and the sum of its files over those 32. vitest starts first the files
+that took longest in its last run on that checkout, and, for a file it has no time for (a fresh
+worktree, CI, a new file), the largest, so a short file of slow tests starts among the last. A
+file whose tests take about a minute or more together is split by theme, its shared setup in a
+module beside it (the agent Worker source's specs on `agent-workers/tests/stack.ts`, the login
+profile pool's on `browser-patchright/tests/profile-stack.ts`, the
+[browser specs](#real-display-and-browser-tests) on their package's `tests/stack.ts`). Every workspace
 package's tests, and the repository scripts', belong to one functional group: `kernel`,
 `workflow`, `workers`, `websites`, `surfaces`, and `libs`. [`scripts/test-groups.ts`](../../scripts/test-groups.ts) holds them, and
 `pnpm test:group` with no name lists each with its packages; its own test fails when a package or

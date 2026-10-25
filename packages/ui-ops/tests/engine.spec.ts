@@ -1,7 +1,7 @@
 import { type Server, createServer } from 'node:http'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import type { Browser, BrowserContext, Page } from 'patchright-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import type { Browser, Page } from 'patchright-core'
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../plugins/browser-patchright/tests/support.ts'
 import { type DriftEvent, type EngineOptions, type HealEvent, UiEngine, loadUiMap, readbackDiff } from '../src/index.ts'
 
@@ -166,16 +166,20 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
   })
   afterAll(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-    await close()
+    try {
+      // Every context a test opened was closed when that test finished.
+      expect(browser.contexts()).toEqual([])
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await close()
+    }
   })
 
-  let context: BrowserContext
-  afterEach(async () => context?.close())
-
+  /** A test may open several pages; each one's context is closed when the test finishes, failed or not. */
   async function open(content: string, map = loadUiMap(MAP), extra: Partial<EngineOptions> = {}): Promise<{ engine: UiEngine; tab: Page; drift: DriftEvent[]; heals: HealEvent[] }> {
     html = content
-    context = await browser.newContext()
+    const context = await browser.newContext()
+    onTestFinished(() => context.close())
     const tab = await context.newPage()
     const drift: DriftEvent[] = []
     const heals: HealEvent[] = []
@@ -367,7 +371,7 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     ok.tab.on('request', (r) => { if (r.url().endsWith('/backend-api/conversation')) order.push('send') })
     await ok.engine.act('composer.send')
     expect(order).toEqual(['record composer.send', 'send'])
-    await context.close()
+    await ok.tab.context().close()
 
     const refused = await open(DRIFTED, loadUiMap(MAP), { beforeHealedAction: () => { throw new Error('audit store down') } })
     await refused.engine.act('composer.insert', { text: 'hello' })
