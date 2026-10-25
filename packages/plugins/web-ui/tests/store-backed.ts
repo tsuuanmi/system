@@ -15,6 +15,8 @@ import type { BoardTask } from '@tsuuanmi/system-board-core'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
+import StoreResources from '@tsuuanmi/system-resources'
+import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
@@ -60,7 +62,7 @@ export interface Booted {
  * queue's configuration (the bundle's policies by default). A queue that refuses to start leaves
  * the board unstarted, as in the bundle, and the UI serving without them.
  */
-export async function boot(options: { dir?: string; approvals?: Partial<ApprovalsConfig> } = {}): Promise<Booted> {
+export async function boot(options: { dir?: string; approvals?: Partial<ApprovalsConfig>; pools?: PoolConfig[] } = {}): Promise<Booted> {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-ui-store-'))
   if (!options.dir) {
     writeFileSync(join(dir, 'operator.token'), Buffer.from(OPERATOR, 'base64url'), { mode: 0o600 })
@@ -75,6 +77,8 @@ export async function boot(options: { dir?: string; approvals?: Partial<Approval
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source(c)) }),
     ctx.plugin(Workflow, { ...CONFIG, templates: TEMPLATES }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir }),
+    // A resource ledger with these pools, when asked: dispatch chooses only Workers whose account's windows it reads.
+    ...(options.pools ? [ctx.plugin(StoreResources, { pools: options.pools })] : []),
   ]
   await Promise.all(fibers)
   const approvals = ctx.plugin(StoreApprovals, { policies: bundlePolicies(), sweepSeconds: 3600, ...options.approvals })

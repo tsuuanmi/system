@@ -778,6 +778,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path === 'activity') return activity(req, res)
     if (path === 'waiting') return waiting(req, res)
     if (path === 'runs/live') return req.method === 'GET' ? live(res) : json(res, 405, { error: 'method not allowed' })
+    // Dispatch (ADR-0063): the starts System proposes, for Home's "Waiting for your go"; their verdicts go
+    // through the approval queue (approvals/decide), each on its request's exact subject.
+    if (path === 'dispatch') return req.method === 'GET' ? json(res, 200, ctx.workflow.dispatchStatus()) : json(res, 405, { error: 'method not allowed' })
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue|review))?$/.exec(path)

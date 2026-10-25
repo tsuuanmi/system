@@ -433,6 +433,14 @@ export const APP_JS = `'use strict'
         deny: 'Nothing is merged: the change stays on its own branch, and the task stays done.',
         yes: 'Approve: merge it', no: 'Deny: do not merge',
         next: 'The run\\'s branch is merged within a few seconds, as one merge commit; a conflict or a moved branch changes nothing. Nothing is pushed: see the task on the Board page.' }
+    } else if (r.action.class === 'dispatch' && r.requester.component === 'workflow') {
+      // A start System proposes (ADR-0063): the task, its attempt, and the Worker its summary names.
+      const asked = /^dispatch:(.+):attempt:(\\d+)$/.exec(ref)
+      d = { title: r.action.summary, subject: 'attempt ' + (asked ? Number(asked[2]) + 1 : '?') + ' of ' + taskOf(r.requester.taskId) + projectText,
+        approve: 'System starts that attempt on the Worker named, at its next look, while the task is still ready and that Worker still free.',
+        deny: 'Nothing starts, and System does not ask again for this attempt; you or the lead may still start it from the Board.',
+        yes: 'Approve: start it', no: 'Deny: do not start it',
+        next: 'System starts the run at its next look, within a minute, on the Worker named: see it under Runs.' }
     } else if (r.action.class === 'remediation' && r.requester.component === 'workflow') {
       d = { title: 'Run a fix: ' + r.action.summary, subject: 'plan ' + ref + ' of run ' + (r.requester.runId || '?'), yes: 'Approve: run the fix', no: 'Deny: do not run it',
         next: 'The run goes on with your answer: see it under Runs.' }
@@ -458,7 +466,7 @@ export const APP_JS = `'use strict'
     const requests = batches.flatMap((b) => b.requests)
     // The board's projects name what a charter or a task request is about; without a board, ids only.
     const projects = new Map()
-    if (requests.some((r) => r.requester.component === 'board' || (r.requester.component === 'workflow' && r.requester.runId))) {
+    if (requests.some((r) => r.requester.component === 'board' || (r.requester.component === 'workflow' && (r.requester.runId || r.requester.taskId)))) {
       try { for (const p of (await api('projects')).projects) projects.set(p.projectId, p) } catch {}
     }
     const described = new Map(requests.map((r) => [r.requestId, describe(r, projects)]))
@@ -837,6 +845,49 @@ export const APP_JS = `'use strict'
   const stalledOf = (r) => 'value' in r.stalled && r.stalled.value ? el('div', { class: 'state failed', role: 'alert' }, 'Stalled since ' + clockOf(r.stalled.value.since) + ': no activity past its source\\'s bound. Stop run ends it.') : null
 
 
+  // Home's "Waiting for your go" (ADR-0063): each start System proposes, with its Worker and the quota it
+  // would draw on, approved or denied by the queue's own verdict on the request's exact subject (INV-5);
+  // whether dispatch is off or paused; and, folded, why each ready task did not start at the last look.
+  const dispatchOf = async () => { try { return await api('dispatch') } catch (error) { return error.status === 404 || error.status === 503 ? null : { error } } }
+  const goWindow = (w) => (w.seconds ? span(w.seconds) : w.window) + ': used ' + (w.used === undefined ? 'unknown' : w.used + ' %') + ' — reserve ' + w.reserve + ' %'
+    + (w.resets ? ' — resets ' + clockOf(w.resets) : '') + (w.observedAt ? ' (read ' + clockOf(w.observedAt) + ')' : '')
+  const goView = (dispatch, q, names, jump) => {
+    if (!dispatch) return null
+    const panel = (...parts) => el('section', { class: 'panel', 'aria-label': 'Waiting for your go' }, el('h3', {}, 'Waiting for your go'), ...parts)
+    if (dispatch.error) return panel(el('p', { class: 'state failed' }, 'The starts System proposes could not be read: ' + dispatch.error.message + '.'))
+    const requests = new Map(q && !q.error ? q.requests.map((r) => [r.requestId, r]) : [])
+    const asked = dispatch.asks.filter((a) => a.state === 'asked' && a.requestId && requests.has(a.requestId))
+    const approved = dispatch.asks.filter((a) => a.state === 'approved' || a.state === 'starting')
+    const state = !dispatch.enabled ? el('p', { class: 'muted' }, 'Dispatch is off (dispatch.enabled: false): System proposes no start by itself.')
+      : dispatch.paused ? el('p', { class: 'soon' }, 'Dispatch is paused since ' + when(dispatch.paused.since) + (dispatch.paused.reason ? ': ' + dispatch.paused.reason : '') + '. System proposes no start until you resume it (system dispatch resume).')
+        : null
+    const name = (worker) => names.get(worker) || worker
+    const item = (a) => {
+      const r = requests.get(a.requestId)
+      const yes = el('button', { class: 'primary', 'aria-label': 'Approve the start of ' + a.title }, 'Approve: start it')
+      const no = el('button', { 'aria-label': 'Deny the start of ' + a.title }, 'Deny')
+      const verdict = (v, clicked) => () => q.decide([{ requestId: r.requestId, subject: r.subject, verdict: v }], undefined, undefined, [yes, no], clicked)
+      yes.addEventListener('click', verdict('approved', yes))
+      no.addEventListener('click', verdict('rejected', no))
+      return el('li', { class: 'go', 'aria-label': 'Start of ' + a.title },
+        el('div', {}, el('strong', {}, '"' + a.title + '"'), ', attempt ' + a.attempt + ', on ' + name(a.worker), el('span', { class: 'muted' }, ' · project ' + a.projectId)),
+        a.windows.map((w) => el('div', { class: 'window' }, w.used !== undefined ? el('meter', { min: '0', max: '100', low: '60', high: '85', optimum: '0', value: String(w.used), 'aria-hidden': 'true' }) : null, el('span', {}, goWindow(w)))),
+        el('div', { class: 'muted' }, 'Why this Worker: ' + a.why),
+        el('div', { class: 'actions' }, yes, no,
+          el('span', { class: Date.parse(r.expiresAt) - Date.now() < 3600000 ? 'soon' : 'muted' }, ' Unanswered by ' + clockOf(r.expiresAt) + ', it counts as denied. '),
+          el('a', { href: '#request-' + r.requestId, onclick: jump('request-' + r.requestId) }, 'the request')))
+    }
+    const last = dispatch.lastPass
+    const reasons = last && last.tasks.length ? el('details', {}, el('summary', {}, 'Why the ready tasks did not start at the last look (' + relative(last.at) + ')'),
+      el('ul', {}, last.tasks.map((t) => el('li', {}, '"' + t.title + '": ' + t.reason))), last.more ? el('p', { class: 'muted' }, last.more + ' more ready task(s) not listed.') : null)
+      : last && last.reason ? el('p', { class: 'muted' }, 'At the last look (' + relative(last.at) + '): ' + last.reason + '.') : null
+    return panel(state,
+      asked.length ? el('ul', { class: 'goes' }, asked.map(item))
+        : el('p', { class: 'muted' }, 'No start waits for your go. When System finds a ready task and a free Worker with quota to spare, it asks here before it starts it.'),
+      approved.length ? el('p', {}, approved.length + ' approved start(s) wait for their Worker to be free: ' + approved.map((a) => '"' + a.title + '" on ' + name(a.worker)).join(', ') + '.') : null,
+      reasons)
+  }
+
   // Home: what waits for the operator, the Workers at a glance, the decisions themselves, and the latest runs.
   async function list() {
     const { runs } = await api('runs')
@@ -851,6 +902,7 @@ export const APP_JS = `'use strict'
     // A run's task by its title, from the Board's cards.
     const titles = new Map((projects || []).flatMap((p) => (p.tasks || []).map((t) => [t.taskId, t.title])))
     const names = new Map(roster && 'value' in roster.workers ? roster.workers.value.map((w) => [w.worker, w.name]) : [])
+    const dispatch = await dispatchOf()
     waits = await readWaiting()
     const part = (name) => waits.unknown ? { unknown: waits.unknown } : waits[name]
     const asked = 'value' in part('requests') ? part('requests').value : 0
@@ -883,6 +935,7 @@ export const APP_JS = `'use strict'
     show(pageHead('home'),
       el('section', { class: 'panel', 'aria-label': 'Waiting for you' }, el('h3', {}, 'Waiting for you'),
         waiting.length ? el('ul', {}, waiting) : el('p', { class: 'muted' }, 'Nothing waits for you now. A request, a review, or a run that needs you appears here as it comes.')),
+      goView(dispatch, q, names, jump),
       since,
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Workers'),
         c ? el('p', {}, c.busy + ' working · ' + c.ready + ' free · ' + c.resting + ' resting · ' + c.unavailable + ' unavailable' + (c.quarantined ? ' · ' + c.quarantined + ' quarantined' : '')
