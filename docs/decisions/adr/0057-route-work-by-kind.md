@@ -92,3 +92,24 @@ Option 4.
   of the steps that would run in it; otherwise it starts fresh, given the brief.
 - Kinds are compared for equality only; they are never ordered or preferred. Routing among the
   Workers that take a kind is unchanged.
+
+## Amendment (2026-10-25): validation is a kind of its own, and the profile's kinds are configuration
+
+The operator's split (2026-10-25) is that one runtime's Workers change the codebase and another's
+run the checks and tests and read; it must be configuration, never a hand edit of which Worker
+takes which step. With `validate:1` named `tests` work, as the `tests` variant's writing step is, a
+Worker given `tests` took both, so test writing and test running could not be routed apart. The
+decision is unchanged (steps name what they are, never who takes them; Workers list the kinds they
+take; equality only); its first consequence is amended:
+
+- `algorithm-development`'s `validate:1` is **`validation`** work: it runs the checks and tests and
+  changes nothing. The writing kinds stay `code`, `docs`, and `tests`; the review still names none.
+- The kind each step names is the `profile-software-development` row's configuration, `kinds`, by
+  step (`develop`, `docs`, `tests`, `validate`), its defaults the shipped kinds
+  ([configuration](../../reference/configuration.md#profile-software-development)). It is additive
+  and optional (ADR-0036); a key that is not a step, or a kind that is not a kind of work, is
+  refused by `system check` and at load (INV-2). No configuration gives the review a kind.
+- A Worker given kinds that does not list `validation` no longer takes `validate:1`. Once every
+  Worker that proves `validate` is given kinds, one of them must list `validation`, or the step fails
+  admission, saying `no Worker that proves validate, local-data takes validation work`; or the
+  operator sets `kinds.validate: tests` to keep the earlier routing.

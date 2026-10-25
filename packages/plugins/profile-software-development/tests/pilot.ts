@@ -70,8 +70,8 @@ export interface Script {
   /**
    * Route by kind of work (ADR-0057): the writers by id, each with the kinds the operator gives it,
    * in place of the one `developer` given none; the reviewer and the digest Worker are given none.
-   * docs/operations/examples/work-kinds.patch.yml gives `developer: [code, docs, tests]` and
-   * `tester: [validation]`.
+   * docs/operations/examples/work-kinds.patch.yml gives its writer `[code, docs, tests]` and its
+   * validator `[validation]`.
    */
   writers?: Record<string, string[]>
   /** The profile row's configuration (default none: the shipped kinds). */
