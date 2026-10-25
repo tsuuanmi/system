@@ -3,14 +3,18 @@
  * minimal MCP server of System's own over stdio, with three read-only tools bound to one run's
  * workspace, so an agent reads its workspace without a shell:
  * - `read_file`: one file, optionally a line range, its lines numbered, bounded in bytes;
- * - `list_dir`: one directory's entries, bounded in number;
+ * - `list_dir`: one directory's entries, bounded in number, and no more of them read than 10 times that;
  * - `search`: a fixed string or a regular expression over the files under a path, bounded in
- *   matches, files, bytes, and time, in a worker thread of this process (no shell, no program).
+ *   matches, files, bytes, and time, in a worker thread of this process with a bounded heap (no
+ *   shell, no program).
  * Every path is resolved with `realpath` and must stay inside the workspace: a `..` segment, an
  * absolute path outside it, and a symlink whose target is outside it are refused; git's own data
- * (`.git` anywhere in the path) and files named as secrets ({@link SECRET_NAMES}) are unreadable,
- * and every file or directory is opened without following a link at its end and checked again by
- * the path its descriptor names (`/proc/self/fd`), so a path swapped after the check is refused.
+ * (`.git` anywhere in the path, and a bare repository `*.git`), files named as secrets
+ * ({@link SECRET_NAMES}, {@link SECRET_PATHS}), files git ignores that are named like secrets
+ * ({@link SECRET_LIKE}), and a file with more than one hard link (outside `node_modules`) are
+ * unreadable, and every file or directory is opened without following a link at its end and
+ * checked again by the path its descriptor names (`/proc/self/fd`), so a path swapped after the
+ * check is refused.
  * Its root is fixed at start (`--root`): it asks the client for no MCP Roots and ignores their
  * notifications. Every bound is a validated argument ({@link WORKSPACE_READ_BOUNDS}, INV-9). A
  * runtime starts it under the run's read confinement with the workspace bound read-only, so these
@@ -18,10 +22,11 @@
  * confinement, as the Codex gate hook is.
  * @module @tsuuanmi/system-agent-runtime-core/workspace-reads
  */
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, readlinkSync, realpathSync, statSync } from 'node:fs'
+import { type Dirent, closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readSync, readlinkSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { fileURLToPath } from 'node:url'
+import { getHeapStatistics } from 'node:v8'
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads'
 
 /** The server's own file: what a runtime runs with `node` and binds into the confinement. */
@@ -120,23 +125,338 @@ export function parseWorkspaceReadArgs(argv: readonly string[]): { root: string;
 
 /**
  * File names a repository keeps secrets in, by name (any letter case): environment files (`.env`,
- * `.env.local`, … but not `.env.example`, `.env.sample`, `.env.template`, `.env.dist`), keys and
- * keystores, SSH private keys, and credential files. Such a file, or anything under a directory so
- * named, is unreadable whether or not the repository ignores it.
+ * `.env.local`, … but not `.env.example`, `.env.sample`, `.env.template`, `.env.dist`; `.envrc`),
+ * keys and keystores, SSH private keys, credential files (`.netrc`, `.npmrc`, `.pypirc`,
+ * `.git-credentials`, `.htpasswd`, `.pgpass`; `credentials` and `secrets`, `secrets.env` among
+ * them), a `.secrets` directory, Terraform variables and state (`*.tfvars`, `*.tfstate`), and
+ * `kubeconfig`. Such a file, or anything under a directory so named, is unreadable whether or not
+ * the repository ignores it.
  */
 export const SECRET_NAMES: readonly RegExp[] = [
-  /^\.env$/i, /^\.env\.(?!(example|sample|template|dist)$).+$/i,
+  /^\.env$/i, /^\.env\.(?!(example|sample|template|dist)$).+$/i, /^\.envrc$/i,
   /\.(pem|key|p12|pfx|jks|keystore|kdbx)$/i, /^id_(rsa|dsa|ecdsa|ed25519)$/i,
-  /^\.(netrc|npmrc|pypirc|git-credentials|htpasswd)$/i, /^(credentials|secrets)(\.(json|ya?ml|toml))?$/i,
+  /^\.(netrc|npmrc|pypirc|git-credentials|htpasswd|pgpass)$/i, /^(credentials|secrets)(\.(json|ya?ml|toml|env))?$/i, /^\.secrets$/i,
+  /\.tfvars(\.json)?$/i, /\.tfstate(\.backup)?$/i, /^kubeconfig$/i,
 ]
 
-/** Why a path relative to the workspace is unreadable by name (git's data, a secret), or undefined. */
+/** Paths that hold credentials though their last name alone does not (consecutive segments, any letter case, anywhere in a path). */
+export const SECRET_PATHS: readonly (readonly [string, string])[] = [['.kube', 'config'], ['.docker', 'config.json'], ['.aws', 'config'], ['.aws', 'credentials']]
+
+/**
+ * A name that looks like a secret's (a word of it, any letter case: secret, token, password,
+ * credential, private, an API key): not refused by itself (`tokenizer.ts` is no secret), only in a
+ * file or directory the workspace's git ignores ({@link GitIgnores}).
+ */
+export const SECRET_LIKE = /(^|[^a-z])(secrets?|tokens?|passwords?|passwd|credentials?|private|api[-_]?keys?)([^a-z]|$)/i
+
+/** Why a path relative to the workspace is unreadable by name (git's data, a repository, a secret), or undefined. */
 function hiddenName(rel: string): string | undefined {
-  for (const segment of rel.split(/[\\/]/)) {
-    if (segment.toLowerCase() === '.git') return 'git\'s own data (.git) is not read'
+  const segments = rel.split(/[\\/]/)
+  for (const [i, segment] of segments.entries()) {
+    const lower = segment.toLowerCase()
+    if (lower === '.git') return 'git\'s own data (.git) is not read'
+    // A bare repository is named so by custom (`project.git`): its config and history are git's data.
+    if (lower.endsWith('.git')) return `${segment} is named as a git repository (*.git), which is not read`
     if (SECRET_NAMES.some((pattern) => pattern.test(segment))) return `${segment} is named as a secret file, which is not read`
+    const next = segments[i + 1]?.toLowerCase()
+    if (SECRET_PATHS.some(([dir, name]) => lower === dir && next === name)) return `${segment}/${segments[i + 1]} is a credentials file, which is not read`
   }
   return undefined
+}
+
+/**
+ * One step of a gitignore pattern: a character, `?`, a bracket set (each never `/`), `*` (any run
+ * without `/`), `**` followed by `/` (`dirs`: nothing, or anything ending in `/`), a trailing `**` (`rest`).
+ */
+type GlobToken = { kind: 'char'; c: string } | { kind: 'one' } | { kind: 'set'; test: (c: string) => boolean } | { kind: 'star' } | { kind: 'dirs' } | { kind: 'rest' }
+
+/**
+ * One line of a `.gitignore`: what it matches, relative to the directory of its file. `unknown`: a
+ * negating pattern this matcher cannot read (a POSIX class it does not know), which fails closed:
+ * taken to match none. An ignoring one with such a class matches a superset of git's (the class is
+ * any character but '/').
+ */
+interface IgnoreRule { tokens: GlobToken[]; negate: boolean; dirOnly: boolean; unknown?: boolean }
+
+/**
+ * Whether `tokens` match all of `path`, by simulating the pattern's automaton one character at a
+ * time (never a backtracking regular expression: a pattern like `*a*a*a…*b` costs at most the
+ * pattern's length per character). Each step spends the active states from `budget`; undefined once
+ * it runs out, which the caller takes as matched (fail closed).
+ */
+function globMatch(tokens: readonly GlobToken[], path: string, budget: { steps: number }): boolean | undefined {
+  const m = tokens.length
+  // State i (0..m): before token i. State m + 1 + i: inside a `dirs` token i, at least one character in.
+  const seen = new Uint32Array(2 * (m + 1))
+  let generation = 1
+  const add = (list: number[], start: number): void => {
+    if (start > m) {
+      if (seen[start] !== generation) {
+        seen[start] = generation
+        list.push(start)
+      }
+      return
+    }
+    for (let i = start; i <= m; i += 1) {
+      if (seen[i] === generation) return
+      seen[i] = generation
+      list.push(i)
+      const kind = tokens[i]?.kind
+      if (kind !== 'star' && kind !== 'dirs' && kind !== 'rest') return
+    }
+  }
+  let current: number[] = []
+  add(current, 0)
+  for (let k = 0; k < path.length; k += 1) {
+    budget.steps -= current.length
+    if (budget.steps < 0) return undefined
+    const c = path[k]!
+    generation += 1
+    const next: number[] = []
+    for (const state of current) {
+      if (state > m) {
+        const i = state - m - 1
+        add(next, state)
+        if (c === '/') add(next, i + 1)
+        continue
+      }
+      const token = tokens[state]
+      if (token === undefined) continue
+      switch (token.kind) {
+        case 'char': if (c === token.c) add(next, state + 1); break
+        case 'one': if (c !== '/') add(next, state + 1); break
+        case 'set': if (c !== '/' && token.test(c)) add(next, state + 1); break
+        case 'star': if (c !== '/') add(next, state); break
+        case 'rest': add(next, state); break
+        case 'dirs':
+          add(next, state + m + 1)
+          if (c === '/') add(next, state + 1)
+          break
+      }
+    }
+    if (next.length === 0) return false
+    current = next
+  }
+  return seen[m] === generation
+}
+
+/** The POSIX character classes git's patterns know (`[[:digit:]]`), ASCII as git's are. */
+const POSIX_CLASSES: Readonly<Record<string, { test: (c: string) => boolean }>> = {
+  alnum: /^[A-Za-z0-9]$/,
+  alpha: /^[A-Za-z]$/,
+  blank: /^[ \t]$/,
+  cntrl: { test: (c) => c.length === 1 && (c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f) },
+  digit: /^[0-9]$/,
+  graph: /^[\x21-\x7e]$/,
+  lower: /^[a-z]$/,
+  print: /^[\x20-\x7e]$/,
+  punct: /^[!-/:-@[-`{-~]$/,
+  space: /^[ \t\n\r\f\v]$/,
+  upper: /^[A-Z]$/,
+  xdigit: /^[0-9A-Fa-f]$/,
+}
+
+/**
+ * The bracket expression opening at `text[open]` (`[`), parsed as git's wildmatch does: `!` or `^`
+ * negates; a first `]` is a member; `\x` is `x`; `a-z` a range; `[:class:]` a POSIX class; a `[`
+ * not opening a class is a member. Its test of one character, and the index of its closing `]`;
+ * `unterminated` without one (git's pattern then matches nothing), `unknown` for a class git's
+ * patterns do not know.
+ */
+function bracketSet(text: string, open: number): { test: (c: string) => boolean; end: number; unknown?: true } | 'unterminated' {
+  let p = open + 1
+  const negated = text[p] === '!' || text[p] === '^'
+  if (negated) p += 1
+  const members: ((c: string) => boolean)[] = []
+  let prev: string | undefined
+  let unknown = false
+  // The first character is a member even if it is `]`.
+  for (let first = true; first || text[p] !== ']'; first = false) {
+    let ch = text[p]
+    if (ch === undefined) return 'unterminated'
+    if (ch === '\\') {
+      p += 1
+      ch = text[p]
+      if (ch === undefined) return 'unterminated'
+      const literal = ch
+      members.push((c) => c === literal)
+    } else if (ch === '-' && prev !== undefined && text[p + 1] !== undefined && text[p + 1] !== ']') {
+      p += 1
+      let high = text[p]!
+      if (high === '\\') {
+        p += 1
+        if (text[p] === undefined) return 'unterminated'
+        high = text[p]!
+      }
+      const low = prev
+      members.push((c) => c >= low && c <= high)
+      ch = undefined
+    } else if (ch === '[' && text[p + 1] === ':') {
+      const close = text.indexOf(']', p + 2)
+      if (close < 0) return 'unterminated'
+      if (close - (p + 2) < 1 || text[close - 1] !== ':') members.push((c) => c === '[')
+      else {
+        const pattern = POSIX_CLASSES[text.slice(p + 2, close - 1)]
+        // A class git's patterns do not know: any character, so the set matches more than git's, never less.
+        if (pattern === undefined) unknown = true
+        members.push((c) => pattern === undefined || pattern.test(c))
+        p = close
+        ch = undefined
+      }
+    } else {
+      const literal = ch
+      members.push((c) => c === literal)
+    }
+    prev = ch
+    p += 1
+  }
+  // With an unknown class the set is taken to match every character but '/' (negated or not): a superset of git's.
+  return { test: (c) => (unknown ? c !== '/' : members.some((member) => member(c)) !== negated), end: p, ...(unknown ? { unknown: true as const } : {}) }
+}
+
+/** A gitignore pattern as steps over a path relative to its file's directory; undefined for a blank line or a comment. */
+function gitIgnoreRule(line: string): IgnoreRule | undefined {
+  let text = line.endsWith('\r') ? line.slice(0, -1) : line
+  while (text.endsWith(' ') && !text.endsWith('\\ ')) text = text.slice(0, -1)
+  if (text === '' || text.startsWith('#')) return undefined
+  const negate = text.startsWith('!')
+  if (negate) text = text.slice(1)
+  const dirOnly = text.endsWith('/')
+  if (dirOnly) text = text.slice(0, -1)
+  if (text === '') return undefined
+  const anchored = text.includes('/')
+  if (text.startsWith('/')) text = text.slice(1)
+  // Unanchored, the pattern may match below any directory of its file's.
+  const tokens: GlobToken[] = anchored ? [] : [{ kind: 'dirs' }]
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i]!
+    if (c === '*' && text[i + 1] === '*' && (i === 0 || text[i - 1] === '/') && (i + 2 === text.length || text[i + 2] === '/')) {
+      // `**/` any directories (or none), a trailing `/**` everything below.
+      tokens.push({ kind: i + 2 === text.length ? 'rest' : 'dirs' })
+      i += 2
+    } else if (c === '*') {
+      if (tokens.at(-1)?.kind !== 'star') tokens.push({ kind: 'star' })
+    } else if (c === '?') tokens.push({ kind: 'one' })
+    else if (c === '[') {
+      const set = bracketSet(text, i)
+      // Unterminated, git's pattern matches nothing (no rule). An unknown class fails closed: a pattern
+      // that ignores matches a superset (the class is any character); one that negates undoes nothing.
+      if (set === 'unterminated') return undefined
+      if (set.unknown && negate) return { tokens: [], negate, dirOnly, unknown: true }
+      tokens.push({ kind: 'set', test: set.test })
+      i = set.end
+    } else if (c === '\\' && i + 1 < text.length) {
+      i += 1
+      tokens.push({ kind: 'char', c: text[i]! })
+    } else tokens.push({ kind: 'char', c })
+  }
+  return { tokens, negate, dirOnly }
+}
+
+/** The most bytes of one ignore file read; a longer one is incomplete, and its directory fails closed ({@link GitIgnores}). */
+const MAX_IGNORE_FILE = 256 * 1024
+/** The most automaton steps one call spends matching ignore patterns ({@link globMatch}); past it, a name like a secret's is refused. */
+const MAX_IGNORE_STEPS = 20_000_000
+
+/**
+ * What the workspace's git ignores, from its `.gitignore` files and `.git/info/exclude` (read here,
+ * never shown; no git runs), each read once per call: a path is ignored when its last matching
+ * pattern, the deeper file's last, does not negate, or when a directory above it is ignored.
+ * Not read: git's global excludes (`core.excludesFile`), which live outside the workspace.
+ *
+ * Bounded, and failing closed: an ignore file longer than {@link MAX_IGNORE_FILE} is not complete,
+ * so everything at or below its directory counts as ignored; and once a call has spent
+ * {@link MAX_IGNORE_STEPS} matching, every path asked about counts as ignored. Only a name like a
+ * secret's is asked about ({@link GitIgnores.secret}), so failing closed refuses no other file.
+ */
+export class GitIgnores {
+  private readonly rules = new Map<string, { rules: IgnoreRule[]; incomplete: boolean }>()
+  private readonly budget = { steps: MAX_IGNORE_STEPS }
+  // A plain field, not a parameter property: the server runs from this file under Node's type stripping, which refuses those.
+  private readonly real: string
+  constructor(real: string) {
+    this.real = real
+  }
+
+  /** The text of the ignore file at `path` ('' if there is none), and whether it is longer than is read. */
+  private read(path: string): { text: string; incomplete: boolean } {
+    let fd: number
+    try {
+      fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    } catch {
+      return { text: '', incomplete: false }
+    }
+    try {
+      if (!fstatSync(fd).isFile()) return { text: '', incomplete: false }
+      // One byte more than is used tells a longer file, whatever its size said.
+      const buffer = Buffer.alloc(MAX_IGNORE_FILE + 1)
+      let read = 0
+      while (read < buffer.length) {
+        const n = readSync(fd, buffer, read, buffer.length - read, read)
+        if (n === 0) break
+        read += n
+      }
+      if (read > MAX_IGNORE_FILE) return { text: '', incomplete: true }
+      return { text: buffer.subarray(0, read).toString('utf8'), incomplete: false }
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  /** The rules of the directory `dir` (relative to the workspace; '' for its root), in order, and whether one of its ignore files is incomplete. */
+  private rulesOf(dir: string): { rules: IgnoreRule[]; incomplete: boolean } {
+    let entry = this.rules.get(dir)
+    if (entry === undefined) {
+      const files = [...(dir === '' ? [this.read(join(this.real, '.git', 'info', 'exclude'))] : []), this.read(join(this.real, dir, '.gitignore'))]
+      entry = {
+        rules: files.flatMap((file) => file.text.split('\n').flatMap((line) => gitIgnoreRule(line) ?? [])),
+        incomplete: files.some((file) => file.incomplete),
+      }
+      this.rules.set(dir, entry)
+    }
+    return entry
+  }
+
+  /** Whether the last pattern matching `path` itself ignores it; true when that cannot be told within bounds. */
+  private matches(path: string, isDir: boolean): boolean {
+    const segments = path.split('/')
+    let ignored = false
+    for (let depth = 0; depth < segments.length; depth += 1) {
+      const sub = segments.slice(depth).join('/')
+      const { rules, incomplete } = this.rulesOf(segments.slice(0, depth).join('/'))
+      if (incomplete) return true
+      for (const rule of rules) {
+        // A negating pattern this matcher cannot read undoes nothing (fails closed).
+        if (rule.unknown) continue
+        if (rule.dirOnly && !isDir) continue
+        const matched = globMatch(rule.tokens, sub, this.budget)
+        if (matched === undefined) return true
+        if (matched) ignored = !rule.negate
+      }
+    }
+    return ignored
+  }
+
+  /** Whether git ignores `rel` (relative to the workspace), it or a directory above it. */
+  ignored(rel: string, isDir: boolean): boolean {
+    const segments = rel.split('/')
+    for (let i = 1; i <= segments.length; i += 1) {
+      if (this.matches(segments.slice(0, i).join('/'), i < segments.length || isDir)) return true
+    }
+    return false
+  }
+
+  /**
+   * Why `rel` is unreadable as an ignored path named like a secret ({@link SECRET_LIKE}), or
+   * undefined: some segment of it is named like a secret, and git ignores the whole path (it, or a
+   * directory above it; `private/config.txt` ignored is refused though only `private` is so named).
+   */
+  secret(rel: string, isDir: boolean): string | undefined {
+    if (rel === '.' || rel === '') return undefined
+    const named = rel.split('/').find((segment) => SECRET_LIKE.test(segment))
+    if (named === undefined) return undefined
+    return this.ignored(rel, isDir) ? `${rel} is ignored by git and named like a secret (${named}), so it is not read` : undefined
+  }
 }
 
 /** A refusal the agent is told (the call's result), never a crash. */
@@ -148,6 +468,30 @@ const MAX_PATH = 4096
 /** How much of a file's start tells a binary file (a NUL byte). */
 const SNIFF = 8000
 const CHUNK = 64 * 1024
+/** How many of one directory's entries are read, at most, per entry `list_dir` may show. */
+const DIRECTORY_READ_FACTOR = 10
+
+/**
+ * At most `cap` entries of the directory open at `fd`, sorted by name, read one by one (never the
+ * whole directory at once), and whether it holds more, left unread.
+ */
+function readEntries(fd: number, cap: number): { entries: Dirent[]; more: boolean } {
+  const dir = opendirSync(`/proc/self/fd/${fd}`)
+  const entries: Dirent[] = []
+  let more = false
+  try {
+    for (let entry = dir.readSync(); entry !== null; entry = dir.readSync()) {
+      if (entries.length >= cap) {
+        more = true
+        break
+      }
+      entries.push(entry)
+    }
+  } finally {
+    dir.closeSync()
+  }
+  return { entries: entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)), more }
+}
 
 /** A file or directory opened inside the workspace, by its descriptor, and where it is. */
 interface Opened { fd: number; real: string; rel: string }
@@ -174,9 +518,9 @@ export class WorkspaceReads {
    * workspace) really is, every symlink followed, and its path relative to the workspace. Refused:
    * not a string, a NUL, a `..` segment, an absolute path outside the workspace, a real location
    * outside the workspace's real path (a symlink out), git's data, or a secret, as written or as
-   * resolved.
+   * resolved; and, as written and as resolved, a path git ignores that is named like a secret ({@link GitIgnores}).
    */
-  locate(given: unknown): { real: string; rel: string } {
+  locate(given: unknown, ignores: GitIgnores = new GitIgnores(this.real)): { real: string; rel: string } {
     if (given !== undefined && typeof given !== 'string') throw new Refused('path is not a string')
     const written = given === undefined || given === '' ? '.' : given
     if (written.length > MAX_PATH || written.includes('\0')) throw new Refused('the path is longer than 4096 characters or holds a NUL')
@@ -189,6 +533,11 @@ export class WorkspaceReads {
     }
     const named = hiddenName(rel)
     if (named) throw new Refused(named)
+    // As written too: a symlink git ignores, named like a secret, is refused wherever it leads.
+    // What it is (a directory or not) is not asked of the link, so both readings are taken.
+    const relWritten = relative(this.real, join(this.real, rel)) || '.'
+    const ignoredAsWritten = SECRET_LIKE.test(relWritten) ? (ignores.secret(relWritten, false) ?? ignores.secret(relWritten, true)) : undefined
+    if (ignoredAsWritten) throw new Refused(ignoredAsWritten)
     let real: string
     try {
       real = realpathSync.native(join(this.real, rel))
@@ -200,7 +549,14 @@ export class WorkspaceReads {
     const relReal = relative(this.real, real) || '.'
     const resolvedName = hiddenName(relReal)
     if (resolvedName) throw new Refused(resolvedName)
+    const ignored = SECRET_LIKE.test(relReal) ? ignores.secret(relReal, statSync(real, { throwIfNoEntry: false })?.isDirectory() ?? false) : undefined
+    if (ignored) throw new Refused(ignored)
     return { real, rel: relReal }
+  }
+
+  /** Why an entry of a listed or searched directory is left out (its name, or ignored and named like a secret), or undefined. */
+  private hidden(rel: string, isDir: boolean, ignores: GitIgnores): string | undefined {
+    return hiddenName(rel) ?? (SECRET_LIKE.test(rel) ? ignores.secret(rel, isDir) : undefined)
   }
 
   /**
@@ -227,6 +583,12 @@ export class WorkspaceReads {
       const stat = fstatSync(fd)
       if (kind === 'file' && stat.isDirectory()) throw new Refused(`${located.rel} is a directory: list it with list_dir`)
       if (kind === 'file' && !stat.isFile()) throw new Refused(`${located.rel} is not a regular file`)
+      // A hard link is the file it links, whatever its name: a secret, or a file outside the
+      // workspace on its filesystem. No path check sees it, so a file with more than one link is
+      // not read, except under node_modules, where pnpm links its store's files.
+      if (kind === 'file' && stat.nlink > 1 && !located.rel.split('/').includes('node_modules')) {
+        throw new Refused(`${located.rel} has ${stat.nlink} hard links, so it may be another file under another name (a secret, or a file outside the workspace), and is not read`)
+      }
       return { fd, real: located.real, rel: located.rel }
     } catch (error) {
       closeSync(fd)
@@ -330,17 +692,20 @@ export class WorkspaceReads {
   /**
    * `list_dir`: the directory's entries by name, at most `maxEntries`: a directory with a trailing
    * `/`, a symlink with `@` (not followed), a file with its size. Git's data and secret files are
-   * left out, and counted.
+   * left out, and counted. It reads at most 10 x `maxEntries` of the directory's entries (in the
+   * order the directory gives them, then sorted), and says when there are more ("at least").
    */
   listDir(input: Record<string, unknown>): string {
     expectFields(input, { path: 'string' }, [])
-    const dir = this.open(this.locate(input.path), 'dir')
+    const ignores = new GitIgnores(this.real)
+    const dir = this.open(this.locate(input.path, ignores), 'dir')
     try {
-      const entries = readdirSync(`/proc/self/fd/${dir.fd}`, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      const cap = DIRECTORY_READ_FACTOR * this.bounds.maxEntries
+      const { entries, more } = readEntries(dir.fd, cap)
       const shown: string[] = []
       let hidden = 0
       for (const entry of entries) {
-        if (hiddenName(entry.name)) {
+        if (this.hidden(dir.rel === '.' ? entry.name : `${dir.rel}/${entry.name}`, entry.isDirectory(), ignores)) {
           hidden += 1
           continue
         }
@@ -360,10 +725,11 @@ export class WorkspaceReads {
       }
       const listed = entries.length - hidden
       const notes = [
-        ...(listed > shown.length ? [`showing the first ${shown.length} of ${listed} (maxEntries)`] : []),
+        ...(more ? [`reading stopped at ${cap} entries, ${DIRECTORY_READ_FACTOR} x maxEntries`] : []),
+        ...(listed > shown.length ? [more ? `showing ${shown.length} (maxEntries)` : `showing the first ${shown.length} of ${listed} (maxEntries)`] : []),
         ...(hidden ? [`${hidden} not shown: git's data or secret files`] : []),
       ]
-      return `${dir.rel === '.' ? '.' : dir.rel}/: ${listed} entr${listed === 1 ? 'y' : 'ies'}${notes.length ? ` (${notes.join('; ')})` : ''}\n${shown.join('\n')}`
+      return `${dir.rel === '.' ? '.' : dir.rel}/: ${more ? 'at least ' : ''}${listed} entr${listed === 1 ? 'y' : 'ies'}${notes.length ? ` (${notes.join('; ')})` : ''}\n${shown.join('\n')}`
     } finally {
       closeSync(dir.fd)
     }
@@ -391,7 +757,8 @@ export class WorkspaceReads {
    * `search`, in this thread: the lines that hold `pattern` (a fixed string, or a regular expression
    * with `regex`), `<path>:<line>: <text>`, in the files under `start` (or that file), in name
    * order, depth first. Not followed or read: symlinks, git's data, secret files, `node_modules`
-   * directories below the start, files over `maxScanBytes`, binary files. Stops at `maxMatches`,
+   * directories below the start, files over `maxScanBytes`, binary files, files with more than one
+   * hard link. Reads at most 10 x `maxEntries` of each directory's entries. Stops at `maxMatches`,
    * `maxSearchFiles`, or `deadline`, and says so.
    */
   searchSync(plan: SearchPlan, deadline: number): string {
@@ -401,6 +768,9 @@ export class WorkspaceReads {
     const matches = (text: string): boolean => (expression ? expression.test(text) : (plan.ignoreCase ? text.toLowerCase() : text).includes(needle))
     const { maxMatches, maxSearchFiles, maxScanBytes, maxLineChars } = this.bounds
     const found: string[] = []
+    const ignores = new GitIgnores(this.real)
+    const cap = DIRECTORY_READ_FACTOR * this.bounds.maxEntries
+    let partial = 0
     let files = 0
     let skipped = 0
     let stop: string | undefined
@@ -434,12 +804,18 @@ export class WorkspaceReads {
           skipped += 1
           return
         }
-        const lines = buffer.subarray(0, read).toString('utf8').split('\n')
-        for (const [i, text] of lines.entries()) {
+        // One line at a time, never an array of them all: a file of short lines would cost many
+        // times its bytes in the thread's bounded heap ({@link searchResourceLimits}).
+        const whole = buffer.toString('utf8', 0, read)
+        for (let i = 0, from = 0; from <= whole.length; i += 1) {
           if (i % 256 === 0 && Date.now() > deadline) {
             stop = `stopped at the search's deadline (searchTimeoutMs ${this.bounds.searchTimeoutMs})`
             return
           }
+          const newline = whole.indexOf('\n', from)
+          const end = newline < 0 ? whole.length : newline
+          const text = whole.slice(from, end)
+          from = end + 1
           if (!matches(text)) continue
           if (found.length >= maxMatches) {
             stop = `stopped at ${maxMatches} matches (maxMatches)`
@@ -461,9 +837,9 @@ export class WorkspaceReads {
       }
       let entries: Array<{ name: string; dir: boolean; file: boolean }>
       try {
-        entries = readdirSync(`/proc/self/fd/${dir.fd}`, { withFileTypes: true })
-          .map((e) => ({ name: e.name, dir: e.isDirectory(), file: e.isFile() }))
-          .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        const read = readEntries(dir.fd, cap)
+        if (read.more) partial += 1
+        entries = read.entries.map((e) => ({ name: e.name, dir: e.isDirectory(), file: e.isFile() }))
       } finally {
         closeSync(dir.fd)
       }
@@ -474,14 +850,14 @@ export class WorkspaceReads {
           return
         }
         const rel = located.rel === '.' ? entry.name : `${located.rel}/${entry.name}`
-        if (hiddenName(entry.name) || (entry.dir && entry.name === 'node_modules')) continue
+        if ((entry.dir && entry.name === 'node_modules') || this.hidden(rel, entry.dir, ignores)) continue
         // A symlink, a socket, a device: none is followed or read.
         const child = { real: join(located.real, entry.name), rel }
         if (entry.dir) walk(child)
         else if (entry.file) searchFile(child)
       }
     }
-    const start = this.locate(plan.start === '.' ? undefined : plan.start)
+    const start = this.locate(plan.start === '.' ? undefined : plan.start, ignores)
     let isDir: boolean
     try {
       isDir = statSync(start.real).isDirectory()
@@ -490,7 +866,11 @@ export class WorkspaceReads {
     }
     if (isDir) walk(start)
     else searchFile(start)
-    const notes = [...(stop ? [stop] : []), `${files} file${files === 1 ? '' : 's'} searched`, ...(skipped ? [`${skipped} not read (over maxScanBytes, binary, or not openable)`] : [])]
+    const notes = [
+      ...(stop ? [stop] : []), `${files} file${files === 1 ? '' : 's'} searched`,
+      ...(partial ? [`${partial} director${partial === 1 ? 'y' : 'ies'} read only to ${partial === 1 ? 'its' : 'their'} first ${cap} entries (${DIRECTORY_READ_FACTOR} x maxEntries)`] : []),
+      ...(skipped ? [`${skipped} not read (over maxScanBytes, binary, hard links, or not openable)`] : []),
+    ]
     return `${found.length} match${found.length === 1 ? '' : 'es'} of ${JSON.stringify(plan.pattern)}${plan.regex ? ' (regular expression)' : ''} under ${start.rel} [${notes.join('; ')}]${found.length ? `\n${found.join('\n')}` : ''}`
   }
 
@@ -501,8 +881,12 @@ export class WorkspaceReads {
   search(input: Record<string, unknown>): Promise<string> {
     const plan = this.searchPlan(input)
     const deadline = Date.now() + this.bounds.searchTimeoutMs
+    const resourceLimits = searchResourceLimits(this.bounds)
+    // V8 sizes the whole heap from both (measured: the old generation and 1.5 x the young one);
+    // the thread reports what it was given, and an answer from a thread bounded more loosely is not used.
+    const heapBudget = (resourceLimits.maxOldGenerationSizeMb + 2 * resourceLimits.maxYoungGenerationSizeMb) * 1024 * 1024
     return new Promise((resolvePromise, reject) => {
-      const worker = new Worker(new URL(import.meta.url), { workerData: { kind: SEARCH_WORKER, plan, deadline } })
+      const worker = new Worker(new URL(import.meta.url), { workerData: { kind: SEARCH_WORKER, plan, deadline }, resourceLimits })
       let settled = false
       const settle = (fn: () => void): void => {
         if (settled) return
@@ -513,11 +897,16 @@ export class WorkspaceReads {
       }
       // Past the deadline the thread checks itself; a second later it is ended from here.
       const timer = setTimeout(() => settle(() => reject(new Refused(`the search did not finish within ${this.bounds.searchTimeoutMs} ms (searchTimeoutMs), and was stopped; narrow its path or its pattern`))), this.bounds.searchTimeoutMs + 1000)
-      worker.once('message', (message: { text?: string; refused?: string; error?: string }) => settle(() => {
-        if (typeof message.text === 'string') resolvePromise(message.text)
+      worker.once('message', (message: { text?: string; refused?: string; error?: string; heapLimit?: number }) => settle(() => {
+        if (typeof message.heapLimit !== 'number' || message.heapLimit > heapBudget) reject(new Error('the search thread\'s heap was not bounded (resourceLimits), so its answer is not used'))
+        else if (typeof message.text === 'string') resolvePromise(message.text)
         else reject(message.refused !== undefined ? new Refused(message.refused) : new Error(message.error ?? 'the search failed'))
       }))
-      worker.once('error', (error) => settle(() => reject(error)))
+      worker.once('error', (error) => settle(() => reject(
+        errno(error) === 'ERR_WORKER_OUT_OF_MEMORY'
+          ? new Refused(`the search ran out of its memory (${resourceLimits.maxOldGenerationSizeMb} MiB, from maxScanBytes), and was stopped; narrow its path or its pattern`)
+          : error,
+      )))
       worker.once('exit', () => settle(() => reject(new Error('the search thread ended without an answer'))))
     })
   }
@@ -551,6 +940,17 @@ interface SearchPlan {
 
 const SEARCH_WORKER = 'system-workspace-reads-search'
 
+/**
+ * The heap of a search's worker thread, from `maxScanBytes`: the thread holds one file at a time,
+ * decoded (up to 2 bytes a character) and one line of it, its matches (bounded), and its walk, so
+ * 64 MiB and 4 x `maxScanBytes` of old generation, and a young generation of `maxScanBytes`
+ * between 16 and 64 MiB. Past it the thread is ended and the search refused.
+ */
+export function searchResourceLimits(bounds: WorkspaceReadBounds): { maxOldGenerationSizeMb: number; maxYoungGenerationSizeMb: number } {
+  const scanMb = Math.ceil(bounds.maxScanBytes / (1024 * 1024))
+  return { maxOldGenerationSizeMb: 64 + 4 * scanMb, maxYoungGenerationSizeMb: Math.min(64, Math.max(16, scanMb)) }
+}
+
 /** Cuts `text` to at most `bytes` bytes of UTF-8, never inside a character. */
 function cut(text: string, bytes: number): string {
   const buffer = Buffer.from(text)
@@ -571,7 +971,7 @@ function expectFields(input: Record<string, unknown>, fields: Record<string, 'st
   for (const key of required) if (input[key] === undefined) throw new Refused(`${key} is required`)
 }
 
-const PATH_DESCRIPTION = 'A path relative to the workspace, or absolute inside it; no ".." segment. Git\'s data (.git) and secret files (.env, keys, credentials) are never read.'
+const PATH_DESCRIPTION = 'A path relative to the workspace, or absolute inside it; no ".." segment. Git\'s data (.git) and secret files (.env, keys, credentials, ignored files named like secrets) are never read, nor a file with more than one hard link outside node_modules.'
 
 /** The three tools as `tools/list` gives them: read-only, closed-world. */
 export function workspaceReadTools(bounds: WorkspaceReadBounds): unknown[] {
@@ -656,8 +1056,11 @@ export async function answerMessage(reads: WorkspaceReads, message: unknown): Pr
 
 /**
  * Serves MCP over newline-delimited JSON-RPC on `input` until it ends, one request at a time, in
- * order, writing each answer with `write`. A line over 1 MiB, or not JSON, is answered with an
- * error and dropped; past 32 requests waiting, a request is refused.
+ * order, writing each answer with `write`. A line over 1 MiB (whether it arrives whole or in
+ * parts), or not JSON, is answered with an error and dropped; past 32 lines waiting (requests, and
+ * lines answered with an error), a request is refused at once, and so is a line that is not JSON.
+ * One at a time, a request waits for those before it: Codex's tool timeout (the search deadline
+ * and 30 s) counts that wait too.
  */
 export function serveWorkspaceReads(reads: WorkspaceReads, input: NodeJS.ReadableStream, write: (line: string) => void): Promise<void> {
   return new Promise((done, failed) => {
@@ -667,33 +1070,44 @@ export function serveWorkspaceReads(reads: WorkspaceReads, input: NodeJS.Readabl
     let pending = 0
     let chain = Promise.resolve()
     const send = (reply: Reply): void => write(JSON.stringify(reply))
+    const refuse = (id: JsonRpcId | null): void => send({ jsonrpc: '2.0', id, error: { code: -32000, message: `more than ${MAX_PENDING} requests wait; this one is refused` } })
+    /** Answers in its turn, after the lines before it, while fewer than MAX_PENDING wait; else false. */
+    const enqueue = (answer: () => Promise<void> | void): boolean => {
+      if (pending >= MAX_PENDING) return false
+      pending += 1
+      chain = chain.then(async () => {
+        try {
+          await answer()
+        } finally {
+          pending -= 1
+        }
+      })
+      return true
+    }
+    const tooLong = (): void => {
+      const reply: Reply = { jsonrpc: '2.0', id: null, error: { code: -32600, message: `a message is longer than ${MAX_MESSAGE} bytes` } }
+      if (!enqueue(() => send(reply))) refuse(null)
+    }
     const handle = (line: string): void => {
       if (line.trim() === '') return
       let message: unknown
       try {
         message = JSON.parse(line)
       } catch {
-        // Answered in its turn, after the requests before it.
-        chain = chain.then(() => send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'not JSON' } }))
+        if (!enqueue(() => send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'not JSON' } }))) refuse(null)
         return
       }
-      if (pending >= MAX_PENDING) {
-        const id = (message as { id?: unknown } | null)?.id
-        if (typeof id === 'string' || typeof id === 'number') send({ jsonrpc: '2.0', id, error: { code: -32000, message: `more than ${MAX_PENDING} requests wait; this one is refused` } })
-        return
-      }
-      pending += 1
-      chain = chain.then(async () => {
+      const raw = (message as { id?: unknown } | null)?.id
+      const id = typeof raw === 'string' || typeof raw === 'number' ? raw : undefined
+      const queued = enqueue(async () => {
         try {
           const reply = await answerMessage(reads, message)
           if (reply) send(reply)
         } catch (error) {
-          const id = (message as { id?: unknown } | null)?.id
-          if (typeof id === 'string' || typeof id === 'number') send({ jsonrpc: '2.0', id, error: { code: -32603, message: (error as Error)?.message?.slice(0, 500) ?? 'failed' } })
-        } finally {
-          pending -= 1
+          if (id !== undefined) send({ jsonrpc: '2.0', id, error: { code: -32603, message: (error as Error)?.message?.slice(0, 500) ?? 'failed' } })
         }
       })
+      if (!queued && id !== undefined) refuse(id)
     }
     input.on('data', (chunk: Buffer | string) => {
       let data = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
@@ -704,14 +1118,16 @@ export function serveWorkspaceReads(reads: WorkspaceReads, input: NodeJS.Readabl
           dropping = false
           continue
         }
-        handle(Buffer.concat([...buffered, head]).toString('utf8'))
+        // A whole line in one chunk is measured too, never parsed past the bound.
+        if (size + head.length > MAX_MESSAGE) tooLong()
+        else handle(Buffer.concat([...buffered, head]).toString('utf8'))
         buffered = []
         size = 0
       }
       if (dropping || data.length === 0) return
       size += data.length
       if (size > MAX_MESSAGE) {
-        chain = chain.then(() => send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: `a message is longer than ${MAX_MESSAGE} bytes` } }))
+        tooLong()
         buffered = []
         size = 0
         dropping = true
@@ -748,11 +1164,13 @@ async function main(argv: readonly string[]): Promise<void> {
 
 if (!isMainThread && (workerData as { kind?: unknown } | null)?.kind === SEARCH_WORKER) {
   const { plan, deadline } = workerData as { plan: SearchPlan; deadline: number }
+  // What the thread's heap is bounded by, for the server to check against what it asked.
+  const heapLimit = getHeapStatistics().heap_size_limit
   try {
     const reads = new WorkspaceReads(plan.root, plan.bounds)
-    parentPort!.postMessage({ text: reads.searchSync(plan, deadline) })
+    parentPort!.postMessage({ text: reads.searchSync(plan, deadline), heapLimit })
   } catch (error) {
-    parentPort!.postMessage(error instanceof Refused ? { refused: error.message } : { error: (error as Error)?.message ?? String(error) })
+    parentPort!.postMessage(error instanceof Refused ? { refused: error.message, heapLimit } : { error: (error as Error)?.message ?? String(error), heapLimit })
   }
 } else if (isMainThread && process.argv[1] !== undefined && (() => {
   try {

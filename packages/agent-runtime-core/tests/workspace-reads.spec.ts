@@ -4,11 +4,12 @@ import { type ChildProcessWithoutNullStreams, execFile, execFileSync, spawn } fr
 import { closeSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READ_BOUNDS, WorkspaceReads, answerMessage, confinedCommand, parseWorkspaceReadArgs, workspaceReadArgs, workspaceReadBounds,
-  workspaceReadBoundsProblem,
+  WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READ_BOUNDS, WorkspaceReads, answerMessage, confinedCommand, parseWorkspaceReadArgs, searchResourceLimits, serveWorkspaceReads,
+  workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem,
 } from '../src/index.ts'
 import { BWRAP, needsBubblewrap } from './host.ts'
 
@@ -208,16 +209,141 @@ describe('a path swapped between its check and its open is refused (TOCTOU)', ()
     }
   })
 
-  it('reads a hard link to a file outside the workspace, as the file it is (current behaviour: a hard link is no symlink, and no path check sees it; open follow-up)', async () => {
+  it('refuses a hard link, to a file outside the workspace or to a secret under another name; reads one under node_modules (pnpm links its store) (T213)', async () => {
     linkSync(join(away, 'f.txt'), join(ws, 'hard.txt'))
+    linkSync(join(ws, '.env'), join(ws, 'env-copy.txt'))
+    linkSync(join(ws, 'node_modules', 'dep', 'index.js'), join(ws, 'node_modules', 'dep', 'linked.js'))
     try {
       const r = reads()
-      const opened = r.open(r.locate('hard.txt'), 'file')
+      expect(() => r.open(r.locate('hard.txt'), 'file')).toThrow(/hard\.txt has 2 hard links/)
+      for (const path of ['hard.txt', 'env-copy.txt']) {
+        const result = await call('read_file', { path })
+        expect(result, path).toMatchObject({ isError: true, text: expect.stringMatching(/^refused: .*hard links/) })
+        expect(result.text, path).not.toContain('needle')
+      }
+      // A search skips them too, and counts them as not read.
+      const found = await call('search', { pattern: 'needle', path: '.' })
+      expect(found.text).not.toMatch(/hard\.txt|env-copy\.txt/)
+      const opened = r.open(r.locate('node_modules/dep/linked.js'), 'file')
       closeSync(opened.fd)
-      expect((await call('read_file', { path: 'hard.txt' })).text).toContain('1\toutside needle')
+      expect((await call('read_file', { path: 'node_modules/dep/linked.js' })).text).toContain('1\tneedle')
     } finally {
       rmSync(join(ws, 'hard.txt'))
+      rmSync(join(ws, 'env-copy.txt'))
+      rmSync(join(ws, 'node_modules', 'dep', 'linked.js'))
     }
+  })
+})
+
+describe('the wider secret names, and files git ignores that are named like secrets (T213)', () => {
+  const sws = join(root, 'secrets-ws')
+  const secrets = [
+    '.envrc', 'secrets.env', '.secrets/token.txt', '.pgpass', 'prod.tfvars', 'prod.tfvars.json', 'terraform.tfstate', 'terraform.tfstate.backup', 'kubeconfig',
+    '.kube/config', '.docker/config.json', '.aws/config', '.aws/credentials', 'backup.git/HEAD', 'mirror.GIT/config',
+  ]
+  const plain = ['config.json', 'docker/config.json', 'aws/config', 'src/config', 'tokenizer.ts', 'local/notes.txt', 'public-token.txt']
+  const ignoredSecrets = ['deploy-token.txt', 'local/api-key.txt', 'src/db.secret.txt', 'private/plain.txt']
+  for (const path of [...secrets, ...plain, ...ignoredSecrets]) {
+    mkdirSync(join(sws, path, '..'), { recursive: true })
+    writeFileSync(join(sws, path), 'needle\n')
+  }
+  writeFileSync(join(sws, '.gitignore'), '# local files\n*-token.txt\n!public-token.txt\nlocal/\n/private\n')
+  writeFileSync(join(sws, 'src', '.gitignore'), '*.secret.txt\n')
+  const sreads = () => new WorkspaceReads(sws, workspaceReadBounds())
+
+  it('never reads a file of the wider list, or anything under a directory of it, as written or listed', async () => {
+    for (const path of secrets) {
+      const result = await sreads().call('read_file', { path })
+      expect(result, path).toMatchObject({ isError: true, text: expect.stringMatching(/^refused: .*(secret|git|credentials)/) })
+    }
+    for (const path of ['.secrets', 'backup.git']) expect((await sreads().call('list_dir', { path })).isError, path).toBe(true)
+    const names = (await sreads().call('list_dir', {})).text.split('\n').slice(1).map((e) => e.split('\t')[0])
+    for (const hidden of ['.envrc', 'secrets.env', '.secrets/', '.pgpass', 'prod.tfvars', 'terraform.tfstate', 'kubeconfig', 'backup.git/', 'mirror.GIT/']) expect(names, hidden).not.toContain(hidden)
+    // .docker, .aws, .kube are listed; their config files are not.
+    expect((await sreads().call('list_dir', { path: '.docker' })).text).toMatch(/^\.docker\/: 0 entries \(1 not shown/)
+    expect((await sreads().call('list_dir', { path: '.aws' })).text).toMatch(/^\.aws\/: 0 entries \(2 not shown/)
+    expect((await sreads().call('list_dir', { path: '.kube' })).text).toMatch(/^\.kube\/: 0 entries \(1 not shown/)
+  })
+
+  it('matches an adversarial ignore pattern in bounded time, on the main thread (T213 review)', async () => {
+    const aws = join(root, 'adversarial-ws')
+    mkdirSync(aws, { recursive: true })
+    const name = `token-${'a'.repeat(200)}`
+    writeFileSync(join(aws, name), 'needle\n')
+    writeFileSync(join(aws, `${name}b`), 'needle\n')
+    writeFileSync(join(aws, '.gitignore'), `${'*a'.repeat(20)}*b\n`)
+    const r = new WorkspaceReads(aws, workspaceReadBounds())
+    const started = Date.now()
+    expect((await r.call('read_file', { path: name })).text).toContain('1\tneedle')
+    expect((await r.call('read_file', { path: `${name}b` })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    const names = (await r.call('list_dir', {})).text.split('\n').slice(1).map((e) => e.split('\t')[0])
+    expect(names).toContain(name)
+    expect(names).not.toContain(`${name}b`)
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+
+  it('fails closed for names like secrets when an ignore file is longer than it reads (T213 review)', async () => {
+    const tws = join(root, 'truncated-ignore-ws')
+    mkdirSync(tws, { recursive: true })
+    for (const path of ['deploy-token.txt', 'notes.txt']) writeFileSync(join(tws, path), 'needle\n')
+    writeFileSync(join(tws, '.gitignore'), `${'# a comment line, long enough to pad the file\n'.repeat(8000)}deploy-token.txt\n`)
+    const r = new WorkspaceReads(tws, workspaceReadBounds())
+    expect((await r.call('read_file', { path: 'deploy-token.txt' })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: 'notes.txt' })).text).toContain('1\tneedle')
+    const found = (await r.call('search', { pattern: 'needle' })).text.split('\n').slice(1).map((l) => l.split(':')[0])
+    expect(found).toEqual(['notes.txt'])
+  })
+
+  it('refuses a file git ignores (its .gitignore files, nested, negation and directories included) when its name looks like a secret; reads the rest', async () => {
+    for (const path of ignoredSecrets) {
+      const result = await sreads().call('read_file', { path })
+      expect(result, path).toMatchObject({ isError: true, text: expect.stringMatching(/^refused: .*ignored by git and named like a secret/) })
+    }
+    for (const path of plain) expect((await sreads().call('read_file', { path })).text, path).toContain('1\tneedle')
+    const found = (await sreads().call('search', { pattern: 'needle' })).text.split('\n').slice(1).map((l) => l.split(':')[0])
+    expect(found.sort()).toEqual([...plain].sort())
+    expect((await sreads().call('list_dir', {})).text.split('\n').slice(1).map((e) => e.split('\t')[0])).not.toContain('deploy-token.txt')
+  })
+
+  it('refuses an ignored file below a directory named like a secret that is not itself ignored (T213 second review)', async () => {
+    const pws = join(root, 'private-dir-ws')
+    mkdirSync(join(pws, 'private'), { recursive: true })
+    for (const path of ['private/config.txt', 'private/notes.txt']) writeFileSync(join(pws, path), 'needle\n')
+    writeFileSync(join(pws, '.gitignore'), 'private/config.txt\n')
+    const r = new WorkspaceReads(pws, workspaceReadBounds())
+    expect((await r.call('read_file', { path: 'private/config.txt' })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: 'private/notes.txt' })).text).toContain('1\tneedle')
+    const names = (await r.call('list_dir', { path: 'private' })).text.split('\n').slice(1).map((e) => e.split('\t')[0])
+    expect(names).toEqual(['notes.txt'])
+    const found = (await r.call('search', { pattern: 'needle' })).text.split('\n').slice(1).map((l) => l.split(':')[0])
+    expect(found).toEqual(['private/notes.txt'])
+  })
+
+  it('matches gitignore POSIX character classes, and fails closed on one it does not know (T213 second review)', async () => {
+    const cws = join(root, 'posix-class-ws')
+    mkdirSync(cws, { recursive: true })
+    for (const path of ['token-1.txt', 'token-a.txt', 'secret-x.txt', 'notes.txt']) writeFileSync(join(cws, path), 'needle\n')
+    writeFileSync(join(cws, '.gitignore'), 'token-[[:digit:]].txt\nsecret-[[:nonsense:]].txt\n')
+    const r = new WorkspaceReads(cws, workspaceReadBounds())
+    expect((await r.call('read_file', { path: 'token-1.txt' })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: 'token-a.txt' })).text).toContain('1\tneedle')
+    expect((await r.call('read_file', { path: 'secret-x.txt' })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: 'notes.txt' })).text).toContain('1\tneedle')
+    const found = (await r.call('search', { pattern: 'needle' })).text.split('\n').slice(1).map((l) => l.split(':')[0])
+    expect(found.sort()).toEqual(['notes.txt', 'token-a.txt'])
+  })
+
+  it('refuses an ignored symlink named like a secret that leads to an ordinary workspace file (T213 second review)', async () => {
+    const lws = join(root, 'ignored-link-ws')
+    mkdirSync(lws, { recursive: true })
+    writeFileSync(join(lws, 'payload.txt'), 'needle\n')
+    symlinkSync('payload.txt', join(lws, 'deploy-token.txt'))
+    writeFileSync(join(lws, '.gitignore'), 'deploy-token.txt\n')
+    const r = new WorkspaceReads(lws, workspaceReadBounds())
+    expect((await r.call('read_file', { path: 'deploy-token.txt' })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: './deploy-token.txt' })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: join(lws, 'deploy-token.txt') })).text).toMatch(/^refused: .*ignored by git and named like a secret/)
+    expect((await r.call('read_file', { path: 'payload.txt' })).text).toContain('1\tneedle')
   })
 })
 
@@ -238,6 +364,22 @@ describe('list_dir', () => {
     const [header, ...entries] = text.split('\n')
     expect(entries).toHaveLength(2)
     expect(header).toMatch(/showing the first 2 of \d+ \(maxEntries\)/)
+  })
+
+  it('reads at most 10 x maxEntries entries of a directory, never all of it, and says there are at least that many (T213)', async () => {
+    const crowd = join(root, 'crowd')
+    mkdirSync(crowd)
+    for (let i = 0; i < 50; i += 1) writeFileSync(join(crowd, `f${String(i).padStart(2, '0')}.txt`), 'needle\n')
+    const r = (maxEntries: number) => new WorkspaceReads(crowd, workspaceReadBounds({ maxEntries }))
+    const capped = await r(2).call('list_dir', {})
+    const [header, ...entries] = capped.text.split('\n')
+    expect(entries).toHaveLength(2)
+    expect(header).toBe('./: at least 20 entries (reading stopped at 20 entries, 10 x maxEntries; showing 2 (maxEntries))')
+    expect((await r(10).call('list_dir', {})).text.split('\n')[0]).toBe('./: 50 entries (showing the first 10 of 50 (maxEntries))')
+    // A search reads no more of one directory either, and says so.
+    const searched = await r(2).call('search', { pattern: 'needle' })
+    expect(searched.text).toMatch(/^20 matches .*20 files searched; 1 directory read only to its first 20 entries \(10 x maxEntries\)/)
+    expect((await r(10).call('search', { pattern: 'needle' })).text).toMatch(/^50 matches .*50 files searched\]/)
   })
 })
 
@@ -282,6 +424,26 @@ describe('search', () => {
       rmSync(join(ws, 'src', 'redos.txt'))
     }
   })
+
+  it('runs in a thread whose heap is bounded by limits derived from maxScanBytes, and a search over a large tree stays within them (T213)', async () => {
+    const small = searchResourceLimits(workspaceReadBounds({ maxScanBytes: 64 * 1024 }))
+    const large = searchResourceLimits(workspaceReadBounds({ maxScanBytes: WORKSPACE_READ_BOUNDS.maxScanBytes.max }))
+    expect(small).toEqual({ maxOldGenerationSizeMb: 68, maxYoungGenerationSizeMb: 16 })
+    expect(large).toEqual({ maxOldGenerationSizeMb: 64 + 4 * 256, maxYoungGenerationSizeMb: 64 })
+    // A tree of 300 files near maxScanBytes, short lines that each match: the thread checks its own
+    // heap limit against these, and the search refuses to answer from a thread that is not bounded.
+    const tree = join(root, 'tree')
+    const line = 'ab needle\n'
+    for (let d = 0; d < 10; d += 1) {
+      mkdirSync(join(tree, `d${d}`), { recursive: true })
+      for (let f = 0; f < 30; f += 1) writeFileSync(join(tree, `d${d}`, `f${f}.txt`), line.repeat(Math.floor((64 * 1024 - 1) / line.length)))
+    }
+    const result = await new WorkspaceReads(tree, workspaceReadBounds({ maxScanBytes: 64 * 1024, maxMatches: 5000, searchTimeoutMs: 60_000 })).call('search', { pattern: 'needle' })
+    expect(result.isError, result.text).toBe(false)
+    expect(result.text).toMatch(/^5000 matches .*stopped at 5000 matches \(maxMatches\)/)
+    const files = await new WorkspaceReads(tree, workspaceReadBounds({ maxScanBytes: 64 * 1024, searchTimeoutMs: 60_000 })).call('search', { pattern: 'not there' })
+    expect(files.text).toMatch(/^0 matches .*300 files searched\]$/)
+  }, 90_000)
 })
 
 describe('MCP over stdio, its root fixed at start', () => {
@@ -325,6 +487,34 @@ describe('MCP over stdio, its root fixed at start', () => {
     expect(answers[3]!.result!.content![0]!.text).toContain('src/deep/b.ts:1:')
     // Every line it wrote is an answer: it asks the client nothing (no roots/list).
     expect(answers.every((a) => !('method' in a))).toBe(true)
+  })
+
+  /** Serves `chunks`, each written whole, and returns the answers. */
+  const serve = async (chunks: Array<string | Buffer>): Promise<Array<{ id: unknown; result?: unknown; error?: { code: number; message: string } }>> => {
+    const input = new PassThrough()
+    const lines: string[] = []
+    const served = serveWorkspaceReads(r, input, (line) => lines.push(line))
+    for (const chunk of chunks) input.write(chunk)
+    input.end()
+    await served
+    return lines.map((l) => JSON.parse(l) as { id: unknown; error?: { code: number; message: string } })
+  }
+
+  it('counts a line that is not JSON among the 32 waiting, and refuses those past them (T213)', async () => {
+    const answers = await serve([Array.from({ length: 40 }, (_, i) => `not json ${i}`).join('\n') + '\n'])
+    expect(answers).toHaveLength(40)
+    expect(answers.filter((a) => a.error?.code === -32700)).toHaveLength(32)
+    expect(answers.filter((a) => a.error?.code === -32000)).toHaveLength(8)
+    expect(answers.every((a) => a.id === null)).toBe(true)
+  })
+
+  it('refuses a line over 1 MiB that arrives whole in one chunk, and answers the next (T213)', async () => {
+    const long = Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: 'x'.repeat(2 * 1024 * 1024) } })}\n${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' })}\n`)
+    const answers = await serve([long])
+    expect(answers).toEqual([{ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'a message is longer than 1048576 bytes' } }, { jsonrpc: '2.0', id: 2, result: {} }])
+    // Split over chunks, it is refused the same.
+    const half = Math.floor(long.length / 3)
+    expect(await serve([long.subarray(0, half), long.subarray(half)])).toEqual(answers)
   })
 
   it('refuses to start on arguments out of range or a workspace that is not there', async () => {

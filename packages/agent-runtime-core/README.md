@@ -171,11 +171,14 @@ Capability **seam definition** for agent runtimes
   binds its one file (`WORKSPACE_READS_SCRIPT`) into a confinement and runs it
   with `node`. Three read-only tools over one workspace fixed at start
   (`WORKSPACE_READS_SERVER` `workspace`, `WORKSPACE_READ_TOOLS`): `read_file`,
-  `list_dir`, `search` (a worker thread, ended at its deadline). Every path is
-  resolved with `realpath` inside the workspace (no `..`, no absolute path
-  outside, no symlink out), git's data and secret-named files (`SECRET_NAMES`)
-  are unreadable, and each open is checked again through `/proc/self/fd`; MCP
-  Roots are ignored. Its bounds (`WorkspaceReadBounds`, `WORKSPACE_READ_BOUNDS`
+  `list_dir`, `search` (a worker thread, ended at its deadline, its heap bounded
+  by `searchResourceLimits`). Directories are read one entry at a time, at most
+  10 x `maxEntries`. Every path is resolved with `realpath` inside the workspace
+  (no `..`, no absolute path outside, no symlink out), git's data (a bare
+  `*.git` too), secret-named files (`SECRET_NAMES`, `SECRET_PATHS`), files git
+  ignores named like secrets (`SECRET_LIKE`), and files with more than one hard
+  link outside `node_modules` are unreadable (T213), and each open is checked
+  again through `/proc/self/fd`; MCP Roots are ignored. Its bounds (`WorkspaceReadBounds`, `WORKSPACE_READ_BOUNDS`
   with ranges, `workspaceReadBounds`, `workspaceReadBoundsProblem`) are its
   arguments (`workspaceReadArgs`, `parseWorkspaceReadArgs`) and travel as
   `RunSpec.workspaceReads`; a runtime that gives its agent the server reports

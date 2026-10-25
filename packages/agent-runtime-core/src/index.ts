@@ -15,8 +15,8 @@ import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import type { WorkspaceReadBounds } from './workspace-reads.ts'
 
 export {
-  SECRET_NAMES, WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READS_SERVER, WORKSPACE_READ_BOUNDS, WORKSPACE_READ_TOOLS, type WorkspaceReadBounds, WorkspaceReads,
-  answerMessage, parseWorkspaceReadArgs, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem, workspaceReadTools,
+  SECRET_LIKE, SECRET_NAMES, SECRET_PATHS, WORKSPACE_READS_PROTOCOLS, WORKSPACE_READS_SCRIPT, WORKSPACE_READS_SERVER, WORKSPACE_READ_BOUNDS, WORKSPACE_READ_TOOLS, type WorkspaceReadBounds,
+  WorkspaceReads, answerMessage, parseWorkspaceReadArgs, searchResourceLimits, serveWorkspaceReads, workspaceReadArgs, workspaceReadBounds, workspaceReadBoundsProblem, workspaceReadTools,
 } from './workspace-reads.ts'
 
 declare module '@deepseek-ai/cordis' {

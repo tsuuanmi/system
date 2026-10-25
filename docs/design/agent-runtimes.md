@@ -1028,26 +1028,72 @@ repository plugins).
 | Tool | Input | Returns, bounded |
 |---|---|---|
 | `read_file` | `path`; `startLine`, `endLine` (1-based, inclusive) | the lines numbered (`<n>\t<line>`), at most `maxReadBytes`, reading through at most `maxScanBytes`; where it stopped and the line to read on from; a binary file (a NUL in its first 8000 bytes) named, not shown |
-| `list_dir` | `path` (default the workspace) | entries by name, at most `maxEntries`: a directory `name/`, a symlink `name@` (not followed), a file with its size; the count of all |
-| `search` | `pattern`; `regex` (default a fixed string); `ignoreCase`; `path` (default the workspace) | `<path>:<line>: <text>`, at most `maxMatches`, each line cut at `maxLineChars`; opening at most `maxSearchFiles` files, none over `maxScanBytes`, within `searchTimeoutMs`; a pattern of at most `maxPatternChars`; never a symlink, a binary file, or a `node_modules` directory below the path |
+| `list_dir` | `path` (default the workspace) | entries by name, at most `maxEntries`: a directory `name/`, a symlink `name@` (not followed), a file with its size; the count of all, or "at least" that many when it read no further (below) |
+| `search` | `pattern`; `regex` (default a fixed string); `ignoreCase`; `path` (default the workspace) | `<path>:<line>: <text>`, at most `maxMatches`, each line cut at `maxLineChars`; opening at most `maxSearchFiles` files, none over `maxScanBytes`, within `searchTimeoutMs`; a pattern of at most `maxPatternChars`; never a symlink, a binary file, a file with more than one hard link, or a `node_modules` directory below the path |
 
 - **Bound to one workspace.** The server takes its root as an argument when it starts and keeps it:
   it declares no capability but tools, asks the client nothing (no `roots/list`), and ignores
   every notification, MCP Roots' among them. It answers `initialize`, `ping`, `tools/list`, and
-  `tools/call` over newline-delimited JSON-RPC on stdio, one request at a time; a message over
-  1 MiB is refused, and so is a request past 32 waiting.
+  `tools/call` over newline-delimited JSON-RPC on stdio, one request at a time, in order; a message
+  over 1 MiB is refused (whether it arrives in one chunk or many), and past 32 lines waiting (a
+  request, or a line answered with an error, not JSON among them) a further one is refused at once
+  (T213). One at a time, a call waits for the calls before it, and Codex's tool timeout (the search
+  deadline and 30 s) counts that wait: a call queued behind a long search can time out in Codex
+  though the server would answer it (the agent then calls again, or narrows the search). The server
+  does not answer concurrently, which would multiply its memory by the searches running at once.
 - **Every path inside it, really.** A path is relative to the workspace or absolute inside it.
   Refused: a `..` segment anywhere, an absolute path outside, and any path whose `realpath` is
   outside the workspace's (a symlink out, a file or a directory); git's own data (`.git` in any
-  letter case, as written or resolved) and files named as secrets, by name whether or not the
-  repository ignores them (`SECRET_NAMES`: `.env` and `.env.*` but `.example`, `.sample`,
-  `.template`, `.dist`; `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`; SSH
-  private keys; `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `.htpasswd`; `credentials` and
-  `secrets` files), which `list_dir` leaves out and counts. Each file or directory is opened without
-  following a link at its end and without blocking (a FIFO), and checked again by the path its
-  descriptor names (`/proc/self/fd`): one swapped after the check is refused.
+  letter case, as written or resolved, and a bare repository named `*.git`) and files named as
+  secrets, by name whether or not the repository ignores them (`SECRET_NAMES`: `.env` and `.env.*`
+  but `.example`, `.sample`, `.template`, `.dist`, and `.envrc`; `*.pem`, `*.key`, `*.p12`,
+  `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`; SSH private keys; `.netrc`, `.npmrc`, `.pypirc`,
+  `.git-credentials`, `.htpasswd`, `.pgpass`; `credentials` and `secrets` files, `secrets.env`
+  among them; a `.secrets` directory; `*.tfvars`, `*.tfstate`; `kubeconfig`; and by path,
+  `SECRET_PATHS`: `.kube/config`, `.docker/config.json`, `.aws/config`, `.aws/credentials`), which
+  `list_dir` leaves out and counts. Each file or directory is opened without following a link at
+  its end and without blocking (a FIFO), and checked again by the path its descriptor names
+  (`/proc/self/fd`): one swapped after the check is refused.
+- **Ignored files named like secrets** (T213). A file or directory git ignores whose path holds,
+  in any segment, a word of a secret's (`SECRET_LIKE`: secret, token, password, passwd,
+  credential, private, API key) is refused and left out too: `deploy-token.txt` under a
+  `*-token.txt` ignore line, anything under an ignored `private/`, and an ignored
+  `private/config.txt` though `private/` itself is not ignored. The path is checked as written and
+  as resolved, so an ignored `deploy-token.txt` symlink to an ordinary file is refused too. Ignored
+  is read from the workspace's own `.gitignore` files (nested, negation, directory and anchored
+  patterns, `**`, bracket sets as git's wildmatch reads them, POSIX classes such as `[[:digit:]]`
+  included; a class it does not know fails closed, as if the line ignored everything at and below
+  its directory) and `.git/info/exclude`, by the server itself,
+  never shown and with no git run; the last matching pattern wins, the deeper file's last, and
+  nothing below an ignored directory is re-included. Neither condition alone refuses a file:
+  `tokenizer.ts` is read, and so is an ignored `dist/index.js`. Patterns are matched by an
+  automaton, one character at a time, never by a backtracking regular expression, so a pattern
+  like `*a*a*a…*b` from the repository cannot stall the server. Matching fails closed: an ignore
+  file over 256 KiB is not complete, so every name like a secret's at or below its directory counts
+  as ignored and is refused; so does every one asked about once a call has spent its matching
+  budget (`MAX_IGNORE_STEPS`).
+- **No hard link** (T213). A hard link is the file it links under another name, a `.env` or, on the
+  same filesystem, a file outside the workspace, and no path check sees it. So a regular file with
+  more than one link (`st_nlink > 1`) is not read, and a search skips and counts it; except under a
+  `node_modules` directory, where pnpm hard-links the files of its store (outside the workspace by
+  design: package files). A file hard-linked into `node_modules` is therefore read, which the run's
+  read confinement bounds: the server sees only what that confinement shows.
+- **Not covered by name** (the residual gap). The names above are a list, not a scan of contents: a
+  secret in a file named like no secret, tracked or not ignored, is read; so is one under an
+  ignore pattern from git's global excludes (`core.excludesFile`, outside the workspace, not read),
+  and a bare repository not named `*.git`. The run's read confinement, which hides the operator's
+  home and credentials, is the layer that keeps the host's secrets out; these names keep the
+  common repository-local ones out of what a read returns.
 - **No program.** Node built-ins only; a search runs in a worker thread of the server, terminated a
   second past its deadline whatever its regular expression does. No shell, git, or subprocess.
+- **Bounded in memory** (T213). `list_dir` and `search` read a directory's entries one by one
+  (`opendir`) and at most 10 x `maxEntries` of them, so one huge directory costs no more: `list_dir`
+  then says "at least N entries" and that it stopped, `search` that it read that directory only so
+  far (the entries read are sorted; the ones left unread are not seen). A search's thread runs
+  with `resourceLimits` derived from `maxScanBytes` (`searchResourceLimits`: an old generation of
+  64 MiB and 4 x `maxScanBytes`, a young one of `maxScanBytes` between 16 and 64 MiB); it holds one
+  file and one line of it at a time, reports the heap limit it got, and an answer from a thread
+  bounded more loosely is not used. Past its limit the thread is ended and the search refused.
 - **Bounded by configuration** (INV-9): the `agents` source's `workspaceReads` (each bound within
   its range, `WORKSPACE_READ_BOUNDS`; refused at load otherwise) goes with every run as
   `RunSpec.workspaceReads`, and the runtime refuses a run whose bounds are out of range

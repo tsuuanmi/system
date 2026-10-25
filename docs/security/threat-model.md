@@ -360,11 +360,29 @@
       ignored, and it sends the client no request). Its path checks are a
       second layer: every path is resolved with `realpath` and must stay in the
       workspace (`..`, an absolute path outside, and a symlink out are
-      refused), git's data and secret-named files (`.env`, keys, credentials)
-      are never read, and each file is opened without following a final link
-      and checked again by what its descriptor names (`/proc/self/fd`). Every
-      bound (bytes, entries, matches, files, line and pattern length, the
-      search deadline) is configuration with a validated range. A call Codex
+      refused), git's data (a bare `*.git` repository too) and secret-named
+      files (`.env`, `.envrc`, keys, credentials, `.pgpass`, Terraform
+      variables and state, `kubeconfig`, `.aws`, `.docker`, and `.kube`
+      credentials) are never read, nor a file the workspace's own
+      `.gitignore` files ignore whose name holds a secret's word (token,
+      secret, password, private, API key; patterns matched in bounded time
+      without backtracking, and an ignore file too long to read whole, or a
+      call past its matching budget, counting as ignoring such a name), and
+      each file is opened without
+      following a final link and checked again by what its descriptor names
+      (`/proc/self/fd`). A file with more than one hard link is not read
+      (a hard link is another file under another name: a `.env`, or a file
+      outside the workspace on its filesystem), except under `node_modules`,
+      where pnpm links its store; a file linked there is bounded only by the
+      read confinement. These are names, not contents: a secret in a file
+      named like no secret, or ignored only by git's global excludes, is
+      read (the residual gap; the read confinement keeps the host's secrets
+      out). Every bound (bytes, entries, matches, files, line and pattern
+      length, the search deadline) is configuration with a validated range;
+      a directory is read one entry at a time and no further than
+      10 x `maxEntries`, and a search's thread has a heap bounded by
+      `maxScanBytes` (`resourceLimits`), so neither a huge directory nor a
+      large tree exhausts the server's memory. A call Codex
       reports for it passes the hook like any other, and an MCP item no allowed
       call accounts for stops the run. Not covered: that Codex 0.164 runs the
       PreToolUse hook on an MCP tool and names it `mcp__workspace__<tool>`
