@@ -111,8 +111,13 @@ async function callToolOf(cli: string): Promise<CallTool> {
   return module.callTool
 }
 
-async function healthOf(call: CallTool, home: string): Promise<Health> {
-  const outcome = await call('status', {}, home)
+/**
+ * The profile's whole health. `status` lists only the checks that are not ok unless asked for every
+ * one (`checks: true`, mcp-status@1.0); a profile from before that ignores the argument and lists them
+ * all, so before and after an update are read alike.
+ */
+export async function healthOf(call: CallTool, home: string): Promise<Health> {
+  const outcome = await call('status', { checks: true }, home)
   const health = outcome.structured?.['health'] as Health | undefined
   if (outcome.isError || !health) throw new Error(`status: ${outcome.text || 'no health report'}`)
   return health
