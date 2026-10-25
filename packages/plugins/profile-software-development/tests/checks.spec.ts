@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process'
 import { captureGitSubject } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { attempt, bootPilot, charter, type Pilot, propose, reported, until } from './pilot.ts'
 
 // A run's required checks on the real stack (T151, ADR-0063): the algorithm-development template
@@ -8,16 +8,6 @@ import { attempt, bootPilot, charter, type Pilot, propose, reported, until } fro
 // its repository's setup; only the agent runtime is scripted. The checks themselves are real commands
 // the operator configured, run confined on the result's exact tree.
 vi.setConfig({ testTimeout: 120_000 })
-
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const CONFINES = !!findBwrap() || process.env.SYSTEM_REQUIRE_BWRAP === '1'
 
 const pilots: Pilot[] = []
 afterEach(async () => {
@@ -32,7 +22,8 @@ const boot = async (...args: Parameters<typeof bootPilot>): Promise<Pilot> => {
 type Acceptance = { decider: { id: string }; inputs: string[]; candidates: Array<{ selected: boolean; reasons: string[] }>; outcome: { option: string; detail: { checks: Record<string, boolean>; checkRun?: { evidence?: string } } } }
 type CheckRun = { subject: { ref: string; version: string }; checks: Array<{ check: string; outcome: string; exitCode?: number; output?: { tail: string } }> }
 
-describe.skipIf(!CONFINES)('the algorithm-development template with the repository\'s checks configured (T151)', () => {
+describe('the algorithm-development template with the repository\'s checks configured (T151)', () => {
+  needsBubblewrap()
   it('runs the required tests and lint on the validated tree once validation is done, and the task\'s result is accepted on them without the operator (REQ-WF-15, INV-5)', async () => {
     const pilot = await boot({ checks: { tests: 'node tests.mjs', lint: 'node lint.mjs' } })
     const { ctx, agent } = pilot

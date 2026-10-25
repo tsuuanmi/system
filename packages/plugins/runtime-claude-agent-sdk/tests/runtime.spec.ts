@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { type Confinement, confinedCommand, meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
+import { BWRAP, needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
 import { ClaudeAgentRuntime, type ConfinedRun, commandSandbox, type QueryFn, type RuntimeOptions, type SpawnConfined } from '../src/index.ts'
 
 type Call = { prompt: string; options: Record<string, unknown> }
@@ -543,18 +544,8 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
   })
 })
 
-function findBwrap(): string | undefined {
-  try {
-    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-const BWRAP = findBwrap()
-// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
-const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
-
-describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap: both layers nest on this host (ADR-0038)', () => {
+describe('claude-agent-sdk under the real bubblewrap: both layers nest on this host (ADR-0038)', () => {
+  needsBubblewrap()
   const root = mkdtempSync(join(tmpdir(), 'system-claude-host-'))
   const dsh = join(root, 'dsh')
   const home = join(dsh, 'system', 'claude-home')

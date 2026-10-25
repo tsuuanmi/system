@@ -309,7 +309,9 @@ a root [`package.json`](../../package.json) script:
    ([`vitest.config.ts`](../../vitest.config.ts)): unit, contract, driver,
    concurrency, and architecture tests, and the tests of the repository's scripts.
    The agent read confinement tests run against the real bubblewrap; locally they
-   are skipped when `bwrap` is missing, and in CI a missing one fails the run. On a
+   are skipped, with the reason, when `bwrap` is missing or cannot confine a command
+   there, and in CI (`SYSTEM_REQUIRE_BWRAP=1`) such a one fails the run (see
+   [running the suite inside a run's check](#running-the-suite-inside-a-runs-check)). On a
    pull request, `pnpm test:affected --base origin/<its base branch>` instead, with
    the same environment.
 3. `pnpm test:e2e`: build, then every `*.e2e.ts`, one file at a time
@@ -335,3 +337,39 @@ comment; a test in [`scripts/checks.spec.ts`](../../scripts/checks.spec.ts) chec
 
 CI cannot prove account-bound flows. The
 [release checklist](../validation/release-checklist.md) covers them.
+
+## Running the suite inside a run's check
+
+A workflow run's `tests` check ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md))
+runs `pnpm test:affected` inside the run's confinement: bubblewrap, the host read-only but the
+check's scratch paths, the worktree read-only too, a private `/tmp`, no network but loopback, its
+own PID namespace and `/dev`, and the daemon's umask (077 when
+[`scripts/live-update.sh`](../../scripts/live-update.sh) started it). The suite gives the verdict
+there that it gives on the host (T174):
+
+- **One helper decides what the environment can do, by doing it:**
+  [`packages/agent-runtime-core/tests/host.ts`](../../packages/agent-runtime-core/tests/host.ts).
+  `CAN_CONFINE` runs `true` under real bubblewrap with the features the code relies on (an agent
+  child's PID namespace, a check's read-only host without network, tmpfs and bind mounts), once
+  per test file; inside a check that is a nested bubblewrap, which a host can refuse. The probes'
+  command lines are written out in the helper, never built by `confinedCommand`: a regression in
+  the code under test then fails the confinement tests instead of skipping them. `cannotWrite(dir)` makes a directory there and removes it.
+  `createdMode(mode)` creates a file and reads its mode. No environment variable stands in for
+  any of these; `SYSTEM_REQUIRE_BWRAP=1` only makes a bubblewrap that cannot confine fail the
+  tests instead of skipping them.
+- **A test that needs what the environment cannot do skips, with the reason:** a `describe`
+  whose tests run commands under real bubblewrap calls `needsBubblewrap()`, and each of its tests
+  is skipped with `needs real bubblewrap: <why>` (vitest's skip note) where bubblewrap cannot
+  confine. A test that needs a writable directory outside the paths hidden from agents skips
+  where `cannotWrite` names why. Where the environment can, the test asserts what it does today.
+- **A test whose expectation follows from the environment asserts what the code does there:**
+  the Codex launcher hides `/dev/ptmx` with the null device where it is the device, and with
+  `/dev/pts` where it links into `/dev/pts` (bubblewrap's own `/dev`, inside a check); a brief's
+  file, created 0o444, has the mode the umask leaves (0o400 under umask 077).
+- **The proof:** [`host.spec.ts`](../../packages/agent-runtime-core/tests/host.spec.ts) runs the
+  tests that once failed only inside a check (the Codex launcher's command line, the brief's file
+  mode) under a check's command line with umask 077, and expects them to pass.
+
+A new test that reads host state (real bubblewrap, a device under `/dev`, a file's mode, the
+host's `/tmp`, the network, the operator's home, a write outside the temporary directory) takes
+its answer from this helper, never from a check of its own.
