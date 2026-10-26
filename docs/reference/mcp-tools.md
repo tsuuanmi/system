@@ -598,6 +598,18 @@ Scope: `client`
 |---|---|---|---|
 | `id` | string | yes |  |
 
+## `metrics`
+
+The maturity metrics of PROP-0016 §1, from recorded data only, over a rolling window (default the 30 days before now) for one project or every one: each metric's value, the sample it is over, and the records it read, or why it cannot be measured yet (never 0); a value the records only bound says so. Then the reading against the L3 lines (starting lines, D83): it holds only when every line is met over 30 days and 30 finished tasks. Reads only; changes nothing.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string |  | One project; absent: every project on the board |
+| `days` | integer |  | The window as the days before until (default 30, the window a level is read over) |
+| `until` | string |  | The window's end, ISO 8601 (exclusive); default now |
+
 ## `model_key`
 
 Store a model route's API key, encrypted, under the credential reference its apiKeyEnv names. Nothing is returned or logged.

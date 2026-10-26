@@ -9,17 +9,19 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
-import type {} from '@tsuuanmi/system-artifacts'
+import type { Envelope } from '@tsuuanmi/system-artifacts'
 import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
 import type { Digests } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type { ToolSpec } from '@tsuuanmi/system-gateway-core'
-import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, countedWhole, QUOTA_DRAW_EVENT, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
+import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, countedWhole, QUOTA_DRAW_EVENT, type QuotaDraw, quotaDrawOf, reconciledBy, SchemaRegistry, USAGE_UNKNOWN_EVENT, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import { z as zod } from 'zod'
+import { buildMetrics, MAX_RUNS_READ, READY_MOVES_READ, METRICS_DEFAULT_DAYS, type Metrics, renderMetrics, type RunDecision } from './metrics.ts'
 import { renderReport } from './render.ts'
 import { buildReport, type DecisionRead, type DigestRead, type DrawRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
+export { buildMetrics, type KindCost, LEVEL_MIN_TASKS, MAX_COST_KINDS, READY_MOVES_READ, MAX_RUNS_READ, METRIC_IDS, METRICS_DEFAULT_DAYS, type LevelReading, type LineStatus, type Metric, type MetricId, type Metrics, type MetricSources, metricValueText, renderMetrics, type RunDecision } from './metrics.ts'
 export { duration, renderReport, whole } from './render.ts'
 export { buildReport, type DecisionRead, type DigestRead, type DrawRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, type UnknownRead, within } from './report.ts'
 
@@ -220,7 +222,172 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
   const [first] = ctx.eventLog.query({ limit: 1 })
   if (first && first.seq > 1 && Date.parse(first.at) > since) notes.push(`the event log keeps entries from ${first.at} on (retention): attempts, remediation, batches, and digests before then are not counted`)
 
-  return buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, draws, advice, notes }, projectId)
+  const made = buildReport(period, { asOf, projects, tasks, requests, usage, events, decisions, ...(digests ? { digests } : {}), unknowns, draws, advice, notes }, projectId)
+  // The maturity metrics over the 30 days to the report's end, and the L3 reading (PROP-0016 I4).
+  // One the bounds refuse leaves the report whole, and says so.
+  try {
+    // Without its own asOf: the report's says when it was read, and two reports of one period differ in that only.
+    const { asOf: _read, ...maturity } = await metrics(ctx, { ...(projectId !== undefined ? { projectId } : {}), until: period.until })
+    return { ...made, maturity }
+  } catch (error) {
+    if (!(error instanceof ReportError)) throw error
+    return { ...made, notes: [...made.notes, `the maturity metrics were not read: ${error.message}`.slice(0, 500)].slice(0, 16) }
+  }
+}
+
+/** The `metrics` tool's input (`$defs/metrics-input`): one project or every one, and the window as the days before until. */
+export interface MetricsInput { projectId?: string; days?: number; until?: string }
+
+/**
+ * The maturity metrics on `input`, read now (docs/design/maturity-metrics.md): the window (30 days
+ * by default) to `until`, the projects in scope and their tasks, and every record the metrics read.
+ * Refused, as a report is, when the board, the queue, or the ledger is not loaded, for an unknown
+ * project, or for more records than its bounds.
+ */
+export async function metrics(ctx: Context, input: MetricsInput, now: Date = new Date()): Promise<Metrics> {
+  const period = periodOf({ days: input.days ?? METRICS_DEFAULT_DAYS, ...(input.until !== undefined ? { until: input.until } : {}) }, now)
+  const board = ctx.get('board')
+  const approvals = ctx.get('approvals')
+  const resources = ctx.get('resources')
+  const missing = [board ? '' : 'the board', approvals ? '' : 'the approval queue', resources ? '' : 'the resource ledger'].filter(Boolean)
+  if (!board || !approvals || !resources) throw new ReportError('unavailable', `${missing.join(', ')} not loaded: the metrics read the board, the approval queue, and the resource ledger, so none is read`)
+  const asOf = new Date().toISOString()
+  const { projectId } = input
+  let projects: Project[]
+  if (projectId === undefined) {
+    projects = await board.projects()
+  } else {
+    const project = await board.project(projectId)
+    if (!project) throw new ReportError('unknown-project', `no project ${projectId} on the board`)
+    projects = [project]
+  }
+  const tasks: BoardTask[] = []
+  for (const p of projects) tasks.push(...await board.tasks({ projectId: p.projectId }))
+  const taskIds = new Set(tasks.map((t) => t.taskId))
+  const notes: string[] = []
+
+  // Whenever recorded: the runs started and reported, and the landings (a task finished in the
+  // window may have started long before it); the window's liveness entries and unknown usage.
+  const startedAll = readEvents(ctx, { type: 'workflow.run.started' })
+  const reportedAll = readEvents(ctx, { type: 'workflow.task.reported' })
+  const landingAll = readEvents(ctx, { type: 'workflow.task.landing' })
+  const runs = projectId === undefined ? new Set<string>() : runsOf(tasks, reportedAll)
+  if (projectId !== undefined) for (const e of startedAll) if (e.runId && taskIds.has(String(e.data?.['taskId']))) runs.add(e.runId)
+  const scope: Scope = { ...(projectId !== undefined ? { projectId } : {}), tasks: taskIds, runs }
+  const liveness = LIVENESS_EVENTS.slice(0, 2).flatMap((type) => readEvents(ctx, { type, since: period.since }))
+  const events = [...startedAll, ...reportedAll, ...landingAll, ...liveness].filter((e) => within.event(scope, e, new Set()))
+
+  const requests = (await approvals.list({ states: STATES })).filter((r) => within.request(scope, r))
+  let usage: UsageRecord[]
+  try {
+    usage = (await resources.usage({ since: period.since, until: period.until })).records.filter((u) => within.usage(scope, u))
+  } catch (error) {
+    if (error instanceof ResourcesError) throw new ReportError('overloaded', `the resource ledger refused the window's records (${error.message}): read a shorter window`)
+    throw error
+  }
+  const until = Date.parse(period.until)
+  let usageUnknown = 0
+  for (const e of readEvents(ctx, { type: USAGE_UNKNOWN_EVENT, since: period.since })) {
+    const fact = usageUnknownOf(e.data)
+    if (fact && Date.parse(e.at) < until && within.unknown(scope, { ...(e.runId !== undefined ? { runId: e.runId } : {}), fact })) usageUnknown += 1
+  }
+
+  // The decisions the counts rest on: each done task's acceptance, and each reported attempt's.
+  const decisions = new Map<string, DecisionRead>()
+  for (const id of [...tasks.map((t) => t.result?.acceptance), ...events.map((e) => (e.type === 'workflow.task.reported' ? e.decision : undefined))]) {
+    if (id === undefined || decisions.has(id)) continue
+    const read = decisionOf(ctx, id)
+    if (read) decisions.set(id, read)
+  }
+
+  // What the agent runs of the window drew (`quota.draw`): an entry that is not a valid record is not counted, and said.
+  const draws: QuotaDraw[] = []
+  let invalidDraws = 0
+  for (const e of readEvents(ctx, { type: QUOTA_DRAW_EVENT, since: period.since })) {
+    if (Date.parse(e.at) >= until) continue
+    const record = quotaDrawOf(e.data)
+    if (!record) invalidDraws += 1
+    else if (within.draw(scope, { ...(e.runId !== undefined ? { runId: e.runId } : {}), record })) draws.push(record)
+  }
+  if (invalidDraws) notes.push(`${invalidDraws} ${QUOTA_DRAW_EVENT} entr${invalidDraws === 1 ? 'y is' : 'ies are'} not a valid quota-draw@1.0 record: not counted`)
+
+  // The decisions people made on the runs. Read for: the done tasks' runs; every run with an entry of
+  // its own in the window (an older run stopped, continued, approved, or freed in it); and every run a
+  // person decided on in the window among the latest decisions stored. What may be missed is said.
+  const since = Date.parse(period.since)
+  const inWindow = (at: string): boolean => Date.parse(at) >= since && Date.parse(at) < until
+  const doneTasks = new Set(tasks.filter((t) => t.state === 'done').map((t) => t.taskId))
+  const toRead = new Set<string>()
+  for (const e of [...startedAll, ...reportedAll]) {
+    if (!e.runId || !within.event(scope, e, new Set())) continue
+    if (doneTasks.has(String(e.data?.['taskId'])) || (e.type === 'workflow.run.started' && inWindow(e.at))) toRead.add(e.runId)
+  }
+  for (const e of readWindow(ctx, period.since)) if (e.runId && inWindow(e.at) && within.event(scope, e, new Set())) toRead.add(e.runId)
+  const latest = ctx.artifacts.list({ kind: 'decision', newest: true, limit: DECISIONS_PAGE })
+  for (const envelope of latest) {
+    const type = (envelope.body as { decider?: { type?: string } } | undefined)?.decider?.type
+    if (envelope.runId && (type === 'client' || type === 'operator') && inWindow(envelope.createdAt) && (projectId === undefined || runs.has(envelope.runId))) toRead.add(envelope.runId)
+  }
+  const unreadDecisions = latest.length === DECISIONS_PAGE && Date.parse(latest.at(-1)!.createdAt) > since
+    ? `a decision a person made in the window on a run with no entry of its own in it, before the ${DECISIONS_PAGE} latest decisions (the oldest ${latest.at(-1)!.createdAt}), is not read`
+    : undefined
+  if (toRead.size > MAX_RUNS_READ) throw new ReportError('overloaded', `more than ${MAX_RUNS_READ} runs' decisions to read: read a shorter window or one project`)
+  const runDecisions = new Map<string, RunDecision[]>()
+  const truncatedRuns: string[] = []
+  for (const runId of [...toRead].sort()) {
+    // The oldest page, and the newest when the oldest is full: a run whose two pages share no decision may hold more between them.
+    const pages = new Map<string, Envelope>()
+    const oldest = ctx.artifacts.list({ kind: 'decision', runId, limit: DECISIONS_PAGE })
+    for (const envelope of oldest) pages.set(envelope.id, envelope)
+    if (oldest.length === DECISIONS_PAGE) {
+      for (const envelope of ctx.artifacts.list({ kind: 'decision', runId, limit: DECISIONS_PAGE, newest: true })) pages.set(envelope.id, envelope)
+      if (pages.size === 2 * DECISIONS_PAGE) truncatedRuns.push(runId)
+    }
+    const people: RunDecision[] = []
+    for (const envelope of pages.values()) {
+      const body = envelope.body as { decisionType?: string; decider?: { type?: string }; outcome?: { option?: string } } | undefined
+      const type = body?.decider?.type
+      if (type === 'client' || type === 'operator') people.push({ id: envelope.id, createdAt: envelope.createdAt, deciderType: type, decisionType: String(body?.decisionType), option: String(body?.outcome?.option) })
+    }
+    if (people.length) runDecisions.set(runId, people.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : 1)))
+  }
+
+  // When each task first became ready: the board's decisions moving a task to ready, the latest first.
+  const readyAt = new Map<string, string>()
+  const readies = ctx.artifacts.list({ kind: 'decision', decisionType: 'board', outcome: 'ready', newest: true, limit: READY_MOVES_READ })
+  for (const envelope of readies) {
+    const detail = (envelope.body as { outcome?: { detail?: { taskId?: unknown; at?: unknown } } }).outcome?.detail
+    const taskId = detail?.taskId
+    if (typeof taskId !== 'string' || !taskIds.has(taskId)) continue
+    const when = typeof detail?.at === 'string' ? detail.at : envelope.createdAt
+    const known = readyAt.get(taskId)
+    if (known === undefined || Date.parse(when) < Date.parse(known)) readyAt.set(taskId, when)
+  }
+  // A full read may not reach a task's first move to ready: the reading takes it as a bound, never as the time.
+  const readyReadFrom = readies.length === READY_MOVES_READ ? readies.at(-1)!.createdAt : undefined
+  const [first] = ctx.eventLog.query({ limit: 1 })
+  if (first && first.seq > 1 && Date.parse(first.at) > since) notes.push(`the event log keeps entries from ${first.at} on (retention): runs, landings, and stalls before then are not counted`)
+
+  return buildMetrics(period, {
+    asOf, tasks, requests, usage, events, decisions, runDecisions, readyAt, usageUnknown, draws, notes,
+    ...(truncatedRuns.length ? { truncatedRuns } : {}), ...(unreadDecisions ? { unreadDecisions } : {}), ...(readyReadFrom ? { readyReadFrom } : {}),
+  }, projectId)
+}
+
+/** Decisions one artifact read returns at most (the artifacts seam's own bound). */
+const DECISIONS_PAGE = 1000
+
+/** Every entry of the event log from `since` on, of any type, at most {@link MAX_EVENTS}: more refuses the reading, never truncates it. */
+function readWindow(ctx: Context, since: string): Array<{ at: string; runId?: string; data?: Record<string, unknown>; type: string; seq: number }> {
+  const out: Array<{ at: string; runId?: string; data?: Record<string, unknown>; type: string; seq: number }> = []
+  let afterSeq = 0
+  for (;;) {
+    const page = ctx.eventLog.query({ since, afterSeq, limit: PAGE })
+    for (const e of page) out.push({ seq: e.seq, at: e.at, type: e.type, ...(e.runId !== undefined ? { runId: e.runId } : {}), ...(e.data !== undefined ? { data: e.data } : {}) })
+    if (out.length > MAX_EVENTS) throw new ReportError('overloaded', `more than ${MAX_EVENTS} event-log entries in the window: read a shorter window`)
+    if (page.length < PAGE) return out
+    afterSeq = page.at(-1)!.seq
+  }
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
@@ -230,15 +397,41 @@ const INPUT: ToolSpec['inputSchema'] = {
   until: zod.string().max(64).optional().describe('The period\'s end, ISO 8601 (exclusive); default now'),
   days: zod.number().int().min(1).max(MAX_DAYS).optional().describe('The period as the days before until (default 7, the weekly investor report)'),
 }
-const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost; and, once dispatch choices were advised, the advisor\'s calibration in shadow (a Brier score per question). Answers with the report and its one-screen rendering.'
+const DESCRIPTION = 'The baseline report, from recorded data only (no model writes it), for a period (default: the 7 days before now) and one project or every one: the board\'s progress and tasks, the attempts and their reviews, remediation, the approval requests asked and answered and how long verdicts took, what asked for the operator per day against the charter\'s attention budget, the reviews held for you now, usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost; and, once dispatch choices were advised, the advisor\'s calibration in shadow (a Brier score per question); and the maturity metrics over the 30 days to its end, with the reading against the L3 lines (as `metrics` gives them). Answers with the report and its one-screen rendering.'
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
 
-/** The `report` tool: input and output checked against `mcp-report@1.5`; the text is the rendering. */
+const METRICS_INPUT: ToolSpec['inputSchema'] = {
+  projectId: zod.string().regex(ID).optional().describe('One project; absent: every project on the board'),
+  days: zod.number().int().min(1).max(MAX_DAYS).optional().describe(`The window as the days before until (default ${METRICS_DEFAULT_DAYS}, the window a level is read over)`),
+  until: zod.string().max(64).optional().describe('The window\'s end, ISO 8601 (exclusive); default now'),
+}
+const METRICS_DESCRIPTION = `The maturity metrics of PROP-0016 §1, from recorded data only, over a rolling window (default the ${METRICS_DEFAULT_DAYS} days before now) for one project or every one: each metric's value, the sample it is over, and the records it read, or why it cannot be measured yet (never 0); a value the records only bound says so. Then the reading against the L3 lines (starting lines, D83): it holds only when every line is met over 30 days and 30 finished tasks. Reads only; changes nothing.`
+
+/** The `report` tool: input and output checked against `mcp-report@1.6`; the text is the rendering. */
 export function registerTool(ctx: Context): void {
+  ctx.mcp.tool('metrics', { scope: 'client', description: METRICS_DESCRIPTION, inputSchema: METRICS_INPUT }, async (args) => {
+    try {
+      schemas.assertDef('mcp-report@1.6', 'metrics-input', args)
+    } catch (error) {
+      return refused(`invalid input, nothing read: ${(error as Error).message}`)
+    }
+    let made: Metrics
+    try {
+      made = await metrics(ctx, args as MetricsInput)
+    } catch (error) {
+      return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `metrics: ${(error as Error).message}`)
+    }
+    try {
+      schemas.assertDef('mcp-report@1.6', 'metrics-output', made)
+    } catch (error) {
+      return refused(`metrics: the reading made an output its schema refuses (a defect): ${(error as Error).message}`)
+    }
+    return { content: [{ type: 'text' as const, text: `${renderMetrics(made).join('\n')}\n` }], structuredContent: { ...made } }
+  })
   ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
     try {
-      schemas.assertDef('mcp-report@1.5', 'report-input', args)
+      schemas.assertDef('mcp-report@1.6', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
@@ -249,7 +442,7 @@ export function registerTool(ctx: Context): void {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-report@1.5', 'report-output', made)
+      schemas.assertDef('mcp-report@1.6', 'report-output', made)
     } catch (error) {
       return refused(`report: the report made an output its schema refuses (a defect): ${(error as Error).message}`)
     }

@@ -6,7 +6,7 @@ import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
-import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostCapacity, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { accountTarget, agentAccountLine, formatMigration, parseMigrate, assertRuntime, callTool, checkRows, signInEnvironment, signInLine, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, hostCapacity, hostRoster, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseMetrics, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -79,6 +79,14 @@ describe('system CLI (PR #3 kernel review)', () => {
     // The tool refuses a period it cannot name (both since and days, or days that are not a whole number), with nothing read.
     expect(parseReport(['--days', 'week'])).toEqual({ days: Number.NaN })
     for (const args of [['--project'], ['--bogus', 'x'], ['--days', '7', '--days', '8'], ['p1']]) expect(parseReport(args), args.join(' ')).toBeUndefined()
+  })
+
+  it('reads system metrics flags: --days n (1 to 366), --project, --until, each once (PROP-0016 I4)', () => {
+    expect(parseMetrics([])).toEqual({})
+    expect(parseMetrics(['--days', '14', '--project', 'system', '--until', '2026-10-26T00:00:00Z'])).toEqual({ days: 14, projectId: 'system', until: '2026-10-26T00:00:00Z' })
+    for (const args of [['--days'], ['--days', '0'], ['--days', '367'], ['--days', 'month'], ['--days', '7.5'], ['--since', '2026-10-01T00:00:00Z'], ['--days', '7', '--days', '8'], ['30']]) {
+      expect(parseMetrics(args), args.join(' ')).toBeUndefined()
+    }
   })
 
   it('reports health with exit 0, 1, or 2, and a host that does not answer as down (REQ-HOST-6)', async () => {

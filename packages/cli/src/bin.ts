@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, hostCapacity, hostRoster, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, type DispatchView, formatDispatch, parseDispatch,formatExplanation, formatFreed, formatLiveness, type Freed, formatUsage, parseFree, formatWorktrees, formatWorktreesRemoved, parseWorktreesRemove, type Worktrees, type WorktreesRemoved, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseMetrics, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -57,6 +57,10 @@ const USAGE = `Usage: system <command>
   report [--project <id>] [--since <time> | --days <n>] [--until <time>] [--json]
                             the baseline report, from recorded data only: progress, results, what asked for you,
                             usage, cost per accepted result; by default the last 7 days (the weekly investor report)
+  metrics [--days <n>] [--project <id>] [--until <time>] [--json]
+                            the maturity metrics (PROP-0016), from recorded data only, over the last 30 days by
+                            default: each one's value, sample, and records read, or why it is not measurable yet;
+                            and the reading against the L3 lines
   explain [--json] <runId|artifact|agentRun>
                             the decision chain behind a run (egress, tier, route, acceptance), every attempt's
                             decisions, and its executions whose liveness needs a look (the verdict, its looks,
@@ -377,6 +381,14 @@ async function main(argv: string[]): Promise<number> {
       const input = parseReport(rest.filter((a) => a !== '--json'))
       if (!input) break
       const outcome = await callTool('report', input)
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(rest.includes('--json') ? JSON.stringify(outcome.structured, null, 2) : outcome.text.trimEnd())
+      return 0
+    }
+    case 'metrics': {
+      const input = parseMetrics(rest.filter((a) => a !== '--json'))
+      if (!input) break
+      const outcome = await callTool('metrics', input)
       if (outcome.isError) throw new Error(outcome.text)
       console.log(rest.includes('--json') ? JSON.stringify(outcome.structured, null, 2) : outcome.text.trimEnd())
       return 0

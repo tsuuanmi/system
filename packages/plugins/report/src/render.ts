@@ -5,6 +5,7 @@
  * from the report alone; numbers are written without a locale.
  */
 import { drawFigureText } from '@tsuuanmi/system-libs'
+import { renderMetrics } from './metrics.ts'
 import type { Report } from './report.ts'
 
 /** A whole number with thousands separated by commas, whatever the host's locale. */
@@ -136,6 +137,9 @@ export function renderReport(report: Report): string {
     for (const q of v.questions) lines.push(`- ${q.question}: Brier ${q.brier} over ${plural(q.scored, 'attempt')} (always answering the rate ${q.rate}: ${q.baseline}; lower is better).`)
     if (!v.questions.length) lines.push('- No advised attempt has an outcome yet: nothing to score.')
   }
+
+  // The maturity metrics and the L3 reading (PROP-0016 I4): their own rolling 30 days, to the period's end.
+  if (report.maturity) lines.push('', ...renderMetrics(report.maturity, '##'))
 
   if (report.notes.length) lines.push('', '## Not counted', '', ...report.notes.map((n) => `- ${n}`))
   return `${lines.join('\n')}\n`

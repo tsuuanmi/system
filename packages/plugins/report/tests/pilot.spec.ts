@@ -111,6 +111,30 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
     expect(before).toMatchObject({ tasks: { created: 0, done: 0 }, attempts: { reported: 0 }, approvals: { asked: 0 }, attention: { interruptions: 0 }, usage: { total: { records: 0 } }, digests: { attached: 0 }, baseline: { acceptedResults: 0 } })
   })
 
+  it('reads the maturity metrics from what the pilot recorded, through the metrics tool and in the report (PROP-0016 I4)', async () => {
+    const { ctx } = await pilotWeek()
+    const tool = (ctx.get('mcp') as RecordingMcp).tools.get('metrics')!
+    expect(tool.spec.scope).toBe('client')
+    const result = await tool.handler({ projectId: 'p1' }, { scope: 'client' })
+    expect(result.isError).toBeUndefined()
+    const read = result.structuredContent as unknown as Report.Metrics
+    expect(() => schemas.assertDef('mcp-report@1.6', 'metrics-output', read)).not.toThrow()
+    expect(read.metrics.map((m) => m.id)).toEqual(Report.METRIC_IDS)
+    // The one finished task's run was started by the lead, and its started entry says so: a touch at least.
+    const lead = read.metrics.find((m) => m.id === 'lead-touches')!
+    expect(lead).toMatchObject({ state: 'measured', sample: 1, bound: 'lower' })
+    expect(lead.value).toBeGreaterThanOrEqual(1)
+    expect(read.level).toMatchObject({ l3: 'not-shown', finishedTasks: 1, days: 30 })
+    expect((result.content as Array<{ text: string }>)[0]!.text).toMatch(/^# Maturity metrics: project p1\n/)
+    // The weekly report carries the same reading over the 30 days to its end; when it was read is the report's asOf.
+    const { report, text } = await call(ctx, { projectId: 'p1' })
+    expect(report!.maturity).toMatchObject({ projectId: 'p1', days: 30, level: { finishedTasks: 1 } })
+    expect(report!.maturity).not.toHaveProperty('asOf')
+    expect(text).toContain('## Maturity metrics: project p1')
+    const refused = await tool.handler({ days: 0 }, { scope: 'client' })
+    expect(refused).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^invalid input, nothing read/) }] })
+  })
+
   it('refuses an input outside its schema, an unknown project, and a period it cannot name, reading nothing', async () => {
     const { ctx } = await pilotWeek()
     for (const [args, why] of [
@@ -181,6 +205,22 @@ describe('the report tool without its sources', () => {
     expect(report!.usage.pools).toMatchObject([{ pool: 'max.agents', records: 1, turns: 2, unknownRuns: 1, withoutTokens: 1, withoutCost: 1 }])
     expect(report!.notes).toContain('1 usage.unknown entry is not a valid usage-unknown@1.0 record: not counted')
     expect(text).toContain('- Usage the ledger could not count: 2 runs (1 not reported, 1 refused by the ledger), 1 of them counted since; a cap counts the others as 0.')
+  })
+
+  it('reads the operator\'s decision on a run whose task is not finished and whose start is not in the window, from the run\'s own entry in it (PROP-0016 I4)', async () => {
+    const ctx = await boot()
+    // No started entry and no task: only the run's own entry in the window, and the decision on it, name it.
+    ctx.eventLog.append({ type: 'workflow.run.continued', runId: 'run-old', data: { by: 'operator' } })
+    ctx.artifacts.recordDecision({
+      decisionType: 'recovery', question: 'Does the operator continue run run-old?', inputs: [],
+      candidates: [{ option: 'continue', selected: true, reasons: ['the operator continues it'] }, { option: 'stop', selected: false, reasons: ['not stop: the operator chose continue'] }],
+      decider: { type: 'operator', id: 'operator.continue', version: '1' }, outcome: { option: 'continue' }, deterministic: false,
+    }, { producer: { type: 'operator', ref: 'operator' }, runId: 'run-old' })
+    const result = await (ctx.get('mcp') as RecordingMcp).tools.get('metrics')!.handler(afterNow(), { scope: 'client' })
+    expect(result.isError).toBeUndefined()
+    const operator = (result.structuredContent as unknown as Report.Metrics).metrics.find((m) => m.id === 'operator-decisions')!
+    expect(operator).toMatchObject({ state: 'measured', figures: { decisions: 1, onRuns: 1 } })
+    expect(operator.bound).toBeUndefined()
   })
 
   it('says when the digest provider loaded does not know a digest attached in the period, which another provider settled before a swap, rather than count it as no claim (Base exit criterion 6)', async () => {

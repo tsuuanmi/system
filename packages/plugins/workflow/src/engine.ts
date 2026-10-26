@@ -252,8 +252,10 @@ export class Engine {
     for (const team of new Set(specs.flatMap((n) => (n.team ? [n.team.id] : [])))) {
       this.ctx.workerSessions.group(teamGroup(runId, team))
     }
-    const task = this.tasks.row(runId)?.task_id
-    this.ctx.eventLog.append({ type: 'workflow.run.started', runId, ...(run.session_id ? { sessionId: run.session_id } : {}), data: { template: run.template, specHash: run.spec_hash, ...(task ? { taskId: task } : {}) } })
+    // A board task's run names who started it (`startedBy`, PROP-0016 I4): the maturity metrics
+    // count a lead's start as a touch, and the event log is what they read (docs/design/maturity-metrics.md).
+    const task = this.tasks.row(runId)
+    this.ctx.eventLog.append({ type: 'workflow.run.started', runId, ...(run.session_id ? { sessionId: run.session_id } : {}), data: { template: run.template, specHash: run.spec_hash, ...(task ? { taskId: task.task_id, startedBy: task.started_by ?? (task.dispatch ? 'dispatch' : 'lead') } : {}) } })
   }
 
   get(runId: string): RunView | undefined {

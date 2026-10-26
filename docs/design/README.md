@@ -35,4 +35,5 @@ verified live.
 | [roster.md](roster.md) | the roster: every Worker in one read model (account and its enrolled or quarantined state, role, tier, availability, current work, load, pools and windows), projected on read, each unreadable fact unknown with why, bounded | gateways (surface) |
 | [web-ui.md](web-ui.md) | the operator's web UI at a glance: what needs you first as cards, a button's effect as its tooltip, the word bound on the first screen, one spacing and one type scale, light and dark, a 360 px phone; its screenshots | gateways (surface) |
 | [reports.md](reports.md) | the baseline report: what a period recorded, per project or for every one, counted by code; the weekly investor report | gateways (surface) |
+| [maturity-metrics.md](maturity-metrics.md) | PROP-0016's maturity metrics over a rolling window, each from named records or said not measurable; a lead touch defined; the L3 reading | gateways (surface) |
 | [notifications.md](notifications.md) | out-of-band notices from recorded events: what each event tells, the expiry reminder, deduplication, the bounded queue, the desktop and webhook sinks behind the egress gate, health | gateways (surface) |

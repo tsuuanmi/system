@@ -1217,10 +1217,33 @@ guesses.
   draws counted, their `median` and `p90` in percentage points (absent with none), and the entries
   left out by state (`excluded`), at most 256 of each list (`omitted` counting the rest). A 1.3
   report stays valid.
+- `mcp-report` 1.5 adds `advice`, the dispatch advisor in shadow (PROP-0015 J1). A 1.4 report
+  stays valid.
+- `mcp-report` 1.6 adds `maturity`: the maturity metrics over the 30 days to the period's end and
+  the reading against the L3 lines, exactly as the [`metrics`](#mcp-tool-metrics) tool gives them
+  (`$defs/metrics-output`); absent when they could not be read, and a note says why. A 1.5 report
+  stays valid.
 - The call's text content is the report rendered for the operator (Markdown); the structured
   content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
   reads nothing more and reports nothing. Example:
   [`mcp-report.week.json`](../../schemas/examples/mcp-report.week.json).
+
+### MCP tool: `metrics`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `metrics` | client | the maturity metrics of PROP-0016 §1 over a rolling window (default the 30 days before now), for one project or every one, from recorded data only, and the reading against the L3 lines (starting lines, D83); reads only |
+
+- Input and output (`mcp-report` 1.6): [`mcp-report.v1.json`](../../schemas/mcp-report.v1.json)
+  `$defs/metrics-input` (`projectId`, `days` from 1 to 366, `until`) and `metrics-output`.
+- `metrics` lists every metric in the proposal's order, each with `state` `measured` (its `value`,
+  the `sample` it is over and what that counts, other `figures`, and, when the records only bound
+  it, `bound` `lower` or `upper` with the `reason`) or `not-measurable` (the `reason`, and never a
+  value); `sources` names the records it read, and `l3` its line and `status` (`meets`, `misses`,
+  `unproven` for a bound that does not settle it, `not-read`).
+- `level.l3` is `holds` only when every line is met over at least 30 days and 30 finished tasks;
+  otherwise `not-shown`, with each reason. What each metric counts is in
+  [maturity metrics](../design/maturity-metrics.md). A refusal is the report's.
 
 ### MCP tool: `roster`
 

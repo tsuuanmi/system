@@ -4,7 +4,8 @@
 > *surface* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Proposals:
 > [PROP-0010](../proposals/0010-base-version.md) (B8: the baseline report, a weekly investor report),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#validation-plan) (the baseline).
-> Payload: [`mcp-report@1.5`](../reference/schemas.md#mcp-tool-report).
+> Payload: [`mcp-report@1.6`](../reference/schemas.md#mcp-tool-report). From 1.6 the report ends
+> with the [maturity metrics](maturity-metrics.md) over the 30 days to its end (`maturity`).
 >
 > Implemented in [`report`](../../packages/plugins/report/README.md); differs from target: quota
 > lost at reset is not reported (the ledger's seam gives each window's latest reading only), and

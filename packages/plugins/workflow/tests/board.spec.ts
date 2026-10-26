@@ -228,6 +228,9 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(taken!.candidates.every((c) => c.reasons.length > 0)).toBe(true)
     const events = ctx.eventLog.query({ runId: run.runId, limit: 100 }).map((e) => e.type)
     expect(events).toEqual(expect.arrayContaining(['workflow.run.started', 'workflow.run.completed', 'workflow.task.reported']))
+    // The started event names the task and who started the run (PROP-0016 I4: a lead's start is a touch).
+    const [started] = ctx.eventLog.query({ runId: run.runId, type: 'workflow.run.started', limit: 1 })
+    expect(started?.data).toMatchObject({ template: 'solo', taskId: task.taskId, startedBy: 'lead' })
   })
 
   it('adopts a lead\'s live claim, and refuses a stale claim or a task not ready before any step runs', async () => {

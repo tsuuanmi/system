@@ -33,6 +33,14 @@ decides nothing, and no model takes part.
   (`accepted`, `limit`, `needs-operator`) the Brier score of the chosen candidate's probability (read
   from its advice decision's `modelAnswers`) against the recorded label, beside the observed rate and
   the score of always answering it (`brierScores`, libs); only when there is any.
+- **The maturity metrics** (PROP-0016 §1, I4 part 1, `mcp-report` 1.6,
+  [design](../../../docs/design/maturity-metrics.md)): MCP `metrics` (client scope; `projectId`,
+  `days` default 30, `until`) and `system metrics` read every metric of §1 over a rolling window.
+  Each is measured, with its value, sample, and sources, and marked when only a bound, or not
+  measurable, with why and no value. Then the L3 reading. Beside the report's reads, it reads
+  `workflow.run.started` (with `startedBy`), `workflow.task.landing`, the decisions people made on
+  the runs (`ctx.artifacts.list` by run), and the board's moves to ready. The report's last section,
+  `maturity`, is the same over the 30 days to its end. [`src/metrics.ts`](src/metrics.ts) is pure.
 - **What a cap counts as 0** (D25, `mcp-report` 1.1,
   [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)): per pool and in all,
   the records without token counts, a cost, or turns, and the runs recorded in the period whose
@@ -66,6 +74,8 @@ decides nothing, and no model takes part.
   records (period bounds, scope, waits, attention against the charter, usage per pool, the
   baseline, determinism, the bounds, the rendering, what a cap counts as 0, the agent runs whose
   liveness asked for the operator, the reviews held for the operator);
+  [`tests/metrics.spec.ts`](tests/metrics.spec.ts) checks each maturity metric on a fixture log of
+  30 days, an empty log, and the window's bounds;
   [`tests/pilot.spec.ts`](tests/pilot.spec.ts) runs the `algorithm-development` template on the
   software-development profile's [pilot in miniature](../profile-software-development/tests/pilot.ts)
   and reads what it recorded through the tool: a project's report, the studio's, the same period

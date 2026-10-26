@@ -8,6 +8,7 @@ import type { ActionClass, ApprovalRequest } from '@tsuuanmi/system-approvals-co
 import type { BoardTask, Project, TaskState } from '@tsuuanmi/system-board-core'
 import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ADVICE_QUESTIONS, ADVICE_SHADOW_ATTEMPTS, type AdviceQuestion, brierScores, type DrawFigure, drawFigures, type QuestionScore, type QuotaDraw, type UsageUnknown } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
+import type { Metrics } from './metrics.ts'
 
 export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
 /** Projects one report lists (`mcp-report@1` bounds it); the rest are counted. */
@@ -176,6 +177,8 @@ export interface Report {
   baseline: { acceptedResults: number; interruptions: number; attempts: number; perAcceptedResult?: { tokens: number; costUsd: number; turns: number; interruptions: number; attempts: number } }
   /** `advice` (1.5): the dispatch advisor in shadow and its calibration (PROP-0015 J1); only when a choice was advised or an outcome recorded in the period. */
   advice?: AdviceCalibration
+  /** `maturity` (1.6): the maturity metrics over the 30 days to the period's end and the L3 reading (PROP-0016 I4); absent when they could not be read (a note says why). */
+  maturity?: Metrics
   notes: string[]
 }
 
