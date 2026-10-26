@@ -94,7 +94,7 @@ export function readsOverride(command: { command: string; args: readonly string[
 /**
  * The `--config` override that lets a writing run's commands write `roots` besides the workspace
  * (T265: the confinement's private `/dev/shm`, which a headless Chrome writes, and the directory of
- * the run's report file), after the operator's own (`sandbox_workspace_write.writable_roots`), which
+ * the run's report file; T270: the shells' tool-state directories), after the operator's own (`sandbox_workspace_write.writable_roots`), which
  * it keeps. Given after the operator's configuration, it is the value Codex reads.
  */
 export function writableRootsOverride(config: Record<string, unknown> = {}, roots: readonly string[]): string {

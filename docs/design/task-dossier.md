@@ -90,6 +90,15 @@ sequenceDiagram
   the Worker to resolve. A fresh start says "starts fresh, not from the tree of attempt N" and why
   (the task opted out, or the change could not be carried). The carry's decisions are linked
   ([starting from the previous attempt's work](workflow-engine.md#starting-from-the-previous-attempts-work)).
+- **What a failed check printed (T270).** A Worker cannot open a linked artifact, so a link to the
+  `check-run` record alone told the next attempt that its tests failed, never which. For each
+  required check that failed on the result's own subject, one more `evidence` entry follows the
+  acceptance's, linking it and the `check-run` record, and carrying in its text what failed: the
+  failing tests' names and assertion lines, then the run's summary, as the source that ran the
+  check read them from the end of its output (`CheckResult.failures`; agent-workers'
+  `failureLines`, which drops the rest, such as a tool's noise). Bounded: at most 200 lines of 240
+  characters (bounded again by the engine, whatever a source sends), and the entry's own 4,000
+  characters. A check that passed, did not run, or failed on another tree adds none.
 - A failure to append is logged and never fails the work it records.
 
 ## Reading

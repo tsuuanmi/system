@@ -62,6 +62,8 @@ class Checker {
   outcomes: Record<string, Outcome> = { tests: 'passed', lint: 'passed' }
   /** What a check's command reported it did not run, by check. */
   notRun: Record<string, string> = {}
+  /** The failing lines a failed check's answer carries, by check (T270). */
+  failures: Record<string, string[]> = {}
   refuse: Checked | undefined
   /** The next check runs until its caller's signal stops it (the host's stop cutting it), then throws as a cut check does. */
   cutNext = false
@@ -100,7 +102,8 @@ class Checker {
         }).id
         return { outcome: 'checked', results: results.map((r) => {
           const notRun = this.notRun[r.check]
-          return notRun ? { ...r, notRun } : r
+          const failures = r.outcome === 'failed' ? this.failures[r.check] : undefined
+          return { ...r, ...(notRun ? { notRun } : {}), ...(failures ? { failures } : {}) }
         }), evidence }
       },
     })
@@ -235,6 +238,32 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     const acceptance = acceptanceOf(ctx, runId)
     expect(acceptance.outcome).toMatchObject({ option: 'reject', detail: { checks: { tests: true, lint: false } } })
     expect(acceptance.candidates.find((c) => c.selected)!.reasons[0]).toMatch(/the run's own lint check failed on git-head/)
+  })
+
+  it('puts the failing tests\' names and assertion lines of a failed check in the task\'s dossier, within the bound, for the next attempt\'s Worker to read (T270)', async () => {
+    const checker = new Checker()
+    checker.outcomes = { tests: 'failed', lint: 'passed' }
+    // More than the bound: the source's lines are bounded again before the dossier takes them.
+    checker.failures = { tests: [' FAIL  packages/b/tests/b.spec.ts > the sum adds up', 'AssertionError: expected 3 to be 4', ...Array.from({ length: 400 }, (_, i) => ` FAIL  packages/p/tests/t${i}.spec.ts > case ${i}`)], lint: ['never told: lint passed'] }
+    const { ctx, task } = await boot(checker)
+    const { taskId, runId } = await task()
+    expect((await settled(ctx, taskId)).state).toBe('ready')
+    const entries = ctx.workflow.dossier({ runId }).entries
+    const failed = entries.filter((e) => e.kind === 'evidence' && e.author.type === 'system' && e.text.startsWith('The tests check failed on '))
+    expect(failed).toHaveLength(1)
+    const text = failed[0]!.text
+    expect(text).toContain(' FAIL  packages/b/tests/b.spec.ts > the sum adds up')
+    expect(text).toContain('AssertionError: expected 3 to be 4')
+    // Within the bound: at most 200 lines of the output after the entry's first line, and the entry's own 4,000 characters.
+    expect(text.split('\n').length - 1).toBeLessThanOrEqual(200)
+    expect([...text].length).toBeLessThanOrEqual(4000)
+    // It follows the acceptance and links it and the check-run evidence; a passed check adds no entry.
+    const acceptance = entries.findIndex((e) => e.text.startsWith('Acceptance of attempt 1'))
+    expect(acceptance).toBeGreaterThanOrEqual(0)
+    expect(entries.indexOf(failed[0]!)).toBeGreaterThan(acceptance)
+    const detail = acceptanceOf(ctx, runId).outcome.detail['checkRun'] as { evidence: string }
+    expect(failed[0]!.refs).toContain(detail.evidence)
+    expect(entries.some((e) => e.text.includes('never told: lint passed'))).toBe(false)
   })
 
   it('holds the result for the operator with each check that did not run to an exit code pending, and with every one pending when the source refuses or none can run them (INV-2)', async () => {

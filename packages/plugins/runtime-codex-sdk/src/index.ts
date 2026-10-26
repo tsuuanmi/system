@@ -293,14 +293,16 @@ export class CodexRuntime implements AgentRuntimeProvider {
         }
       }
       // The workspace is bound back as the sandbox allows; Codex's own sandbox still confines writes.
-      // The shells' home is bound back read-only (T198): it stays empty, so whatever shell and login
+      // The shells' home is bound back read-only (T198): it holds no file, so whatever shell and login
       // mode a call picks finds no startup file there, and no call can write one for a later call.
+      // Its tool-state directories are writable over it, and fish's startup directories in them
+      // read-only again (T270): a tool's state under ~ is written, never a shell's startup code.
       // The workspace reads server's script and node are bound back read-only too: Codex starts the
       // server, which confines itself again, the workspace read-only to it (T200b).
       const own = channel ? [channel.dir, this.hook(), this.node()] : []
-      const readOnly = [...new Set([shell.path, ...own, this.readsScript(), this.node()])]
+      const readOnly = [...new Set([shell.path, ...shell.startup, ...own, this.readsScript(), this.node()])]
       const writes = spec.sandbox === 'workspace-write'
-      const bind = writes ? { writable: [home, spec.workspace], readOnly } : { writable: [home], readOnly: [spec.workspace, ...readOnly] }
+      const bind = writes ? { writable: [home, spec.workspace, ...shell.writable], readOnly } : { writable: [home, ...shell.writable], readOnly: [spec.workspace, ...readOnly] }
       let confined: { command: string; args: string[] }
       let reads: { command: string; args: string[] }
       // A writing run's commands run a browser test as a check's confinement does (T265): its report
@@ -311,7 +313,9 @@ export class CodexRuntime implements AgentRuntimeProvider {
         reads = this.readsCommand(spec.workspace, readBounds)
         const confinement = withRunReport(this.confinement(bind), writes ? spec.reportFile : undefined)
         confined = confinedCommand(executable, [], confinement)
-        if (writes) roots = toolSandboxAllowances(confinement, spec.reportFile).write.map((path) => (path === spec.reportFile ? dirname(path) : path))
+        // And the shells' tool-state directories (T270): fish's startup directories in them stay
+        // read-only, bound so by the confinement, which no sandbox inside it can undo.
+        if (writes) roots = [...toolSandboxAllowances(confinement, spec.reportFile).write.map((path) => (path === spec.reportFile ? dirname(path) : path)), ...shell.writable]
       } catch (error) {
         throw new ProviderError('config_error', `codex-sdk: ${firstLine(error)}; nothing was run`, { cause: error })
       }

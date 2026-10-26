@@ -19,6 +19,11 @@ import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 /** What a writing step's work is, as the autonomy policy names it: a plain run's checks are judged under it. */
 export const WRITES = 'workspace-write'
 
+/** How many failing lines of one failed check the task's dossier tells (T270). */
+export const MAX_FAILURE_LINES = 200
+/** How long each of those lines may be. */
+const MAX_FAILURE_LINE_CHARS = 240
+
 /** What a run's checks came to, for its acceptance decision. */
 export interface RanChecks {
   /** The exact tree they ran on. */
@@ -29,6 +34,8 @@ export interface RanChecks {
   evidence?: ArtifactRef
   /** Why a check asked for did not run to an exit code, or why none was asked: it stays pending. */
   notes: string[]
+  /** Each failed check's failing lines (its tests' names and assertions), as its source read them, bounded: for the task's dossier (T270). */
+  failures?: Partial<Record<RunCheck, string[]>>
   /** What the acceptance decision's detail records of them. */
   detail: Record<string, unknown>
 }
@@ -153,8 +160,13 @@ async function runRequiredChecks(
   if (checked.outcome === 'refused') return { ...pending(`source ${checked.source} refused (${checked.cause}): ${checked.reason}`), detail: { asked: required, source: checked.source, outcome: 'refused', cause: checked.cause } }
   const checks: Partial<Record<RunCheck, boolean>> = {}
   const notes: string[] = []
+  const failures: Partial<Record<RunCheck, string[]>> = {}
   for (const r of checked.results) {
     if (!required.includes(r.check)) continue
+    // A source's lines are bounded again here: the dossier holds what a source sends only within its bound (INV-9).
+    if (r.outcome === 'failed' && Array.isArray(r.failures) && r.failures.length) {
+      failures[r.check] = r.failures.slice(0, MAX_FAILURE_LINES).map((line) => String(line).slice(0, MAX_FAILURE_LINE_CHARS))
+    }
     if (r.outcome === 'error') notes.push(`its ${r.check} check did not run to an exit code on the result (${r.reason}); it stays pending`)
     else {
       checks[r.check] = r.outcome === 'passed'
@@ -163,7 +175,7 @@ async function runRequiredChecks(
     }
   }
   return {
-    subject: tree.subject, checks, notes, ...(checked.evidence ? { evidence: checked.evidence as ArtifactRef } : {}),
+    subject: tree.subject, checks, notes, ...(Object.keys(failures).length ? { failures } : {}), ...(checked.evidence ? { evidence: checked.evidence as ArtifactRef } : {}),
     // Each result keeps what its command reported it did not run: the board's auto-accept rule holds a pass with it (T255).
     detail: { asked: required, source: checked.source, outcome: 'checked', results: checked.results.map((r) => ({ check: r.check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), ...(r.notRun ? { notRun: r.notRun.slice(0, 300) } : {}) })), ...(checked.evidence ? { evidence: checked.evidence } : {}) },
   }

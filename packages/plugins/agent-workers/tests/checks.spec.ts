@@ -259,6 +259,10 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       expect(body.subject).toEqual({ type: 'git-head', ...at.subject })
       expect(body.checks[0]).toMatchObject({ argv: ['node', 'test.mjs'], output: { tail: 'tests: dep ok\n', bytes: 14 } })
       expect(body.checks[1]!.output.tail).toContain('lint: unused.js declares a variable it never uses')
+      // The failed check's answer carries what failed, bounded (T270); the passed one's carries nothing. check-run@1.0 itself is unchanged (asserted above).
+      expect(checked.results[1]!.failures).toContain('lint: unused.js declares a variable it never uses')
+      expect(checked.results[1]!.failures!.length).toBeLessThanOrEqual(200)
+      expect(checked.results[0]).not.toHaveProperty('failures')
       // Each command ran on the policy's own decision, named among the evidence's inputs.
       for (const c of body.checks) {
         expect(evidence.inputs).toContain(c.autonomy)

@@ -31,7 +31,7 @@ import type { Check } from '@tsuuanmi/system-approvals-core'
 import { recordOutcome } from './advisor.ts'
 import type { TaskFrame } from './briefs.ts'
 import { keepable, TaskCarries } from './carries.ts'
-import { type LandingTarget, type RanChecks, ranOn } from './checks.ts'
+import { type LandingTarget, MAX_FAILURE_LINES, type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
 import { holderLapsedAtStart, infrastructureOf } from './infrastructure.ts'
 import { TaskDigests } from './digests.ts'
@@ -1346,6 +1346,15 @@ export class TaskRuns {
     this.dossiers.safely('the acceptance', () => this.dossiers.evidence(run.run_id,
       `Acceptance of attempt ${this.frame(run.run_id)?.attempt ?? '?'} (run ${run.run_id}): ${option} on ${describe(subject)}; ${said}${review ? `; the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s)${review.summary ? ` (${review.summary.split(';')[0]})` : ''}, cycle ${review.cycle} of ${review.maxCycles}` : ''}${tierSaid.length ? `; ${tierSaid[0]}` : ''}${short ? `; ${short}` : ''}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
       [acceptance, ...(ran?.evidence ? [ran.evidence] : []), ...artifacts], subject))
+    // What failed, in the dossier itself (T270): the Worker of the next attempt reads its failing tests
+    // there, never only a link to the check-run artifact it cannot open. Only a check that failed on
+    // the result's own subject (INV-5).
+    for (const [check, lines] of Object.entries(ran?.failures ?? {}) as Array<[Check, string[]]>) {
+      if (checks[check] !== false || !lines.length) continue
+      this.dossiers.safely(`the failures of the ${check} check`, () => this.dossiers.evidence(run.run_id,
+        `The ${check} check failed on ${describe(subject)}: ${lines.length} line${lines.length === 1 ? '' : 's'} of its output (at most ${MAX_FAILURE_LINES}), the failing tests' names and assertions, then its summary:\n${lines.join('\n')}`,
+        [acceptance, ...(ran?.evidence ? [ran.evidence] : [])], subject))
+    }
     return undefined
   }
 

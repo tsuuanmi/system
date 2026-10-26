@@ -58,7 +58,8 @@ export interface RuntimeEvidence {
    * non-login, non-interactive shell that reads no startup file and no startup variable (`bash
    * --norc --noprofile` with no `BASH_ENV` or `ENV`), the shell a trusted program the agent cannot
    * choose or change (T198). Every runtime here enforces that no startup code its agent wrote ever
-   * runs: its shells' `HOME` is an empty private directory bound back read-only ({@link agentHome}),
+   * runs: its shells' `HOME` is a private directory with no file bound back read-only, only its
+   * tool-state directories writable and fish's startup directories in them read-only ({@link agentHome}),
    * their environment names no startup variable or file ({@link agentShellEnvironment}), and nothing
    * its agent runs can write where its shells read startup code. That is not this field, which also
    * needs the shell program pinned. Absent or false: a gate never takes a shell command for a read,
@@ -1402,8 +1403,9 @@ export const SHELL_CONFIG_DIRECTORIES: readonly string[] = ['XDG_CONFIG_HOME', '
  * code from, nor one naming another directory a shell reads startup files from
  * ({@link SHELL_CONFIG_DIRECTORIES}), `HOME` the private home ({@link agentHome}), so every startup
  * file a shell looks for in its home (`~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.zshenv`,
- * `~/.config/fish/config.fish`, …) is that empty directory's, which the confinement binds back
- * read-only: none exists, and none can be made during the run. `XDG_CACHE_HOME` keeps naming the
+ * `~/.config/fish/config.fish`, …) is that private directory's, which the confinement binds back
+ * read-only (but for its tool-state directories, T270, where no shell reads startup code, fish's
+ * kept read-only): none exists, and none can be made during the run. `XDG_CACHE_HOME` keeps naming the
  * operator's cache (`<HOME>/.cache` when it was unset), where tools find what they already
  * downloaded (corepack's package managers among them); no shell reads a startup file there.
  * The environment alone does not choose the shell a runtime starts, so it never earns
@@ -1416,21 +1418,50 @@ export function agentShellEnvironment(env: Record<string, string>, home: string)
   return { ...clean, ...(cache ? { XDG_CACHE_HOME: cache } : {}), HOME: home }
 }
 
-/** A run's private shell home: its path, and how to remove it once the run ended. */
+/**
+ * Where a tool keeps its state under its home (T270), relative to it: the XDG defaults for data,
+ * state, cache, and configuration (`~/.local/share`, `~/.local/state`, `~/.cache`, `~/.config`). Each
+ * is in the private home from the start, and a runtime binds each back **writable** over the
+ * read-only home, so a tool that makes `~/.local/share/<tool>`, `~/.cache/<tool>`, or
+ * `~/.config/<tool>` writes it instead of printing `EROFS`. No shell reads a startup file there but
+ * fish, whose directories ({@link HOME_STARTUP_DIRECTORIES}) stay read-only.
+ */
+export const HOME_STATE_DIRECTORIES: readonly string[] = ['.local/share', '.local/state', '.cache', '.config']
+
+/**
+ * The directories inside {@link HOME_STATE_DIRECTORIES} where a shell reads startup code, relative to
+ * the home: fish's `config.fish` and `conf.d` (`~/.config/fish`) and its data directory's
+ * `vendor_conf.d` (`~/.local/share/fish`). Each is an empty directory a runtime binds back
+ * **read-only** over the writable one it lies in, so nothing can be planted there (T198, T270).
+ */
+export const HOME_STARTUP_DIRECTORIES: readonly string[] = ['.config/fish', '.local/share/fish']
+
+/**
+ * A run's private shell home: its path, the directories in it a runtime binds back writable and
+ * read-only again over the read-only home (T270), and how to remove it once the run ended.
+ */
 export interface AgentHome {
   path: string
+  /** Its tool-state directories, absolute ({@link HOME_STATE_DIRECTORIES}): bound back writable. */
+  writable: string[]
+  /** The shell startup directories in those, absolute ({@link HOME_STARTUP_DIRECTORIES}): bound back read-only over them. */
+  startup: string[]
   remove(): void
 }
 
 /**
- * A fresh, empty, owner-only home for one agent run or probe (T198), made in `parent` (an
- * owner-only directory outside every workspace, such as the runtime's run directory, which the read
+ * A fresh, owner-only home for one agent run or probe (T198), made in `parent` (an owner-only
+ * directory outside every workspace, such as the runtime's run directory, which the read
  * confinement hides and binds the home back from). Refused (throws) when it would lie in
  * `workspace`, or the workspace in it: a home in the worktree is git-visible and a Worker's tools
- * write there. A runtime binds it back into its confinement **read-only** (a `readOnly` bind, never a
- * `writable` one): it stays empty for the whole run, so no shell its agent starts, login,
- * interactive, or neither, in whatever mode a call asks for, finds a startup file there, and no tool
- * call can write one for a later call's shell to read. Nothing in it survives the run
+ * write there. It holds no file, only the empty tool-state directories ({@link HOME_STATE_DIRECTORIES})
+ * and the shell startup directories in them ({@link HOME_STARTUP_DIRECTORIES}). A runtime binds the
+ * home back into its confinement **read-only** (a `readOnly` bind, never a `writable` one), each of
+ * {@link AgentHome.writable} writable over it, and each of {@link AgentHome.startup} read-only again
+ * over those: so no shell its agent starts, login, interactive, or neither, in whatever mode a call
+ * asks for, finds a startup file in its home (`~/.bashrc`, `~/.profile`, `~/.zshenv`,
+ * `~/.config/fish/config.fish`, …), and no tool call can write one for a later call's shell to
+ * read, while a tool's own state under the home is writable (T270). Nothing in it survives the run
  * ({@link AgentHome.remove}).
  */
 export function agentHome(parent: string, workspace?: string): AgentHome {
@@ -1439,6 +1470,7 @@ export function agentHome(parent: string, workspace?: string): AgentHome {
   const remove = (): void => rmSync(path, { recursive: true, force: true })
   try {
     chmodSync(path, 0o700)
+    for (const name of [...HOME_STATE_DIRECTORIES, ...HOME_STARTUP_DIRECTORIES]) mkdirSync(join(path, name), { recursive: true, mode: 0o700 })
     if (workspace !== undefined) {
       const home = realpathSync(path)
       const ws = real(workspace) ?? workspace
@@ -1448,5 +1480,5 @@ export function agentHome(parent: string, workspace?: string): AgentHome {
     remove()
     throw error
   }
-  return { path, remove }
+  return { path, writable: HOME_STATE_DIRECTORIES.map((name) => join(path, name)), startup: HOME_STARTUP_DIRECTORIES.map((name) => join(path, name)), remove }
 }
