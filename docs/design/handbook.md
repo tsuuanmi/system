@@ -9,7 +9,9 @@
 > prompt carries the repository's lessons (agent-workers `src/lessons.ts`, T220) and its tool gate's
 > note (agent-workers `src/gate.ts` `unaskedNote`), both appended by the Worker source and recorded
 > nowhere as rules; its role's text is its template's prompt (profile plugins); nothing is measured
-> against a bound, and no brief names the version of any rule it carried.
+> against a bound, and no brief names the version of any rule it carried. The lead's playbook is
+> written ([lead's playbook](../operations/lead-playbook.md), T252), and the lead reads it as a file:
+> no slice is built from it.
 
 System's rules are written in many places: the invariants and ADRs, the autonomy policy and its path
 map, the board's charters, the templates' prompts, `AGENTS.md`, `CONTRIBUTING.md`, the engineering
@@ -29,7 +31,7 @@ has one home, in one layer; another place links to it and never copies it.
 | **1. Constitution** | the invariants, the accepted ADRs, and the rules about ADRs and documents themselves | operator | [invariants](../architecture/invariants.md), [ADRs](../decisions/adr/README.md), [decision rules](../decisions/README.md#decision-rules), [documentation policy](../governance/documentation.md) | the git blob id of `docs/architecture/invariants.md` at the repository's HEAD, and the highest accepted ADR's number | an ADR the operator accepts (heavy in the path map) | `scripts/architecture.spec.ts`, the seams' conformance suites, the crash and upgrade suites, `check:schemas`, `check:docs`; for the rest, the review |
 | **2. Organisation policy** | the autonomy policy (modes, action classes, `ALWAYS_ASK`, the commands list), the risk tiers' path map ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md)), the trust tiers (PROP-0016 §3), what escalates (§7), the budgets the operator set (research 10 %, attention 15 a day) | operator; the lead proposes | the studio and project policies (configuration and the stored set, [approvals](approvals.md#the-autonomy-policy)); this repository's project policy and map, `policies/system.json`; `docs/operations/` for the prose | the policy's `version` and the hash of the set in force (`policy().set`); the map's `riskTiers.version` | a `policy-change` approval ([ADR-0041](../decisions/adr/0041-policy-changes-through-the-approval-queue.md)) | the tool gate on every call; the approval queue; the policy's load-time rules; `check:tiers` for the map; the `workflow.risk-tier` decision and the board's hold of a heavy result |
 | **3. Project charter** | the project's objective, constraints, stop rules, budget, required checks, auto-accept branches | operator, with the lead | the board's project record (`project@1.x` `charter`, [board](board.md)) | the project id and `charter.version` (an integer the board already keeps) | a charter amendment the operator approves (`board_charter`) | the board (budgets, gates, `board.auto-accept`), a run's required checks ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)); a charter's `constraints` text, the review only |
-| **4. Role playbooks** | how a writer, a reviewer, a validator, a researcher, and the lead each work, and what "done" means for the role | lead | the templates' prompts (`profile-software-development`, `profile-scientific-research` `src/index.ts`; the second review's wording, workflow `src/risk.ts`) and, for the rules a writer follows in this repository, [AGENTS.md](../../AGENTS.md), [CONTRIBUTING.md](../../CONTRIBUTING.md), and the [engineering](../engineering/README.md) docs | the template's name, its package's version, and the sha256 of the playbook text the slice carries (templates carry no version of their own today) | a reviewed change | per rule, the check it names (below); most are the review only |
+| **4. Role playbooks** | how a writer, a reviewer, a validator, a researcher, and the lead each work, and what "done" means for the role | lead | the templates' prompts (`profile-software-development`, `profile-scientific-research` `src/index.ts`; the second review's wording, workflow `src/risk.ts`); for the rules a writer follows in this repository, [AGENTS.md](../../AGENTS.md), [CONTRIBUTING.md](../../CONTRIBUTING.md), and the [engineering](../engineering/README.md) docs; for the lead, the [lead's playbook](../operations/lead-playbook.md) | the template's name, its package's version, and the sha256 of the playbook text the slice carries (templates carry no version of their own today) | a reviewed change | per rule, the check it names (below); most are the review only |
 | **5. Repository lessons** | mistakes made in this repository before, one line each, with what now enforces it | lead and review | [lessons](../engineering/lessons.md), one per repository | the git blob id of `docs/engineering/lessons.md` at the Worker repository's HEAD | a commit; a lesson whose check makes it impossible to repeat is folded or dropped | `agent-workers/tests/lessons.spec.ts` (at most 30 lines of at most 400 characters, each naming `Check:`); each lesson's own check |
 
 **Rules for every layer:**
@@ -173,14 +175,45 @@ conclusion): **S1** hypotheses as a `hypothesis-set@1.0`, citations, independent
 template's prompts). Check: in part, the result schema, and a `quote-check` where a criterion names
 it. **S2** research Workers on at least two providers (PROP-0016 §5). Check: **none**.
 
-**Lead** (not a step the engine starts; the coordination's own session):
+**Lead** (not a step the engine starts; each project's own lead session, D88): the home of every
+lead rule is the [lead's playbook](../operations/lead-playbook.md) (T252), each line with its id and
+check; [examples/LEAD.md](../operations/examples/LEAD.md) is the onboarding checklist a project's
+`LEAD.md` copies, pointing at it and adding no rule. The ids are `LD`, so they never read as an
+operator decision's `Dnn`. The rules first listed here as D1 to D4 are LD22 (D1 and D2), LD23 (D3),
+and LD4 (D4).
 
-| Id | Rule | Home today | Check |
-|---|---|---|---|
-| D1 | give work as a board task: propose with criteria naming each validation command and its `check`, start with the variant, write the input as "Develop step" and "Validation step", point the writer at CONTRIBUTING | [development](../engineering/development.md#give-work-to-system-workers) | in part: the board validates the shape; the rest **none** |
-| D2 | plan the work, propose just before running, after merging what it builds on | [pilot](../operations/pilot.md) | **none** |
-| D3 | a release: changesets, `pnpm version-packages`, tag on `main`, the checklist | [releasing](../engineering/releasing.md) | the release workflow's `verify` job; the checklist |
-| D4 | the decision brief for every escalation | PROP-0016 §4, §7 | **none** (I2's later part) |
+| Id | Rule (short; the playbook holds it whole) | Check |
+|---|---|---|
+| LD1 | decide alone on `dev`: a start, a read-only or own-scratch command, an accept on review and checks, a merge into `dev`, a salvage, a task filed | in part: the board (H1), `board.auto-accept` (H4) |
+| LD2 | decide and tell the operator in the day's digest | **none** |
+| LD3 | escalate with a decision brief: policy, charter, a deploy beyond `dev`, a merge to `main`, an external send, a security alert dismissed, a heavy result, spending past a budget, anything irreversible or outward-facing | in part: `ALWAYS_ASK`, the board's hold of a heavy result |
+| LD4 | the decision brief's form | **none** (I2's later part) |
+| LD5 | System's `merge` request stays the operator's | `ALWAYS_ASK` |
+| LD6 | the daily loop's reading order | **none** |
+| LD7 | the order to handle what it finds | **none** |
+| LD8 | one digest a day, within the attention budget | **none** |
+| LD9 | a deferred command judged by its words, never a pattern | **none** |
+| LD10 | the Worker's own untracked scratch may be removed | **none** |
+| LD11 | deny with what to run instead | **none** |
+| LD12 | never a write to System's own directories | in part: the gate (`.git`) |
+| LD13 | when to salvage | **none** |
+| LD14 | how to salvage | in part: CI on `dev` |
+| LD15 | each salvage files its root-cause task | **none** |
+| LD16 | sync the landing checkout after every lead push | in part: the landing refuses a moved or dirty checkout |
+| LD17 | never push on a failed check | in part: CI, the auto-update |
+| LD18 | never build or test in the live checkout | in part: `live-update.sh` |
+| LD19 | a live update: pause, wait, build, check, roll back, verify Workers | in part: `live-update.sh`; the lead's own starts **none** |
+| LD20 | a paused automatic update is read the same day | **none** |
+| LD21 | a task: one concern; what to read, deliver, test, document, and leave alone | **none** |
+| LD22 | give work as a board task; propose just before running | in part: the board validates the shape |
+| LD23 | a release is the operator's | the release workflow's `verify` job |
+| LD24 | kill by PID only | **none** |
+| LD25 | never read a secret | in part: `check:secrets` |
+| LD26 | a public repository gets only public content | in part: `check:secrets` |
+| LD27 | no model name in an artifact | **none** |
+| LD28 | each operator decision with its id | **none** |
+| LD29 | a lesson within its bounds | `lessons.spec.ts` |
+| LD30 | a durable decision is an ADR, the next free number | in part: `check:docs` |
 
 **Every Worker of a board task** (brief mechanics, rendered by code): **B1** ask instead of answering
 with one JSON object of at most 8 questions (`renderBrief`, checked by `questionsOf`); **B2** write the
@@ -206,14 +239,16 @@ is written at all **none** (the engine writes the step's entry when a Worker wro
 | 1 | 23 (and the ADRs) | 11 | 1 | 11 |
 | 2 | 13 | 8 | 1 | 4 |
 | 3 | 5 | 4 | 0 | 1 |
-| 4 | 47 | 11 | 9 | 27 |
+| 4 | 73 | 13 | 20 | 40 |
 | 5 | 6 | 2 | 2 | 2 |
-| **All** | **94** | **36** | **13** | **45** |
+| **All** | **120** | **38** | **24** | **58** |
 
-"In part" counts INV-3, P10, W8, W11, W18, Q5, V3, Y1, S1, D1, B2, L3, and L6. INV-2, 6, 8, 9,
-and 13 count as **none**: each mechanism has tests, but nothing checks the rule itself. A rule whose
-only check is the review (W2, V2) counts as **none**. These numbers are I1's starting reading of
-"rules without a check".
+"In part" counts INV-3, P10, W8, W11, W18, Q5, V3, Y1, S1, LD1, LD3, LD12, LD14, LD16 to LD19,
+LD22, LD25, LD26, LD30, B2, L3, and L6. INV-2, 6, 8, 9, and 13 count as **none**: each mechanism
+has tests, but nothing checks the rule itself. A rule whose only check is the review (W2, V2)
+counts as **none**. These numbers are I1's starting reading of "rules without a check". The
+reading before the lead's playbook (T249) was 94 rules, 36 checked, 13 in part, 45 **none**: the
+playbook (T252) wrote down 30 lead rules for the 4 listed before, and most of them have no check yet.
 
 ### Duplicates
 
@@ -235,6 +270,7 @@ later parts land.
 | wait for the event (T4) | testing.md | lesson L6 |
 | pin the time (T7) | testing.md | lesson L5 |
 | confined, no network (P6) | the sandbox and the gate view | the three writing prompts |
+| the lead's lines that restate another home: the decision brief (LD4), giving work (LD22), a release (LD23), a lesson (LD29), an ADR (LD30) | PROP-0016 §4, development.md "Give work to System Workers", releasing.md, lessons.md, the decision rules (K1 to K3) | the lead's playbook, one short line each that links its home |
 
 A lesson may stay while its copy earns its place in the brief (it is the line a writer sees), but
 it then names its home in its text, as L3 and L5 already do.
@@ -301,7 +337,7 @@ How each layer's parts carry the keys (I1 part 2 builds them; nothing is rewritt
 | **review** | as `develop` | the tier's review lines (a heavy change's second review: V5; the adversarial review, I2's later part); a review member has no gate view (it makes no call) | objective, required checks, constraints (to judge them) | the reviewer's playbook (V1 to V5) | every lesson that applies to `review`, so a lesson whose check is the review reaches it (X3) |
 | **validate** | the pointer | the gate view (it runs commands) | required checks | the validator's playbook (Y1) | lessons whose `Applies` names `validate` only |
 | **research** | the pointer | egress: what may leave for which Worker (INV-12), from the gate view where it has one | objective | the template's step text (S1) | lessons whose `Applies` names `research` only |
-| **lead** | the pointer, what needs an ADR (K1 to K3) | §7's table, the path map's tiers and what each means, the decision brief's form, the budgets (P8 to P12) | each led project's whole charter | the lead's playbook (D1 to D4) | every lesson (the lead owns them) |
+| **lead** | the pointer, what needs an ADR (K1 to K3) | §7's table, the path map's tiers and what each means, the decision brief's form, the budgets (P8 to P12) | each led project's whole charter | the [lead's playbook](../operations/lead-playbook.md) whole (LD1 to LD30) | every lesson (the lead owns them) |
 
 The lead is no step the engine starts, so it has no brief: its slice is a file built the same way
 (`system handbook --role lead`, I1 part 3), read at the start of the lead's session, within the same
@@ -351,6 +387,13 @@ differs by some tens of percent; the bytes are what is bounded, and no vendor's 
 This task's own brief (T249, a `docs` writer) carries about 6,300 bytes of handbook (its role text,
 its gate view, six lessons), about 1,600 tokens: an estimate read from the brief, not a measurement
 by code.
+
+The lead's slice (T252) carries the [lead's playbook](../operations/lead-playbook.md) whole: about
+10,000 bytes, about 2,600 tokens (estimated from the file, not measured by code), over layer 4's
+900-token share. With the pointer and K1 to K3, the layer 2 lines (about 1,000), a charter (about
+300), and today's six lessons (about 600), the total is about 4,700 tokens, within the bound: the
+overflow of the share is recorded, never refused (below). Once the lessons fill their share (3,100),
+the lead's total would pass 6,000; the playbook's owner, the lead, shortens it first.
 
 **The bound acts on the total.** A slice whose total is within 6,000 tokens is sent whatever its
 layers' shares; a layer over its share in such a slice is recorded, never refused. A slice over the
@@ -422,7 +465,7 @@ The weekly report tells a lesson added or dropped (PROP-0016 §7).
 | Metric | From |
 |---|---|
 | slice size per run, per layer | the `handbook` field of each brief and the execution's source half |
-| rules without a check | this inventory's **none** rows, counted again from the layers' homes once rules carry ids (45 today) |
+| rules without a check | this inventory's **none** rows, counted again from the layers' homes once rules carry ids (58 today, after the lead's playbook; 45 before it) |
 | reads fetched per run | the run's recorded `read` gate decisions on a handbook home (invariants, ADRs, lessons, AGENTS.md, the engineering docs): whether Workers read what the slice left out, or read too much |
 | overflows | `handbook.bound` decisions, by layer, in warn and refuse mode |
 
