@@ -175,7 +175,7 @@ describe('system profile (e2e through dsh)', () => {
     expect(clientTools).toEqual([
       'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
       'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
-      'brainstorm', 'digests_get', 'digests_request', 'dispatch_status', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'roster', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
+      'brainstorm', 'digests_get', 'digests_request', 'dispatch_status', 'dossier_read', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'roster', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
     ])
     // Digests are on (B6): a request names stored artifacts only, and one that names none is refused with nothing done.
     const digester = await client2(url, tokenOf('client'))

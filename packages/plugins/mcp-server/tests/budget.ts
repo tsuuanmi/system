@@ -41,11 +41,15 @@ export const BUDGET = {
      * `dispatch_status` saying it lists the starts dispatch made, add about 200 B (T184, PROP-0014 D2;
      * estimated from the text and schema added, not yet measured on the shipped profile: the
      * `measured` value below is T153's until surface.e2e is next run).
+     * The task dossier's `dossier_read` (T233, ADR-0070), the lead's and the operator's, adds about
+     * 450 B (estimated from its text and schema, short and with no argument descriptions; not yet
+     * measured). Its `dossier_append` is no tool of this surface: a Worker's run holds it, bound to its step.
      */
     operator: { measured: 45_614, ceiling: 47_200 },
     /**
      * Trimmed from 28,013 B to 26,352 (T108); 61 B for the reviews held, as above (T107); 75 B for `checks` (T115);
-     * 134 B for `roster`'s `now` (T152); 318 B for `dispatch_status` and the class `dispatch` (T153).
+     * 134 B for `roster`'s `now` (T152); 318 B for `dispatch_status` and the class `dispatch` (T153); about
+     * 450 B for `dossier_read` (T233, estimated as above).
      */
     client: { measured: 26_940, ceiling: 29_000 },
   },

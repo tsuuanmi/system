@@ -7,7 +7,10 @@
  *   else is denied without a prompt (`dontAsk`, no approval surface);
  * - no settings files are loaded (`settingSources: []`) and no MCP server is attached
  *   (`strictMcpConfig` with none given, live check 2026-10-12: the account's claude.ai
- *   connectors were attached otherwise), so nothing outside the policy widens a Worker;
+ *   connectors were attached otherwise), so nothing outside the policy widens a Worker; the one
+ *   exception is the run's own host tools (`RunSpec.hostTools`, ADR-0070: its task's dossier),
+ *   given as an in-process server `system` (`hostToolsServer`), each pre-approved by its exact
+ *   name (`mcp__system__<name>`) and passed to the run's gate before it runs like any other call;
  * - `workspace-write` adds `Edit` and `Write`, pre-approved only by workspace-scoped rules
  *   (verified live against traversal, symlinks, and home paths), and `Bash`, whose every command
  *   runs in the SDK's sandbox (ADR-0038): writes to the workspace only, no network, no command
@@ -57,7 +60,7 @@ import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
   type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand,
-  agentHome, agentShellEnvironment, homeProblem, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
+  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -214,7 +217,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     // every tool, which holds in every permission mode.
     // Its own reading tools, on every run whose tools list names them (or names none): a gate denies
     // a shell inspection command it has the tool for, naming it (T222).
-    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true, readTools: [...READ_ONLY_TOOLS] }
+    // A run's host tools (ADR-0070) are an in-process MCP server of the SDK's, so it offers them on every run.
+    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true, readTools: [...READ_ONLY_TOOLS], hostTools: true }
     const unconfined = (detail: string): RuntimeEvidence => ({ ...found, detail: `Claude Code ${version}; ${detail}`, sandboxes: ['read-only'], executes: false, readsConfined: false })
     if (!this.options.confine) return unconfined('no read confinement is configured')
     try {
@@ -253,6 +257,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     if (refused.length) {
       throw new ProviderError('config_error', `claude-agent-sdk: a ${spec.sandbox} run allows only ${allowed.join(', ')}; refusing ${refused.join(', ')}`)
     }
+    const hosted = spec.hostTools?.length ? hostToolsProblem(spec.hostTools) : undefined
+    if (hosted) throw new ProviderError('config_error', `claude-agent-sdk: ${hosted}; nothing was run`)
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'claude-agent-sdk: Claude Code is not installed')
     if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
@@ -290,13 +296,15 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     // What each assistant message reported, by message id: the run's usage when no result comes.
     const streamed = new Map<string, StreamedMessage>()
     const metering = (): RunMetering => (result ? meteringFrom(result, mainModel, limits) : partialMetering(streamed, mainModel, limits, signal.aborted ? 'stopped' : deferral.current ? 'deferred' : 'ended'))
+    // The run's host tools (ADR-0070), answered in this process, each pre-approved by its exact name.
+    const host = spec.hostTools?.length ? spec.hostTools : []
     try {
       const messages = this.query({
         prompt: spec.prompt,
         options: {
-          cwd: spec.workspace, tools, allowedTools: tools.map(rule), permissionMode: 'dontAsk', permissionPrompts: 'none', settingSources: [],
-          // No MCP server at all: not the operator's, not a project's, not the account's connectors.
-          mcpServers: {}, strictMcpConfig: true,
+          cwd: spec.workspace, tools, allowedTools: [...tools.map(rule), ...host.map((t) => `mcp__${HOST_TOOLS_SERVER}__${t.name}`)], permissionMode: 'dontAsk', permissionPrompts: 'none', settingSources: [],
+          // No MCP server but the run's own host tools: not the operator's, not a project's, not the account's connectors.
+          mcpServers: host.length ? { [HOST_TOOLS_SERVER]: { type: 'sdk', name: HOST_TOOLS_SERVER, instance: hostToolsServer(host) as never } } : {}, strictMcpConfig: true,
           pathToClaudeCodeExecutable: executable, abortController: controller,
           // Under the host's read confinement, its home and the workspace bound back (ADR-0024, ADR-0038).
           spawnClaudeCodeProcess: (options) => this.spawnConfined(options, confinement, observer),

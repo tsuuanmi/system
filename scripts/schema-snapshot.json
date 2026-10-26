@@ -3510,6 +3510,48 @@
       "/properties/unread/items/properties/why": {"h":"f3d90892b6e9ec10"}
     }
   },
+  "task-dossier-entry.v1.json": {
+    "version": "1.0",
+    "nodes": {
+      "": {"h":"c6138401a745c335","r":["attempt","author","kind","projectId","schema","seq","taskId","text"],"p":["attempt","author","commits","finding","inReplyTo","kind","prev","projectId","refs","schema","seq","subject","taskId","text"]},
+      "/properties/attempt": {"h":"90f9bb36165b3aa4"},
+      "/properties/author": {"h":"cd1a463c46d62641","r":["ref","type"],"p":["execution","nodeId","ref","runId","type"]},
+      "/properties/author/properties/execution": {"h":"52ba84a4bbf396ba"},
+      "/properties/author/properties/nodeId": {"h":"52ba84a4bbf396ba"},
+      "/properties/author/properties/ref": {"h":"52ba84a4bbf396ba"},
+      "/properties/author/properties/runId": {"h":"d9b15405da102f55"},
+      "/properties/author/properties/type": {"h":"3fb8fc48d8ea2595"},
+      "/properties/commits": {"h":"756e4eb42f3a8bfe"},
+      "/properties/commits/items": {"h":"0079ef08f9c16263"},
+      "/properties/finding": {"h":"52ba84a4bbf396ba"},
+      "/properties/inReplyTo": {"h":"0b0febbee944fd72"},
+      "/properties/kind": {"h":"183844bd85429159"},
+      "/properties/prev": {"h":"0b0febbee944fd72"},
+      "/properties/projectId": {"h":"d9b15405da102f55"},
+      "/properties/refs": {"h":"756e4eb42f3a8bfe"},
+      "/properties/refs/items": {"h":"0b0febbee944fd72"},
+      "/properties/schema": {"h":"f1c4869c376ec734"},
+      "/properties/seq": {"h":"906b40adf99fd9b6"},
+      "/properties/subject": {"h":"72a6e29c46a62860"},
+      "/properties/taskId": {"h":"d9b15405da102f55"},
+      "/properties/text": {"h":"e5b3001aa5951151"}
+    }
+  },
+  "task-dossier.v1.json": {
+    "version": "1.0",
+    "nodes": {
+      "": {"h":"8038b2aa22dd8e49","r":["entries","head","maxChars","projectId","schema","shown","taskId","text"],"p":["entries","head","maxChars","projectId","schema","shown","taskId","text"]},
+      "/properties/entries": {"h":"906b40adf99fd9b6"},
+      "/properties/head": {"h":"0b0febbee944fd72"},
+      "/properties/maxChars": {"h":"d5d41973c27aac2a"},
+      "/properties/projectId": {"h":"d9b15405da102f55"},
+      "/properties/schema": {"h":"979ff6b750e03ca9"},
+      "/properties/shown": {"h":"b921f352e469417b"},
+      "/properties/shown/items": {"h":"0b0febbee944fd72"},
+      "/properties/taskId": {"h":"d9b15405da102f55"},
+      "/properties/text": {"h":"3a6e28dfcd1be6d4"}
+    }
+  },
   "team-result.v1.json": {
     "version": "1.0",
     "nodes": {

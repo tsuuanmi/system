@@ -71,6 +71,19 @@ The **`agents` Worker source**: agent runtimes as Workers
   lessons of at most 400 characters each, the rest counted. No file committed
   there, or no repository, is no section. It is appended before the egress check,
   which sees it.
+- **A board task's dossier tools** (`src/dossier.ts`, ADR-0070,
+  [design](../../../docs/design/task-dossier.md)): a run that serves a step of a
+  board task's workflow run (its row's `workflow_run_id`, `step_node`, and
+  `task_id`, from the engine's start request), never a review member's, on a
+  runtime that reports `hostTools`, is given `dossier_read` and `dossier_append`
+  as host tools (`RunSpec.hostTools`), bound to that workflow run, step, and the
+  run itself as the step's execution, never to anything the agent names. They
+  call the engine's `readDossier` and `appendToDossier` (found as the `workflow`
+  service; this source does not depend on the engine), which take them only
+  while that execution runs the step, and record the entry as the step's
+  Worker's. The gate classifies only the host tools the run was given
+  (`mcp__system__dossier_read` a `read`, `…dossier_append` a `workspace-write`),
+  each with only its own fields, and the Tools section says what to write.
 - **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
   [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
   - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,

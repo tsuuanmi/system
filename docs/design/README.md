@@ -27,6 +27,7 @@ verified live.
 | [statistics.md](statistics.md) | the evaluation engine's statistics: the exact paired sign-flip test, the interval that inverts it, its conventions for ties, zeros, and float tolerance, the analysis method, golden tests against SciPy | orchestration (library) |
 | [resources.md](resources.md) | configured pools and pool templates per account, limit readings, reservations before a run, deduplicated usage after it, usage the ledger cannot count | routing (resource ledger) |
 | [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
+| [task-dossier.md](task-dossier.md) | a board task's dossier: the append-only record Workers that share no session work through (plan, progress, review, response, evidence), the gated append, the bounded slice in every brief | orchestration |
 | [teams.md](teams.md) | the `team` option on a workflow node: Model A members, independent proposals, sealed ballots, tally, bounded debate, tie votes | orchestration |
 | [agent-runtimes.md](agent-runtimes.md) | Claude Code, Codex, ACP agents, and the Antigravity CLI as Workers: the tool gate, confinement, agent accounts (enrollment slots, identity, Workers as account × role), metering and limit readings, review members | capabilities |
 | [models.md](models.md) | API and local models as Workers: the model catalog, keys by reference, egress, bounds, restart; the `api-first` preset | capabilities |

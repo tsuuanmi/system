@@ -1012,6 +1012,34 @@ guesses.
   cut (a note at its end says so). Its classification is the run's. Example:
   [`board-projection.tasks-md.json`](../../schemas/examples/board-projection.tasks-md.json).
 
+### `task-dossier-entry`
+
+- One entry of a board task's dossier ([task dossier](../design/task-dossier.md),
+  [ADR-0070](../decisions/adr/0070-workers-that-share-no-session-work-through-a-tasks-dossier.md)),
+  the body of an artifact whose kind follows the entry's: `plan` a `plan`, `progress` and `response`
+  a `report`, `review` a `finding`, `evidence` an `evidence`.
+- `seq` is its place in its task's dossier, from 1 with no gap; `prev` names the entry before it
+  (absent on the first), and is among the artifact's inputs, so the dossier at an entry is a hash
+  chain. The engine numbers and lists entries (`workflow_dossiers`, append-only) and never rewrites
+  one; `attempt` is the task's attempt it was written in.
+- `author` is the Worker that wrote it (by its step's gated tool, or as the step's own entry the
+  engine appended for it), with the run, step, and execution, or the engine (`system`, `workflow`),
+  which alone writes `evidence`.
+- `refs` link (never copy) what the entry is about: a step's result, a review's assessment, a
+  decision; `subject` is the exact subject a review reviewed or a step left; `commits`,
+  `finding`, and `inReplyTo` say what a response fixed, in which commit, and which review entry it
+  answers. Example:
+  [`task-dossier-entry.review.json`](../../schemas/examples/task-dossier-entry.review.json).
+
+### `task-dossier`
+
+- The body of a `report` artifact: a board task's dossier as a reader is given it at one entry
+  (`head`), rendered by the engine within `maxChars` characters: a summary (entries by kind, which
+  are left out, where to read them) and the latest entries that fit (`shown`, oldest first). A step's
+  brief points at one within 6,000 characters (role `context`); a run's workspace holds one within
+  200,000 as `.system/DOSSIER.md`. At least as strict as the entries it holds. Example:
+  [`task-dossier.slice.json`](../../schemas/examples/task-dossier.slice.json).
+
 ### `check-run`
 
 - The body of an `evidence` artifact: a workflow run's required checks as the Worker source that

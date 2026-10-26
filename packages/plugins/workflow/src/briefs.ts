@@ -67,7 +67,10 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
   const own = new Set(parts.pointers.map((p) => p.ref))
   // A run whose worktree starts from the previous attempt's work says so first (ADR-0061).
   const carried = task ? e.tasks.carries.pointer(run.run_id) : undefined
-  const extra = [...(carried ? [carried] : []), ...(task?.pointers ?? [])].filter((p) => !own.has(p.ref)).slice(0, BRIEF_LIMITS.pointers - parts.pointers.length)
+  // The task's dossier as it stands now (ADR-0070): its slice for every step, the whole of it as a file.
+  const dossier = task ? e.tasks.dossiers.forBrief(run, node) : {}
+  const extra = [...(carried ? [carried] : []), ...(task?.pointers ?? []), ...(dossier.pointer ? [dossier.pointer] : [])].filter((p) => !own.has(p.ref)).slice(0, BRIEF_LIMITS.pointers - parts.pointers.length)
+  const files = [...(task?.files ?? []), ...(dossier.file ? [dossier.file] : [])].slice(0, BRIEF_LIMITS.files)
   const bound = node.subject ? (JSON.parse(node.subject) as { subject?: { type: 'git-head'; ref: string; version: string } }).subject : undefined
   const handle = spec.session.sessionId ? e.ctx.workers.handle(spec.session.sessionId) : undefined
   return {
@@ -75,7 +78,7 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
     // A criterion that names what checks it carries that (@1.3 `check`), so a step that measures the change knows its own.
     schema: !task ? 'brief@1.1' : task.acceptance.some((a) => a.check !== undefined) ? 'brief@1.3' : 'brief@1.2',
     ...(task ? { projectId: task.projectId, taskId: task.taskId, attempt: task.attempt, ask: { maxQuestions: QUESTION_LIMITS.count } } : {}),
-    ...(task?.files?.length ? { files: task.files } : {}),
+    ...(files.length ? { files } : {}),
     goal: clampText(task?.goal ?? spec.objective, BRIEF_LIMITS.goal),
     acceptance: task?.acceptance ?? [
       { id: 'contract', statement: clampText(`The result passes the acceptance contract ${spec.acceptance}`, BRIEF_LIMITS.statement) },

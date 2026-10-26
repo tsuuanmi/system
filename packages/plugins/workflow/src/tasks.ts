@@ -35,6 +35,7 @@ import { type LandingTarget, type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
 import { holderLapsedAtStart, infrastructureOf } from './infrastructure.ts'
 import { TaskDigests } from './digests.ts'
+import { TaskDossiers } from './dossiers.ts'
 import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
@@ -102,11 +103,14 @@ export class TaskRuns {
   readonly landings: TaskLandings
   /** Whether each run starts from the work its task's previous attempt left. */
   readonly carries: TaskCarries
+  /** Each task's dossier, across its attempts (ADR-0070). */
+  readonly dossiers: TaskDossiers
 
   constructor(private readonly e: Engine) {
     this.digests = new TaskDigests(e)
     this.landings = new TaskLandings(e)
     this.carries = new TaskCarries(e)
+    this.dossiers = new TaskDossiers(e)
   }
 
   row(runId: string): TaskRow | undefined {
@@ -1324,6 +1328,10 @@ export class TaskRuns {
     this.e.ctx.store.transaction((db) => {
       db.prepare('UPDATE workflow_tasks SET result = ?, acceptance = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(result), acceptance, now(), run.run_id)
     })
+    // The System's evidence in the task's dossier: the checks and the acceptance, linked (ADR-0070).
+    this.dossiers.safely('the acceptance', () => this.dossiers.evidence(run.run_id,
+      `Acceptance of attempt ${this.frame(run.run_id)?.attempt ?? '?'} (run ${run.run_id}): ${option} on ${describe(subject)}; ${said}${review ? `; the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s), cycle ${review.cycle} of ${review.maxCycles}` : ''}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
+      [acceptance, ...(ran?.evidence ? [ran.evidence] : []), ...artifacts], subject))
     return undefined
   }
 
@@ -1598,6 +1606,10 @@ export class TaskRuns {
       return this.digests.due(row, outcome.status)
     })
     if (due) this.digests.drive(row.run_id)
+    // What reached the board, in the task's dossier (ADR-0070): the next attempt reads it there.
+    this.dossiers.safely('the report', () => this.dossiers.evidence(row.run_id,
+      `Reported to the board: run ${row.run_id} ${outcome.status}${outcome.state ? `, task ${outcome.state}` : ''}${outcome.reason ? `: ${outcome.reason}` : ''}.`,
+      outcome.decision ? [outcome.decision] : []))
     clearTimeout(this.retries.get(row.run_id)?.timer)
     this.retries.delete(row.run_id)
     if (outcome.status === 'review' || outcome.status === 'refused') this.e.ctx.logger.warn(`workflow: run ${row.run_id}'s outcome left board task ${row.task_id} ${outcome.state ?? 'as it was'}: ${outcome.reason ?? outcome.status}`)

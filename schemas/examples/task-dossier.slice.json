@@ -1,0 +1,13 @@
+{
+  "schema": "task-dossier@1.0",
+  "projectId": "system",
+  "taskId": "task-acd0913e25a8",
+  "entries": 2,
+  "head": "sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+  "shown": [
+    "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+    "sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9"
+  ],
+  "maxChars": 6000,
+  "text": "Dossier of board task task-acd0913e25a8 (project system): 2 entries (1 plan, 1 progress), newest last. Each entry is appended once and never changed: follow it, and add what you do to it, never rewrite it.\nEvery entry is shown.\n\n## #1 · attempt 1 · plan · agent:developer, step develop:1 · sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae\nPlan: a dossier per task in the workflow engine; files: dossiers.ts, briefs.ts; risk: longer briefs.\n\n## #2 · attempt 1 · progress · agent:developer, step develop:1 · sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9\nAdded the dossier and its slice; remains: the tests of the slice's bound."
+}

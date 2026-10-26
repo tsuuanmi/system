@@ -48,7 +48,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
 | [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
-| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `approvals` (optional), `credentials` (optional), `eventLog` (optional), `mcp` (optional), `resources` (optional) | `agent-runtime-core`, `approvals-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
+| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `approvals` (optional), `credentials` (optional), `eventLog` (optional), `mcp` (optional), `resources` (optional), `workflow` (optional) | `agent-runtime-core`, `approvals-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
 | [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `eventLog` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
 | [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
@@ -157,6 +157,7 @@ flowchart TB
   agent_workers -.-> event_log
   agent_workers -.-> mcp_server
   agent_workers -.-> resources
+  agent_workers -.-> workflow
   approvals --> store
   approvals --> artifacts
   approvals -.-> event_log
@@ -309,6 +310,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `agent-workers` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `agent-workers` (capabilities) | `resources` | `resources` (routing) | optional |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
+| `agent-workers` (capabilities) | `workflow` | `workflow` (orchestration) | optional |
 | `approvals` (routing) | `mcp` | `mcp-server` (gateways) | optional |
 | `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `digest-extractive` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |

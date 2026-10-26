@@ -13,7 +13,7 @@ import { lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import { COMMIT_ID, type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_GIT_TOOLS, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
+import { COMMIT_ID, HOST_TOOLS_SERVER, type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_GIT_TOOLS, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
 import { type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
@@ -103,6 +103,29 @@ export interface ClassifyOptions {
    * empty: none, and such a command stays a `command`.
    */
   readTools?: readonly string[] | undefined
+  /**
+   * The host tools its source gave the run's agent, by name (ADR-0070: `dossier_read`,
+   * `dossier_append`), which the runtime offers as `mcp__system__<name>`: only these are classified
+   * ({@link HOST_TOOL_FIELDS}); any other tool of that server, or one the run was not given, is refused.
+   */
+  hostTools?: readonly string[] | undefined
+}
+
+/** The host tools' server as an MCP client names its tools (`mcp__system__<name>`, ADR-0070). */
+const HOST_PREFIX = `mcp__${HOST_TOOLS_SERVER}__`
+
+/**
+ * The host tools the gate classifies, each with its input fields (agent-workers `dossierTools`, whose
+ * schemas the runtime checks too) and its class: reading the task's dossier is a `read`; appending
+ * to it changes System's own record of the work (no file, no command, nothing sent out), judged as
+ * a `workspace-write`, the class of the Worker writing its own work.
+ */
+const HOST_TOOL_FIELDS: Record<string, { fields: Record<string, FieldType>; class: 'read' | 'workspace-write'; summary: string }> = {
+  dossier_read: { fields: { from: 'number', limit: 'number' }, class: 'read', summary: 'Reads its board task\'s dossier (System\'s own record of the work)' },
+  dossier_append: {
+    fields: { kind: 'string', text: 'string', commits: 'strings', refs: 'strings', finding: 'string', inReplyTo: 'string' }, class: 'workspace-write',
+    summary: 'Appends an entry to its board task\'s dossier (System\'s own append-only record of the work; no file, no command)',
+  },
 }
 
 /**
@@ -528,6 +551,8 @@ export interface ToolsNoteOptions {
    * names the tool for each. Absent: none.
    */
   readTools?: readonly string[] | undefined
+  /** The run holds its board task's dossier tools (ADR-0070): the section says what to write with them. Absent: it does not. */
+  dossier?: boolean | undefined
 }
 
 /**
@@ -606,6 +631,9 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
       ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Read its git history the same way, never with git in a shell: git_log (count, skip, commit, paths), git_show (commit; stat, patch), git_diff (the worktree, or cached: the index, against HEAD; or from and to), git_status; a commit is always its hex id (from git_log), never a branch name. Each path is relative to the workspace, or absolute inside it, with no "..".']
       : []),
     ...(readOnly ? ['- Your sandbox is read-only: no tool call writes a file (Write, Edit, and any command that changes one fail), so read, and answer with what you found.'] : []),
+    ...(options.dossier === true
+      ? ['- Your board task\'s dossier, through which its Workers work (none reads your conversation): dossier_read pages through it; dossier_append adds your entry as this step\'s Worker: a plan at the start, progress after each step (what you did, its commits, what remains, small decisions and why), a response per review finding (fixed in which commit, or not and why); a reviewer, its review.']
+      : []),
     'Tool calls that run without asking the operator:',
   ]
   const tail = [
@@ -755,6 +783,10 @@ function classifyGitView(tool: string, input: Record<string, unknown>, workspace
  *   `sed -n <a>[,<b>]p <path>…` (an in-place edit, a `-e` or `-f` script, a script that writes
  *   or runs a command) or a `find` with an action is no inspection, and stays a `command`;
  * - `WebFetch`, `WebSearch`: `external-send`;
+ * - the host tools its source gave the run (`options.hostTools`, ADR-0070), as `mcp__system__<name>`:
+ *   `dossier_read`, a `read`; `dossier_append`, a `workspace-write` (System's own record of the work,
+ *   no file); each with only its own fields. Any other `mcp__system__…` tool, or one the run was not
+ *   given, is refused;
  * - any other tool (`run_command` among them), or an input that is not an object: refused.
  * A path may be a `file:` URI, which is checked as the path it names.
  *
@@ -774,6 +806,16 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     // server of that name a runtime did not start is no read.
     if (options.workspaceReads !== true) return { refused: `${tool.slice(0, 100)} is not a tool the gate classifies: this run's runtime gives its agent no workspace reads server`, reason: 'unclassified-tool' }
     if (!SERVER_TOOLS.includes(tool)) return { refused: `${tool.slice(0, 100)} is not one of the workspace reads server's tools (${WORKSPACE_READ_TOOLS.join(', ')}); no other tool of it runs`, reason: 'unclassified-tool' }
+  }
+  if (tool.startsWith(HOST_PREFIX)) {
+    // Only a host tool the run's source gave it (ADR-0070): a server of that name it was not given is no tool of System's.
+    const name = tool.slice(HOST_PREFIX.length)
+    const host = Object.hasOwn(HOST_TOOL_FIELDS, name) ? HOST_TOOL_FIELDS[name] : undefined
+    if (!host || !options.hostTools?.includes(name)) return { refused: `${tool.slice(0, 100)} is not a tool the gate classifies: this run was given no such host tool`, reason: 'unclassified-tool' }
+    if (!isObject(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
+    const unknown = unknownField(input, host.fields)
+    if (unknown) return { refused: `${tool} ${unknown}`, reason: 'unsupported-field' }
+    return { class: host.class, summary: clamp(`${tool}${typeof input.kind === 'string' ? ` ${input.kind}` : ''}`), consequences: `${host.summary}. ${ANSWER}` }
   }
   if (!isObject(input)) return { refused: `the input of ${tool} is not an object`, reason: 'invalid-input' }
   const fields = Object.hasOwn(FIELDS, tool) ? FIELDS[tool] : undefined
@@ -884,6 +926,11 @@ export interface GateRun {
    * shell inspection command one of them serves is denied at once, naming it, and asks no one.
    */
   readTools?: readonly string[] | undefined
+  /**
+   * The host tools the run's agent was given, by name (ADR-0070; {@link ClassifyOptions.hostTools}):
+   * only these of `mcp__system__…` are classified; any other is denied.
+   */
+  hostTools?: readonly string[] | undefined
 }
 
 /** The call a run's gate deferred: the run stops there and does not complete. */
@@ -1133,7 +1180,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`, 'run-stopped')
     const approvals = ctx.get('approvals')
     if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision', 'no-approvals')
-    const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true, readTools: run.readTools })
+    const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true, readTools: run.readTools, hostTools: run.hostTools })
     if ('refused' in action) return refuse(call, action.refused, action.reason)
     const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}) })
     switch (verdict.mode) {

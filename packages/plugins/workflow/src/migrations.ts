@@ -144,4 +144,17 @@ export const MIGRATIONS = [{
   // unavailable. A step failed before it existed is unmarked, and its attempt counts.
   version: 22,
   sql: 'ALTER TABLE workflow_nodes ADD COLUMN infrastructure TEXT;',
+}, {
+  // A board task's dossier (docs/design/task-dossier.md, ADR-0070): its entries in order, each a
+  // content-hashed `task-dossier-entry@1.0` artifact naming the one before it, carried across the
+  // task's attempts. Append-only: a row is never updated (the trigger refuses it), and `seq` has no gap.
+  // `step` is the node's `<attempt>:<escalations>` an entry a Worker appended was written in.
+  version: 23,
+  sql: `CREATE TABLE workflow_dossiers (
+    task_id TEXT NOT NULL, seq INTEGER NOT NULL, project_id TEXT NOT NULL, attempt INTEGER NOT NULL, kind TEXT NOT NULL, entry TEXT NOT NULL,
+    author_type TEXT NOT NULL, run_id TEXT, node_id TEXT, step TEXT, created_at TEXT NOT NULL, PRIMARY KEY (task_id, seq)
+  );
+  CREATE INDEX workflow_dossiers_step ON workflow_dossiers (run_id, node_id, step);
+  CREATE TRIGGER workflow_dossiers_append_only BEFORE UPDATE ON workflow_dossiers
+  BEGIN SELECT RAISE(ABORT, 'a task dossier entry never changes: append another'); END;`,
 }]

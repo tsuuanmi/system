@@ -238,6 +238,24 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     const draws = w.draws()
     return reply({ runs, ...(draws ? { draws } : {}) }, `${runs.length} recent run${runs.length === 1 ? '' : 's'}, ${steps} step${steps === 1 ? '' : 's'}${draws ? `; ${draws.records} quota draw${draws.records === 1 ? '' : 's'} by kind and window` : ''}`)
   })
+  // A board task's dossier (ADR-0070): read by anyone who may read runs. It is appended to only by a
+  // step's own Worker, through the tool its source binds to that step (never here, where a caller
+  // would name the step and be recorded as its Worker), and by the engine's evidence.
+  c.mcp.tool('dossier_read', {
+    scope: 'client',
+    description: 'A board task\'s dossier (by taskId, or a runId serving it): its append-only entries whole, oldest first from `from`.',
+    inputSchema: {
+      taskId: zod.string().max(200).optional(), runId: zod.string().max(200).optional(),
+      from: zod.number().int().min(1).optional(), limit: zod.number().int().min(1).max(50).optional(),
+    },
+  }, async (args) => {
+    try {
+      const page = w.dossier({ taskId: args.taskId as string | undefined, runId: args.runId as string | undefined, from: args.from as number | undefined, limit: args.limit as number | undefined })
+      return reply(page, `${page.entries.length} of ${page.total} entries of ${page.taskId}'s dossier${page.next ? `; next from ${page.next}` : ''}`)
+    } catch (error) {
+      return failure(error)
+    }
+  })
   // Dispatch (ADR-0064): the lead reads where it stands to plan; only the operator pauses or resumes it.
   c.mcp.tool('dispatch_status', {
     scope: 'client',

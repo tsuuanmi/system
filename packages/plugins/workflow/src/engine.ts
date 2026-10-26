@@ -995,6 +995,8 @@ export class Engine {
         }
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
+        // A board task's step leaves its entry in the task's dossier, unless it appended its own (ADR-0070).
+        this.tasks.dossiers.safely(`step ${node.node_id}'s entry`, () => this.tasks.dossiers.stepSettled(run, node, spec, result, gate?.passed ? { decision: gate.decision } : undefined))
       } else {
         const escalation = escalate(this, run, node, spec, result, acceptance.decision, rejected, decisions, lease, held)
         if (escalation.escalated) return

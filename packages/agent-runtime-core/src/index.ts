@@ -90,6 +90,172 @@ export interface RuntimeEvidence {
    * own configured home only, and refuses a run that names another.
    */
   homes?: boolean
+  /**
+   * It gives a run's agent the run's host tools ({@link RunSpec.hostTools}, ADR-0070) as MCP tools of
+   * the server {@link HOST_TOOLS_SERVER}, each call answered in System's own process by the tool its
+   * Worker source bound to that run, and passed to the run's gate first like any other call. Absent
+   * or false: it offers none, and a source gives it none.
+   */
+  hostTools?: boolean
+}
+
+/** The name a runtime gives the server of a run's host tools: an MCP client names its tools `mcp__system__<name>`. */
+export const HOST_TOOLS_SERVER = 'system'
+
+/** A host tool's name: lowercase letters, digits, and `_`, starting with a letter, at most 64 characters. */
+export const HOST_TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/
+
+/** One argument of a host tool, in the closed subset of JSON Schema a runtime must render exactly. */
+export type HostToolProperty =
+  | { type: 'string'; description?: string; minLength?: number; maxLength?: number; enum?: string[] }
+  | { type: 'integer'; description?: string; minimum?: number; maximum?: number }
+  | { type: 'array'; description?: string; maxItems?: number; items: { type: 'string'; maxLength?: number } }
+
+/** A host tool's input: an object of named arguments and no other. */
+export interface HostToolSchema {
+  type: 'object'
+  additionalProperties: false
+  properties: Record<string, HostToolProperty>
+  required?: string[]
+}
+
+/**
+ * A tool a Worker source gives one run's agent (ADR-0070), answered in System's own process: the
+ * source binds it to that run when it builds the run (its workflow run, step, and execution, from
+ * its own record, never from the agent's input), so the agent names only what the tool takes. A
+ * runtime that reports {@link RuntimeEvidence.hostTools} offers each as `mcp__system__<name>`,
+ * validating the input against `inputSchema` before `call` sees it; every call passes the run's gate
+ * first. `call` never throws for a refusal: it answers `isError` with why.
+ */
+export interface HostTool {
+  /** {@link HOST_TOOL_NAME}. */
+  name: string
+  description: string
+  inputSchema: HostToolSchema
+  /** It changes nothing (MCP `readOnlyHint`). */
+  readOnly: boolean
+  call(input: Record<string, unknown>): Promise<{ text: string; isError: boolean }>
+}
+
+/** Why `tools` are not host tools a runtime can offer (a bad or repeated name, a schema outside the subset), or undefined. */
+export function hostToolsProblem(tools: readonly HostTool[]): string | undefined {
+  const seen = new Set<string>()
+  for (const tool of tools) {
+    if (typeof tool?.name !== 'string' || !HOST_TOOL_NAME.test(tool.name)) return `${JSON.stringify(String(tool?.name).slice(0, 80))} is not a host tool name`
+    if (seen.has(tool.name)) return `the host tool ${tool.name} is given twice`
+    seen.add(tool.name)
+    const schema = tool.inputSchema
+    if (schema?.type !== 'object' || schema.additionalProperties !== false || typeof schema.properties !== 'object') return `the host tool ${tool.name}'s input is not a closed object`
+    for (const [name, property] of Object.entries(schema.properties)) {
+      const ok = property?.type === 'string' || property?.type === 'integer' || (property?.type === 'array' && property.items?.type === 'string')
+      if (!ok) return `the host tool ${tool.name}'s argument ${name} is not a string, an integer, or a list of strings`
+    }
+    if (schema.required?.some((name) => !Object.hasOwn(schema.properties, name))) return `the host tool ${tool.name} requires an argument it does not name`
+  }
+  return undefined
+}
+
+/** Why `input` does not meet a host tool's schema (not an object, an argument it does not name, one of another type or out of its bounds, a required one missing), or undefined. */
+export function hostToolInputProblem(schema: HostToolSchema, input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return 'the arguments are not an object'
+  const chars = (text: string): number => [...text].length
+  for (const [name, value] of Object.entries(input)) {
+    const p = Object.hasOwn(schema.properties, name) ? schema.properties[name] : undefined
+    if (!p) return `${JSON.stringify(name.slice(0, 64))} is not an argument of this tool (${Object.keys(schema.properties).join(', ')})`
+    if (p.type === 'string') {
+      if (typeof value !== 'string') return `${name} is not a string`
+      if ((p.minLength !== undefined && chars(value) < p.minLength) || (p.maxLength !== undefined && chars(value) > p.maxLength)) return `${name} holds ${chars(value)} characters, not ${p.minLength ?? 0} to ${p.maxLength ?? 'any'}`
+      if (p.enum && !p.enum.includes(value)) return `${name} is none of ${p.enum.join(', ')}`
+    } else if (p.type === 'integer') {
+      if (!Number.isSafeInteger(value)) return `${name} is not an integer`
+      if ((p.minimum !== undefined && (value as number) < p.minimum) || (p.maximum !== undefined && (value as number) > p.maximum)) return `${name} is not from ${p.minimum ?? 'any'} to ${p.maximum ?? 'any'}`
+    } else {
+      if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) return `${name} is not a list of strings`
+      if (p.maxItems !== undefined && value.length > p.maxItems) return `${name} holds more than ${p.maxItems} items`
+      const max = p.items.maxLength
+      if (max !== undefined && value.some((v: string) => chars(v) > max)) return `an item of ${name} is longer than ${max} characters`
+    }
+  }
+  const missing = schema.required?.find((name) => (input as Record<string, unknown>)[name] === undefined)
+  return missing ? `${missing} is required` : undefined
+}
+
+/** The transport an in-process MCP server is connected over (the MCP SDK's `Transport`, as far as it is used here). */
+export interface HostToolsTransport {
+  onmessage?: ((message: unknown) => void) | undefined
+  send(message: unknown): Promise<void>
+  start?(): Promise<void>
+  close?(): Promise<void>
+}
+
+/** The MCP protocol versions the host tools server answers in; the first is its own. */
+export const HOST_TOOLS_PROTOCOLS: readonly string[] = ['2025-06-18', '2025-03-26', '2024-11-05']
+
+/**
+ * A minimal MCP server over a run's host tools ({@link HostTool}), for a runtime that hosts an MCP
+ * server in its own process (the Claude Agent SDK's `sdk` servers take any object with
+ * `connect(transport)`). It answers `initialize`, `ping`, `tools/list` (each tool's name,
+ * description, schema, and read-only hint), and `tools/call`: the input checked against the tool's
+ * schema ({@link hostToolInputProblem}; refused as the call's error result, `call` never reached),
+ * then the tool's own answer, a tool that throws answered as an error result. Any other method is
+ * not found; a notification is not answered. Its tools are fixed when it is made.
+ */
+export function hostToolsServer(tools: readonly HostTool[]): { connect(transport: HostToolsTransport): Promise<void>; close(): Promise<void>; answer(message: unknown): Promise<Record<string, unknown> | undefined> } {
+  const problem = hostToolsProblem(tools)
+  if (problem) throw new Error(problem)
+  const byName = new Map(tools.map((tool) => [tool.name, tool]))
+  const answer = async (message: unknown): Promise<Record<string, unknown> | undefined> => {
+    const m = typeof message === 'object' && message !== null && !Array.isArray(message) ? message as Record<string, unknown> : {}
+    const id = typeof m.id === 'string' || (typeof m.id === 'number' && Number.isFinite(m.id)) ? m.id : undefined
+    if (typeof m.method !== 'string' || id === undefined) return undefined
+    const params = typeof m.params === 'object' && m.params !== null ? m.params as Record<string, unknown> : {}
+    const result = (value: unknown): Record<string, unknown> => ({ jsonrpc: '2.0', id, result: value })
+    switch (m.method) {
+      case 'initialize': {
+        const asked = params.protocolVersion
+        return result({
+          protocolVersion: typeof asked === 'string' && HOST_TOOLS_PROTOCOLS.includes(asked) ? asked : HOST_TOOLS_PROTOCOLS[0],
+          capabilities: { tools: { listChanged: false } }, serverInfo: { name: `system-${HOST_TOOLS_SERVER}`, version: '1.0.0' },
+        })
+      }
+      case 'ping':
+        return result({})
+      case 'tools/list':
+        return result({ tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: { readOnlyHint: t.readOnly, destructiveHint: false, idempotentHint: t.readOnly, openWorldHint: false } })) })
+      case 'tools/call': {
+        const tool = typeof params.name === 'string' ? byName.get(params.name) : undefined
+        const reply = (text: string, isError: boolean): Record<string, unknown> => result({ content: [{ type: 'text', text }], isError })
+        if (!tool) return reply(`refused: ${String(params.name).slice(0, 100)} is not a tool of this server (${[...byName.keys()].join(', ')})`, true)
+        const input = params.arguments === undefined ? {} : params.arguments
+        const wrong = hostToolInputProblem(tool.inputSchema, input)
+        if (wrong) return reply(`refused: ${wrong}`, true)
+        try {
+          const { text, isError } = await tool.call(input as Record<string, unknown>)
+          return reply(text, isError)
+        } catch (error) {
+          return reply(`failed: ${(error as Error)?.message?.slice(0, 500) ?? String(error)}`, true)
+        }
+      }
+      default:
+        return { jsonrpc: '2.0', id, error: { code: -32601, message: `${m.method.slice(0, 100)} is not a method of this server` } }
+    }
+  }
+  let connected: HostToolsTransport | undefined
+  return {
+    answer,
+    async connect(transport) {
+      connected = transport
+      transport.onmessage = (message) => {
+        void answer(message).then((reply) => (reply ? transport.send(reply) : undefined)).catch(() => undefined)
+      }
+      await transport.start?.()
+    },
+    async close() {
+      const transport = connected
+      connected = undefined
+      await transport?.close?.()
+    },
+  }
 }
 
 /** What a probe is asked about (ADR-0051). */
@@ -237,6 +403,12 @@ export interface RunSpec {
    * has nothing they bound.
    */
   workspaceReads?: Partial<WorkspaceReadBounds> | undefined
+  /**
+   * Tools bound to this run by its Worker source ({@link HostTool}, ADR-0070), for a runtime that
+   * reports {@link RuntimeEvidence.hostTools}; a source gives none to any other. Such a runtime
+   * refuses tools {@link hostToolsProblem} finds a problem in (`config_error`), before running anything.
+   */
+  hostTools?: HostTool[] | undefined
 }
 
 /**

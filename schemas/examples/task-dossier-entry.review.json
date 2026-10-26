@@ -1,0 +1,16 @@
+{
+  "schema": "task-dossier-entry@1.0",
+  "projectId": "system",
+  "taskId": "task-acd0913e25a8",
+  "seq": 3,
+  "prev": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "attempt": 1,
+  "kind": "review",
+  "author": { "type": "worker", "ref": "agent:reviewer", "runId": "run_16c06e485106a045", "nodeId": "review:1", "execution": "agent-run-7" },
+  "text": "Review review:1 by agent:reviewer of git-head 4258b207 at 9f2c: changes-requested, 1 finding (1 blocking). Its result and assessment are linked.\n- blocking: no test covers the slice's bound (packages/plugins/workflow/src/dossiers.ts)",
+  "refs": [
+    "sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+    "sha256:baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096"
+  ],
+  "subject": { "type": "git-head", "ref": "4258b207", "version": "9f2c" }
+}

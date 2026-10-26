@@ -822,6 +822,15 @@ second execution path (INV-1).
   - `dispatch_status` (client scope) gives `dispatchStatus`; `dispatch_pause { reason?, projectId? }`
     and `dispatch_resume { projectId? }` are the operator's pause and resume of dispatch, entirely or
     of one project (ADR-0064, PROP-0014 D2).
+  - `dossier_read { taskId? | runId?, from?, limit? }` (client scope) pages a board task's dossier,
+    every entry whole ([task dossier](../../../docs/design/task-dossier.md), ADR-0070). There is no
+    `dossier_append` on this surface: a Worker appends through the tool its run holds, bound by its
+    source to its step and execution (`appendToDossier(caller, entry)`, `readDossier(caller, page)`;
+    an agent Worker's host tools, agent-workers `src/dossier.ts`), only while that execution runs the
+    step, by its role, never `evidence`; the entry's author is the step's Worker. The engine itself
+    writes the evidence (acceptance, report, landing) and a settled step's entry when the step wrote
+    none, and every brief of a task's run points at a 6,000-character slice of the dossier and places
+    the whole of it as `.system/DOSSIER.md`.
   - Each answers once ([replies](../mcp-server/README.md#token-budget)): the view is the
     structured content; the text is a completed run's answer, any other run's `standing` (what
     it waits for, why it failed, or how many steps are done), or an `outline` of the answer.
@@ -1038,6 +1047,7 @@ in `engine.ts`:
 | `tasks.ts` | runs that serve a board task: what their briefs carry, resuming the session before them, taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
 | `carries.ts` | whether a task's run starts from the work its previous attempt left: decided at admission within its bounds, carried through the workers seam's `carry` before the run's first step, recorded, and pointed at by every brief of the run |
+| `dossiers.ts` | a board task's dossier (ADR-0070): its append-only chain of `task-dossier-entry@1.0` entries across attempts (`workflow_dossiers`), the engine's evidence and a settled step's entry, a Worker's gated append and read bound to its step's execution, `dossier_read`, and the bounded slice and `.system/DOSSIER.md` every brief of a task's run is given |
 | `landings.ts` | the landing of a task run's accepted result: watched after the report, committed on the run's branch once the task is done, its `merge` put to the policy and asked on the queue, merged on the approval, through the workers seam's `land` |
 | `dispatch.ts` | the dispatch pass: its settings, the ready tasks it looks at and why each is not taken, the writing step's Worker chosen by the quota score among the router's candidates, the policy, the decisions, the ask and its request, its verdict, the start on that Worker, the bounds from its rows, the pause, and the status |
 | `views.ts` | run views, `usage`, `explain` |

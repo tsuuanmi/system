@@ -1258,6 +1258,29 @@ a command at once instead, never asking (T222, `use-read-tool`;
 - **Told before the work.** The Worker's Tools section says that a shell inspection command one of
   its reading tools serves is denied at once, never asked, and names the tool for each form.
 
+### Host tools: a run's own tools, answered by System
+
+A Worker source can give one run tools of System's that are bound to that run (`RunSpec.hostTools`,
+`HostTool` in agent-runtime-core; [ADR-0070](../decisions/adr/0070-workers-that-share-no-session-work-through-a-tasks-dossier.md)):
+the source fixes what the tool acts for when it builds the run, from its own record, so the agent
+names only what the tool takes. The first are a board task's [dossier](task-dossier.md) tools,
+`dossier_read` and `dossier_append`, which the `agents` source binds to the workflow run, the step,
+and the execution the run serves (`src/dossier.ts`), for a run of a board task's step that is no
+review member's.
+
+- **Offered only by a runtime that reports `RuntimeEvidence.hostTools`**, as the MCP server
+  `system` (`mcp__system__<name>`); a source gives none to any other. Claude Code offers them as an
+  in-process server of its SDK (`hostToolsServer`, a minimal MCP server over the tools, no program
+  started), each pre-approved by its exact name and no other MCP server attached. Codex, ACP, and
+  the Antigravity CLI offer none yet: their steps are recorded by the engine.
+- **Checked twice.** Every call passes the run's tool gate first, which classifies only the host
+  tools the run was given, each with only its own fields (`dossier_read` a `read`, `dossier_append` a
+  `workspace-write` of System's own record, no file); then the server checks the input against the
+  tool's closed schema (a string, an integer, or a list of strings, each bounded) before the tool
+  sees it. A name, a schema outside that subset, or a repeated name refuses the run (`config_error`).
+- **Answered in System's process**, so a tool reaches what it is bound to and nothing the agent
+  names: the dossier refuses an append unless the bound execution is the one its step runs now.
+
 ## Metering
 
 What a run consumed comes from the runtime's own objective numbers, never from the model's text
