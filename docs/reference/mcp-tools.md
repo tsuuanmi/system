@@ -598,6 +598,17 @@ Scope: `client`
 |---|---|---|---|
 | `id` | string | yes |  |
 
+## `hold_steps`
+
+Before a stop: each running run finishes its step in flight and starts no next one until released (release: true) or the host restarts. Returns the hold and the steps in flight.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `reason` | string |  |  |
+| `release` | boolean |  |  |
+
 ## `metrics`
 
 The maturity metrics of PROP-0016 §1, from recorded data only, over a rolling window (default the 30 days before now) for one project or every one: each metric's value, the sample it is over, and the records it read, or why it cannot be measured yet (never 0); a value the records only bound says so. Then the reading against the L3 lines (starting lines, D83): it holds only when every line is met over 30 days and 30 finished tasks. Reads only; changes nothing.

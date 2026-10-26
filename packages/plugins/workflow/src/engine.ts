@@ -17,6 +17,7 @@ import { type Draft, draftOf, instructionsProblem, instructionsText, placeholder
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
+import { heldNow, release } from './hold.ts'
 import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
@@ -121,9 +122,14 @@ export class Engine {
     for (const { run_id } of runs) this.inheritedRuns.add(run_id)
   }
 
-  /** On start: every running run is scheduled again, then unfinished wakes are settled (REQ-WF-4). */
+  /**
+   * On start: every running run is scheduled again, then unfinished wakes are settled (REQ-WF-4).
+   * A hold between steps left from before the start ends with it (./hold.ts): it lasts only while
+   * the process it was set in waits to stop.
+   */
   recover(): void {
     if (this.stopped.signal.aborted) return
+    release(this, 'restart')
     const rows = this.ctx.store.db.prepare("SELECT run_id FROM workflow_runs WHERE status = 'running' ORDER BY created_at").all() as Array<{ run_id: string }>
     for (const { run_id } of rows) this.schedule(run_id)
     this.tasks.recover()
@@ -411,11 +417,15 @@ export class Engine {
           // finish and their results are taken, then the run blocks its task or fails (ADR-0047).
           const budgetStopped = !holderLost && this.tasks.budgetStopped(runId)
           const windingDown = holderLost || budgetStopped
+          // While the operator holds steps (a live update waits to stop the host, ./hold.ts), the
+          // steps already sent finish and nothing new starts: the release, or the next start,
+          // schedules the run again from its recorded state.
+          const holding = !windingDown && heldNow(this) !== undefined
           // A node that must differ from others is promoted with or after them, never before: it then
           // waits for their Workers while they run beside it (ADR-0027).
           const promoted = new Set(nodes.filter((n) => n.state !== 'WAITING').map((n) => n.node_id))
           // Until nothing more can be promoted, so the order nodes are listed in never serializes branches.
-          for (let more = !windingDown; more;) {
+          for (let more = !windingDown && !holding; more;) {
             more = false
             for (const node of nodes) {
               const differs = (JSON.parse(node.spec) as ResolvedNode).differentFrom ?? []
@@ -434,7 +444,7 @@ export class Engine {
           // A node that must differ from a peer with no Worker yet runs only beside that peer, so
           // it can wait for the peer's routing; otherwise it is parked until the peer is routed.
           const ids = new Set(runnable.map((n) => n.node_id))
-          const active = windingDown ? runnable.filter((n) => n.state === 'RUNNING' && n.execution_id) : runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
+          const active = windingDown || holding ? runnable.filter((n) => n.state === 'RUNNING' && n.execution_id) : runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
             const row = current_.find((r) => r.node_id === peer)
             return !row?.worker && row?.state !== 'FAILED' && !ids.has(peer)
           }))
@@ -443,6 +453,7 @@ export class Engine {
             if (await this.tasks.budgetEnd(runId) === 'wait') this.retryLater(runId, TASK_WAIT_MS)
             return
           }
+          if (!active.length && holding) return
           if (!active.length) {
             // A tie waits a bounded time for a deciding vote, and a plan's gate for its verdict (INV-9):
             // a tie then completes inconclusive, a gate closes and fails the run.
@@ -643,6 +654,8 @@ export class Engine {
     if (!node.execution_id) {
       const delay = node.not_before ? Date.parse(node.not_before) - Date.now() : 0
       if (delay > 0 && !(await sleep(delay, signal))) return
+      // Held between steps (./hold.ts): nothing new starts; the release schedules the run again.
+      if (heldNow(this)) return
       // A review's source is read by the engine, not a Worker.
       if (spec.executor === 'snapshot') return runSnapshot(this, run, node, spec, lease, signal)
       // No Worker execution starts on instructions that are not what the node's wording composes
@@ -817,8 +830,9 @@ export class Engine {
         return
       }
       // A run that lost its board task's holder while this node routed starts nothing (INV-15), nor
-      // one whose task's budget refused a step beside it (ADR-0047).
-      if (this.tasks.lost(run.run_id) || this.tasks.budgetStopped(run.run_id)) {
+      // one whose task's budget refused a step beside it (ADR-0047), nor one held between steps
+      // while it routed (./hold.ts): the node stays READY and routes again after the release.
+      if (this.tasks.lost(run.run_id) || this.tasks.budgetStopped(run.run_id) || heldNow(this)) {
         done()
         return
       }

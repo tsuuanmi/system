@@ -4,7 +4,7 @@
 // nothing, every refusal comes before anything is written, and a rollback stops and starts the unit
 // (a fake daemon). --apply itself is rehearsed by hand on a throwaway worktree and home (the runbook
 // says how), since it builds and starts a real profile.
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -363,7 +363,9 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       expect(output).toContain('ROLLING BACK')
       expect(status).toBe(1)
       expect(f.unit.calls()).toEqual(['start system.service', 'stop system.service', 'reset-failed system.service', 'start system.service'])
-      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'roster', 'roster', 'dispatch_resume'])
+      // A profile from before the hold (T257) holds nothing: the wait is for every step.
+      expect(output).toContain('this profile holds no steps')
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', 'dispatch_resume'])
       expect(stateOf(f)).toContain('dispatch_paused=resumed')
     } finally {
       f.unit.cleanup()
@@ -383,7 +385,7 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       expect(status).toBe(1)
       expect(f.unit.calls()).toEqual(['start system.service'])
       expect(readFileSync(join(f.unit.dir, 'state'), 'utf8').trim()).toBe('active')
-      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'roster', 'dispatch_resume'])
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'dispatch_resume'])
       expect(stateOf(f)).toContain('phase=captured')
       expect(f.git('rev-parse', 'HEAD')).toBe(f.from)
     } finally {
@@ -444,6 +446,115 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       f.unit.cleanup()
     }
   })
+
+  /** T223's run chaining steps, as on 2026-10-26: its review, the fix, the review again, never done. */
+  const REVIEW: FakeWork = { ...T223, nodeId: 'review:1' }
+  const FIX: FakeWork = { ...T223, nodeId: 'fix:1' }
+
+  /** `--apply` in the background, so a test can interrupt it: its output so far, and its exit status. */
+  function applying(f: Fixture): { child: ReturnType<typeof spawn>; output: () => string; exited: Promise<number | null> } {
+    const child = spawn('bash', [SCRIPT, f.target, '--from', f.from, '--live', f.live, '--dsh-home', f.home, '--backups', f.backups,
+      '--node-dir', dirname(process.execPath), '--pnpm-dir', f.bin, '--apply', '--check-with', builtTarget(f), '--runs-every', '1'], { env: { ...process.env, PATH: `${f.bin}:${process.env.PATH}` } })
+    let output = ''
+    child.stdout!.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    child.stderr!.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    return { child, output: () => output, exited: new Promise((resolve) => child.on('close', (code) => resolve(code))) }
+  }
+
+  it('holds steps, so the wait ends when the steps in flight end, though the run would chain its next steps (T257)', () => {
+    const f = fixture()
+    const system = running(f)
+    // Unheld, the run goes on from its develop step to its review, the fix, the review again: never idle.
+    system.work([T223], [T223], [REVIEW], [FIX], [REVIEW])
+    // Held, its develop step finishes and nothing starts after it.
+    system.holds([T223], [])
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-every', '1', '--runs-wait', '1')
+      expect(output, output).toContain('steps held: each running run finishes the step it is in (0 in flight) and starts no next one until the restart')
+      expect(output).toMatch(T223_LINE)
+      expect(output).toMatch(/nothing runs: no workflow step runs \(after \d+ s\)/)
+      expect(output).not.toContain('review:1')
+      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('systemctl --user stop system.service'))
+      // Once the daemon exited, its next start ends the hold: the update releases nothing itself.
+      expect(output).toContain('steps: the hold ends with the next start of the daemon')
+      expect(stateOf(f)).toContain('steps_held=restart')
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', 'dispatch_resume'])
+      expect(status).toBe(1)
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('at the bound, releases the hold before it stops, the unit not stopped (T257)', () => {
+    const f = fixture()
+    const system = running(f)
+    system.work([T223])
+    system.holds([T223])
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0')
+      expect(output, output).toContain('steps released: each running run goes on from its recorded state')
+      expect(output).toContain('STOP: steps still run after 0 min (above): system.service was not stopped')
+      expect(status).toBe(1)
+      expect(system.held()).toBe(false)
+      expect(stateOf(f)).toContain('steps_held=released')
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'hold_steps release', 'dispatch_resume'])
+      expect(f.unit.calls()).toEqual(['start system.service'])
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    it(`an update interrupted while it waits (${signal}) ends the wait at once and leaves no hold (T257)`, async () => {
+      const f = fixture()
+      const system = running(f)
+      system.work([T223])
+      system.holds([T223])
+      try {
+        const update = applying(f)
+        // It waits for T223's step, held (up to 90 min).
+        await vi.waitFor(() => expect(update.output()).toMatch(/waiting for what runs, \d+ s of at most 1 h 30 min/), { timeout: 30_000, interval: 100 })
+        expect(system.held()).toBe(true)
+        update.child.kill(signal)
+        // Its reader is stopped too: the script's output closes, long before the wait's bound.
+        const code = await update.exited
+        expect(code, update.output()).toBe(signal === 'SIGINT' ? 130 : 143)
+        expect(update.output()).toContain('steps released: each running run goes on from its recorded state')
+        expect(system.held()).toBe(false)
+        expect(system.calls().slice(-1)).toEqual(['hold_steps release'])
+        expect(stateOf(f)).toContain('steps_held=released')
+        expect(f.unit.calls()).toEqual(['start system.service'])
+      } finally {
+        f.unit.cleanup()
+      }
+    })
+
+    it(`an update interrupted (${signal}) while it asks for the hold, which the daemon set before it answered, leaves no hold (T257 review)`, async () => {
+      const f = fixture()
+      const system = running(f)
+      system.work([T223])
+      system.holds([T223])
+      // The daemon sets the hold at once and answers 10 s later: long enough that the interruption
+      // below always comes before the answer, however loaded the host.
+      system.holdDelay(10_000)
+      try {
+        const update = applying(f)
+        // The hold is set, and the script has no answer yet: its release is owed already.
+        await vi.waitFor(() => expect(system.held()).toBe(true), { timeout: 30_000, interval: 50 })
+        expect(stateOf(f)).toContain('steps_held=pending')
+        update.child.kill(signal)
+        const code = await update.exited
+        expect(code, update.output()).toBe(signal === 'SIGINT' ? 130 : 143)
+        expect(update.output()).toContain('steps released: each running run goes on from its recorded state')
+        expect(system.held()).toBe(false)
+        expect(system.calls().slice(-1)).toEqual(['hold_steps release'])
+        expect(stateOf(f)).toContain('steps_held=released')
+        expect(f.unit.calls()).toEqual(['start system.service'])
+      } finally {
+        f.unit.cleanup()
+      }
+    })
+  }
 
   it('takes --runs-wait in whole minutes and --runs-every in whole seconds, at least 1', () => {
     const f = fixture()

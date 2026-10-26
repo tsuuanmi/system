@@ -22,9 +22,11 @@ import { TEST_TEMPLATES } from './templates.ts'
 
 const CATALOG: ModelEntry[] = [{ id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }]
 
-/** The engine over a fake model Worker: no browser, so faults are injected deterministically. */
-async function boot(script: FakeScript = {}, workflow: Record<string, unknown> = {}, catalog: ModelEntry[] = CATALOG) {
-  const dir = mkdtempSync(join(tmpdir(), 'system-engine-'))
+/**
+ * The engine over a fake model Worker: no browser, so faults are injected deterministically. On
+ * `dir`, another boot's store: a restart. `stop` stops it, once (the test's end stops it otherwise).
+ */
+async function boot(script: FakeScript = {}, workflow: Record<string, unknown> = {}, catalog: ModelEntry[] = CATALOG, dir = mkdtempSync(join(tmpdir(), 'system-engine-'))) {
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
@@ -34,11 +36,13 @@ async function boot(script: FakeScript = {}, workflow: Record<string, unknown> =
   await Promise.all(fibers)
   // Start-up recovery has run, so nothing scheduled then can take a run back by chance.
   await new Promise((resolve) => setTimeout(resolve, 200))
-  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
-  onTestFinished(async () => {
+  let stopping: Promise<void> | undefined
+  const stop = (): Promise<void> => (stopping ??= (async () => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
-  })
-  return { ctx }
+  })())
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+  onTestFinished(stop)
+  return { ctx, stop, dir }
 }
 
 describe('ctx.workflow: the engine under injected faults', () => {
@@ -206,6 +210,93 @@ describe('ctx.workflow: the engine under injected faults', () => {
     expect(ctx.workflow.get(once.runId)).toMatchObject({ status: 'completed' })
     expect(ctx.workflow.resume()).toEqual({ draining: false, active: [] })
     expect(ctx.workflow.start({ template: 'ask', input: 'after resume', classification: 'public' }).status).toBe('running')
+  }, 60_000)
+
+  /** Two chained steps, as a review and its fix are. */
+  const CHAIN = {
+    chain: [
+      { nodeId: 'one', objective: 'the first step', prompt: 'First: {{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' },
+      { nodeId: 'two', objective: 'the next step', dependsOn: ['one'], prompt: 'Second', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' },
+    ],
+  }
+
+  /** A Worker whose executions run until the test finishes them: `started` lists them, in order. */
+  function byHand(ctx: Context) {
+    const started: string[] = []
+    const executions = new Map<string, WorkerExecution>()
+    const waiting = new Map<string, () => void>()
+    ctx.workers.register(source('hand', [worker('w:hand')], {
+      start: () => {
+        const id = `x-${started.length + 1}`
+        started.push(id)
+        executions.set(id, { id, status: 'running', submitted: true, decisions: [] })
+        return executions.get(id)!
+      },
+      get: (id) => executions.get(id),
+      wait: (id) => (executions.get(id)!.status === 'running' ? new Promise((resolve) => waiting.set(id, () => resolve(executions.get(id)!))) : Promise.resolve(executions.get(id)!)),
+    }))
+    const finish = (id: string): void => {
+      executions.set(id, { id, status: 'completed', submitted: true, decisions: [], result: ctx.artifacts.put({ kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'public', producer: { type: 'worker', ref: 'w:hand' },
+        body: { schema: 'provider-answer@1.0', provider: 'p', account: 'acct-hand', turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: `done ${id}` } }).id as `sha256:${string}` })
+      waiting.get(id)?.()
+    }
+    return { started, finish }
+  }
+
+  /** Nothing advances in this process: the drain reports no run, and admission opens again. */
+  async function settledTurns(ctx: Context): Promise<void> {
+    await vi.waitFor(() => expect(ctx.workflow.drain().active).toEqual([]), { timeout: 20_000 })
+    ctx.workflow.resume()
+  }
+
+  it('holds steps: the step in flight finishes, the run starts no next step while held, and starts it after the release, never sending a step again (T257)', async () => {
+    const { ctx } = await boot({}, { templates: CHAIN })
+    const hand = byHand(ctx)
+    const run = ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public' })
+    await vi.waitFor(() => expect(hand.started).toHaveLength(1), { timeout: 20_000 })
+    const held = ctx.workflow.holdSteps('live update to 096d6b6d')
+    expect(held).toEqual({ held: { since: expect.any(String), reason: 'live update to 096d6b6d', decision: expect.stringMatching(/^sha256:/) }, inFlight: [{ runId: run.runId, nodeId: 'one', worker: 'w:hand' }] })
+    // The operator's decision, recorded before the hold (INV-13).
+    expect(ctx.artifacts.get(held.held!.decision!)?.body).toMatchObject({ decisionType: 'gate', decider: { type: 'operator', id: 'workflow.steps-hold' }, outcome: { option: 'hold', detail: { reason: 'live update to 096d6b6d' } } })
+    // Holding again changes nothing.
+    expect(ctx.workflow.holdSteps('again').held).toEqual(held.held)
+    hand.finish('x-1')
+    await vi.waitFor(() => expect(ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'one')?.state).toBe('COMPLETED'), { timeout: 20_000 })
+    await settledTurns(ctx)
+    // Between its steps: still running, its next step not started, nothing in flight.
+    expect(hand.started).toHaveLength(1)
+    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'running' })
+    expect(ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'two')?.state).toBe('WAITING')
+    expect(ctx.workflow.stepHold()).toEqual({ held: held.held, inFlight: [] })
+
+    expect(ctx.workflow.releaseSteps()).toEqual({ inFlight: [] })
+    await vi.waitFor(() => expect(hand.started).toHaveLength(2), { timeout: 20_000 })
+    hand.finish('x-2')
+    expect(await ctx.workflow.wait(run.runId, 20_000)).toMatchObject({ status: 'completed', answer: 'done x-2' })
+    expect(hand.started).toHaveLength(2)
+    expect(ctx.eventLog.query({ type: 'workflow.steps.held' }).map((e) => [e.decision, e.data])).toEqual([[held.held!.decision, { since: held.held!.since, reason: 'live update to 096d6b6d' }]])
+    const released = ctx.eventLog.query({ type: 'workflow.steps.released' })
+    expect(released.map((e) => e.data)).toEqual([{ heldSince: held.held!.since, reason: 'live update to 096d6b6d', by: 'operator' }])
+    // The release is the operator's decision too, its input the hold's.
+    expect(ctx.artifacts.get(released[0]!.decision!)?.body).toMatchObject({ decisionType: 'gate', inputs: [held.held!.decision], decider: { type: 'operator', id: 'workflow.steps-hold' }, outcome: { option: 'run', detail: { by: 'operator' } } })
+  }, 60_000)
+
+  it('a hold left over ends with the next start, and a held run goes on from its recorded state then (T257)', async () => {
+    const first = await boot({}, { templates: CHAIN })
+    first.ctx.workflow.holdSteps('live update, interrupted after the stop')
+    const run = first.ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public' })
+    await settledTurns(first.ctx)
+    // Held from its admission: no step started.
+    expect(first.ctx.workflow.get(run.runId)!.nodes.map((n) => n.state)).toEqual(['WAITING', 'WAITING'])
+    await first.stop()
+
+    const { ctx } = await boot({}, { templates: CHAIN }, CATALOG, first.dir)
+    expect(await ctx.workflow.wait(run.runId, 30_000)).toMatchObject({ status: 'completed', answer: 'echo: Second' })
+    expect(ctx.workflow.stepHold().held).toBeUndefined()
+    const released = ctx.eventLog.query({ type: 'workflow.steps.released' })
+    expect(released.map((e) => e.data)).toEqual([{ heldSince: expect.any(String), reason: 'live update, interrupted after the stop', by: 'restart' }])
+    // The start's release is the engine's rule, a decision of its own (INV-13).
+    expect(ctx.artifacts.get(released[0]!.decision!)?.body).toMatchObject({ decisionType: 'gate', decider: { type: 'rule', id: 'workflow.steps-hold-restart' }, outcome: { option: 'run', detail: { by: 'restart' } }, deterministic: true })
   }, 60_000)
 
   it('closes a gate nobody decided within gateTimeoutHours, failing the run by rule and saying why; continue waits again, and an approval in time runs the plan (INV-9)', async () => {

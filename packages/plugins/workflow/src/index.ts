@@ -23,6 +23,7 @@ import { sweepDeferrals } from './continuations.ts'
 import { dispatchProblems, type DispatchPass, type DispatchStatus } from './dispatch.ts'
 import type { DossierAppendInput, DossierCaller, DossierPage } from './dossiers.ts'
 import { checkTemplate, Engine } from './engine.ts'
+import { hold, type HoldView, holdView, release } from './hold.ts'
 import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
 import { pollMs } from './queue.ts'
@@ -42,6 +43,7 @@ export { DOSSIER_FILE, DOSSIER_KINDS, DOSSIER_LIMITS, renderDossier, ROLE_KINDS 
 export type { DossierAppendInput, DossierCaller, DossierEntry, DossierEntryView, DossierKind, DossierPage, DossierView } from './dossiers.ts'
 export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores, featuresOf, fitLogistic, LocalAdvisor, modelPrompt, OUTCOME_EVENT, QUESTION_SET, QUESTIONS, SHADOW_ATTEMPTS, vectorOf } from './advisor.ts'
 export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
+export type { HoldView, StepHold, StepInFlight } from './hold.ts'
 export type { DispatchPass, DispatchPassView, DispatchPause, DispatchSettings, DispatchStarted, DispatchStatus, DispatchWindow } from './dispatch.ts'
 export type { Config, DispatchConfig, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartedBy, StartInput, TaskCarry, TaskClaim, TaskDispatch, TaskLanding, TaskOutcome, TaskRebase, TaskStartInput, TaskView, TemplateStep, UsageDraws, UsageFilter, UsageRunView, WorkflowError } from './types.ts'
 
@@ -242,6 +244,26 @@ export class Workflow extends Service {
   resume(): { draining: boolean; active: string[] } {
     this.engine.draining = false
     return { draining: false, active: [...this.engine.running.keys()] }
+  }
+
+  /**
+   * Hold steps (the operator's, while a live update waits to stop the host; T257): each running run
+   * finishes the step it is in and starts no next one until {@link releaseSteps}, or the next start
+   * of the host, which ends a hold left over. Returns the hold and the steps still in flight.
+   * Holding a held engine changes nothing; dispatch's pause is a separate thing.
+   */
+  holdSteps(reason?: string): HoldView {
+    return hold(this.engine, reason)
+  }
+
+  /** Release the hold between steps: every running run is scheduled again and goes on from its recorded state. */
+  releaseSteps(): HoldView {
+    return release(this.engine, 'operator')
+  }
+
+  /** The hold between steps, if one is set, and the steps in flight. A read only. */
+  stepHold(): HoldView {
+    return holdView(this.engine)
   }
 
   /**

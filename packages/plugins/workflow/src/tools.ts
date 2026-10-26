@@ -186,6 +186,10 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     description: 'Admit new runs again after a drain.',
     inputSchema: {},
   }, async () => json(w.resume()))
+  c.mcp.tool('hold_steps', {
+    description: 'Before a stop: each running run finishes its step in flight and starts no next one until released (release: true) or the host restarts. Returns the hold and the steps in flight.',
+    inputSchema: { reason: zod.string().max(500).optional(), release: zod.boolean().optional() },
+  }, async (args) => json(args.release ? w.releaseSteps() : w.holdSteps(args.reason ? String(args.reason) : undefined)))
   c.mcp.tool('continue', {
     description: 'Continue a failed run: reopen its one failed node (or a stopped run\'s nodes) as a new attempt (an operator decision).',
     inputSchema: { runId: zod.string().max(200), nodeId: zod.string().max(200).optional() },

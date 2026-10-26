@@ -9,12 +9,17 @@
  *   node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running]
  *   node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
  *   node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
+ *   node scripts/live-update-check.ts hold-steps <cli> <DSH_HOME> <reason>
+ *   node scripts/live-update-check.ts release-steps <cli> <DSH_HOME>
  *
- * Before the stop (T234), `dispatch-pause` pauses dispatch unless it is paused or off already, and
- * `await-idle` waits, bounded, until no workflow step runs (every RUNNING node of every running run in
+ * Before the stop (T234), `dispatch-pause` pauses dispatch unless it is paused or off already,
+ * `hold-steps` holds steps (T257: each running run finishes the step it is in and starts no next one,
+ * so the wait ends at the next step boundary), and `await-idle` waits, bounded, until no workflow step
+ * runs (every RUNNING node of every running run in
  * the store, read-only, on a Worker or not; the roster's `work` adds what it knows, and its bounds are
  * noted), saying what it waits for: each run, its step, the Worker, and for how long; `running` is one such
- * read, for the dry run; `dispatch-resume` lifts the update's own pause once the profile runs again.
+ * read, for the dry run; `dispatch-resume` lifts the update's own pause once the profile runs again, and
+ * `release-steps` the hold when the update stops before the stop (the restart ends it otherwise).
  *
  * `<cli>` is the installed CLI module, `packages/cli/lib/index.js` of the checkout the profile runs:
  * every call goes through its `callTool`, as the operator. `capture`, before the update, records the
@@ -446,6 +451,37 @@ export async function pauseDispatch(call: CallTool, home: string, reason: string
   return { outcome: 'paused', detail: `dispatch paused: ${reason}` }
 }
 
+/** A profile's answer when it serves no `hold_steps` (its code is older than the hold). */
+const NO_HOLD = /unknown tool|not found|not installed|no tool/i
+
+/** Whether the update holds steps: it set the hold now, or the profile serves none (its code is older than the hold). */
+export type HoldOutcome = { outcome: 'held' | 'none'; detail: string }
+
+/**
+ * Hold steps (T257, MCP `hold_steps`): each running run finishes the step it is in and starts no
+ * next one until the release or the restart, so the wait ends with the steps in flight. A profile
+ * that serves no hold (code from before it) holds nothing: the wait then lasts until no step runs.
+ */
+export async function holdSteps(call: CallTool, home: string, reason: string): Promise<HoldOutcome> {
+  const held = await call('hold_steps', { reason }, home)
+  if (held.isError) {
+    if (NO_HOLD.test(held.text)) return { outcome: 'none', detail: `this profile holds no steps (${held.text.slice(0, 200)}): the wait lasts until no step runs` }
+    throw new Error(`hold_steps: ${held.text}`)
+  }
+  const inFlight = Array.isArray(held.structured?.['inFlight']) ? (held.structured['inFlight'] as unknown[]).length : 0
+  return { outcome: 'held', detail: `steps held: each running run finishes the step it is in (${inFlight} in flight) and starts no next one until the restart` }
+}
+
+/**
+ * Release the update's hold (MCP `hold_steps` with `release`): every running run goes on from its
+ * recorded state. Released when its request's outcome was unknown too (an interruption during it):
+ * a profile that serves no hold holds nothing, so there is nothing to release.
+ */
+export async function releaseSteps(call: CallTool, home: string): Promise<void> {
+  const released = await call('hold_steps', { release: true }, home)
+  if (released.isError && !NO_HOLD.test(released.text)) throw new Error(`hold_steps: ${released.text}`)
+}
+
 /** A Worker's availability in one cell: its state, and why when it takes no work. */
 const cell = (w: WorkerAvailability | undefined): string => (!w ? '(not listed)' : w.reason ? `${w.state}: ${w.reason}` : w.state)
 
@@ -665,7 +701,9 @@ const USAGE = `usage: node scripts/live-update-check.ts capture <cli> <DSH_HOME>
        node scripts/live-update-check.ts running <cli> <DSH_HOME>
        node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running]
        node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
-       node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>`
+       node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
+       node scripts/live-update-check.ts hold-steps <cli> <DSH_HOME> <reason>
+       node scripts/live-update-check.ts release-steps <cli> <DSH_HOME>`
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv
@@ -685,6 +723,16 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'dispatch-pause' && args.length === 3) {
     const paused = await pauseDispatch(await callToolOf(args[0]!), args[1]!, args[2]!)
     console.log(`${paused.outcome}: ${paused.detail}`)
+    return 0
+  }
+  if (command === 'hold-steps' && args.length === 3) {
+    const held = await holdSteps(await callToolOf(args[0]!), args[1]!, args[2]!)
+    console.log(`${held.outcome}: ${held.detail}`)
+    return 0
+  }
+  if (command === 'release-steps' && args.length === 2) {
+    await releaseSteps(await callToolOf(args[0]!), args[1]!)
+    console.log('steps released: each running run goes on from its recorded state')
     return 0
   }
   if (command === 'dispatch-resume' && args.length === 2) {
