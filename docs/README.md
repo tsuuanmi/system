@@ -30,6 +30,7 @@ other documents link to it instead of repeating it.
 | To … | Read |
 |---|---|
 | run or recover the built system | [operations](operations/README.md): runbooks for routine procedures (first start, accounts and agent accounts, the board, the approval queue, the resource ledger, upgrades), the Base pilot, and playbooks for incidents (a stuck run, quota, a provider UI change) |
+| lead a project as its lead session | the [lead's playbook](operations/lead-playbook.md) and its onboarding checklist, [LEAD.md](operations/examples/LEAD.md) |
 | know what the Base release (v0.8) must deliver, and what is built | [release scope](requirements/release-scope.md#base-v08), [PROP-0010](proposals/0010-base-version.md), the [roadmap](proposals/roadmap.md) |
 | understand the board, the approval queue, the resource ledger, digests, or the plugin host | [board](design/board.md), [approvals](design/approvals.md), [resources](design/resources.md), [digests](design/digests.md), [plugin host](design/plugin-host.md), their [record semantics](reference/schemas.md), and the package READMEs they name |
 | add agent Workers, or enroll several sign-ins of one agent runtime | [agent runtimes](design/agent-runtimes.md) and its [agent accounts](design/agent-runtimes.md#agent-accounts), [PROP-0012](proposals/0012-agent-accounts.md), the [runbook](operations/runbooks.md#agent-workers) |
