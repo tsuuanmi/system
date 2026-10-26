@@ -5,7 +5,7 @@ import type { Candidate, Localized } from './map.ts'
 type Root = Page | Locator | Frame
 
 /** One regex accepting any configured locale's variant. */
-export function localizedRegex(names: Localized, locales: readonly string[]): RegExp {
+function localizedRegex(names: Localized, locales: readonly string[]): RegExp {
   const sources = locales.map((l) => names[l]).filter((s): s is string => typeof s === 'string')
   const all = sources.length ? sources : Object.values(names)
   return new RegExp(all.map((s) => `(?:${s})`).join('|'), 'i')

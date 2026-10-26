@@ -4,6 +4,6 @@
  */
 import * as plugin from './plugin.ts'
 
-export { type AskOptions, type AskResult, type AuthState, ChatGptWebDriver, type ConversationMode, type DriverOptions, type DriverTimeouts, shippedMap } from './driver.ts'
+export { ChatGptWebDriver, type DriverOptions, type DriverTimeouts, shippedMap } from './driver.ts'
 export { type Config, apply, inject, name } from './plugin.ts'
 export default plugin

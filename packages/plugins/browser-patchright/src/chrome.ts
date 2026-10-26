@@ -39,7 +39,7 @@ function chromeMajor(path: string): number | undefined {
   }
 }
 
-export function managedBrowsersDir(home: string = dshHome()): string {
+function managedBrowsersDir(home: string = dshHome()): string {
   return join(home, 'system', 'browsers')
 }
 

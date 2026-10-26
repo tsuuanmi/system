@@ -39,7 +39,7 @@ export const MAX_KEPT_TABS = 4
  * A kept tab idle longer than this is not handed back: the turn starts from a fresh page, which
  * loads the conversation and so finds out if the site no longer has it, or has signed it out.
  */
-export const MAX_KEPT_IDLE_MS = 10 * 60_000
+const MAX_KEPT_IDLE_MS = 10 * 60_000
 
 /** How often an open waiting for room under `maxBrowsers` looks again. */
 const ROOM_POLL_MS = 500
@@ -158,7 +158,7 @@ function lockHolder(dir: string): ProfileUser[] {
 }
 
 /** Remove the lock files of a browser that is gone; only when no process uses the profile. */
-export function clearLockFiles(dir: string): void {
+function clearLockFiles(dir: string): void {
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) rmSync(join(dir, name), { force: true })
 }
 

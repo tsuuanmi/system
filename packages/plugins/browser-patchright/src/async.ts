@@ -3,7 +3,7 @@ import { abortReason } from '@tsuuanmi/system-provider-core'
 import type { BrowserContext, Page } from 'patchright-core'
 
 /** The longest a close waits for a page of its context that is still opening. */
-export const ATTACH_WAIT_MS = 10_000
+const ATTACH_WAIT_MS = 10_000
 
 /** Pages still opening, per context. */
 const opening = new WeakMap<BrowserContext, Set<Promise<Page>>>()

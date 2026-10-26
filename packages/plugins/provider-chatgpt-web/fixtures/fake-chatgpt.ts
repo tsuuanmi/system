@@ -160,7 +160,7 @@ interface Conversation {
 const INLINE_PILLS = '<div><a data-inline-mention-interactive data-search-result-target href="https://www.sqlite.org/wal.html">sqlite.org</a><a data-inline-mention-interactive data-search-result-target href="https://docs.example/notes" hidden>docs.example</a></div>'
 
 /** A run in the app shell of 2026-10-18: no frame; while it runs, its progress; once done, its report as an answer. */
-export function inlineRun(research: { done: boolean; report: string }): string {
+function inlineRun(research: { done: boolean; report: string }): string {
   return research.done
     // Its citations as source pills after the answer's own container, as the live shell (2026-10-18).
     ? `<div class="turn"><p>Research completed in 1m · 3 citations</p><div><h4 class="sr-only">ChatGPT said:</h4><p>${research.report}</p></div>${INLINE_PILLS}<div><button aria-label="Copy">c</button></div></div>`
@@ -168,7 +168,7 @@ export function inlineRun(research: { done: boolean; report: string }): string {
 }
 
 /** The embedded app frame of one Deep research run, as the live site places it after the run's prompt. */
-export function researchHost(conversationId: string, index: number): string {
+function researchHost(conversationId: string, index: number): string {
   return `<iframe title="Deep research" src="/web-sandbox.oai/${conversationId}/${index}" style="display:block;width:960px;height:640px;border:0"></iframe>`
 }
 
@@ -177,7 +177,7 @@ export function researchHost(conversationId: string, index: number): string {
  * report layout is the live one of 2026-10-12: the summary line with digit-reel counters, the
  * title, Export and Expand, then the title as a level-1 heading whose container is the report.
  */
-export function researchDocument(research: { done: boolean; report: string }, untitled = false): string {
+function researchDocument(research: { done: boolean; report: string }, untitled = false): string {
   const reel = '<span>' + Array.from({ length: 30 }, (_, i) => String(i % 10)).join('<br>') + '</span>'
   const inner = research.done
     ? `<main><p>Research completed in 1m · ${reel} citations · ${reel} searches</p><p>Research findings</p>`

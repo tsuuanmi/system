@@ -42,7 +42,7 @@ export interface UiOutline {
   truncated: boolean
 }
 
-export const OUTLINE_LIMITS = { nodes: 200, depth: 12 }
+const OUTLINE_LIMITS = { nodes: 200, depth: 12 }
 
 const EMAIL = /[^\s@()<>,;:"']+@[^\s@()<>,;:"']+\.[A-Za-z]{2,}/
 const REDACTED = '[redacted]'
