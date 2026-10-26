@@ -111,6 +111,16 @@ export interface FakeWork { runId: string; nodeId: string; worker?: string; sinc
 export interface FakeSystem {
   /** The steps each read of the roster finds, in turn; the last one stays. */
   work: (...reads: FakeWork[][]) => void
+  /**
+   * The profile serves the hold between steps (T257, `hold_steps`): once held, each read of the
+   * roster finds these steps in turn instead (the last one stays), until released. Without it, the
+   * profile is one from before the hold: `hold_steps` is no tool of it.
+   */
+  holds: (...reads: FakeWork[][]) => void
+  /** Whether steps are held now. */
+  held: () => boolean
+  /** Hold steps, then answer `hold_steps` only `ms` later (a request interrupted after the hold is set). */
+  holdDelay: (ms: number) => void
   /** Dispatch as `dispatch_status` answers it. */
   dispatch: (status: { enabled: boolean; paused?: { since: string; reason?: string } }) => void
   /** The tools called, in order. */
@@ -139,12 +149,23 @@ const store = (items) => {
   }
 }
 exports.callTool = async (name, args) => {
-  fs.appendFileSync(path.join(dir, 'calls'), name + '\\n')
+  fs.appendFileSync(path.join(dir, 'calls'), name + (name === 'hold_steps' && args.release ? ' release' : '') + '\\n')
   if (name === 'status') return ok({ health: { state: 'ok', checks: [] } })
+  if (name === 'hold_steps' && !fs.existsSync(path.join(dir, 'holds.json'))) return { isError: true, text: 'MCP error -32602: Tool hold_steps not found', structured: undefined }
+  if (name === 'hold_steps') {
+    if (args.release) fs.rmSync(path.join(dir, 'held'), { force: true })
+    else if (!fs.existsSync(path.join(dir, 'held'))) fs.writeFileSync(path.join(dir, 'held'), String(args.reason))
+    // Set, and its answer still on the way: an interruption now leaves the outcome unknown to the caller.
+    if (!args.release && fs.existsSync(path.join(dir, 'hold-delay.json'))) await new Promise((resolve) => setTimeout(resolve, read('hold-delay.json')))
+    return ok({ ...(fs.existsSync(path.join(dir, 'held')) ? { held: { since: new Date().toISOString(), reason: fs.readFileSync(path.join(dir, 'held'), 'utf8') } } : {}), inFlight: [] })
+  }
   if (name === 'roster') {
-    const reads = read('work.json')
-    const n = fs.existsSync(path.join(dir, 'reads')) ? Number(fs.readFileSync(path.join(dir, 'reads'), 'utf8')) : 0
-    fs.writeFileSync(path.join(dir, 'reads'), String(n + 1))
+    // Held, the runs start no next step: the reads go on from the held sequence, when one is given.
+    const held = fs.existsSync(path.join(dir, 'held')) && fs.existsSync(path.join(dir, 'holds.json'))
+    const reads = read(held ? 'holds.json' : 'work.json')
+    const counter = path.join(dir, held ? 'held-reads' : 'reads')
+    const n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0
+    fs.writeFileSync(counter, String(n + 1))
     const all = reads[Math.min(n, reads.length - 1)]
     store(all)
     const items = all.filter((i) => i.worker)
@@ -173,7 +194,8 @@ exports.callTool = async (name, args) => {
  * A fake `system` for the live update's wait (T234): the CLI module the update's checks import
  * (`packages/cli/lib/index.js` of the live checkout), whose `callTool` answers `status`, `roster`
  * (each read the next steps given, those on a Worker; every one of them is written to the store
- * too, which the wait reads next), and dispatch's status, pause, and resume; with a store the
+ * too, which the wait reads next), dispatch's status, pause, and resume, and, when given `holds`,
+ * the hold between steps (`hold_steps`, set and released); with a store the
  * capture can read (no run until the first roster read, no migration).
  */
 export function fakeSystem(root: string, live: string, home: string): FakeSystem {
@@ -192,9 +214,10 @@ export function fakeSystem(root: string, live: string, home: string): FakeSystem
   db.close()
   const work = (...reads: FakeWork[][]): void => writeFileSync(join(dir, 'work.json'), JSON.stringify(reads))
   const dispatch = (status: { enabled: boolean; paused?: { since: string; reason?: string } }): void => writeFileSync(join(dir, 'dispatch.json'), JSON.stringify(status))
+  const holds = (...reads: FakeWork[][]): void => writeFileSync(join(dir, 'holds.json'), JSON.stringify(reads))
   work([])
   dispatch({ enabled: true })
-  return { work, dispatch, calls: () => (existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n') : []) }
+  return { work, holds, held: () => existsSync(join(dir, 'held')), holdDelay: (ms) => writeFileSync(join(dir, 'hold-delay.json'), JSON.stringify(ms)), dispatch, calls: () => (existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n') : []) }
 }
 
 /** A daemon environment file, owner-only, naming `home`. */

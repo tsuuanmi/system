@@ -6,7 +6,9 @@
 # only read) and prints the plan. With --apply it acts:
 #   1. capture what the running profile answers: its health, every run's explain and result, each
 #      Worker's availability (its roster); and where its unit, system.service, sends the daemon's output;
-#   1b. pause dispatch (unless paused or off already), and wait, up to --runs-wait minutes, until no
+#   1b. pause dispatch (unless paused or off already), hold steps (T257: each running run finishes
+#      the step it is in and starts no next one; released on every exit before the stop, ended by
+#      the next start after it), and wait, up to --runs-wait minutes, until no
 #      workflow step runs (every RUNNING step of every running run in the store, read-only, on a
 #      Worker or not; each run, its step, its Worker, for how long, with what the roster adds), so
 #      the stop cuts no agent run (T234); at the bound stop, the unit untouched, unless --cut-running;
@@ -40,7 +42,9 @@ usage: scripts/live-update.sh <target sha> [--apply] [--check-with <built checko
          [--workers-wait <seconds>] [--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running]
 
 A dry run unless --apply. --apply needs --check-with: the profile is checked against the target's
-code before anything is stopped. Before the stop it pauses dispatch (unless paused or off already)
+code before anything is stopped. Before the stop it pauses dispatch (unless paused or off already),
+holds steps (each running run finishes the step it is in and starts no next one; released on every
+exit before the stop, ended by the restart after it),
 and waits until no workflow step runs, up to --runs-wait minutes, reading the store (read-only) and
 the roster every --runs-every seconds and saying what runs (run, step, Worker, for how long). At the bound it stops,
 exit 1, the unit not stopped; with --cut-running it stops the unit anyway and names the runs it cuts.
@@ -159,7 +163,24 @@ on_err() {
   fail "unexpected error (exit $1) at line $2"
 }
 trap 'on_err $? $LINENO' ERR
-trap '[[ -z $SCRATCH ]] || rm -rf -- "$SCRATCH"' EXIT
+
+# Every exit, an interruption's too: the wait's reader stopped, the update's hold between steps
+# released while the daemon it was set in still runs (T257: a hold never outlives the update's wait;
+# once the daemon stopped, its next start ends the hold), and the scratch directory removed.
+WAITER=''      # the wait's reader (live-update-check.ts await-idle), while it runs
+on_exit() {
+  local code=$?
+  trap - ERR
+  set +e
+  if [[ -n $WAITER ]]; then kill "$WAITER" 2>/dev/null; fi
+  if [[ -n $STATE ]] && steps_owed; then release_steps; fi
+  [[ -z $SCRATCH ]] || rm -rf -- "$SCRATCH"
+  exit "$code"
+}
+trap on_exit EXIT
+# An interruption exits, so the exit's cleanup runs; a wait in progress returns at once (`wait`).
+trap 'log "interrupted"; exit 130' INT
+trap 'log "terminated"; exit 143' TERM
 
 # --- environment --------------------------------------------------------------------------------
 
@@ -296,6 +317,7 @@ stop_daemon() {
   state=$(unit_state)
   if ((running != 0)) && [[ $state == inactive || $state == failed ]]; then
     log "the daemon is not running ($UNIT: $state)"
+    steps_held_until_start
     return 0
   fi
   log "systemctl --user stop $UNIT (${pids[*]:-no daemon}; $state): its ExecStop drains, then stops"
@@ -313,6 +335,16 @@ stop_daemon() {
     return 1
   fi
   log "the daemon has exited"
+  steps_held_until_start
+}
+
+# The daemon the hold was set in has exited: its next start ends the hold (the engine releases one
+# left over before it schedules any run), and every run goes on from its recorded state.
+steps_held_until_start() {
+  if [[ -n $STATE ]] && steps_owed; then
+    state_set steps_held restart
+    log "steps: the hold ends with the next start of the daemon"
+  fi
 }
 
 healthz_ok() {
@@ -582,21 +614,83 @@ resume_dispatch() {
   fi
 }
 
+# Hold steps before the wait (T257): each running run finishes the step it is in and starts no next
+# one, so the wait ends at the next step boundary instead of when every run is done. Recorded
+# (steps_held=update) until it is released (release_steps) or the daemon stopped (the next start
+# ends it). A profile whose code has no hold holds nothing: the wait is then T234's, for every step.
+hold_steps() {
+  local out
+  # The release is owed before the hold is asked for (steps_held=pending): an interruption during
+  # the request, or an answer lost after the daemon set the hold, leaves the outcome unknown, and
+  # every way out then releases it as if it were held.
+  state_set steps_held pending
+  # Asked every time, a run taken up again too: holding a held engine changes nothing, and a hold
+  # recorded before a restart of the daemon has ended with it.
+  out=$(check_tool hold-steps "live update to ${TARGET:0:12}: waiting for the steps in flight before the stop") || return 1
+  log "${out#*: }"
+  if [[ $out == held:* ]]; then
+    state_set steps_held update
+  else
+    state_set steps_held none
+  fi
+}
+
+# Whether this update holds steps, or may (its request's outcome unknown): a release is owed.
+steps_owed() {
+  local held
+  held=$(state_get steps_held)
+  [[ $held == update || $held == pending ]]
+}
+
+# Release this update's hold while the daemon it was set in runs (the update stops before the stop:
+# at the wait's bound, on a refusal, or interrupted), a hold whose request's outcome is unknown too.
+# Once that daemon has exited, its next start releases it. A release that fails is said, with what to do.
+release_steps() {
+  steps_owed || return 0
+  if ! daemon_running; then
+    state_set steps_held restart
+    log "steps: the daemon is not running; its next start ends the hold"
+    return 0
+  fi
+  if check_tool release-steps 2>&1 | tee -a "$LOG_FILE" >&2; then
+    state_set steps_held released
+  else
+    log "note: steps stay held by this update: release them (MCP hold_steps with release: true), or restart $UNIT, which ends the hold"
+  fi
+}
+
 # Wait, bounded, until no workflow step runs, on a Worker or not (T234): the stop cuts no agent run.
-# At the bound: stop, the unit untouched (dispatch resumed); with --cut-running, go on and say what
-# the stop cuts.
+# Steps are held first (T257), so only the steps in flight are waited for. At the bound: stop, the
+# unit untouched (steps released, dispatch resumed); with --cut-running, go on and say what the stop
+# cuts. The reader runs in the background and is waited for, so an interruption ends the wait at once
+# and the exit releases the hold.
 wait_idle() {
   local -a cut=()
+  local status=0 fifo teed
   if ((CUT_RUNNING)); then cut=(--cut-running); fi
   pause_dispatch || die "dispatch could not be paused (above)"
+  hold_steps || die "steps could not be held (above)"
   log "waiting until no workflow step runs: up to $RUNS_WAIT min, a look every $RUNS_EVERY s"
-  if check_tool await-idle --wait $((RUNS_WAIT * 60)) --every "$RUNS_EVERY" ${cut[@]+"${cut[@]}"} 2>&1 | tee -a "$LOG_FILE" >&2; then
+  if [[ -z $SCRATCH ]]; then SCRATCH=$(mktemp -d); fi
+  fifo=$SCRATCH/await-idle.out
+  rm -f -- "$fifo"
+  mkfifo -m 600 "$fifo"
+  tee -a "$LOG_FILE" <"$fifo" >&2 &
+  teed=$!
+  PATH=$RUN_PATH "$NODE_DIR/node" --disable-warning=ExperimentalWarning "$SCRIPT_DIR/live-update-check.ts" await-idle "$LIVE/packages/cli/lib/index.js" "$DSH_HOME_DIR" \
+    --wait $((RUNS_WAIT * 60)) --every "$RUNS_EVERY" ${cut[@]+"${cut[@]}"} >"$fifo" 2>&1 &
+  WAITER=$!
+  wait "$WAITER" || status=$?
+  WAITER=''
+  wait "$teed" || true
+  if ((status == 0)); then
     return 0
   fi
   if ((CUT_RUNNING)); then
     log "--cut-running: stopping $UNIT with the steps above still running; each is cut, and fails or resumes as its source tells (docs/operations/runbooks.md#a-runs-liveness-is-unknown)"
     return 0
   fi
+  release_steps
   resume_dispatch
   die "steps still run after $RUNS_WAIT min (above): $UNIT was not stopped. Run the update again once they finish (or with a longer --runs-wait), or with --cut-running to cut them"
 }
@@ -735,7 +829,7 @@ rollback() {
 preflight() {
   local problems=0 head untracked avail dir tool running=0
 
-  for tool in git systemctl flock sha256sum realpath df; do
+  for tool in git systemctl flock sha256sum realpath df mkfifo; do
     if ! command -v "$tool" >/dev/null; then log "missing tool: $tool"; problems=$((problems + 1)); fi
   done
   if ! node24 -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit((a === 24 && b >= 18) || (a === 26 && b >= 5) || a > 26 ? 0 : 1)'; then
@@ -845,7 +939,9 @@ dry_run() {
 Plan for --apply (this dry run changed nothing):
   1. capture: health, the explain and result of $runs, and each Worker's availability (its roster)
      -> $BACKUPS/<date>-before-base/before.json
-     then pause dispatch (unless paused or off already; resumed once the profile runs again), and
+     then pause dispatch (unless paused or off already; resumed once the profile runs again), hold
+     steps (each running run finishes its step in flight and starts no next one until the restart;
+     released if the update stops before the stop), and
      wait until no workflow step runs, up to $RUNS_WAIT min, a look every $RUNS_EVERY s, saying
      what runs (above, now); $(if ((CUT_RUNNING)); then echo 'at the bound, --cut-running: stop anyway, naming what it cuts'; else echo "at the bound: stop, exit 1, $UNIT not stopped"; fi)
   2. systemctl --user stop $UNIT (its ExecStop: system shutdown --deadline, a drain); the daemon and

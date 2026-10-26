@@ -44,6 +44,9 @@ export const BUDGET = {
      * The task dossier's `dossier_read` (T233, ADR-0070), the lead's and the operator's, adds about
      * 450 B (estimated from its text and schema, short and with no argument descriptions; not yet
      * measured). Its `dossier_append` is no tool of this surface: a Worker's run holds it, bound to its step.
+     * The operator's `hold_steps` (T257: a live update's wait ends at the next step boundary) adds
+     * about 400 B (estimated from its text and two arguments, not yet measured): worth it, since an
+     * update that cannot end its wait holds every Worker idle.
      */
     operator: { measured: 45_614, ceiling: 47_200 },
     /**

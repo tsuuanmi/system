@@ -831,6 +831,10 @@ second execution path (INV-1).
   - `drain` admits no new run (a new one is refused as `overloaded`) and
     reports the runs still executing; call it again to poll. `resume` admits
     runs again;
+  - `hold_steps { reason?, release? }` holds steps before a stop (T257,
+    [the hold between steps](../../../docs/design/workflow-engine.md#the-hold-between-steps)): each
+    running run finishes the step it is in and starts no next one until `release: true` or the
+    next start of the host; it answers the hold and the steps in flight;
   - `research` returns at once; `deep: true` runs its `deep` variant;
   - `brainstorm { question }` and `review { material, repository?: { url, ref? },
     focus? }` start those templates and return at once;
@@ -1070,6 +1074,7 @@ in `engine.ts`:
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
+| `hold.ts` | the hold between steps (T257): set and released by the operator with its reason, on the `steps-hold` row of `workflow_dispatch_control`; while held, a run finishes its steps in flight and starts no next one; the release schedules every running run again, and the engine's start ends a hold left over |
 | `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
 | `tasks.ts` | runs that serve a board task: what their briefs carry, resuming the session before them, taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
 | `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |

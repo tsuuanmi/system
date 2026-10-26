@@ -1692,7 +1692,7 @@ check` (37 rows, checked on a copy, 2026-10-23).
      Workers](#antigravity-cli-workers) list the reasons and what to do.
    - Exit 1, `STOP` (nothing was changed) or `rolled back`: e218ae7 runs, on its store as it was at the
      stop. The notes say why. `STOP: steps still run after <n> min` is the wait's bound: the unit
-     was not stopped and dispatch was resumed. Run the same command again once those runs are done
+     was not stopped, steps were released, and dispatch was resumed. Run the same command again once those steps are done
      (or with a longer `--runs-wait`), or with `--cut-running` to cut them. A Worker that took work before and stays unavailable names its reason
      in the table of the Workers before and after: fix its cause on the host (a runtime's probe, its
      sandbox), then update again.
@@ -1717,7 +1717,21 @@ check` (37 rows, checked on a copy, 2026-10-23).
      recorded in the update's state and lifted (`system dispatch resume`) once the profile runs
      again: after the upgrade checks, after a rollback, or at the wait's bound. The lead's and your
      own starts are not paused: hold them yourself while you update;
-  2. reads what runs every `--runs-every` seconds (30), up to `--runs-wait` minutes (90), until no
+  2. **holds steps** (T257; MCP `hold_steps`, its reason naming the update): each running run
+     finishes the step it is in and starts no next one. On 2026-10-26 the update to 096d6b6d waited
+     25 minutes and was stopped by hand, because a run kept chaining steps (review, fix, review
+     again) and a research run kept going, so "no step runs" never held while every other Worker
+     sat idle. Held, the wait ends at the next step boundary: once the steps in flight end, nothing
+     runs. The script records that it owes a release before it asks for the hold
+     (`steps_held=pending`, then `update`), and releases it on every way out before the stop: at the
+     wait's bound, on a refusal, and when it is interrupted (Ctrl-C, `kill`), the wait ending at once,
+     an interruption while it asks for the hold included. Once the daemon has stopped, its next start
+     ends the hold (the engine releases one left over before it schedules any run): each held run
+     goes on from its recorded state, as after any restart, and no step is sent again. A profile
+     whose code is older than the hold (`this profile holds no steps`) holds nothing, and the wait is
+     T234's, for every step. Left held by a script killed with `kill -9`: `hold_steps` with
+     `release: true` as the operator, or restart the unit;
+  3. reads what runs every `--runs-every` seconds (30), up to `--runs-wait` minutes (90), until no
      workflow step runs. The store, opened read-only as the capture opens it, is the source: every
      node in state `RUNNING` of every run in status `running`, whether it runs on a Worker or not
      (a step the engine runs itself, or one not routed yet, names no Worker), and however old the
@@ -1728,7 +1742,8 @@ check` (37 rows, checked on a copy, 2026-10-23).
      the first look, whenever that changes, and every 5 minutes: each run, its step, its Worker, and
      for how long (`run run_… step develop:1 on agent:codex-main/develop, for 12 min (task T223,
      algorithm-development)`);
-  3. at the bound, stops with exit 1, the unit not stopped and nothing changed; with
+  4. at the bound, stops with exit 1, the unit not stopped and nothing changed (steps released,
+     dispatch resumed); with
      `--cut-running` it goes on to the stop as before, naming each run it cuts first. A cut agent run
      fails or resumes as its source tells; one that fails `reconciliation_failed` is yours to look
      at ([a run's liveness is unknown](#a-runs-liveness-is-unknown)).

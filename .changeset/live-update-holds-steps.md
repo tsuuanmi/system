@@ -1,0 +1,9 @@
+---
+"@tsuuanmi/system-workflow": minor
+---
+
+A live update's wait ends at the next step boundary, not when every run is done (T257). On 2026-10-26 the update to 096d6b6d paused dispatch and waited 25 minutes: a running run kept chaining steps (review, fix, review again) and a research run kept going, so "no workflow step runs" never held while every other Worker sat idle, and the lead stopped the update.
+- The engine has a hold between steps: MCP `hold_steps { reason?, release? }` (operator scope; `ctx.workflow.holdSteps`, `releaseSteps`, `stepHold`). While held, each running run finishes the step it is in and starts no next one: nothing is promoted, routed, or sent, and a step whose routing was in flight sends nothing. The hold is recorded with its reason (`workflow.steps.held`, `workflow.steps.released`). The release schedules every running run again, and each goes on from its recorded state, exactly as after a restart: a step already sent is never sent again. The engine's next start ends a hold left over, so a hold never outlives the process it was set in. Dispatch's pause is unchanged.
+- `scripts/live-update.sh --apply` holds steps after it pauses dispatch, so it waits only for the steps in flight (bounded by `--runs-wait`, as before). It records that it owes a release before it asks for the hold, and releases it on every way out before the stop: at the wait's bound, on a refusal, and when it is interrupted (SIGINT, SIGTERM), which now ends the wait at once, an interruption while it asks for the hold included. After the stop, the daemon's next start ends it, rollback included. A profile whose code has no hold holds nothing, and the wait is T234's. `scripts/live-update-check.ts` gains `hold-steps` and `release-steps`.
+
+See the runbook "Update the live install", and docs/design/workflow-engine.md "The hold between steps".

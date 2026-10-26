@@ -568,6 +568,41 @@ A bare `ask` outside a run has no recovery and fails as before.
 This failover applies to a Worker whose account is `pooled`, or that declares none. For an
 `assigned` account it is narrowed, below.
 
+### The hold between steps
+
+A stop cuts a step in flight, so a live update waits until no step runs before it stops the host
+(T234). A run that chains steps (a review, its fix, the review again) never leaves that state while
+it lasts: on 2026-10-26 an update waited 25 minutes for it, every other Worker idle, and was
+stopped by hand. The hold (T257) makes the wait end at the next step boundary.
+
+- **Set and released by the operator** (MCP `hold_steps { reason?, release? }`, operator scope;
+  `ctx.workflow.holdSteps`, `releaseSteps`, `stepHold`), with its reason. Each change is a `gate`
+  decision recorded before it (INV-13), as dispatch's pause is: the operator's (decider
+  `workflow.steps-hold`) for a hold and its release, the engine's rule (`workflow.steps-hold-restart`)
+  for a release at a start, each release's input the hold's decision. The hold is the `steps-hold`
+  row of `workflow_dispatch_control` (`{ since, reason, decision }`), and each change is an event
+  that names its decision: `workflow.steps.held`, `workflow.steps.released` (`by: operator` or
+  `restart`). Holding a held engine changes nothing. Each answer gives the hold and the steps in flight (every `RUNNING` node
+  of a running run).
+- **While held**, a run's turn runs only its steps already sent (`RUNNING`, with an execution), as a
+  run winding down does: their results are taken as ever, and nothing is promoted, routed, or sent.
+  A step whose routing was in flight when the hold was set sends nothing (the check is made again
+  just before its source's `start`), and stays `READY`. A run with nothing in flight ends its turn;
+  its gates and deferred calls wait too. Admission is not held: a run admitted while held starts
+  nothing until the release. Dispatch's pause is a separate thing, and the drain still refuses new
+  runs at the stop.
+- **The release** schedules every running run again: each goes on from its recorded state, exactly
+  as after a restart, so a step already sent is waited on and never sent again.
+- **A hold never outlives its process.** The engine's start releases a hold left over (`by:
+  restart`) before it schedules any run, so a stop during an update, an interrupted update, or a
+  rollback to a backup taken while held, never leaves runs held.
+
+`scripts/live-update.sh` holds steps after it pauses dispatch, waits for the steps in flight
+(bounded, as before), and releases the hold on every way out before the stop: the wait's bound, a
+refusal, an interruption (one while it asks for the hold too: it records the release as owed
+before it asks). After the stop, the next start ends it
+([the runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)).
+
 ### A team member's first step after a site's own error
 
 > Decision: [ADR-0062](../decisions/adr/0062-a-team-members-first-step-is-resent-once-after-a-sites-own-error.md)
