@@ -23,7 +23,7 @@ import { ensurePrivateDir } from '@tsuuanmi/system-libs'
 /** The environment variables that name a run's channel to its hook. */
 export const GATE_ENV = { socket: 'SYSTEM_CODEX_GATE_SOCKET', key: 'SYSTEM_CODEX_GATE_KEY' } as const
 /** Codex's hook timeout, in its unit (seconds): above the hook's own deadline (90 s), so the hook always answers itself. */
-export const HOOK_TIMEOUT_S = 120
+const HOOK_TIMEOUT_S = 120
 /** The largest hook input the channel takes (the hook refuses a larger one first). */
 const MAX_INPUT = 16 * 1024 * 1024
 /** Calls asked at once; a further one is refused (blocked by its hook). */
@@ -46,7 +46,7 @@ export interface Deferral {
  * (`exec_command`, reported as `Bash`), a patch, an MCP tool. A call whose tool produces none
  * (`view_image`) is not counted.
  */
-export function itemOf(tool: string): string | undefined {
+function itemOf(tool: string): string | undefined {
   if (tool === 'Bash') return 'command_execution'
   if (tool === 'apply_patch') return 'file_change'
   if (tool.startsWith('mcp__')) return 'mcp_tool_call'

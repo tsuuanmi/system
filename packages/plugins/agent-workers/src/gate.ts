@@ -457,7 +457,7 @@ function readCommand(argv: string[], workspace: string): boolean {
  * first word, as the gate split it; T147's programs), the reading tools that serve them in the
  * order they are named (the runtime's own first, then the workspace reads server's), and how.
  */
-export const INSPECTIONS = [
+const INSPECTIONS = [
   { programs: ['cat', 'head', 'tail', 'sed'], forms: 'cat, head, tail, sed -n', tools: ['Read', 'read_file'], how: 'it reads a file, a range of its lines too' },
   { programs: ['wc'], forms: 'wc', tools: ['Read', 'read_file'], how: 'it numbers a file\'s lines, so its last line number is the line count' },
   { programs: ['grep', 'rg'], forms: 'grep, rg', tools: ['Grep', 'search'], how: 'it searches files for a pattern' },
@@ -506,7 +506,7 @@ export function readToolsOf(evidence: { workspaceReads?: boolean | undefined; re
  * tools of `readTools` that serve it, named. Undefined when it is no inspection command, or none
  * of its tools is the agent's: it stays a `command`, judged as one.
  */
-export function inspectionRefusal(argv: readonly string[], readTools: readonly string[] | undefined): Refusal | undefined {
+function inspectionRefusal(argv: readonly string[], readTools: readonly string[] | undefined): Refusal | undefined {
   const group = inspectionOf(argv)
   if (!group || !readTools?.length) return undefined
   const tools = group.tools.filter((tool) => readTools.includes(tool))

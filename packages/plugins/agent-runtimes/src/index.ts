@@ -29,7 +29,7 @@ export interface Config {
  * `system init` installs (`$DSH_HOME/system/browsers`, a browser build and nothing secret), so a
  * Worker's own browser tests find the same Chrome as the host's, read-only, under the confinement.
  */
-export const DEFAULT_READ_ONLY: readonly string[] = ['$DSH_HOME/system/tools', '$DSH_HOME/system/browsers']
+const DEFAULT_READ_ONLY: readonly string[] = ['$DSH_HOME/system/tools', '$DSH_HOME/system/browsers']
 
 /**
  * The variable that names, inside the confinement, where the managed Chrome is bound back

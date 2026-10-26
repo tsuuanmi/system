@@ -76,7 +76,7 @@ export function refused(config: Record<string, unknown>): string | undefined {
 }
 
 /** How long Codex waits for the workspace reads server to start, in its unit (seconds). */
-export const READS_STARTUP_S = 30
+const READS_STARTUP_S = 30
 
 /**
  * The `--config` override that registers a run's workspace reads server (T200b) under

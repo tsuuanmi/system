@@ -81,7 +81,7 @@ import { TurnUsage } from './usage.ts'
 
 export { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
 export { FEATURES_OFF } from './overrides.ts'
-export { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, askRateLimits, limitsFromRateLimits } from './rate-limits.ts'
+export { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, limitsFromRateLimits } from './rate-limits.ts'
 
 /** The part of a Codex thread a run uses (the SDK's `Thread`, or a test double). */
 export interface CodexThread {
@@ -154,7 +154,7 @@ export type SpawnAppServer = (command: string, args: string[], options: { cwd: s
  * session gets a terminal (`/dev/ptmx`, or where it links into `/dev/pts`), and no process reaches
  * the operator's own terminals (`/dev/pts/<n>`).
  */
-export const NO_TERMINAL: readonly string[] = ['/dev/ptmx', '/dev/pts']
+const NO_TERMINAL: readonly string[] = ['/dev/ptmx', '/dev/pts']
 
 /** Codex items that are not a tool's work: messages, reasoning, the plan, errors. Any other item is a tool call's. */
 const PLAIN_ITEMS = new Set(['agent_message', 'reasoning', 'todo_list', 'error'])

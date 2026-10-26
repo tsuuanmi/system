@@ -56,7 +56,7 @@ export const HOOKS_JSON = `${JSON.stringify({ [HOOK_NAME]: { PreToolUse: [{ matc
 const HOOK_SCRIPT = new URL('../hook/gate-hook.mjs', import.meta.url)
 
 /** Antigravity's global customization root inside a home it runs with (`$HOME/.gemini/config`). */
-export const configDir = (home: string): string => join(home, '.gemini', 'config')
+const configDir =(home: string): string => join(home, '.gemini', 'config')
 
 /**
  * Keep the runtime's hooks.json in `home`, and say what in that home would reach a Worker outside

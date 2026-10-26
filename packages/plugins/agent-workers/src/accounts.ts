@@ -23,6 +23,7 @@ import { type CredentialProvider, type CredentialRecord, credentialKey } from '@
 import { type AgentRuntimeProvider, type IdentityReading, type LoginCommand, accountIdOf, titleOf } from '@tsuuanmi/system-agent-runtime-core'
 import { type ContentId, ensurePrivateDir, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
+import { ACCOUNT_ID } from './roles.ts'
 
 export type AccountStatus = 'enrolled' | 'ready' | 'signed-out' | 'quarantined'
 export type QuarantineReason = 'changed' | 'ambiguous' | 'duplicate' | 'unverified'
@@ -72,7 +73,6 @@ export const ACCOUNTS_MIGRATION = {
 export const MAX_SLOTS = 64
 /** A provider's kind, as an account id's namespace (`agent-account@1.0` provider). */
 const PROVIDER = /^[a-z][a-z0-9-]{0,63}$/
-const ACCOUNT_ID = /^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$/
 const DECIDER = { type: 'rule' as const, id: 'agent-accounts.enrollment', version: '1' }
 /** Where the per-install key of the account ids is kept in the vault. */
 const KEY_RECORD = credentialKey('system-agent-workers', 'identity-key')

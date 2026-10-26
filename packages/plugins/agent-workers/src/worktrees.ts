@@ -57,18 +57,18 @@ import type { Regeneration } from './regenerate.ts'
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
 export const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 /** git 2.17 added `git worktree remove`. */
-export const WORKTREE_GIT_FLOOR = [2, 17] as const
+const WORKTREE_GIT_FLOOR = [2, 17] as const
 /** At most this many worktrees are retired by one sweep; the rest wait for the next. */
-export const SWEEP_BATCH = 50
+const SWEEP_BATCH = 50
 /** Who commits a worktree's pending changes before it is removed. */
-export const SYSTEM_AUTHOR = { name: 'system', email: 'system@localhost' } as const
+const SYSTEM_AUTHOR ={ name: 'system', email: 'system@localhost' } as const
 
 /** The trailer a landing's commit carries: the exact subject it holds, so a commit repeated after a restart is found done (INV-4). */
 export const SUBJECT_TRAILER = 'System-Subject'
 /** The trailer the commit of a carried tree carries: the workflow run whose worktree starts from it (ADR-0061). */
-export const CARRIED_TRAILER = 'System-Carried-To'
+const CARRIED_TRAILER = 'System-Carried-To'
 /** The first line of the commit by which the retention keeps a worktree's uncommitted work on its branch. */
-export const keptSubject = (runId: string): string => `system: keep the uncommitted work of workflow run ${runId}`
+const keptSubject =(runId: string): string => `system: keep the uncommitted work of workflow run ${runId}`
 
 /**
  * The trailers of a landing's rebase commit (ADR-0068): the head it was made from and the base commit
@@ -90,7 +90,7 @@ export const rebaseRef = (runId: string, head: string): string => `refs/system/r
  * replay, so its worktree is made the base's again and the replay run again; only with it is what the
  * worktree holds the replay, to commit (INV-4).
  */
-export const replayedRef = (runId: string, head: string): string => `refs/system/rebase-replayed/${runId}/${head}`
+const replayedRef =(runId: string, head: string): string => `refs/system/rebase-replayed/${runId}/${head}`
 /** The head a rebase commit's message says it was made from (its last {@link REBASED_TRAILER}), when it says one. */
 const rebasedFrom = (message: readonly string[]): string | undefined => {
   const line = message.findLast((l) => l.startsWith(`${REBASED_TRAILER}: `))
@@ -169,7 +169,7 @@ const IDLE = `${FREE}
   AND COALESCE((SELECT MAX(r.updated_at) FROM agent_runs r WHERE r.workflow_run_id = w.workflow_run_id), w.created_at) < ?`
 
 /** A worktree that cannot be prepared, checked, or retired; what git said, if it ran. */
-export class WorktreeError extends Error {
+class WorktreeError extends Error {
   override readonly name = 'WorktreeError'
 }
 
@@ -300,7 +300,7 @@ function fields(field: (value: string) => boolean): (text: string) => boolean {
 }
 
 /** Dependency files {@link dependencyPaths} lists at most: past it, the listing is refused, never cut (INV-2, INV-9). */
-export const DEPENDENCY_PATHS_MAX = 2000
+const DEPENDENCY_PATHS_MAX = 2000
 
 /**
  * The paths of the worktree at `path` whose file name is one of `names` (a dependency manifest, the
@@ -396,7 +396,7 @@ const real = (path: string): string | undefined => {
 
 const under = (path: string, root: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
 
-export const branchOf = (runId: string): string => `system/run/${runId}`
+const branchOf =(runId: string): string => `system/run/${runId}`
 
 /** The directory of a repository's worktrees: its name, then a short hash of its real path. */
 export function repositoryKey(repository: string): string {

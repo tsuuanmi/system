@@ -97,21 +97,21 @@ export interface DerivedWorker {
 }
 
 /** A role id. */
-export const ROLE = /^[a-z][a-z0-9-]{0,31}$/
+const ROLE = /^[a-z][a-z0-9-]{0,31}$/
 /** An agent account id, `<provider>:<16 hex>` (`agent-account@1.0`). */
 export const ACCOUNT_ID = /^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$/
 /** A pool template's id (resources `templates`). */
 const TEMPLATE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 /** The most roles, and the most Workers they derive (INV-9; `mcp-agent-accounts` lists at most 256 Workers). */
-export const MAX_ROLES = 64
-export const MAX_DERIVED = 256
+const MAX_ROLES = 64
+const MAX_DERIVED = 256
 /** The most runs one account runs at once. */
 export const MAX_CONCURRENT_PER_ACCOUNT = 16
 
 /** The Worker id of an account in a role: `agent:<accountId>/<role>`. */
 export const workerIdOf = (accountId: string, role: string): string => `agent:${accountId}/${role}`
 /** The provider (runtime) an account id names: its namespace. */
-export const providerOfAccount = (accountId: string): string => accountId.slice(0, accountId.indexOf(':'))
+const providerOfAccount =(accountId: string): string => accountId.slice(0, accountId.indexOf(':'))
 
 const fail = (message: string): never => {
   throw new ProviderError('config_error', message)
@@ -144,7 +144,7 @@ export function checkProviders(providers: readonly AgentProviderConfig[]): void 
 }
 
 /** The most kinds of work one Worker takes (`capability-descriptor@1.6` `kinds`). */
-export const MAX_KINDS = 16
+const MAX_KINDS = 16
 
 /**
  * What is wrong with a Worker's or role's `kinds` (ADR-0057), or undefined when nothing is: at least

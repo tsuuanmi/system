@@ -22,7 +22,7 @@ export interface DossierCaller {
 }
 
 /** The kinds a Worker appends; `evidence` is the engine's alone. */
-export const WORKER_KINDS = ['plan', 'progress', 'review', 'response'] as const
+const WORKER_KINDS =['plan', 'progress', 'review', 'response'] as const
 
 /** What `dossier_append` takes, as the engine's `appendToDossier` does. */
 export interface DossierEntryInput {
@@ -48,9 +48,6 @@ export function dossiersOf(ctx: Context): StepDossiers | undefined {
   const service = ctx.get('workflow' as never) as Partial<StepDossiers> | undefined
   return typeof service?.readDossier === 'function' && typeof service.appendToDossier === 'function' ? service as StepDossiers : undefined
 }
-
-/** The tools' names, as the agent and its gate see them (`mcp__system__<name>`). */
-export const DOSSIER_TOOLS = ['dossier_read', 'dossier_append'] as const
 
 /** The bounds the engine holds an entry to (workflow `DOSSIER_LIMITS`), so a call over them is refused before it reaches the engine. */
 const LIMITS = { text: 4000, refs: 16, commits: 16, finding: 200, pageMax: 50 } as const
