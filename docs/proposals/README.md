@@ -136,6 +136,19 @@ accepted/implemented -> superseded
   PROP-0002's `ctx.decisions` seam, one query per decision with the whole distribution recorded,
   in shadow, never widening a gate.
 
+- [PROP-0016: Operating model, a startup inside a group](0016-operating-model.md), **proposed**
+  (2026-10-26, from the operator's vision of that day and the T224 brainstorm). System grows
+  itself inside clear policies, and the operator keeps objectives, budgets, trust boundaries,
+  irreversible actions, and exceptional risk. A maturity model from L0 to L6, each level read from
+  rolling-30-day metrics (lead touches per task, operator decisions per day, unattended
+  completion, time ready-to-landed, stalls, escaped defects, Worker availability, cost per
+  accepted result, quota idle while work is ready). System is between L2 and L3 today, and the
+  target is L4 by 2028 to 2029 with selective L5. It also covers a handbook in five layers, each
+  with an owner, a version, and a check, of which each Worker gets only its slice; trust tiers for
+  a new Worker or model; light, normal, and heavy process by risk; a research function the
+  operator steers by direction and budget; and packaging for several projects. Increments I1 to
+  I5.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
