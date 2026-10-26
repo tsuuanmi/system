@@ -1043,7 +1043,7 @@ login, and interactive, are the real ones):
 
 ### The workspace reads server
 
-> T200b (operator 2026-10-25, option A, on research T204). Implemented in
+> T200b (operator 2026-10-25, option A, on research T204); its git views T223. Implemented in
 > [`agent-runtime-core`](../../packages/agent-runtime-core/README.md) (`src/workspace-reads.ts`) and
 > [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md).
 
@@ -1059,6 +1059,10 @@ repository plugins).
 | `read_file` | `path`; `startLine`, `endLine` (1-based, inclusive) | the lines numbered (`<n>\t<line>`), at most `maxReadBytes`, reading through at most `maxScanBytes`; where it stopped and the line to read on from; a binary file (a NUL in its first 8000 bytes) named, not shown |
 | `list_dir` | `path` (default the workspace) | entries by name, at most `maxEntries`: a directory `name/`, a symlink `name@` (not followed), a file with its size; the count of all, or "at least" that many when it read no further (below) |
 | `search` | `pattern`; `regex` (default a fixed string); `ignoreCase`; `path` (default the workspace) | `<path>:<line>: <text>`, at most `maxMatches`, each line cut at `maxLineChars`; opening at most `maxSearchFiles` files, none over `maxScanBytes`, within `searchTimeoutMs`; a pattern of at most `maxPatternChars`; never a symlink, a binary file, a file with more than one hard link, or a `node_modules` directory below the path |
+| `git_log` | `count` (default 20); `skip`; `commit` (a hex id; default HEAD); `paths`; `fields` (of `hash`, `parents`, `date`, `author`, `email`, `committer`, `committed`, `subject`, `body`; default hash, date, author, subject) | one line per commit, the fields tab-separated, a body indented below; at most `maxLogCount` commits and `maxGitBytes`, a commit cut inside not shown, and the `skip` to read on with |
+| `git_show` | `commit` (a hex id); `stat`, `patch` (each default true); `paths` | the commit's id, parents, author, committer, and whole message, then its stat and patch; at most `maxGitBytes` |
+| `git_diff` | `cached` (the index against HEAD; default the worktree against HEAD), or `from` and `to` (hex ids); `stat` (default the patch); `paths` | the patch or the stat, submodules not entered; at most `maxGitBytes` |
+| `git_status` | `paths` | the branch line, then `XY path` per changed or untracked path (porcelain v1, no rename detection); at most `maxGitBytes` |
 
 - **Bound to one workspace.** The server takes its root as an argument when it starts and keeps it:
   it declares no capability but tools, asks the client nothing (no `roots/list`), and ignores
@@ -1113,8 +1117,48 @@ repository plugins).
   and a bare repository not named `*.git`. The run's read confinement, which hides the operator's
   home and credentials, is the layer that keeps the host's secrets out; these names keep the
   common repository-local ones out of what a read returns.
-- **No program.** Node built-ins only; a search runs in a worker thread of the server, terminated a
-  second past its deadline whatever its regular expression does. No shell, git, or subprocess.
+- **No program but git, run read-only.** Node built-ins only; a search runs in a worker thread of
+  the server, terminated a second past its deadline whatever its regular expression does. No shell;
+  the only subprocess is git, for the git views (below).
+- **Git views** (T223). Each view runs git itself (`spawn`, never a shell) in the workspace with an
+  argv the server builds (`gitArgv`): a commit only as a hex id of 4 to 64 digits (`COMMIT_ID`,
+  given as `<id>^{commit}`), never a ref name, an option, or an expression; each path through the
+  same `realpath` checks as `read_file` (one that only history has is where it would be: its
+  deepest existing ancestor's real path), then after `--` as a literal pathspec (`:(literal)`), at
+  most 64; `git_log`'s fields a fixed set of `--format` placeholders. What can run a program on a
+  read command, from git-config(1), gitattributes(5), and githooks(5), and how each is turned off
+  (`GIT_CONFIG_PINS`, given as `-c`, which no repository file overrides):
+  - `core.fsmonitor`, a hook program `status` and `diff` run to learn what changed:
+    `core.fsmonitor=` (empty is false);
+  - the pager: `--no-pager`, `core.pager=cat`;
+  - `diff.external` and a diff driver's `command`: `diff.external=`, `--no-ext-diff`; a driver's
+    `textconv`: `--no-textconv`; global attributes: `core.attributesFile=/dev/null`, `GIT_ATTR_NOSYSTEM`;
+  - filter drivers: not only on checkout, as first thought: a `clean` or `process` filter runs
+    whenever git reads a worktree file to compare or diff it (`status`, a worktree `diff`), its
+    driver chosen by a `.gitattributes` the worktree may hold. So every driver the repository's
+    configuration names (`git config --get-regexp ^filter\.`, which runs nothing) gets an empty
+    `clean`, `smudge`, and `process`, and `required` false; a name `-c` cannot carry refuses the view;
+  - hooks: none of these commands runs one (`post-index-change` only where the index is written,
+    which `--no-optional-locks` stops); `core.hooksPath=/dev/null` all the same;
+  - `gpg.program` on a signature check: `log.showSignature=false`, `--no-show-signature`;
+  - a partial clone's lazy fetch and the transport programs it would run: `protocol.allow=never`,
+    `GIT_NO_LAZY_FETCH=1`, `core.sshCommand=`, `credential.helper=`, `core.askPass=`;
+  - git run again in a submodule: `--ignore-submodules=all`, `status.submoduleSummary=false`,
+    `submodule.recurse=false`; and `log.mailmap=false`, `gc.auto=0`, `maintenance.auto=false`.
+
+  Its environment is its own (`gitEnvironment`), nothing of the server's but `PATH`:
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`,
+  `GIT_OPTIONAL_LOCKS=0`, the C locale, the repository found only at the workspace's root
+  (`GIT_CEILING_DIRECTORIES` its parent) and its worktree the workspace (`GIT_WORK_TREE`, over any
+  `core.worktree`). Git runs in a process group of its own, killed at `gitTimeoutMs` (one deadline
+  for every git a view runs) or once its output passes `maxGitBytes`. Files named as secrets, as
+  `read_file` refuses them, are left out: `git_show` and `git_diff` list the files the diff touches
+  first and exclude each such one (`:(exclude,literal)`), saying how many; `git_status` counts them
+  and does not show them. A repository whose `.git/config` names an fsmonitor, a clean and a process
+  filter, a textconv, a diff command, and an external diff, each a script leaving a marker, runs
+  them under plain git and none of them through the views (`tests/workspace-reads.spec.ts`). A
+  linked worktree whose git directory lies under a path the run's read confinement hides is not
+  readable by git there: the views answer that git failed.
 - **Bounded in memory** (T213). `list_dir` and `search` read a directory's entries one by one
   (`opendir`) and at most 10 x `maxEntries` of them, so one huge directory costs no more: `list_dir`
   then says "at least N entries" and that it stopped, `search` that it read that directory only so
@@ -1129,7 +1173,8 @@ repository plugins).
   (`config_error`); the server refuses to start on them too.
 - **Confined twice.** Codex registers it for every run, the read-only sandbox's included, as a
   `--config` override (`mcp_servers.workspace`, its only MCP server: the operator's own are
-  refused), with a 30 s start and a tool timeout of the search deadline and 30 s. Codex starts MCP
+  refused), with a 30 s start and a tool timeout of the longer of the search and git deadlines,
+  and 30 s. Codex starts MCP
   servers outside its own sandbox, so the command is `node` and the server's script under a
   bubblewrap of their own, inside the run's read confinement: the host read-only, the workspace
   bound back read-only (whatever the run's sandbox), no network, the workspace its directory. The
@@ -1137,9 +1182,11 @@ repository plugins).
   file of a fresh directory, nested as a run nests it) before it reports `workspaceReads`; on a
   host that refuses, no Codex Worker is admitted.
 - **Gated as reads, where the runtime gives it.** Codex's hook reports the tools as
-  `mcp__workspace__read_file`, `mcp__workspace__list_dir`, and `mcp__workspace__search`; for a run
+  `mcp__workspace__read_file`, `mcp__workspace__list_dir`, `mcp__workspace__search`, and the git
+  views `mcp__workspace__git_log`, `…git_show`, `…git_diff`, `…git_status`; for a run
   whose runtime reports `workspaceReads` (its evidence, passed to the gate as `cleanShells` is),
-  the gate classifies exactly these as `read` (inside the workspace, no `..`, not git's data) and
+  the gate classifies exactly these as `read` (inside the workspace, no `..`, not git's data; for a
+  git view every path of `paths` so, and every commit a hex id) and
   refuses any other tool name of the server; under any other runtime it refuses every
   `mcp__workspace__…` tool, since no server of System's started there (`unclassified-tool`;
   [approvals](approvals.md#how-a-call-is-classified)). Each allowed call accounts for one

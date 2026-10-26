@@ -178,13 +178,24 @@ Capability **seam definition** for agent runtimes
   `*.git` too), secret-named files (`SECRET_NAMES`, `SECRET_PATHS`), files git
   ignores named like secrets (`SECRET_LIKE`), and files with more than one hard
   link outside `node_modules` are unreadable (T213), and each open is checked
-  again through `/proc/self/fd`; MCP Roots are ignored. Its bounds (`WorkspaceReadBounds`, `WORKSPACE_READ_BOUNDS`
+  again through `/proc/self/fd`; MCP Roots are ignored. Four read-only git
+  views (T223, `WORKSPACE_GIT_TOOLS`): `git_log`, `git_show`, `git_diff`,
+  `git_status`, each git run without a shell with an argv the server builds
+  (`gitArgv`: commits only as hex ids, `COMMIT_ID`; paths through the same
+  `realpath` checks, then literal pathspecs after `--`; `GIT_LOG_FIELDS` a
+  fixed set), every setting that could run a program pinned off
+  (`GIT_CONFIG_PINS`, every filter driver the repository names, `--no-textconv`,
+  `--no-ext-diff`) in an environment of its own (`gitEnvironment`), bounded by
+  `maxLogCount`, `maxGitBytes`, and `gitTimeoutMs`; files named as secrets are
+  left out of every stat, patch, and status. Its bounds (`WorkspaceReadBounds`, `WORKSPACE_READ_BOUNDS`
   with ranges, `workspaceReadBounds`, `workspaceReadBoundsProblem`) are its
   arguments (`workspaceReadArgs`, `parseWorkspaceReadArgs`) and travel as
   `RunSpec.workspaceReads`; a runtime that gives its agent the server reports
   `RuntimeEvidence.workspaceReads`. `tests/workspace-reads.spec.ts` covers each
-  bound, every refusal, the protocol, its own process, and the server under real
-  bubblewrap with the workspace read-only.
+  bound, every refusal, the protocol, its own process, the git views (a
+  repository whose configuration names an fsmonitor, a filter, a textconv, and
+  an external diff runs none of them), and the server under real bubblewrap
+  with the workspace read-only.
 - Conformance:
   - `conformance/agent-runtimes.ts` has `agentRuntimesConformance` for the
     registry;

@@ -13,7 +13,7 @@ import { lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import { type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
+import { COMMIT_ID, type ToolCall, type ToolGate, type ToolVerdict, WORKSPACE_GIT_TOOLS, WORKSPACE_READS_SERVER, WORKSPACE_READ_TOOLS } from '@tsuuanmi/system-agent-runtime-core'
 import { type ActionClass, type ApprovalRequest, type Approvals, type ArtifactRef, type AutonomyVerdict, type Check, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
@@ -76,8 +76,8 @@ export interface ToolAction {
  * with `command` only, `apply_patch` with the patch as `command`, `view_image`); and the Antigravity
  * CLI's file tools as its PreToolUse hook reports them (`read_file`, `write_file`, `edit_file`,
  * each naming its file in `Path`). Its `run_command` is not classified, so it is denied: no
- * confinement of its commands is proven. And the three tools of System's own workspace reads
- * server, as an MCP client names them (`mcp__workspace__read_file`, …, T200b).
+ * confinement of its commands is proven. And the tools of System's own workspace reads server, as
+ * an MCP client names them (`mcp__workspace__read_file`, …, T200b; its git views, T223).
  */
 /** What a classification knows of the run's runtime. */
 export interface ClassifyOptions {
@@ -89,15 +89,16 @@ export interface ClassifyOptions {
   shellReads?: boolean | undefined
   /**
    * The runtime gives the run's agent System's own workspace reads server
-   * (`RuntimeEvidence.workspaceReads`, T200b): only then are its three tools
-   * (`mcp__workspace__read_file`, `…list_dir`, `…search`) a `read`. Absent: every tool of that
-   * name is refused, since no server of System's started under it.
+   * (`RuntimeEvidence.workspaceReads`, T200b): only then are its tools
+   * (`mcp__workspace__read_file`, `…list_dir`, `…search`, and the git views `…git_log`,
+   * `…git_show`, `…git_diff`, `…git_status`, T223) a `read`. Absent: every tool of that name is
+   * refused, since no server of System's started under it.
    */
   workspaceReads?: boolean | undefined
   /**
    * The reading tools the run's agent has, by name (T222): its runtime's own (`Read`, `Grep`,
    * `Glob`; `RuntimeEvidence.readTools`, as the Worker's tools list keeps them) and the workspace
-   * reads server's (`read_file`, `list_dir`, `search`, with `workspaceReads`). A shell inspection
+   * reads server's (`read_file`, `list_dir`, `search`, and its git views, with `workspaceReads`). A shell inspection
    * command one of them serves is refused at once, naming it ({@link inspectionRefusal}). Absent or
    * empty: none, and such a command stays a `command`.
    */
@@ -108,10 +109,14 @@ export interface ClassifyOptions {
  * The tools of the workspace reads server (agent-runtime-core, T200b) as an MCP client names them
  * (`mcp__<server>__<tool>`, as Codex's hook reports an MCP tool): System's own read-only server,
  * started under the run's confinement with its root fixed to the run's workspace. They run no
- * program, so they are reads. No other tool of that server is classified.
+ * program but git, which the server runs itself with an argv it builds and every setting that
+ * could run a program pinned off (T223), so they are reads. No other tool of that server is classified.
  */
 const SERVER_PREFIX = `mcp__${WORKSPACE_READS_SERVER}__`
 const SERVER_TOOLS: readonly string[] = WORKSPACE_READ_TOOLS.map((tool) => `${SERVER_PREFIX}${tool}`)
+/** The server's git views (T223): their paths (`paths`, a list) and their commits (hex ids only). */
+const GIT_VIEWS: readonly string[] = WORKSPACE_GIT_TOOLS.map((tool) => `${SERVER_PREFIX}${tool}`)
+const GIT_COMMIT_FIELDS = ['commit', 'from', 'to'] as const
 
 /** Tools that only read, and the input field that names where; a field that may be absent reads the workspace. */
 const READS: Record<string, { field: string; required: boolean }> = {
@@ -173,6 +178,10 @@ const FIELDS: Record<string, Record<string, FieldType>> = {
   [`${SERVER_PREFIX}read_file`]: { path: 'string', startLine: 'number', endLine: 'number' },
   [`${SERVER_PREFIX}list_dir`]: { path: 'string' },
   [`${SERVER_PREFIX}search`]: { pattern: 'string', regex: 'boolean', ignoreCase: 'boolean', path: 'string' },
+  [`${SERVER_PREFIX}git_log`]: { count: 'number', skip: 'number', commit: 'string', paths: 'strings', fields: 'strings' },
+  [`${SERVER_PREFIX}git_show`]: { commit: 'string', stat: 'boolean', patch: 'boolean', paths: 'strings' },
+  [`${SERVER_PREFIX}git_diff`]: { from: 'string', to: 'string', cached: 'boolean', stat: 'boolean', paths: 'strings' },
+  [`${SERVER_PREFIX}git_status`]: { paths: 'strings' },
 }
 const EDIT_FIELDS: Record<string, FieldType> = { old_string: 'string', new_string: 'string', replace_all: 'boolean' }
 
@@ -460,7 +469,7 @@ function inspectionOf(argv: readonly string[]): (typeof INSPECTIONS)[number] | u
 
 /**
  * The reading tools a run's agent has (T222), from its runtime's evidence and the Worker's tools
- * list: the workspace reads server's three where the runtime gives it (`workspaceReads`), and the
+ * list: the workspace reads server's (its git views among them, T223) where the runtime gives it (`workspaceReads`), and the
  * runtime's own (`readTools`) that the tools list keeps (an absent or empty list keeps every one,
  * as the runtime then gives its default set). No evidence: none.
  */
@@ -509,8 +518,8 @@ export interface ToolsNoteOptions {
   sandbox?: 'read-only' | 'workspace-write' | undefined
   /**
    * The runtime gives the agent the workspace reads server (T200b): its reading tools are the
-   * server's read_file, list_dir, and search, and it is told to read with them, never with a
-   * shell. Absent: it gives none.
+   * server's read_file, list_dir, and search, and its git views (T223), and it is told to read
+   * with them, never with a shell. Absent: it gives none.
    */
   workspaceReads?: boolean | undefined
   /**
@@ -548,7 +557,7 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
   const workspaceReads = options.workspaceReads === true
   const lines: string[] = []
   if (unasked('read')) {
-    lines.push(`- Reading tools (${workspaceReads ? 'the workspace server\'s read_file, list_dir, and search' : 'Read, Glob, Grep, LS'}) on paths inside your workspace ${ws}.`)
+    lines.push(`- Reading tools (${workspaceReads ? 'the workspace server\'s read_file, list_dir, search, git_log, git_show, git_diff, and git_status' : 'Read, Glob, Grep, LS'}) on paths inside your workspace ${ws}.`)
     if (options.shellReads === true) {
       lines.push(`- Bash read-only inspection, every path absolute and inside ${ws} (a relative path, or a form that names none, asks): cat, head, tail, wc, ls, stat, file, sed -n <a>,<b>p, rg, grep, and find without actions; and echo, pwd, true, false with no argument but echo's.`)
     }
@@ -594,7 +603,7 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     'Tools (your tool gate and the autonomy policy now):',
     `- Workspace: ${ws}. A tool's path outside it is denied, and so is a write in its .git.`,
     ...(workspaceReads
-      ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Each path is relative to the workspace, or absolute inside it, with no "..".']
+      ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Read its git history the same way, never with git in a shell: git_log (count, skip, commit, paths), git_show (commit; stat, patch), git_diff (the worktree, or cached: the index, against HEAD; or from and to), git_status; a commit is always its hex id (from git_log), never a branch name. Each path is relative to the workspace, or absolute inside it, with no "..".']
       : []),
     ...(readOnly ? ['- Your sandbox is read-only: no tool call writes a file (Write, Edit, and any command that changes one fail), so read, and answer with what you found.'] : []),
     'Tool calls that run without asking the operator:',
@@ -675,6 +684,29 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
 }
 
 /**
+ * One of the workspace reads server's git views (T223), its fields already known whole: `read` when
+ * every commit it names (`commit`, `from`, `to`) is a hex id and every path of `paths` is inside the
+ * workspace (as written and on disk; a path only history has is where it would be), holds no `..`
+ * segment, and is not git's own data; the server refuses the rest itself, and so does the gate.
+ */
+function classifyGitView(tool: string, input: Record<string, unknown>, workspace: string): ToolAction | Refusal {
+  for (const field of GIT_COMMIT_FIELDS) {
+    const value = input[field]
+    if (value !== undefined && (typeof value !== 'string' || !COMMIT_ID.test(value))) {
+      return { refused: `${tool} names ${field} ${JSON.stringify(String(value).slice(0, 100))}, which is not a commit's hex id: the workspace reads server takes no other`, reason: 'invalid-input' }
+    }
+  }
+  const paths = (input.paths as string[] | undefined) ?? []
+  for (const path of paths) {
+    if (path === '' || !within(workspace, path)) return { refused: `${tool} names ${path === '' ? 'an empty path' : path}, which is not inside the workspace`, reason: path === '' ? 'invalid-input' : 'outside-workspace' }
+    if (path.split(/[\\/]/).includes('..')) return { refused: `${tool} names ${path}, which climbs with "..": the workspace reads server never reads such a path`, reason: 'outside-workspace' }
+    if (gitData(workspace, path)) return { refused: `${tool} names ${path}, which is git's own data (.git): the workspace reads server never reads it`, reason: 'git-data' }
+  }
+  const where = paths.length ? paths.join(' ') : 'the workspace'
+  return { class: 'read', summary: clamp(`${tool} ${where}`), consequences: `Reads the git history and status of the run's workspace (${clamp(where)}), without a shell. ${ANSWER}` }
+}
+
+/**
  * Classify one tool call, conservatively; `{ refused }` for a call the gate does not classify,
  * which is denied without asking anyone. Every classified tool's input may carry only the fields
  * its SDK type declares, each of its type (an unknown field, or a wrong type, is refused), and a
@@ -685,9 +717,11 @@ function patchFiles(patch: string): Array<{ op: string; path: string }> | { refu
  * - the workspace reads server's `mcp__workspace__read_file`, `mcp__workspace__list_dir`, and
  *   `mcp__workspace__search` (T200b): `read`, when the `path` they name is inside the workspace
  *   (absent or empty for `list_dir` and `search`: the workspace), holds no `..` segment, and is not
- *   git's own data; they run no program. Only for a run whose runtime gives its agent that server
- *   (`options.workspaceReads`, its evidence); otherwise, and for any other tool of that server
- *   (`mcp__workspace__…`), refused;
+ *   git's own data; they run no program. Its git views `mcp__workspace__git_log`, `…git_show`,
+ *   `…git_diff`, `…git_status` (T223): `read`, when every commit they name is a hex id and every
+ *   path of their `paths` passes the same checks ({@link classifyGitView}). Only for a run whose
+ *   runtime gives its agent that server (`options.workspaceReads`, its evidence); otherwise, and for
+ *   any other tool of that server (`mcp__workspace__…`), refused;
  * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `write_file`, `edit_file`: `workspace-write`, for
  *   a file inside the workspace; outside it is refused (the runtime refuses it too), and so is a
  *   file in git's own data (a `.git` entry in its path, as written or on disk);
@@ -746,6 +780,7 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
   if (!fields) return { refused: `${tool} is not a tool the gate classifies`, reason: 'unclassified-tool' }
   const unknown = unknownField(input, fields)
   if (unknown) return { refused: `${tool} ${unknown}`, reason: 'unsupported-field' }
+  if (GIT_VIEWS.includes(tool)) return classifyGitView(tool, input, workspace)
   const read = Object.hasOwn(READS, tool) ? READS[tool] : undefined
   if (read) {
     if (tool === 'Glob') {

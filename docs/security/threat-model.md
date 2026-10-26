@@ -346,14 +346,16 @@
     - so a Codex Worker reads without a shell (T200b): every run registers
       System's own workspace reads server (`agent-runtime-core`,
       [the workspace reads server](../design/agent-runtimes.md#the-workspace-reads-server)),
-      whose three tools (`read_file`, `list_dir`, `search`) the gate classifies
+      whose tools (`read_file`, `list_dir`, `search`, and the git views of
+      T223 below) the gate classifies
       as `read` by their MCP names (`mcp__workspace__…`), only for a run whose
       runtime reports that it gives its agent that server (`workspaceReads`
       evidence; elsewhere every `mcp__workspace__…` tool is denied, so a
       server of that name System did not start is never taken for reads); any
-      other tool name of that server is denied. They are reads because they run no program: the
+      other tool name of that server is denied. They are reads because they run no program but
+      git, run read-only as below: the
       server is Node built-ins only, searches in a thread of its own (killed at
-      its deadline), and runs no shell, git, or subprocess. Codex starts it
+      its deadline), and runs no shell, and no subprocess but git. Codex starts it
       outside its own sandbox, so the server confines itself: a bubblewrap of
       its own nested in the run's read confinement, the host and the workspace
       read-only, no network, its root fixed by its arguments (MCP Roots are
@@ -389,6 +391,48 @@
       rests on the runtime's item accounting, not on the probe's turn, which
       calls no MCP tool (a hook that did not run stops the run, after one
       read); and what a read returns reaches the model, as any read does;
+    - so a Worker reads git history without a shell (T223): the same server's
+      `git_log`, `git_show`, `git_diff`, and `git_status`, which the gate
+      classifies as `read` only as it does the server's other tools, and only
+      when every commit they name is a hex id and every path is inside the
+      workspace and not git's data. The threat is a git read command running
+      a program its repository's configuration names (`.git/config` is not
+      the agent's to write, but a repository can arrive so configured). Per
+      git-config(1), gitattributes(5), and githooks(5), on `log`, `show`,
+      `diff`, and `status` that can be: `core.fsmonitor` (a hook run to ask
+      what changed), the pager, `diff.external` and a diff driver's
+      `command`, a driver's `textconv`, `gpg.program` (`log.showSignature`), a
+      transport's programs on a partial clone's lazy fetch (`core.sshCommand`,
+      credential helpers), a submodule's own git, and filter drivers:
+      contrary to "filters only on checkout", a `clean` (or `process`) filter
+      runs whenever git reads a worktree file to compare or diff it, so on
+      `status` and a worktree `diff`. Hooks are not run by these commands
+      (`post-index-change` only when the index is written). The server runs
+      git with an argv it builds (no shell; commits only as hex ids; paths
+      checked as for `read_file`, then given after `--` as literal pathspecs)
+      and turns each of these off: `-c core.fsmonitor= -c core.pager=cat
+      -c core.hooksPath=/dev/null -c diff.external= -c core.attributesFile=/dev/null`,
+      `log.showSignature=false`, `protocol.allow=never`, the submodule
+      settings, `--no-pager`, `--no-optional-locks`, `--no-ext-diff`,
+      `--no-textconv`, `--no-show-signature`, `--ignore-submodules=all`, and
+      every filter driver the repository's configuration names (read with
+      `git config`, which runs nothing) with an empty `clean`, `smudge`, and
+      `process` and `required` false. Its environment is its own:
+      `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+      `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, the repository found
+      only at the workspace's root, its worktree the workspace (over any
+      `core.worktree`). Each view is bounded in bytes (`maxGitBytes`), commits
+      (`maxLogCount`), and time (`gitTimeoutMs`, the whole process group
+      killed past it), and files named as secrets are left out of every stat,
+      patch, and status. A test repository whose `.git/config` names an
+      fsmonitor, a clean and a process filter, a textconv, a diff command, and
+      an external diff, each a script leaving a marker, is shown to run them
+      under plain git and none of them through the views. Not covered: a
+      program-running setting a later git adds; a commit message or file
+      content, which reaches the model as any read does; and a linked
+      worktree whose git directory lies under a path the run's read
+      confinement hides: the server sees none of it, so there the views
+      answer that git failed (no runtime binds that directory back yet);
     - a process inside Codex's sandbox that could read the socket's path cannot
       present the key, and the gate only answers: no call runs because of it;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
