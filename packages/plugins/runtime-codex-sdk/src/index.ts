@@ -68,7 +68,7 @@ import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
   type RuntimeEvidence, type ToolCall, WORKSPACE_READS_SCRIPT, type WorkspaceReadBounds, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement,
-  readHomeJson, toolSandboxAllowances, withMetering, withRunReport, workspaceReadArgs, workspaceReadBounds, writeLauncher,
+  readHomeJson, tailOf, toolSandboxAllowances, withMetering, withRunReport, workspaceReadArgs, workspaceReadBounds, writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
@@ -345,6 +345,20 @@ export class CodexRuntime implements AgentRuntimeProvider {
         else if (event.type === 'error') failure = event.message
         else if (event.type === 'item.started' || event.type === 'item.updated' || event.type === 'item.completed') {
           if (event.type === 'item.completed' && event.item.type === 'agent_message') text = event.item.text
+          // A command that ended is reported to the run's source with the exit code Codex reports (T284).
+          if (event.type === 'item.completed' && event.item.type === 'command_execution' && spec.onToolResult) {
+            const { command, exit_code: exitCode, aggregated_output: output, status } = event.item
+            // Ended only with an exit code Codex reports: an item still in progress, or one with none, is no command that ran to its end.
+            const ended = status !== 'in_progress' && typeof exitCode === 'number'
+            try {
+              spec.onToolResult({
+                tool: 'Bash', input: { command }, callId: event.item.id, isError: status === 'failed' || (ended && exitCode !== 0),
+                ...(ended ? { exitCode } : { unfinished: true }), tail: tailOf(output),
+              })
+            } catch {
+              // Observing never fails the run.
+            }
+          }
           // A tool's item that no allowed call accounts for ran past the gate: its hook failed or never ran.
           if (channel && !seen.has(event.item.id)) {
             seen.add(event.item.id)

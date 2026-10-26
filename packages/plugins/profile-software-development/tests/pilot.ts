@@ -73,6 +73,10 @@ export interface Script {
   evidence?: boolean
   /** The text of that evidence entry (default {@link EVIDENCE}): what an author that pastes no real output would write instead. */
   evidenceText?: string
+  /** Whether the developer runs the repository's tests, which its runtime reports with the exit code and output (default false; T284). */
+  ran?: boolean
+  /** Whether the developer runs them only when the gate refused its evidence and its session continues (default false; T284). */
+  ranAfterRefusal?: boolean
   /** Whether the runtime gives its runs the dossier tools, as host tools (default true). */
   hostTools?: boolean
   /** Whether the runtime proves its commands confined (default true). */
@@ -157,6 +161,11 @@ export class PilotAgent implements AgentRuntimeProvider {
     }
     /** Append the checks' output to the task's dossier, as a writing step must before it ends (T267). */
     const verify = async (): Promise<void> => {
+      // A command it runs, which its runtime reports to the run's source with its exit code and output (T284).
+      const refused = spec.prompt.includes('ended without showing the checks it ran')
+      if (this.script.ran || (this.script.ranAfterRefusal && refused)) {
+        if (await call('Bash', { command: TESTS })) spec.onToolResult?.({ tool: 'Bash', input: { command: TESTS }, isError: false, exitCode: 0, tail: MEASURED })
+      }
       if (this.script.evidence === false || !spec.hostTools?.length) return
       const tool = spec.hostTools.find((t) => t.name === 'dossier_append')!
       const entry = { kind: 'evidence', text: this.script.evidenceText ?? EVIDENCE }

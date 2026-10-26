@@ -202,10 +202,11 @@ function reopen(e: Engine, node: NodeRow, request: ApprovalRequest, call: { exec
  * under the run's lease): `READY` with instructions that end with `text`, so its input hash, its
  * execution key, and its brief are new. Its next execution resumes the native session.
  */
-function reopenNode(e: Engine, node: NodeRow, decision: ArtifactRef, text: string, lease: () => Lease): void {
+function reopenNode(e: Engine, node: NodeRow, decision: ArtifactRef, text: string, lease: () => Lease, alone = false): void {
   const spec = specOf(node)
   const record = JSON.parse(node.record) as NodeRecord
-  const parts = appended(node.brief_parts ? JSON.parse(node.brief_parts) as Instructions : literal(node.prompt!), text)
+  // `alone`: the text is the whole next message of the session (T284), not the instructions with it appended.
+  const parts = alone ? literal(text.trim()) : appended(node.brief_parts ? JSON.parse(node.brief_parts) as Instructions : literal(node.prompt!), text)
   const prompt = instructionsText(e, parts)
   const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: record.inputReceipt?.bundle ?? [] }))
   e.writeNode(node, { state: 'READY', execution_id: null, worker: null, not_before: null, error: null, excluded: null, approval_request: null, prompt, brief_parts: JSON.stringify(parts) }, (r) => {
@@ -213,6 +214,15 @@ function reopenNode(e: Engine, node: NodeRow, decision: ArtifactRef, text: strin
     delete next.execution
     return next
   }, lease)
+}
+
+/**
+ * A step whose evidence the gate refused, continued once on its own session (T284): in the caller's
+ * transaction, under the run's lease, the node `READY` as a new attempt whose instructions are the
+ * refusal's message alone, the next message of its session, under the gate's `decision`.
+ */
+export function continueWithMessage(e: Engine, node: NodeRow, decision: ArtifactRef, message: string, lease: () => Lease): void {
+  reopenNode(e, node, decision, message, lease, true)
 }
 
 // --- a board task's run: the step waits on the request ---

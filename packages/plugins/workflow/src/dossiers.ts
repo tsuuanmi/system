@@ -171,6 +171,145 @@ const EXIT_CODE = /\bexit(?:ed)?(?:\s+(?:code|status))?\s*[:=]?\s*-?\d+\b/gi
 /** A command named in prose: `Command: corepack pnpm lint`. */
 const COMMAND_LINE = /^command\s*:/i
 
+/** A command a step's Worker ran, as its runtime reported it to the System (T284). */
+export interface CommandRecord {
+  command: string
+  /** The exit code, where the runtime reports one (Codex), or its error text names one (Claude Code's failure). */
+  exitCode?: number | undefined
+  /** The tool reported an error. */
+  isError: boolean
+  /**
+   * The runtime reported no end of it (a background launch, which answers once the command starts; an
+   * interrupted command): it carries no exit code, and never counts as a check that ran.
+   */
+  unfinished?: true | undefined
+  /** The last characters of its output. */
+  tail: string
+}
+
+/**
+ * The records the System keeps for one step (INV-9), in two bounded lists, so the bound never drops
+ * the evidence of a check: the commands that run a check (`checks`) apart from every other (`others`).
+ * `seq` keeps the order they ran in; `dropped` counts what each bound let go.
+ */
+export interface StepCommands {
+  checks: Array<CommandRecord & { seq: number }>
+  others: Array<CommandRecord & { seq: number }>
+  dropped: { checks: number; others: number }
+  next: number
+}
+
+/**
+ * The bounds (INV-9): check commands kept per step (when over, an older run of a check that a later
+ * finished run still shows goes first, so each check that ran stays shown); other commands kept per
+ * step (the oldest goes first); steps kept; characters of a check's output tail, of a check's command,
+ * and of an other command, in the dossier (a command alone: its exit code always follows it whole).
+ */
+export const RECORDED = { checks: 15, others: 50, steps: 500, tail: 300, command: 200, otherLine: 120 } as const
+
+/** The command a check is, by its words: `corepack pnpm lint`, `pnpm test:affected`, `tsc --noEmit`. */
+const CHECK_COMMAND: Partial<Record<BriefCheck, RegExp>> = {
+  tests: /\b(?:tests?|vitest|jest|pytest|mocha)\b/i,
+  typecheck: /\b(?:typecheck|tsc|mypy|pyright)\b/i,
+  lint: /\b(?:lint|eslint|oxlint|ruff)\b/i,
+}
+
+/** The checks a command runs, by its words. */
+const checksRun = (command: string): BriefCheck[] => COMMAND_CHECKS.filter((c) => CHECK_COMMAND[c]?.test(command))
+
+/** Whether a record shows `check` ran: a command for it that ran to its end. */
+const shows = (r: CommandRecord, check: BriefCheck): boolean => !r.unfinished && !!CHECK_COMMAND[check]?.test(r.command)
+
+/**
+ * Keep `record` in a step's records, within the bounds: a check command among the checks, any other
+ * among the others. Over the checks' bound, the oldest record goes whose every check another kept
+ * record still shows (an unfinished one shows none, so it goes first); the others drop their oldest.
+ */
+export function keepCommand(step: StepCommands, record: CommandRecord): void {
+  const kept = { ...record, seq: step.next++ }
+  if (!checksRun(record.command).length) {
+    step.others.push(kept)
+    while (step.others.length > RECORDED.others) {
+      step.others.shift()
+      step.dropped.others++
+    }
+    return
+  }
+  step.checks.push(kept)
+  while (step.checks.length > RECORDED.checks) {
+    const spare = step.checks.findIndex((r, i) => checksRun(r.command).every((c) => r.unfinished || step.checks.some((o, j) => j !== i && shows(o, c))))
+    step.checks.splice(spare === -1 ? 0 : spare, 1)
+    step.dropped.checks++
+  }
+}
+
+/** A step's records in the order they ran. */
+export const commandsIn = (step: StepCommands | undefined): CommandRecord[] =>
+  step ? [...step.checks, ...step.others].sort((a, b) => a.seq - b.seq).map(({ seq: _seq, ...r }) => r) : []
+
+/** What a record's end was, as reported: its exit code, or why it has none. */
+function endOf(c: CommandRecord): string {
+  if (c.unfinished) return 'no end reported (launched in the background, or interrupted): no exit code, so it shows no check'
+  return c.exitCode !== undefined ? `exit ${c.exitCode}` : c.isError ? 'the tool reported an error (no exit code)' : 'the tool reported no error (no exit code)'
+}
+
+/**
+ * The step's recorded commands as the System's dossier entries list them (T284), each at most
+ * {@link DOSSIER_LIMITS}`.text` characters, so the dossier's bound never cuts one: every kept command
+ * that runs a check, first, with its end (exit code) and the tail of its output; then every other kept
+ * command with its end; and what the bounds let go, counted. Split into parts at record boundaries.
+ */
+export function commandsText(step: StepCommands): string[] {
+  const checks = [...step.checks].sort((a, b) => a.seq - b.seq)
+  const others = [...step.others].sort((a, b) => a.seq - b.seq)
+  const one = (s: string): string => s.replace(/\s+/g, ' ').trim()
+  const blocks = [
+    ...checks.map((c) => [
+      `$ ${clampText(one(c.command), RECORDED.command)}`, endOf(c),
+      ...(c.tail.trim() ? [clampText(c.tail.trim().split('\n').slice(-6).join('\n'), RECORDED.tail)] : []),
+    ].join('\n')),
+    ...(others.length ? [`Other commands it ran (${others.length}${step.dropped.others ? `; ${step.dropped.others} earlier not kept` : ''}):`] : []),
+    // The command alone is cut to its bound; its end (the exit code, or why it has none) always follows whole.
+    ...others.map((c) => `$ ${clampText(one(c.command), RECORDED.otherLine)} — ${endOf(c)}`),
+  ]
+  const head = (part: number, parts: number): string =>
+    `Commands the step's Worker ran, as the System recorded them from its runtime: ${checks.length} that run a check${step.dropped.checks ? ` (${step.dropped.checks} earlier runs of a check another kept run still shows, not kept)` : ''}, ${others.length + step.dropped.others} other${parts > 1 ? ` (part ${part} of ${parts})` : ''}:`
+  // Parts within the entry's bound: the head names its part, so room is kept for the longest head.
+  const room = DOSSIER_LIMITS.text - head(99, 99).length - 1
+  const parts: string[][] = [[]]
+  let used = 0
+  for (const block of blocks) {
+    const size = block.length + 1
+    if (used + size > room && parts.at(-1)!.length) {
+      parts.push([])
+      used = 0
+    }
+    parts.at(-1)!.push(block)
+    used += size
+  }
+  return parts.map((p, i) => [head(i + 1, parts.length), ...p].join('\n'))
+}
+
+/**
+ * Why the evidence a writing step shows does not show its checks' output (T284, T267), or undefined
+ * when it does. The commands the System recorded itself (`commands`: each with its exit code and the
+ * tail of its output, as the runtime reported them) come first: a required check counts as shown when
+ * a recorded command for it ran to its end, whatever the Worker wrote: one its runtime reported no
+ * end of (a background launch, an interrupted command) shows nothing. A check no recorded command
+ * shows falls back to the Worker's own entries (`texts`, optional prose), read as {@link proseProblem} reads them.
+ */
+export function evidenceProblem(texts: readonly string[], checks: readonly BriefCheck[], commands: readonly CommandRecord[] = []): string | undefined {
+  if (!commands.length) return proseProblem(texts, checks)
+  const required = COMMAND_CHECKS.filter((c) => checks.includes(c))
+  const missing = required.filter((c) => !commands.some((r) => shows(r, c)))
+  if (!missing.length) return undefined
+  const prose = proseProblem(texts, missing)
+  if (!prose) return undefined
+  const launched = missing.filter((c) => commands.some((r) => r.unfinished && CHECK_COMMAND[c]?.test(r.command)))
+  const unended = launched.length ? `; the command for ${launched.join(', ')} was launched in the background or interrupted, so its end was never reported: run it in the foreground, to its end` : ''
+  return `no command the System recorded runs the check${missing.length > 1 ? 's' : ''} ${missing.join(', ')} the task's criteria require to its end (it recorded ${commands.length} command${commands.length === 1 ? '' : 's'})${unended}, and ${prose}`
+}
+
 /**
  * Why the evidence a writing step appended does not show its checks' output (T267), or undefined when
  * it does: some evidence; at least one command it ran (a `$ …` line, a `Command:` line, or a reported
@@ -180,7 +319,7 @@ const COMMAND_LINE = /^command\s*:/i
  * Worker that says so must not be refused for its honesty. A shape the engine can read, never proof
  * the commands ran: the run's required checks run again on the exact result at acceptance (ADR-0063).
  */
-export function evidenceProblem(texts: readonly string[], checks: readonly BriefCheck[]): string | undefined {
+function proseProblem(texts: readonly string[], checks: readonly BriefCheck[]): string | undefined {
   const text = texts.join('\n').trim()
   if (!text) return 'the step\'s dossier holds no evidence entry by its Worker in this attempt'
   const required = COMMAND_CHECKS.filter((c) => checks.includes(c))
@@ -265,6 +404,9 @@ export function renderDossier(
 }
 
 export class TaskDossiers {
+  /** The commands the System recorded for each running step (T284), by run and step. */
+  private readonly recorded = new Map<string, StepCommands>()
+
   constructor(private readonly e: Engine) {}
 
   /**
@@ -362,21 +504,74 @@ export class TaskDossiers {
     return rows.map((r) => (this.e.ctx.artifacts.get(r.entry)?.body as DossierEntry | undefined)?.text ?? '')
   }
 
+  /** The commands the System recorded for a step (T284), oldest first. */
+  commandsOf(node: Pick<NodeRow, 'run_id' | 'node_id'>): CommandRecord[] {
+    return commandsIn(this.recorded.get(`${node.run_id}\0${node.node_id}`))
+  }
+
   /**
-   * The gate at the end of a `verifies` step of a board task's run (T267): it passes (undefined) when
-   * the step's author pasted the output of the checks the task requires into the dossier as `evidence`,
-   * in the shape {@link evidenceProblem} reads; otherwise the step is refused, with a `gate` decision
-   * (INV-13) that says what is missing. A run that serves no board task has no dossier, so it asks
-   * nothing. A Worker with no dossier tool never gets here: the step requires the `dossier` capability
-   * at admission ({@link DOSSIER_CAPABILITY}).
+   * Keep a command a step's Worker ran, as its runtime reported it (T284): the command, its exit code
+   * where the runtime reports one (none for one it reported no end of), whether the tool reported an
+   * error, and a bounded tail of its output. The caller is the step's running execution (never named
+   * by the agent), as for {@link appendByWorker}; only a step that shows evidence keeps them. In
+   * memory, bounded ({@link keepCommand}: the bound never drops the last record that shows a check):
+   * a step's records end with the step (its gate), and a restart that loses them leaves the Worker to
+   * run the checks again, once, as any refusal does.
+   */
+  recordCommand(caller: DossierCaller, report: CommandRecord): void {
+    const { node } = this.running(caller, 'nothing was recorded')
+    if (!(JSON.parse(node.spec) as ResolvedNode).showsEvidence) return
+    const key = `${node.run_id}\0${node.node_id}`
+    const step = this.recorded.get(key) ?? { checks: [], others: [], dropped: { checks: 0, others: 0 }, next: 0 }
+    const unfinished = report.unfinished === true
+    keepCommand(step, {
+      command: report.command.slice(0, 500), isError: report.isError,
+      ...(unfinished ? { unfinished: true as const } : report.exitCode !== undefined ? { exitCode: report.exitCode } : {}), tail: report.tail.slice(-1000),
+    })
+    this.recorded.delete(key)
+    this.recorded.set(key, step)
+    if (this.recorded.size > RECORDED.steps) this.recorded.delete(this.recorded.keys().next().value as string)
+  }
+
+  /** How many times the gate refused this step's evidence (T284): its `workflow.evidence` decisions that refused. */
+  refusals(run: RunRow, node: NodeRow): number {
+    return this.e.ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId: run.run_id, nodeId: node.node_id, outcome: 'refuse', limit: 1000 })
+      .filter((a) => (a.body as { decider?: { id?: string } }).decider?.id === 'workflow.evidence').length
+  }
+
+  /**
+   * The commands the System recorded for the step, as `evidence` entries by the System (T284), so a
+   * reviewer reads real commands and exit codes: every kept check command first, in as many entries
+   * as the entry's bound needs ({@link commandsText}), so none is cut; nothing when none was
+   * recorded. The step's records end with it.
+   */
+  settleCommands(run: RunRow, node: NodeRow): void {
+    const key = `${node.run_id}\0${node.node_id}`
+    const step = this.recorded.get(key)
+    this.recorded.delete(key)
+    if (!step || (!step.checks.length && !step.others.length)) return
+    for (const text of commandsText(step)) this.safely(`step ${node.node_id}'s recorded commands`, () => this.evidence(run.run_id, text, []))
+  }
+
+  /**
+   * The gate at the end of a `showsEvidence` step of a board task's run (T267, T284): it passes
+   * (undefined) when a command the System recorded runs each check the task requires, whatever the
+   * Worker wrote ({@link evidenceProblem}), or, for a check none ran, when the Worker's own evidence
+   * says why; the commands recorded are then written to the dossier with their exit codes. Otherwise
+   * the step is refused, with a `gate` decision (INV-13) that says what is missing and how to show
+   * it. A run that serves no board task has no dossier, so it asks nothing. A Worker with no dossier
+   * tool never gets here: the step requires the `dossier` capability at admission ({@link DOSSIER_CAPABILITY}).
    */
   evidenceGate(run: RunRow, node: NodeRow): { message: string; decision: ArtifactRef } | undefined {
     const frame = this.e.tasks.frame(run.run_id)
     if (!frame) return undefined
     const checks = [...new Set(frame.acceptance.map((a) => a.check).filter((c): c is BriefCheck => c !== undefined))]
-    const why = evidenceProblem(this.evidenceOf(node), checks)
-    if (!why) return undefined
-    const message = `step ${node.node_id} ended without the output of the checks its author ran in the task's dossier (${why}): run the required checks, append their real output as an evidence entry (dossier_append: each command, the lines that hold the result, and its exit code when the tool reports one; a check that could not run, and why), then finish`
+    const why = evidenceProblem(this.evidenceOf(node), checks, this.commandsOf(node))
+    if (!why) {
+      this.settleCommands(run, node)
+      return undefined
+    }
+    const message = `step ${node.node_id} ended without showing the checks it ran (${why}): run the required checks (${checks.filter((c) => (COMMAND_CHECKS as readonly string[]).includes(c)).join(', ') || 'the task\'s criteria'}) with your shell tool, as the task's criteria name them; the System records each command you run, its exit code, and the tail of its output itself, so there is nothing to paste. A check that cannot run: say which and why in an evidence entry (dossier_append). Then finish`
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'gate',
       question: `May step ${node.node_id} of run ${run.run_id} end, with the output of its author's checks in the task's dossier?`,
@@ -385,7 +580,7 @@ export class TaskDossiers {
         { option: 'refuse', selected: true, reasons: [why] },
         { option: 'end', selected: false, reasons: ['not end: the author shows the checks\' output before anyone reviews its change (T267)'] },
       ],
-      decider: { type: 'rule', id: 'workflow.evidence', version: '2' }, outcome: { option: 'refuse', detail: { checks } }, deterministic: true,
+      decider: { type: 'rule', id: 'workflow.evidence', version: '3' }, outcome: { option: 'refuse', detail: { checks } }, deterministic: true,
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
     return { message, decision }
   }

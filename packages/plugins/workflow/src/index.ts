@@ -21,7 +21,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type Advisor, MAX_TRAINING } from './advisor.ts'
 import { sweepDeferrals } from './continuations.ts'
 import { dispatchProblems, type DispatchPass, type DispatchStatus } from './dispatch.ts'
-import type { DossierAppendInput, DossierCaller, DossierPage } from './dossiers.ts'
+import type { CommandRecord, DossierAppendInput, DossierCaller, DossierPage } from './dossiers.ts'
 import { checkTemplate, Engine } from './engine.ts'
 import { hold, type HoldView, holdView, release } from './hold.ts'
 import { MIGRATIONS } from './migrations.ts'
@@ -40,7 +40,7 @@ export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './s
 export { WorkflowFailure } from './types.ts'
 export { dispatchProblems, dispatchSettings, MAX_LOOKED } from './dispatch.ts'
 export { DOSSIER_FILE, DOSSIER_KINDS, DOSSIER_LIMITS, renderDossier, ROLE_KINDS } from './dossiers.ts'
-export type { DossierAppendInput, DossierCaller, DossierEntry, DossierEntryView, DossierKind, DossierPage, DossierView } from './dossiers.ts'
+export type { CommandRecord, DossierAppendInput, DossierCaller, DossierEntry, DossierEntryView, DossierKind, DossierPage, DossierView } from './dossiers.ts'
 export { adviceProblem, adviseInShadow, advisorStop, ANSWER_SCHEMA, brierScores, featuresOf, fitLogistic, LocalAdvisor, modelPrompt, OUTCOME_EVENT, QUESTION_SET, QUESTIONS, SHADOW_ATTEMPTS, vectorOf } from './advisor.ts'
 export type { Advice, AdviceDetail, Advisor, AdvisorCandidate, AdvisorConfig, AdvisorCounts, AdvisorFeatures, AdvisorSettings, AdvisorSignal, CandidateAdvice, OutcomeData, Question, QuestionScore } from './advisor.ts'
 export type { HoldView, StepHold, StepInFlight } from './hold.ts'
@@ -356,6 +356,15 @@ export class Workflow extends Service {
    */
   appendToDossier(caller: DossierCaller, input: DossierAppendInput): { id: string; seq: number } {
     return this.engine.tasks.dossiers.appendByWorker(caller, input)
+  }
+
+  /**
+   * Keep a command a step's Worker ran (T284): the command, its exit code as its runtime reports it,
+   * whether the tool reported an error, and a bounded tail of its output, which the step's evidence
+   * gate reads. Bound to `caller` as {@link appendToDossier} is; refused unless the step runs now.
+   */
+  recordCommand(caller: DossierCaller, report: CommandRecord): void {
+    this.engine.tasks.dossiers.recordCommand(caller, report)
   }
 
   /** `dossier_read` for a step's Worker, bound to `caller` as {@link appendToDossier} is: a page of its own task's dossier. */

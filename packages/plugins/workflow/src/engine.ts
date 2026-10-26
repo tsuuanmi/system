@@ -15,7 +15,7 @@ import { acceptPlain } from './acceptance.ts'
 import { checksFor, landingTargets } from './checks.ts'
 import { DOSSIER_CAPABILITY, type TaskDossiers } from './dossiers.ts'
 import { type Draft, draftOf, guidesFor, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
-import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
+import { awaitCall, continueWithMessage, settleCalls, waitsOnCall } from './continuations.ts'
 import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor, waitForSelfReview } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { heldNow, release } from './hold.ts'
@@ -1068,6 +1068,8 @@ export class Engine {
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     let gate: ReturnType<typeof verificationGate> | undefined
     let unverified: ReturnType<TaskDossiers['evidenceGate']>
+    // Whether the gate already refused this step's evidence once (T284): its second refusal fails the step.
+    const refusedBefore = acceptance.accepted && spec.showsEvidence ? this.tasks.dossiers.refusals(run, node) > 0 : false
     this.ctx.store.transaction(() => {
       const refused = acceptance.accepted && spec.grows ? grow(this, run, node, spec, result, lease) : undefined
       if (refused) {
@@ -1075,8 +1077,15 @@ export class Engine {
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: refused.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted && spec.showsEvidence && (unverified = this.tasks.dossiers.evidenceGate(run, node))) {
-        // A writing step that shows no output of its checks ends here, before anything reviews it (T267).
-        const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `evidence_missing: ${unverified.message}` }
+        if (!refusedBefore) {
+          // The first refusal is answered, not ended on (T284): the step continues its own session once, with the refusal's message.
+          continueWithMessage(this, node, unverified.decision, unverified.message, lease)
+          this.ctx.eventLog.append({ type: 'workflow.node.evidence-refused', runId: run.run_id, nodeId: node.node_id, decision: unverified.decision, data: { ...data, continued: true } })
+          return
+        }
+        // A writing step that still shows no checks after its one answer ends here, before anything reviews it (T267, T284).
+        this.tasks.dossiers.settleCommands(run, node)
+        const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `evidence_missing: evidence refused twice: ${unverified.message}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: unverified!.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: unverified.decision, data: { ...data, kind: error.kind, disposition: error.disposition } })
       } else if (acceptance.accepted && node.subject && !(gate = spec.verifies ? verificationGate(this, run, node, result, lease) : subjectGate(this, run, node, result)).passed) {

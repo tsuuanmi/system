@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import { evidenceProblem } from '../src/dossiers.ts'
+import { commandsIn, commandsText, DOSSIER_LIMITS, evidenceProblem, keepCommand, RECORDED, type StepCommands } from '../src/dossiers.ts'
 import { GUIDE_DIR, GUIDE_LIMITS, GUIDE_SECTIONS, guidesTouching, loadGuides, parseGuide, renderGuides } from '../src/review-guides.ts'
 import { type NodeTemplate, preflight } from '../src/spec.ts'
 
@@ -131,6 +131,59 @@ describe('the shape of an author\'s evidence (T267)', () => {
     expect(evidenceProblem(['Command: corepack pnpm lint'], ['lint'])).toMatch(/no output line/)
     expect(evidenceProblem(['$ make\nexit 0\nok', '$ make again\nexit 0\nok'], ['lint', 'tests'])).toMatch(/does not name the checks tests, lint/)
     expect(evidenceProblem(['$ npm test\nexit 0'], ['tests'])).toMatch(/no output line/)
+  })
+
+  it('counts a check as shown by a command the System recorded, whatever the Worker wrote (T284)', () => {
+    const lint = { command: 'corepack pnpm lint', exitCode: 0, isError: false, tail: '' }
+    expect(evidenceProblem([], ['lint'], [lint])).toBeUndefined()
+    expect(evidenceProblem(['done'], ['lint', 'review'], [lint])).toBeUndefined()
+    // A check that failed is shown too: the gate asks that the check ran, the run's own checks judge it.
+    expect(evidenceProblem([], ['lint'], [{ ...lint, exitCode: 1, isError: true }])).toBeUndefined()
+    // A check no recorded command runs is refused, naming it, unless the Worker says why it could not run.
+    expect(evidenceProblem([], ['lint', 'tests'], [lint])).toMatch(/no command the System recorded runs the check tests/)
+    expect(evidenceProblem(['Command: corepack pnpm test -> not allowed on the command list, so not run'], ['lint', 'tests'], [lint])).toBeUndefined()
+  })
+
+  it('never takes a command its runtime reported no end of (a background launch) for a check that ran (T284)', () => {
+    const launched = { command: 'corepack pnpm lint', isError: false, unfinished: true as const, tail: '' }
+    expect(evidenceProblem([], ['lint'], [launched])).toMatch(/launched in the background or interrupted.*run it in the foreground/)
+    const step: StepCommands = { checks: [], others: [], dropped: { checks: 0, others: 0 }, next: 0 }
+    keepCommand(step, launched)
+    const [text] = commandsText(step)
+    expect(text).toContain('$ corepack pnpm lint')
+    expect(text).toContain('no end reported')
+    expect(text).not.toMatch(/exit 0/)
+  })
+
+  it('keeps the record that shows a check however many other commands follow it, and lists it in entries the dossier never cuts (T284)', () => {
+    const step: StepCommands = { checks: [], others: [], dropped: { checks: 0, others: 0 }, next: 0 }
+    keepCommand(step, { command: 'corepack pnpm lint', exitCode: 0, isError: false, tail: 'Found 0 warnings' })
+    for (let i = 0; i < 200; i++) keepCommand(step, { command: `git status --short ${'x'.repeat(i % 7)}`, exitCode: 0, isError: false, tail: 'M a.ts\n'.repeat(50) })
+    // More runs of the check than its bound keeps: older runs go, a run that shows lint stays.
+    for (let i = 0; i < RECORDED.checks + 5; i++) keepCommand(step, { command: 'corepack pnpm test:affected', isError: true, exitCode: 1, tail: 'x'.repeat(2000) })
+    const commands = commandsIn(step)
+    expect(commands.length).toBe(RECORDED.checks + RECORDED.others)
+    expect(evidenceProblem([], ['lint', 'tests'], commands)).toBeUndefined()
+    const parts = commandsText(step)
+    expect(parts.length).toBeGreaterThan(1)
+    for (const part of parts) expect([...part].length).toBeLessThanOrEqual(DOSSIER_LIMITS.text)
+    const all = parts.join('\n')
+    expect(all).toContain('$ corepack pnpm lint\nexit 0\nFound 0 warnings')
+    expect(all.split('$ corepack pnpm test:affected').length - 1).toBe(RECORDED.checks - 1)
+    expect(all).toContain(`${200 - RECORDED.others} earlier not kept`)
+    expect(parts[0]).toContain(`(part 1 of ${parts.length})`)
+  })
+
+  it('lists the exit code of a command longer than its bound: the command alone is cut, its end follows whole (T284)', () => {
+    const step: StepCommands = { checks: [], others: [], dropped: { checks: 0, others: 0 }, next: 0 }
+    const long = `node scripts/build.mjs ${'--flag '.repeat(70)}`
+    keepCommand(step, { command: long, exitCode: 1, isError: true, tail: 'boom' })
+    keepCommand(step, { command: `corepack pnpm lint ${'--fix '.repeat(60)}`, exitCode: 2, isError: true, tail: 'error' })
+    keepCommand(step, { command: `make ${'target '.repeat(60)}`, isError: false, unfinished: true, tail: '' })
+    const text = commandsText(step).join('\n')
+    expect(text).toMatch(/^\$ node scripts\/build\.mjs .*… — exit 1$/m)
+    expect(text).toMatch(/^\$ corepack pnpm lint .*…\nexit 2$/m)
+    expect(text).toMatch(/^\$ make .*… — no end reported/m)
   })
 })
 
