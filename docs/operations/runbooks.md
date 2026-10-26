@@ -3218,3 +3218,60 @@ regenerated: <why>; the repository is as it was", or naming the files that are n
 | `the autonomy policy asks the operator about the generated files' command n` | list the command (step 3), then merge by hand or run the task again |
 | `was not set up under …'s setup as loaded now` | the setup changed after the run's worktree was made: merge by hand |
 | `the worktree … was removed` | the retention removed the run's worktree, where the commands run: merge by hand |
+
+## Replay the golden set (workflow eval)
+
+Before a change to how System works on a task is kept (a fix in the author's session, a run without
+`validate:1`, …), replay golden past board tasks under it and under the current process, and
+compare ([workflow eval](../validation/experiments/workflow-eval.md)). Everything runs beside live
+work, never in it: an eval clone of the repository, an eval board project, a budget cap. The
+helper is `node --import tsx scripts/experiments/workflow-eval.ts` (`wfe` below), run from a
+checkout of the `system` repository; it writes under the eval's directory only.
+
+1. **Once: the eval clone and its Workers.** Clone the repository where nothing else works
+   (`git clone /home/me/src/system ~/experiments/workflow-eval/repo`), outside `~/.dsh`. In a patch
+   kept for the eval, add writing and reviewing Workers on it as for any repository
+   ([agent Workers](#agent-workers): `worktreePerRun: true`), and its `worktreeSetup` with the
+   setup and checks ([set up a run's worktree](#set-up-a-runs-worktree),
+   [let a run pass the required checks](#let-a-run-pass-the-required-checks)). Never point them at
+   your checkout: a trial checks the clone out at old commits.
+2. **Once: the eval project.** Found a project for the eval with `board_charter`
+   (`projectId: eval-<evalId>`), which you approve, so its tasks, approvals, and usage are the
+   trials' alone. Its results are never merged: reject each `merge` request it asks.
+3. **Calibrate** each task you will replay: `wfe calibrate <caseId> --repo ~/experiments/workflow-eval/repo
+   --good <a commit with its accepted change> --scratch ~/experiments/workflow-eval/scratch` must
+   say `calibrated` (the grader fails on the base and passes on the accepted change).
+4. **Plan:** `wfe plan ~/experiments/workflow-eval/<evalId> --variants current,<variant> --tasks
+   T184,T187,T188 --repetitions 2 --seed <any text> --cap <tokens>:<quota points>:<minutes>
+   --reserve <tokens>:<quota points>:<minutes>`. The cap bounds every trial together; the reserve is
+   what one trial may take. The plan prints the trials' order: each round runs one variant's block,
+   then the other's.
+5. **Each block: a maintenance window.** Routing does not bind a step to a repository yet, so for
+   a block pause dispatch (`system dispatch pause`) and let running work finish; put the block's
+   variant configuration in force (its `configuration` patch, or none for `current`) with the eval's
+   Workers, `system check`, restart. After the block, take the eval Workers' rows out, restart, and
+   `system dispatch resume`.
+6. **Each trial**, one at a time:
+   1. `wfe next <eval> --repo ~/experiments/workflow-eval/repo`: it checks the clone out at the
+      task's base and prints the board task. Propose it (MCP `board_propose` with what it printed),
+      then start it once ready: `system run algorithm-development --task <taskId> -` with the goal on
+      stdin (`--variant docs` when it says so). Answer what it asks as you would for live work: each
+      approval is a counted touch.
+   2. When the run ends: `wfe export <eval> <trialId> <runId>`; beside the export put `usage.json`
+      (MCP `resources_usage` with the `runId`) and `draws.json` (the run's `quota-draw` records),
+      and the trial's `approvals.json` (MCP `approvals_list` with every state and the eval project).
+      A task given more attempts (`--attempts`) exports each attempt's run.
+   3. `wfe grade <eval> <trialId> --repo ~/experiments/workflow-eval/repo --worktree <the run's
+      worktree>` (`system worktrees` names it). It reads the worktree and changes nothing in it.
+   `next` refuses while a trial is not graded, and once the cap would be passed: the eval stops
+   there, and the report says which trials did not run.
+7. **Report:** `wfe report <eval>` writes `report.md` and `report.json`: per task and in total,
+   passed, passed first time, review cycles, touches, tokens, quota points, minutes, and the tasks
+   that flipped. Copy `report.md` into the experiment's records when the eval closes.
+
+| It says | Do |
+|---|---|
+| `the golden set changed since the plan` or `variant … changed since the plan` | the records moved under a running eval: finish it from the checkout it was planned on, or plan a new eval |
+| `the eval clone … holds uncommitted changes` | something wrote in the clone: it is the eval's alone. Look, then `git -C <clone> stash` or reset it |
+| a trial not counted: `the eval clone was pinned at …` or `does not descend from the base` | the run's worktree was not cut from the task's base (the clone moved before the run's first step): run the trial again in a new eval |
+| a trial not counted: `the grader's setup failed` | the offline install could not run in the grading worktree: the store lacks a package of that commit's lockfile; install once online in your checkout, then grade again |

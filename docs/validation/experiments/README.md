@@ -9,6 +9,7 @@ about `system` itself, beside the [self-build](../self-build.md) record and the
 |---|---|---|
 | [Lead agnosticism](lead-agnosticism.md) | Can a lead of another provider family carry on a project another lead started, through `system`'s MCP tools alone, with no step lost or repeated? | ready, once the live install is updated |
 | [Worker agnosticism on `review`](worker-agnosticism.md) | Does swapping one review member's Worker (ChatGPT website for Codex CLI, beside a fixed Antigravity CLI member) leave the team's outcomes within pre-registered margins? The first record of PROP-0011's feedback loop | pre-registered 2026-10-23; not run: its [preconditions](worker-agnosticism.md#preconditions) are open |
+| [Workflow eval](workflow-eval.md) | Does a change to System's own process hold up? Golden past board tasks replayed under a named process variant, at least twice each, offline from live work, graded by the tasks' own checks, with the tasks that flipped between variants | the runner, the set's format, and three tasks (2026-10-26); not run: its [preconditions](workflow-eval.md#preconditions) are open |
 
 ## How an experiment is written and run
 
