@@ -21,15 +21,15 @@ import { buildMetrics, MAX_RUNS_READ, READY_MOVES_READ, METRICS_DEFAULT_DAYS, ty
 import { renderReport } from './render.ts'
 import { buildReport, type DecisionRead, type DigestRead, type DrawRead, LIVENESS_EVENTS, MAX_DAYS, periodOf, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type UnknownRead, within } from './report.ts'
 
-export { buildMetrics, type KindCost, LEVEL_MIN_TASKS, MAX_COST_KINDS, READY_MOVES_READ, MAX_RUNS_READ, METRIC_IDS, METRICS_DEFAULT_DAYS, type LevelReading, type LineStatus, type Metric, type MetricId, type Metrics, type MetricSources, metricValueText, renderMetrics, type RunDecision } from './metrics.ts'
+export { buildMetrics, METRIC_IDS, type Metric, type MetricId, type Metrics, type MetricSources, renderMetrics, type RunDecision } from './metrics.ts'
 export { duration, renderReport, whole } from './render.ts'
-export { buildReport, type DecisionRead, type DigestRead, type DrawRead, MAX_DAYS, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Scope, type Sources, type UnknownRead, within } from './report.ts'
+export { buildReport, type DecisionRead, type DrawRead, MAX_PROJECTS, periodOf, type Period, type Recorded, type Report, ReportError, type ReportInput, runsOf, type Sources, type UnknownRead, within } from './report.ts'
 
 export const name = 'report'
 export const inject = ['artifacts', 'eventLog']
 
 /** Event-log entries one report reads per query at most (INV-9): more refuses the report, never truncates it. */
-export const MAX_EVENTS = 100_000
+const MAX_EVENTS = 100_000
 const PAGE = 1000
 /** The entries a report counts in its period, beside the task reports and digests it reads whole. */
 const PERIOD_EVENTS = ['workflow.graph.grown', 'workflow.gate.opened', 'workflow.gate.closed', 'approvals.batched', ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ...LIVENESS_EVENTS] as const
@@ -91,7 +91,7 @@ async function digestRuns(ctx: Context, digests: Digests, requestId: string): Pr
  * is not loaded (a report without one of them would be silently wrong, INV-2), for an unknown
  * project, or for more records than its bounds.
  */
-export async function report(ctx: Context, input: ReportInput, now: Date = new Date()): Promise<Report> {
+async function report(ctx: Context, input: ReportInput, now: Date = new Date()): Promise<Report> {
   const period = periodOf(input, now)
   const board = ctx.get('board')
   const approvals = ctx.get('approvals')
@@ -236,7 +236,7 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
 }
 
 /** The `metrics` tool's input (`$defs/metrics-input`): one project or every one, and the window as the days before until. */
-export interface MetricsInput { projectId?: string; days?: number; until?: string }
+interface MetricsInput { projectId?: string; days?: number; until?: string }
 
 /**
  * The maturity metrics on `input`, read now (docs/design/maturity-metrics.md): the window (30 days
@@ -244,7 +244,7 @@ export interface MetricsInput { projectId?: string; days?: number; until?: strin
  * Refused, as a report is, when the board, the queue, or the ledger is not loaded, for an unknown
  * project, or for more records than its bounds.
  */
-export async function metrics(ctx: Context, input: MetricsInput, now: Date = new Date()): Promise<Metrics> {
+async function metrics(ctx: Context, input: MetricsInput, now: Date = new Date()): Promise<Metrics> {
   const period = periodOf({ days: input.days ?? METRICS_DEFAULT_DAYS, ...(input.until !== undefined ? { until: input.until } : {}) }, now)
   const board = ctx.get('board')
   const approvals = ctx.get('approvals')
@@ -440,7 +440,7 @@ function ownProject(args: Record<string, unknown>, lead: string | undefined): Re
 }
 
 /** The `report` tool: input and output checked against `mcp-report@1.6`; the text is the rendering. */
-export function registerTool(ctx: Context): void {
+function registerTool(ctx: Context): void {
   ctx.mcp.tool('metrics', { scope: 'client', description: METRICS_DESCRIPTION, inputSchema: METRICS_INPUT }, async (args, context) => {
     try {
       schemas.assertDef('mcp-report@1.6', 'metrics-input', args)

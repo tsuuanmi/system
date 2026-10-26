@@ -28,7 +28,7 @@ import type {} from '@tsuuanmi/system-store'
 import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank, webAccessEffect } from './policy.ts'
 import { registerTools } from './tools.ts'
 
-export { ACTION_CLASSES, PolicySet, policyProblems } from './policy.ts'
+export { ACTION_CLASSES, policyProblems } from './policy.ts'
 
 export interface Config {
   /** `autonomy-policy@1.x` records: exactly one studio policy, and project policies that narrow it. */
@@ -96,7 +96,7 @@ export interface RepeatedApprovals {
 interface Threshold { approvals: number; windowSeconds: number }
 
 /** The bounds and defaults of {@link RepeatedApprovals}: conservative, since a proposal asks the operator once more. */
-export const REPEATED_APPROVALS = { approvals: { min: 3, max: 100, default: 5 }, windowSeconds: { min: 3600, max: 7776000, default: 604800 } } as const
+const REPEATED_APPROVALS = { approvals: { min: 3, max: 100, default: 5 }, windowSeconds: { min: 3600, max: 7776000, default: 604800 } } as const
 
 /** Every problem of a `repeatedApprovals` value; none when it is absent or valid. */
 function repeatedProblems(value: unknown): string[] {
@@ -122,17 +122,17 @@ export interface ListFilter { states?: RequestState[]; batchId?: string; project
 /** A page of the queue, and the cursor of the next one (absent on the last). */
 export interface RequestPage { requests: ApprovalRequest[]; next?: string }
 
-export const REQUEST_STATES: readonly RequestState[] = ['open', 'batched', 'approved', 'rejected']
+const REQUEST_STATES: readonly RequestState[] = ['open', 'batched', 'approved', 'rejected']
 /** Requests one `approvals_list` page holds unless asked otherwise, and at most (`mcp-approvals@1`). */
-export const DEFAULT_PAGE = 20
-export const MAX_PAGE = 100
+const DEFAULT_PAGE = 20
+const MAX_PAGE = 100
 /** Requests the sweep reads per statement; a protocol constant, not a deployment value. */
 const SWEEP_PAGE = 500
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const CONTENT_ID = /^sha256:[0-9a-f]{64}$/
 /** Policy changes one `policyChanges` call returns unless asked otherwise, and at most. */
-export const DEFAULT_CHANGES = 20
-export const MAX_CHANGES = 100
+const DEFAULT_CHANGES = 20
+const MAX_CHANGES = 100
 const CHANGE_STATES: ReadonlyArray<PolicyChange['state']> = ['asked', 'applied', 'declined', 'retired']
 const OPEN: readonly RequestState[] = ['open', 'batched']
 /** Listing order: batched requests by batch, then the rest; within each, by expiry, then by insertion. */

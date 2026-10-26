@@ -10,14 +10,14 @@ import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ADVICE_QUESTIONS, ADVICE_SHADOW_ATT
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { Metrics } from './metrics.ts'
 
-export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
+const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
 /** Projects one report lists (`mcp-report@1` bounds it); the rest are counted. */
 export const MAX_PROJECTS = 100
 /** Pools one report lists (`mcp-report@1`), as many as the ledger configures at once. */
-export const MAX_POOLS = 64
+const MAX_POOLS = 64
 /** The longest period one report covers (INV-9). */
 export const MAX_DAYS = 366
-export const DEFAULT_DAYS = 7
+const DEFAULT_DAYS = 7
 const DAY_MS = 86_400_000
 
 /** A period from `since` (inclusive) to `until` (exclusive). */
@@ -151,12 +151,12 @@ interface HeldReview { taskId: string; projectId: string; title: string; expires
 /** What the agent runs of the period drew (`mcp-report@1.4`): the figures per kind and window, and per kind, template step, and window. */
 interface QuotaDraws { records: number; byKind: DrawFigure[]; byStep: DrawFigure[]; omitted?: number }
 /** Figures of each list one report lists (`mcp-report@1.4`); the rest are counted. */
-export const MAX_DRAW_FIGURES = 256
+const MAX_DRAW_FIGURES = 256
 
 /** The event-log entries of an agent run's liveness the report counts (PROP-0013). */
 export const LIVENESS_EVENTS = ['agent-workers.run.stalled', 'agent-workers.run.unknown', 'agent-workers.run.freed'] as const
 /** Held runs, and held reviews, one report lists (`mcp-report@1.2`, `@1.3`); the rest are counted. */
-export const MAX_HELD = 64
+const MAX_HELD = 64
 
 /** The `report` tool's output (`$defs/report-output`). */
 export interface Report {

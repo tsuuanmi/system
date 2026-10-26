@@ -9,7 +9,7 @@ import { RISK_TIERS, type RiskTier } from './risk-tiers.ts'
 
 /** An intelligence tier (`common@1` `tier`), lowest first. */
 export type IntelligenceTier = 'economy' | 'standard' | 'frontier'
-export const INTELLIGENCE_TIERS: readonly IntelligenceTier[] = ['economy', 'standard', 'frontier']
+const INTELLIGENCE_TIERS: readonly IntelligenceTier[] = ['economy', 'standard', 'frontier']
 
 /** A policy's map (`autonomy-policy@1.2` `tierByRisk`): under each risk tier, a step's capability or kind mapped to its tier. */
 export interface TierByRisk {
@@ -26,7 +26,7 @@ export interface TierByRiskOf {
 }
 
 /** The most entries one risk tier of a map holds (INV-9). */
-export const TIER_BY_RISK_BOUNDS = { entries: 32 } as const
+const TIER_BY_RISK_BOUNDS = { entries: 32 } as const
 /** A key: a capability (`develop`, `connector:<name>`) or a kind of work (`docs`). */
 const KEY = /^[a-z][a-z0-9:-]{0,63}$/
 

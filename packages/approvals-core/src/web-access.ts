@@ -11,17 +11,17 @@ import type { Classification } from './index.ts'
 
 /** The role profiles a grant may name: `research`, a read-only role whose only tools are reads and web calls. */
 export type WebAccessProfile = 'research'
-export const WEB_ACCESS_PROFILES: readonly WebAccessProfile[] = ['research']
+const WEB_ACCESS_PROFILES: readonly WebAccessProfile[] = ['research']
 
 /** The tools a grant may name: the two calls that send a query or a URL out of this machine. */
 export type WebTool = 'WebSearch' | 'WebFetch'
-export const WEB_TOOLS: readonly WebTool[] = ['WebSearch', 'WebFetch']
+const WEB_TOOLS: readonly WebTool[] = ['WebSearch', 'WebFetch']
 
 /** The bound of a grant's calls per run when it names none (T262). */
 export const DEFAULT_MAX_WEB_CALLS = 40
 
 /** The bounds of a grant (INV-9). */
-export const WEB_ACCESS_BOUNDS = { rules: 8, maxWebCallsPerRun: 200, noteChars: 500 } as const
+const WEB_ACCESS_BOUNDS = { rules: 8, maxWebCallsPerRun: 200, noteChars: 500 } as const
 
 /** One grant: the role profile it is for, its tools, its bound, the highest classification a run under it may hold, and why. */
 export interface WebAccessRule {
