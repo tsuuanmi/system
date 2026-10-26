@@ -10,7 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
+import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, riskTierMaps, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import {
@@ -1706,7 +1706,7 @@ export class StoreBoard extends Board {
       return { held: { verdict, pendingChecks: verdict.mode === 'forbid' ? [] : verdict.failedChecks!, seconds: await seconds() } }
     }
     // A heavy result is never accepted unattended (ADR-0071), by the policy or by the auto-accept rule: the operator decides it.
-    const heavy = this.heavyOf(acceptance)
+    const heavy = await this.heavyOf(acceptance, task.projectId)
     if (heavy) return { held: { verdict, pendingChecks: [], seconds: await seconds(), heavy } }
     // The auto-accept rule (D80, ADR-0067) is for a listed project's results that land: on a git working tree.
     if (!this.autoAccept?.projects.includes(task.projectId) || result.subject.type !== 'git-head') return {}
@@ -1719,12 +1719,18 @@ export class StoreBoard extends Board {
    * Why an accepting decision is of a heavy result (ADR-0071), read from the record it names, never
    * from its own account: `outcome.detail.risk.decision`, among its inputs, is a `workflow.risk-tier`
    * decision whose outcome is `heavy`. A decision that names a tier it does not back with that record
-   * is held too (INV-2). Undefined when it names no tier (tiering off) or a tier below heavy.
+   * is held too (INV-2), and so is one that names no tier while a policy of the task's project
+   * carries a path map: tiering is on, so its silence is no tier. Undefined when it names no tier and
+   * no applying policy carries a map (tiering off), or a tier below heavy.
    */
-  private heavyOf(acceptance: ArtifactRef): string | undefined {
+  private async heavyOf(acceptance: ArtifactRef, projectId: string): Promise<string | undefined> {
     const body = this.ctx.artifacts.get(acceptance)?.body as { inputs?: string[]; outcome?: { detail?: Record<string, unknown> } } | undefined
     const risk = body?.outcome?.detail?.['risk']
-    if (risk === undefined) return undefined
+    if (risk === undefined) {
+      return riskTierMaps((await this.ctx.approvals.policy(projectId)).policies).length
+        ? `it names no risk tier (outcome.detail.risk), though a policy of project ${projectId} carries a path map (riskTiers), so the tier is taken as heavy`
+        : undefined
+    }
     const ref = isObject(risk) && typeof risk['decision'] === 'string' ? risk['decision'] as ArtifactRef : undefined
     const record = ref && (body!.inputs ?? []).includes(ref) ? this.ctx.artifacts.get(ref)?.body as { decider?: { id?: string }; outcome?: { option?: string } } | undefined : undefined
     if (!record || record.decider?.id !== 'workflow.risk-tier') return `it names a risk tier with no workflow.risk-tier decision among its inputs (outcome.detail.risk.decision), so the tier is taken as heavy`

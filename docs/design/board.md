@@ -397,7 +397,9 @@ holds, each read from the record the decision names, never from its own account:
   [process tiered by risk](workflow-engine.md#process-tiered-by-risk)) is never accepted unattended,
   with or without the setting: an accepting decision that is not the operator's and names a risk
   tier (`outcome.detail.risk`, version 4) is held for the operator when the `workflow.risk-tier`
-  decision it names among its inputs says `heavy`, or when it names none there (INV-2); the hold's
+  decision it names among its inputs says `heavy`, or when it names none there (INV-2). One that
+  names no tier is held too when a policy of the task's project carries a path map (`riskTiers`):
+  with tiering on, no tier is read as heavy, never as tiering off. The hold's
   decision says why (`outcome.detail.heavy`). Only the operator's acceptance accepts it.
 - The setting is validated when the board starts: project ids, plain branch names (no patterns), at
   most 64 each, no repeats; off unless both lists name one.

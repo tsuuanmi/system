@@ -82,7 +82,8 @@ What constrains it:
 - **Heavy: never accepted unattended.** The board holds an accepting decision of a heavy result for
   the operator, by the auto-accept rule (ADR-0067) and by the policy alike, the reason in the hold's
   decision (`detail.heavy`). It reads the tier from the `workflow.risk-tier` decision the acceptance
-  names among its inputs; an acceptance that names a tier without that record is held too. Only the
+  names among its inputs; an acceptance that names a tier without that record is held too, and so
+  is one that names no tier while a policy of the task's project carries a map. Only the
   operator's acceptance accepts it. A rejection applies as before.
 - **Light: the validation may be skipped.** A template step marked `riskSkip: ['light']` (only the
   final step, a Worker step that depends on another, never at `heavy`) is retired before it starts

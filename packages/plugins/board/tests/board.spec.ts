@@ -870,6 +870,22 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       expect(await ctx.board.accept(heavy.taskId, operator, at(6))).toMatchObject({ state: 'done', lastDecision: operator })
     })
 
+    it('holds an acceptance that names no risk tier when a policy of the task\'s project carries a path map: its silence is no tier (ADR-0071, INV-2)', async () => {
+      const { ctx, approvals } = await boot({ board: AUTO })
+      await active(ctx, 'p3')
+      const tiered = POLICIES.map((p) => p.projectId === 'p3' ? { ...p, schema: 'autonomy-policy@1.1' as const, riskTiers: { version: 1, rules: [{ paths: ['**'], tier: 'light' as const, note: 'everything' }] } } : p)
+      approvals().reload(tiered, at(4))
+      const silent = await inReview(ctx, 'silent', 'p3')
+      const held = await ctx.board.accept(silent.taskId, engineAcceptance(ctx, silent.taskId, silent.r, { checks: { tests: true, lint: true }, branch: 'main' }), at(5))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: [] } })
+      expect((ctx.artifacts.get(held.lastDecision!)!.body as { outcome?: { detail?: { heavy?: string } } }).outcome?.detail?.heavy).toMatch(/names no risk tier .* carries a path map/)
+      // With no map, the same acceptance applies as before.
+      approvals().reload(POLICIES, at(5))
+      const plain = await inReview(ctx, 'plain', 'p3')
+      const accepting = engineAcceptance(ctx, plain.taskId, plain.r, { checks: { tests: true, lint: true }, branch: 'main' })
+      expect(await ctx.board.accept(plain.taskId, accepting, at(6))).toMatchObject({ state: 'done', lastDecision: accepting })
+    })
+
     it('validates the setting: distinct project ids and plain branch names within the bound; off unless both lists name one', () => {
       expect(autoAcceptOf(undefined)).toBeUndefined()
       expect(autoAcceptOf({ projects: ['system'], branches: [] })).toBeUndefined()
