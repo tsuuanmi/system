@@ -229,6 +229,10 @@ const evidenceOf = (ctx: Context, checked: Checked | undefined): Evidence => {
   return ctx.artifacts.get(checked.evidence as `sha256:${string}`)!.body as Evidence
 }
 
+/** The decisions that ran again a check the host cut (T269), in a workflow run. */
+const rerunsOf = (ctx: Context, runId: string) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId })
+  .filter((a) => (a.body as { decider?: { id?: string } }).decider?.id === 'agent-workers.check-cut-rerun')
+
 const TESTS = 'node test.mjs'
 const LINT = 'node lint.mjs'
 
@@ -563,7 +567,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       expect(evidenceOf(ctx, again).checks[0]!.output).toEqual(stored.output)
     })
 
-    it('holds a check a stop killed before its end as an error, never run again on its subject (INV-4)', async () => {
+    it('holds a check a stop of its run killed before its end, in the same daemon, as an error, never run again on its subject (INV-4)', async () => {
       const repo = repository()
       const slow = 'sleep 30'
       const { ctx, write, check, checksWith } = await boot(repo, { checks: { typecheck: slow } }, [...SETUP, slow])
@@ -585,7 +589,7 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       expect(Date.now() - before).toBeLessThan(10_000)
     })
 
-    it('keeps each check\'s outcome on its subject across a restart and never runs it again, and holds one a crash interrupted as an error (INV-4)', async () => {
+    it('keeps each check\'s outcome on its subject across a restart and never runs it again, and runs again one a crash cut, on the same subject, as a decision (INV-4, T269)', async () => {
       const repo = repository()
       // Each run of it prints another number, so a second run would show.
       commit(repo, { 'clock.mjs': "console.log(`clock: ${process.hrtime.bigint()}`)\nprocess.exit(1)\n" })
@@ -606,22 +610,140 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
 
       const second = await boot(repo, setup, listed, first.home)
       const again = await second.check('run_restart', at, ['tests', 'typecheck', 'lint'])
+      // The check the crash cut came to nothing: it runs again on the same subject, to its exit code.
       expect(again).toMatchObject({
         outcome: 'checked',
         results: [
           { check: 'tests', outcome: 'failed', exitCode: 1 },
-          { check: 'typecheck', outcome: 'error', reason: expect.stringContaining('started at 2026-10-25T00:00:00.000Z and recorded no end (the daemon stopped meanwhile); it is not run again on this subject') },
+          { check: 'typecheck', outcome: 'passed', exitCode: 0 },
           { check: 'lint', outcome: 'passed', exitCode: 0 },
         ],
       })
       const body = evidenceOf(second.ctx, again)
       // The same output, to the byte: the stored outcome, not a second run.
       expect(body.checks[0]!.output).toEqual(printed)
-      expect(body.checks[1]).not.toHaveProperty('output')
+      expect(body.checks[1]!.output!.tail).toBe('tests: dep ok\n')
+      // The re-run is a decision of its own, among the evidence's inputs, with why.
+      const rerun = rerunsOf(second.ctx, 'run_restart')
+      expect(rerun).toHaveLength(1)
+      expect(rerun[0]!.body).toMatchObject({
+        decisionType: 'gate', outcome: { option: 'run', detail: { check: 'typecheck', cuts: 1, maxCuts: 3, cause: 'cut-by-host', subject: `git:${at.subject.ref}:${at.subject.version}` } },
+        candidates: [{ option: 'run', selected: true, reasons: [expect.stringMatching(/^cut by the host, re-run: its command \(node test\.mjs\) started at 2026-10-25T00:00:00\.000Z and recorded no end: the daemon stopped meanwhile/)] }, { option: 'hold', selected: false }],
+      })
+      expect(second.ctx.artifacts.get((again as { evidence: `sha256:${string}` }).evidence)!.inputs).toContain(rerun[0]!.id)
+      expect(second.ctx.eventLog.query({ type: 'agent-workers.check.rerun', runId: 'run_restart' }).map((e) => ({ data: e.data, decision: e.decision })))
+        .toEqual([{ decision: rerun[0]!.id, data: expect.objectContaining({ check: 'typecheck', cuts: 1 }) }])
       // Asked once more, every outcome stands as stored.
       const third = await second.check('run_restart', at, ['tests', 'typecheck', 'lint'])
       expect(third?.outcome === 'checked' && third.results).toEqual(again?.outcome === 'checked' && again.results)
       expect(evidenceOf(second.ctx, third).checks).toEqual(body.checks)
+      // Its outcome stands from then on: it is not run again.
+      expect(rerunsOf(second.ctx, 'run_restart')).toHaveLength(1)
+    })
+
+    it('runs again, after the restart, a check the host\'s stop cut, on the same result tree, and its pass stands (T269)', async () => {
+      const repo = repository()
+      // Quiet for longer than its stall bound, so its stall event says the command runs.
+      const slow = 'sleep 4'
+      const setup = { checks: { tests: slow }, checkStallSeconds: 1 }
+      const listed = [...SETUP, slow]
+      const first = await boot(repo, setup, listed)
+      const at = await first.write('run_cut')
+      const host = new AbortController()
+      const step = { runId: 'run_cut', workspace: at.workspace, subject: at.subject, checks: ['tests' as RunCheck], classification: 'operator-shared' as const }
+      const cut = first.ctx.workers.check!(step, host.signal)
+      await vi.waitFor(() => expect(first.ctx.eventLog.query({ type: 'agent-workers.check', runId: 'run_cut' }).map((e) => (e.data as { state: string }).state)).toContain('stalled'), { timeout: 30_000, interval: 50 })
+      // The host stops: the engine's turn is aborted with it, then the daemon exits.
+      host.abort(Object.assign(new Error('the host stopped'), { hostStopped: true }))
+      await expect(cut).rejects.toThrow('the host stopped')
+      await first.stop()
+
+      const second = await boot(repo, setup, listed, first.home)
+      const again = await second.check('run_cut', at, ['tests'])
+      expect(again).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0, reason: expect.stringContaining(`(${slow}) exited 0 on git:${at.subject.ref}:${at.subject.version}`) }] })
+      const rerun = rerunsOf(second.ctx, 'run_cut')
+      expect(rerun.map((r) => r.body)).toEqual([expect.objectContaining({
+        outcome: { option: 'run', detail: expect.objectContaining({ check: 'tests', cuts: 1, cause: 'cut-by-host' }) },
+        candidates: [expect.objectContaining({ option: 'run', reasons: [expect.stringContaining('was stopped before its end by the host\'s stop, in the daemon before this one')] }), expect.objectContaining({ option: 'hold' })],
+      })])
+      // The tree is the result's still, and the pass stands: asked again, it is the stored one.
+      expect(captureGitSubject(at.workspace)!.subject).toMatchObject(at.subject)
+      const stored = await second.check('run_cut', at, ['tests'])
+      expect(stored).toMatchObject({ results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }] })
+      expect(evidenceOf(second.ctx, stored).checks).toEqual(evidenceOf(second.ctx, again).checks)
+      expect(rerunsOf(second.ctx, 'run_cut')).toHaveLength(1)
+    })
+
+    it('never runs again, after a restart, a check the operator\'s stop of its run killed: only the host\'s own stop cuts a check (INV-4, T269)', async () => {
+      const repo = repository()
+      const slow = 'sleep 4'
+      const setup = { checks: { tests: slow }, checkStallSeconds: 1 }
+      const listed = [...SETUP, slow]
+      const first = await boot(repo, setup, listed)
+      const at = await first.write('run_operator')
+      const operator = new AbortController()
+      const step = { runId: 'run_operator', workspace: at.workspace, subject: at.subject, checks: ['tests' as RunCheck], classification: 'operator-shared' as const }
+      const running = first.ctx.workers.check!(step, operator.signal)
+      await vi.waitFor(() => expect(first.ctx.eventLog.query({ type: 'agent-workers.check', runId: 'run_operator' }).map((e) => (e.data as { state: string }).state)).toContain('stalled'), { timeout: 30_000, interval: 50 })
+      operator.abort()
+      await expect(running).rejects.toBeDefined()
+      await first.stop()
+
+      const second = await boot(repo, setup, listed, first.home)
+      expect(await second.check('run_operator', at, ['tests'])).toMatchObject({ results: [{ check: 'tests', outcome: 'error', reason: expect.stringContaining('was stopped before its end') }] })
+      expect(rerunsOf(second.ctx, 'run_operator')).toEqual([])
+    })
+
+    it('keeps the cut count across a crash between the decision to run again and the check\'s start: the row is replaced only by the started one (INV-9, T269)', async () => {
+      const repo = repository()
+      const setup = { checks: { tests: TESTS } }
+      const listed = [...SETUP, TESTS]
+      const first = await boot(repo, setup, listed)
+      const at = await first.write('run_gap')
+      const subject = `git:${at.subject.ref}:${at.subject.version}`
+      first.ctx.store.transaction((db) => {
+        db.prepare('INSERT INTO agent_check_runs (workflow_run_id, workspace, subject, check_name, argv, setup_hash, state, record, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run('run_gap', at.workspace, subject, 'tests', JSON.stringify(TESTS.split(' ')), first.setupHash, 'started', JSON.stringify({ instance: 'an-earlier-daemon', cuts: 1 }), '2026-10-25T00:00:00.000Z')
+      })
+      expect(await first.check('run_gap', at, ['tests'])).toMatchObject({ results: [{ check: 'tests', outcome: 'passed' }] })
+      // The row was never absent: it is the started one's replacement, done, and a crash before that kept the earlier row.
+      const row = first.ctx.store.db.prepare('SELECT state FROM agent_check_runs WHERE workflow_run_id = ?').get('run_gap') as { state: string }
+      expect(row.state).toBe('done')
+      first.ctx.store.transaction((db) => {
+        db.prepare("UPDATE agent_check_runs SET state = 'started', record = ?, ended_at = NULL WHERE workflow_run_id = ?").run(JSON.stringify({ instance: 'the-daemon-that-crashed', cuts: 2 }), 'run_gap')
+      })
+      await first.stop()
+      // A third cut (2 before, one more): at the bound, an error, never run again.
+      const second = await boot(repo, setup, listed, first.home)
+      expect(await second.check('run_gap', at, ['tests'])).toMatchObject({ results: [{ check: 'tests', outcome: 'error', reason: expect.stringContaining('the host has cut it 3 times') }] })
+    })
+
+    it('stops running again a check the host cut three times: it stays an error on its subject (INV-9, T269)', async () => {
+      const repo = repository()
+      const setup = { checks: { tests: TESTS, lint: LINT } }
+      const listed = [...SETUP, TESTS, LINT]
+      const { ctx, write, check, setupHash } = await boot(repo, setup, listed)
+      const at = await write('run_bound')
+      const subject = `git:${at.subject.ref}:${at.subject.version}`
+      ctx.store.transaction((db) => {
+        const insert = db.prepare('INSERT INTO agent_check_runs (workflow_run_id, workspace, subject, check_name, argv, setup_hash, state, record, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        // Cut twice before, and started a third time by a daemon that stopped with it running.
+        insert.run('run_bound', at.workspace, subject, 'tests', JSON.stringify(TESTS.split(' ')), setupHash, 'started', JSON.stringify({ instance: 'an-earlier-daemon', cuts: 2 }), '2026-10-25T00:00:00.000Z')
+        // Cut once, by an earlier daemon's stop: it runs again.
+        insert.run('run_bound', at.workspace, subject, 'lint', JSON.stringify(LINT.split(' ')), setupHash, 'done',
+          JSON.stringify({ check: 'lint', outcome: 'error', reason: 'its command (node lint.mjs) was stopped before its end', cutIn: 'an-earlier-daemon', cuts: 1 }), '2026-10-25T00:00:00.000Z')
+      })
+      const checked = await check('run_bound', at, ['tests', 'lint'])
+      expect(checked).toMatchObject({
+        outcome: 'checked',
+        results: [
+          { check: 'tests', outcome: 'error', reason: expect.stringContaining('the host has cut it 3 times on this subject, so it is not run again (at most 3, INV-9)') },
+          { check: 'lint', outcome: 'passed', exitCode: 0 },
+        ],
+      })
+      expect(rerunsOf(ctx, 'run_bound').map((r) => (r.body as { outcome: { detail: { check: string; cuts: number } } }).outcome.detail)).toEqual([expect.objectContaining({ check: 'lint', cuts: 1 })])
+      // What the store keeps of a cut is its own: the evidence keeps to check-run@1.0.
+      new SchemaRegistry().assert('check-run@1.0', ctx.artifacts.get((checked as { evidence: `sha256:${string}` }).evidence)!.body)
     })
   })
 

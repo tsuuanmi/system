@@ -1772,19 +1772,22 @@ check` (37 rows, checked on a copy, 2026-10-23).
    `system health`, then what `--apply` would wait for before the stop (each step running now, as
    below), and the plan. Fix what it reports until it ends with the plan.
 3. **Apply:** the same command with `--apply`, in a shell that outlives a disconnect (`tmux`, or
-   `nohup … > ~/system-backups/live-update.out 2>&1 &`): the wait for running steps may take up to
-   `--runs-wait`, and the drain up to ten minutes more. The unit starts the daemon with its
+   `nohup … > ~/system-backups/live-update.out 2>&1 &`): the wait for the steps in flight takes up
+   to `--runs-wait` (5 minutes), and the stop's drain up to `--cut-deadline` (60 s) more; no quiet
+   moment is needed, since each step the stop cuts resumes by itself. The unit starts the daemon with its
    environment file, never this shell's environment. Notes and the backup go to
    `~/system-backups/<date>-before-base/` (`-2`, `-3` for a later attempt).
 4. **Read the outcome.**
    - Exit 0, `updated`: Base runs. `system plugins` lists each plugin's lifecycle, and `system
      health` names each agent Worker that cannot take work yet (`agent:codex-review
      (unavailable)`): [Codex Workers](#codex-workers) and [Antigravity CLI
-     Workers](#antigravity-cli-workers) list the reasons and what to do.
+     Workers](#antigravity-cli-workers) list the reasons and what to do. When the stop cut steps,
+     `what the stop cut, and how it resumed:` lists each (also in `<dir>/cut-report.txt`).
    - Exit 1, `STOP` (nothing was changed) or `rolled back`: e218ae7 runs, on its store as it was at the
-     stop. The notes say why. `STOP: steps still run after <n> min` is the wait's bound: the unit
-     was not stopped, steps were released, and dispatch was resumed. Run the same command again once those steps are done
-     (or with a longer `--runs-wait`), or with `--cut-running` to cut them. A Worker that took work before and stays unavailable names its reason
+     stop. The notes say why. `STOP: steps still run after <n> min` is the wait's bound with
+     `--no-cut`: the unit was not stopped, steps were released, and dispatch was resumed. Run the
+     same command again once those steps are done (or with a longer `--runs-wait`), or without
+     `--no-cut` to cut them. A Worker that took work before and stays unavailable names its reason
      in the table of the Workers before and after: fix its cause on the host (a runtime's probe, its
      sandbox), then update again.
    - Exit 2, `LOOK FIRST`: the script will not act on what it found, or the rollback failed. It prints
@@ -1798,11 +1801,15 @@ check` (37 rows, checked on a copy, 2026-10-23).
   start`, the main process of `system.service`, which runs in `system-live` on Node 24 with one
   required environment file naming this DSH home, its output going to a file. A daemon started any
   other way is refused, before anything changes.
-- **No running step is cut** (T234). On 2026-10-26 the update to c2a45415 stopped the unit while
-  T223's develop step ran: the drain ran into `TimeoutStopSec` (720 s), the daemon exited with the
-  run going, and the run failed `reconciliation_failed` ([a run's liveness is
-  unknown](#a-runs-liveness-is-unknown)) with its usage left uncounted. So before the stop, after
-  the capture, the script:
+- **No step is cut unsaid, and a cut is cheap** (T234, T269). On 2026-10-26 the update to c2a45415
+  stopped the unit while T223's develop step ran: the drain ran into `TimeoutStopSec` (720 s), the
+  daemon exited with the run going, and the run failed `reconciliation_failed` ([a run's liveness is
+  unknown](#a-runs-liveness-is-unknown)) with its usage left uncounted. Since then a run stopped by
+  the host resumes by itself: its agent step ends `host-stopped`, a free retry on its session that
+  spends no attempt ([ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md)),
+  and a check the stop cut runs again after the restart. The operator decided (2026-10-26): "stop
+  instead of waiting for a quiet moment, since we can resume; with many projects there will rarely
+  be only one task running". So before the stop, after the capture, the script:
   1. pauses dispatch (`system dispatch pause`, its reason naming the update) unless it is paused
      already (yours stays as it is, and is never resumed by the script) or off. Its own pause is
      recorded in the update's state and lifted (`system dispatch resume`) once the profile runs
@@ -1822,7 +1829,7 @@ check` (37 rows, checked on a copy, 2026-10-23).
      whose code is older than the hold (`this profile holds no steps`) holds nothing, and the wait is
      T234's, for every step. Left held by a script killed with `kill -9`: `hold_steps` with
      `release: true` as the operator, or restart the unit;
-  3. reads what runs every `--runs-every` seconds (30), up to `--runs-wait` minutes (90), until no
+  3. reads what runs every `--runs-every` seconds (30), up to `--runs-wait` minutes (5), until no
      workflow step runs. The store, opened read-only as the capture opens it, is the source: every
      node in state `RUNNING` of every run in status `running`, whether it runs on a Worker or not
      (a step the engine runs itself, or one not routed yet, names no Worker), and however old the
@@ -1833,16 +1840,49 @@ check` (37 rows, checked on a copy, 2026-10-23).
      the first look, whenever that changes, and every 5 minutes: each run, its step, its Worker, and
      for how long (`run run_… step develop:1 on agent:codex-main/develop, for 12 min (task T223,
      algorithm-development)`);
-  4. at the bound, stops with exit 1, the unit not stopped and nothing changed (steps released,
-     dispatch resumed); with
-     `--cut-running` it goes on to the stop as before, naming each run it cuts first. A cut agent run
-     fails or resumes as its source tells; one that fails `reconciliation_failed` is yours to look
-     at ([a run's liveness is unknown](#a-runs-liveness-is-unknown)).
+  4. at the bound, **cuts** (the default, `--cut-running`): it names each step it cuts (run, step,
+     Worker, for how long) and writes them to `<dir>/cut.json`, then goes on to the stop. With
+     `--no-cut` it stops instead, exit 1, the unit not stopped and nothing changed (steps released,
+     dispatch resumed).
 
-  The drain keeps its own deadline (`--deadline 600` in `ExecStop`). The automatic update passes
-  neither option: a pass whose wait reaches the bound stops, exit 1, and pauses itself.
-- The stop: `systemctl --user stop system.service`. Its `ExecStop` is `system shutdown --deadline
-  600` (the drain), and the daemon and `system start` exit. It never kills.
+  The automatic update passes no option: it holds, waits up to 5 minutes, and cuts too.
+- The stop. When it cuts, the script stops the daemon itself first, with `system shutdown --deadline
+  <--cut-deadline>` (60 s by default, at most 600; the CLI's `shutdownHost`, run as the operator on
+  this DSH home): no new run is admitted, the drain waits at most that long, then the daemon is sent
+  SIGTERM and exits, and `system start`, the unit's main process, with it. What still runs then is
+  cut at once:
+  - an agent step is aborted, its session and worktree kept; the agent run is reconciled at the next
+    start and ends `host-stopped`, so its run's failure is a free retry of the same attempt on its
+    session ([ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md));
+    a run whose step outlived the stop resumes in place;
+  - a website turn already sent is never resent: the next start reconciles it from the page
+    ([provider turns](../design/provider-turns.md), INV-4); one whose outcome the page cannot tell
+    is recorded as unknown and fails closed (`reconciliation_failed`), its step marked `host-stopped`
+    when the stop alone ended it;
+  - a run's acceptance check (`tests`, `lint`, `typecheck`) that the stop killed came to nothing: at
+    the next start the engine asks for it again, and the source runs it again on the same result tree,
+    a `gate` decision of rule `agent-workers.check-cut-rerun` ("cut by the host, re-run") and an
+    `agent-workers.check.rerun` event; the result is then accepted, or sent back, on what the check
+    came to, never held for the operator because it was cut ([the run's required
+    checks](../design/workflow-engine.md#a-runs-required-checks)).
+
+  Then `systemctl --user stop system.service` finds the unit down (its `ExecStop` does nothing
+  without a main process). The short stop is taken whenever the update may cut, a wait that ended
+  with nothing running too (a run's checks, which are no step, then have 60 s, not 600). Without it
+  (`--no-cut` only: a cut whose profile's CLI has no `shutdownHost`, or whose short stop fails with the
+  daemon still running, is refused, nothing stopped, steps released and dispatch resumed; it never
+  takes the unit's drain), the stop is the
+  unit's: its `ExecStop` is `system shutdown --deadline 600` (the drain), and the daemon and `system
+  start` exit. It never kills. On
+  2026-10-26 the update to 2a64dad8 with `--cut-running` still took ten minutes to stop (10:30 to
+  10:40): the unit's drain waited for the cut steps anyway. The short stop is T269's answer.
+- **The report** (T269), when it cut: after the upgrade checks, `what the stop cut, and how it
+  resumed:` reads the store (read-only) and says, for each step of `cut.json`, `free retry (T218)`
+  (its step ended `host-stopped`; the task's next run named when there is one), `resumed` (the step
+  went on in its session from its recorded state), `not settled yet` (it resumes by itself; follow it
+  with `system explain <run>`), or that its run failed for a reason not the host's (the attempt
+  counts: look at it); then each check the stop cut that ran again since the cut, with its decision.
+  A check is no step, so the wait never names it: the report does. Also in `<dir>/cut-report.txt`.
 - The backup, taken once the daemon has stopped, so it is the store a rollback returns to: `system
   backup` (the store by `VACUUM INTO`, and the vault; the key stays in `~/.dsh/system`, as in
   [backup and restore](#backup-and-restore)), verified by a restore preview; and the profile's files.

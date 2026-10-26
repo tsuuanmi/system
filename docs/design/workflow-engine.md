@@ -1352,12 +1352,27 @@ acceptance is decided; a model's account of a command, such as `validate:1`'s re
   none, and they stay pending for the operator. A task that writes a subject keeps binding to it.
 - **Restart** (INV-4): a run stopped before its acceptance asks for them again, and the source
   answers with each check's stored outcome on that subject, never running one again to replace
-  what it came to (one a crash interrupted is an `error`, pending;
-  [a run's checks](agent-runtimes.md#a-runs-checks)). A board task's run whose acceptance was
-  stored before the stop finishes on it, its checks not asked again. A stop of the run (the
-  operator's, a lost lease) stops the commands in flight; the source stores each as it ended, one
-  the stop killed as an `error`.
-- **Bounded** (INV-9): at most the three checks, each within the source's deadline.
+  what it came to ([a run's checks](agent-runtimes.md#a-runs-checks)). A board task's run whose
+  acceptance was stored before the stop finishes on it, its checks not asked again. A stop of the
+  run (the operator's, a lost lease) stops the commands in flight; the source stores each as it
+  ended, one the stop killed as an `error`, pending.
+- **A check the host cut runs again** (T269). The host's stop (a live update's cut, any restart) or
+  a crash that kills a check before its end leaves it with no outcome: nothing it came to would be
+  replaced, and the check is read-only to the tree (INV-5). So when the engine asks again after the
+  restart, the source runs it again on the same result tree instead of answering `error`: a `gate`
+  decision of rule `agent-workers.check-cut-rerun` says so ("cut by the host, re-run", with the
+  cuts so far), named among the `check-run@1.0` evidence's inputs, and an `agent-workers.check.rerun`
+  event tells it (a live update's report lists it). The result is then accepted, or sent back, on
+  what the check came to, never held for the operator because it was cut. Bounded (INV-9): a check
+  the host cut three times on one subject stays an `error`, pending, its reason saying so. The
+  source tells a host's cut from a stop of the run by the stop's own reason: the engine
+  aborts its runs' turns with a reason that says the host stopped (and the source's own stop says
+  so too), and only a check killed so, or left started by a daemon that went away, is cut by the
+  host. One killed by the operator's stop of its run or a lost lease stays the `error` it was
+  stored as, after any restart. A re-run replaces the check's stored row in one statement, so the
+  cuts counted are never absent from the store.
+- **Bounded** (INV-9): at most the three checks, each within the source's deadline, and three cuts
+  of each.
 - **Configuration**: the commands are the operator's, per repository
   ([runbook](../operations/runbooks.md#let-a-run-pass-the-required-checks)); with none configured,
   each check is an `error` and stays pending, as before this section.

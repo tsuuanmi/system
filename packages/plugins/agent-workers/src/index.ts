@@ -592,7 +592,7 @@ export class AgentWorkers extends Service {
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
-    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups })
+    this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups, hostStopped: this.stopped.signal })
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     this.readBounds = readBoundsOf(config.workspaceReads)
     const slots = new Map<string, number>()

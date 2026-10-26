@@ -12,8 +12,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  awaitIdle, awaitWorkers, baselineProblems, type Health, healthOf, healthProblems, idle, type Running, runningInStore, runningLines, runningOf, runProblems, workerProblems, type Workers,
-  workersNow, workersOf, workersTable,
+  awaitIdle, awaitWorkers, baselineProblems, cutOutcomes, cutReportLines, type CutSteps, type Health, healthOf, healthProblems, idle, type Running, runningInStore, runningLines, runningOf, runProblems,
+  workerProblems, type Workers, workersNow, workersOf, workersTable,
 } from './live-update-check.ts'
 import { daemonEnv, type FakeSystem, fakeSystem, type FakeWork, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
 
@@ -345,7 +345,7 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     return dir ? readFileSync(join(f.backups, dir, 'live-update.state'), 'utf8') : ''
   }
 
-  it('pauses dispatch, waits until no step runs while saying what runs, and only then stops the unit', () => {
+  it('pauses dispatch, waits until no step runs while saying what runs, and only then stops the daemon', () => {
     const f = fixture()
     const system = running(f)
     // The capture's read, then the wait's: T223's develop step runs, then nothing does.
@@ -353,31 +353,32 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     try {
       const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-every', '1')
       expect(output, output).toContain('dispatch paused: live update to')
-      expect(output).toContain('waiting until no workflow step runs: up to 90 min, a look every 1 s')
-      expect(output).toMatch(/waiting for what runs, \d+ s of at most 1 h 30 min:\n {2}run run_T223/)
+      expect(output).toContain('waiting until no workflow step runs: up to 5 min, a look every 1 s')
+      expect(output).toMatch(/waiting for what runs, \d+ s of at most 5 min:\n {2}run run_T223/)
       expect(output).toMatch(T223_LINE)
       expect(output).toMatch(/nothing runs: no workflow step runs \(after \d+ s\)/)
-      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('systemctl --user stop system.service'))
+      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('system shutdown --deadline 60'))
       // The fixture has no backup to take: the update rolls back, as it did before T234, and the
       // rollback lifts the update's own pause once the daemon runs again.
       expect(output).toContain('ROLLING BACK')
       expect(status).toBe(1)
-      expect(f.unit.calls()).toEqual(['start system.service', 'stop system.service', 'reset-failed system.service', 'start system.service'])
+      // The daemon stopped by the short stop, the unit down with it: its own stop was not needed.
+      expect(f.unit.calls()).toEqual(['start system.service', 'reset-failed system.service', 'start system.service'])
       // A profile from before the hold (T257) holds nothing: the wait is for every step.
       expect(output).toContain('this profile holds no steps')
-      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', 'dispatch_resume'])
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', `shutdown 60 ${realpathSync(f.home)}`, 'dispatch_resume'])
       expect(stateOf(f)).toContain('dispatch_paused=resumed')
     } finally {
       f.unit.cleanup()
     }
   })
 
-  it('at the bound, stops with what still runs, the unit not stopped and dispatch resumed', () => {
+  it('with --no-cut, at the bound, stops with what still runs, the unit not stopped and dispatch resumed', () => {
     const f = fixture()
     const system = running(f)
     system.work([T223])
     try {
-      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0')
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0', '--no-cut')
       expect(output, output).toContain('still running after 0 s, the bound:')
       expect(output).toMatch(T223_LINE)
       expect(output).toContain('STOP: steps still run after 0 min (above): system.service was not stopped')
@@ -393,7 +394,7 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     }
   })
 
-  it('with --cut-running, stops the unit at the bound and names what it cuts; an operator\'s pause is left as it is', () => {
+  it('with --cut-running (the default), cuts at the bound and names what it cuts; an operator\'s pause is left as it is', () => {
     const f = fixture()
     const system = running(f)
     system.work([T223])
@@ -401,15 +402,79 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     try {
       const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0', '--cut-running')
       expect(output, output).toContain('dispatch is paused already, since 2026-10-26T08:00:00.000Z (by hand): left as it is')
-      expect(output).toContain('still running after 0 s, the bound; --cut-running: the stop cuts')
+      expect(output).toContain('still running after 0 s, the bound; the stop cuts each step below, and each resumes by itself after the restart')
       expect(output).toMatch(T223_LINE)
-      expect(output).toContain('--cut-running: stopping system.service with the steps above still running')
+      expect(output).toContain('cutting: the stop cuts the steps above, still running after 0 min')
       expect(status).toBe(1)
-      expect(f.unit.calls().slice(0, 2)).toEqual(['start system.service', 'stop system.service'])
+      expect(system.calls()).toContain(`shutdown 60 ${realpathSync(f.home)}`)
+      expect(f.unit.calls()).not.toContain('stop system.service')
       expect(system.calls()).not.toContain('dispatch_pause')
       expect(system.calls()).not.toContain('dispatch_resume')
     } finally {
       f.unit.cleanup()
+    }
+  })
+
+  it('by default holds steps, waits for the steps in flight, then cuts them: a stop with a 60 s drain, never the unit\'s 600 s one, each cut step named for the report (T269)', () => {
+    const f = fixture()
+    const system = running(f)
+    // Held, T223's develop step is still in flight at the bound.
+    system.work([T223])
+    system.holds([T223])
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0')
+      expect(output, output).toContain('steps held: each running run finishes the step it is in')
+      expect(output).toContain('waiting until no workflow step runs: up to 0 min')
+      expect(output).toContain('still running after 0 s, the bound; the stop cuts each step below')
+      expect(output).toMatch(T223_LINE)
+      expect(output).toContain('stopping the daemon with a drain of at most 60 s (system shutdown --deadline 60)')
+      expect(output).toContain('cut at the deadline (1 min): 1 run(s) still running were cut (run_T223)')
+      // The hold, the wait, then the cut: in that order, and the unit's own stop never drained.
+      const calls = system.calls()
+      expect(calls.slice(0, 7)).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', `shutdown 60 ${realpathSync(f.home)}`])
+      expect(f.unit.calls()).not.toContain('stop system.service')
+      expect(output).toContain('steps: the hold ends with the next start of the daemon')
+      expect(stateOf(f)).toContain('steps_held=restart')
+      // What was cut, for the report after the restart.
+      const dir = readdirSync(f.backups).find((name) => name.includes('-before-base'))!
+      const cut = JSON.parse(readFileSync(join(f.backups, dir, 'cut.json'), 'utf8')) as { cutAt: string; steps: unknown[] }
+      expect(cut.steps).toEqual([expect.objectContaining({ runId: 'run_T223', nodeId: 'develop:1', worker: 'agent:codex-main/develop', taskId: 'T223' })])
+      // The fixture has no backup to take: it rolls back, and the daemon runs again.
+      expect(status).toBe(1)
+      expect(readFileSync(join(f.unit.dir, 'state'), 'utf8').trim()).toBe('active')
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('stops with the drain --cut-deadline names; a CLI without the short stop refuses the cut, never taking the unit\'s drain (T269)', () => {
+    const f = fixture()
+    const system = running(f)
+    system.work([T223])
+    try {
+      const { output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0', '--cut-deadline', '5')
+      expect(output, output).toContain('stopping the daemon with a drain of at most 5 s (system shutdown --deadline 5)')
+      expect(system.calls()).toContain(`shutdown 5 ${realpathSync(f.home)}`)
+    } finally {
+      f.unit.cleanup()
+    }
+
+    const old = fixture()
+    const before = running(old)
+    before.work([T223])
+    before.noShutdown()
+    try {
+      const { status, output } = run(old, old.target, '--apply', '--check-with', builtTarget(old), '--runs-wait', '0')
+      // Refused, nothing stopped: no cut takes the unit's 600 s drain.
+      expect(output, output).toContain("this profile's CLI has no shutdownHost, so the short stop is unavailable")
+      expect(output).toContain('STOP: the short stop (system shutdown --deadline 60) cannot be made')
+      expect(output).toContain('the live install was not changed')
+      expect(status).toBe(1)
+      expect(old.unit.calls()).toEqual(['start system.service'])
+      expect(readFileSync(join(old.unit.dir, 'state'), 'utf8').trim()).toBe('active')
+      expect(before.calls()).toContain('dispatch_resume')
+    } finally {
+      old.unit.cleanup()
     }
   })
 
@@ -420,9 +485,9 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     system.work([gate], [gate], [])
     try {
       const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-every', '1')
-      expect(output, output).toMatch(/waiting for what runs, \d+ s of at most 1 h 30 min:\n {2}run run_T224 step acceptance:1 on no Worker, for \d+ (s|min|h \d+ min) \(task T224, algorithm-development\)/)
+      expect(output, output).toMatch(/waiting for what runs, \d+ s of at most 5 min:\n {2}run run_T224 step acceptance:1 on no Worker, for \d+ (s|min|h \d+ min) \(task T224, algorithm-development\)/)
       expect(output).toMatch(/nothing runs: no workflow step runs \(after \d+ s\)/)
-      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('systemctl --user stop system.service'))
+      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('system shutdown --deadline 60'))
       expect(status).toBe(1)
     } finally {
       f.unit.cleanup()
@@ -435,10 +500,11 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     system.work([T223])
     try {
       const { status, output } = run(f, f.target)
-      expect(output, output).toContain('what --apply would wait for before the stop (up to 90 min):')
+      expect(output, output).toContain('what --apply would wait for before the stop (up to 5 min, then cut):')
       expect(output).toContain('running now:')
       expect(output).toMatch(T223_LINE)
-      expect(output).toContain('at the bound: stop, exit 1, system.service not stopped')
+      expect(output).toContain('at the bound: cut, naming each step it cuts (-> cut.json)')
+      expect(output).toContain('system shutdown --deadline 60 (a drain of at most 60 s, then the daemon')
       expect(status).toBe(0)
       expect(f.unit.calls()).toEqual(['start system.service'])
       expect(system.calls()).not.toContain('dispatch_pause')
@@ -474,24 +540,24 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       expect(output).toMatch(T223_LINE)
       expect(output).toMatch(/nothing runs: no workflow step runs \(after \d+ s\)/)
       expect(output).not.toContain('review:1')
-      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('systemctl --user stop system.service'))
+      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('system shutdown --deadline 60'))
       // Once the daemon exited, its next start ends the hold: the update releases nothing itself.
       expect(output).toContain('steps: the hold ends with the next start of the daemon')
       expect(stateOf(f)).toContain('steps_held=restart')
-      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', 'dispatch_resume'])
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'hold_steps', 'roster', 'roster', `shutdown 60 ${realpathSync(f.home)}`, 'dispatch_resume'])
       expect(status).toBe(1)
     } finally {
       f.unit.cleanup()
     }
   })
 
-  it('at the bound, releases the hold before it stops, the unit not stopped (T257)', () => {
+  it('with --no-cut, at the bound, releases the hold before it stops, the unit not stopped (T257)', () => {
     const f = fixture()
     const system = running(f)
     system.work([T223])
     system.holds([T223])
     try {
-      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0')
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0', '--no-cut')
       expect(output, output).toContain('steps released: each running run goes on from its recorded state')
       expect(output).toContain('STOP: steps still run after 0 min (above): system.service was not stopped')
       expect(status).toBe(1)
@@ -512,8 +578,8 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
       system.holds([T223])
       try {
         const update = applying(f)
-        // It waits for T223's step, held (up to 90 min).
-        await vi.waitFor(() => expect(update.output()).toMatch(/waiting for what runs, \d+ s of at most 1 h 30 min/), { timeout: 30_000, interval: 100 })
+        // It waits for T223's step, held (up to 5 min).
+        await vi.waitFor(() => expect(update.output()).toMatch(/waiting for what runs, \d+ s of at most 5 min/), { timeout: 30_000, interval: 100 })
         expect(system.held()).toBe(true)
         update.child.kill(signal)
         // Its reader is stopped too: the script's output closes, long before the wait's bound.
@@ -556,12 +622,13 @@ describe('live-update.sh waits for what runs before it stops the unit (T234)', (
     })
   }
 
-  it('takes --runs-wait in whole minutes and --runs-every in whole seconds, at least 1', () => {
+  it('takes --runs-wait in whole minutes, --runs-every in whole seconds, at least 1, and --cut-deadline in whole seconds, at most 600', () => {
     const f = fixture()
-    for (const args of [['--runs-wait', 'soon'], ['--runs-every', '0']]) {
+    for (const args of [['--runs-wait', 'soon'], ['--runs-every', '0'], ['--cut-deadline', 'soon'], ['--cut-deadline', '601']]) {
       const { status, output } = run(f, f.target, ...args)
       expect(status).toBe(2)
-      expect(output).toContain('[--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running]')
+      expect(output).toContain('[--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running | --no-cut]')
+      expect(output).toContain('[--cut-deadline <seconds>]')
     }
   })
 })
@@ -694,6 +761,58 @@ describe('live-update-check: what runs before the stop (T234)', () => {
     sleeps.length = 0
     expect((await awaitIdle(async () => runningOf(none, roster([])), options)).idle).toBe(true)
     expect(sleeps).toEqual([])
+  })
+})
+
+describe('live-update-check: how each step the stop cut resumed (T269)', () => {
+  const CUT_AT = '2026-10-26T10:30:00.000Z'
+  /** A store after the restart, as the engine's, the board's, and the event log's migrations leave it. */
+  function store(): DatabaseSync {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`CREATE TABLE workflow_runs (run_id TEXT PRIMARY KEY, template TEXT, status TEXT, created_at TEXT);
+      CREATE TABLE workflow_nodes (run_id TEXT, node_id TEXT, state TEXT, worker TEXT, infrastructure TEXT);
+      CREATE TABLE workflow_tasks (run_id TEXT, task_id TEXT);
+      CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, type TEXT, run_id TEXT, node_id TEXT, entry TEXT)`)
+    return db
+  }
+  const step = (runId: string, nodeId: string, taskId?: string) => ({ runId, nodeId, worker: 'agent:codex-main/develop', template: 'algorithm-development', ...(taskId ? { taskId } : {}) })
+
+  it('names a free retry, a resumed session, a step not settled yet, and each check run again', () => {
+    const db = store()
+    db.exec(`INSERT INTO workflow_runs VALUES ('run_T223', 'algorithm-development', 'failed', '2026-10-26T09:00:00.000Z'), ('run_T223b', 'algorithm-development', 'running', '2026-10-26T10:41:00.000Z'),
+        ('run_T224', 'algorithm-development', 'completed', '2026-10-26T09:10:00.000Z'), ('run_T225', 'algorithm-development', 'running', '2026-10-26T09:20:00.000Z'),
+        ('run_T226', 'algorithm-development', 'failed', '2026-10-26T09:30:00.000Z');
+      INSERT INTO workflow_nodes VALUES ('run_T223', 'develop:1', 'FAILED', 'agent:codex-main/develop', 'host-stopped'), ('run_T224', 'review:1', 'COMPLETED', 'agent:codex-main/review', NULL),
+        ('run_T225', 'develop:1', 'READY', NULL, NULL), ('run_T226', 'develop:1', 'FAILED', 'agent:codex-main/develop', NULL);
+      INSERT INTO workflow_tasks VALUES ('run_T223', 'T223'), ('run_T223b', 'T223');`)
+    db.prepare("INSERT INTO events (at, type, run_id, entry) VALUES (?, 'agent-workers.check.rerun', ?, ?)")
+      .run('2026-10-26T10:42:00.000Z', 'run_T227', JSON.stringify({ decision: 'sha256:abc', data: { check: 'tests', subject: 'git:main:v1', cuts: 1 } }))
+    // A re-run from before this cut is another update's.
+    db.prepare("INSERT INTO events (at, type, run_id, entry) VALUES (?, 'agent-workers.check.rerun', ?, ?)").run('2026-10-25T10:00:00.000Z', 'run_old', '{}')
+    const cut: CutSteps = { cutAt: CUT_AT, steps: [step('run_T223', 'develop:1', 'T223'), step('run_T224', 'review:1'), step('run_T225', 'develop:1'), step('run_T226', 'develop:1'), step('run_gone', 'plan:1')] }
+    const outcomes = cutOutcomes(db, cut)
+    expect(outcomes.steps.map((o) => o.how)).toEqual(['free-retry', 'resumed', 'pending', 'counted', 'unknown'])
+    expect(cutReportLines(cut, outcomes)).toEqual([
+      'cut at 2026-10-26T10:30:00.000Z: 5 step(s)',
+      '  run run_T223 step develop:1 on agent:codex-main/develop (task T223): free retry (T218): the step ended host-stopped, so its run\'s failure spends no attempt; run run_T223b serves task T223 now (running)',
+      '  run run_T224 step review:1 on agent:codex-main/develop: resumed: the step went on in its session from its recorded state, and is completed (run completed)',
+      '  run run_T225 step develop:1 on agent:codex-main/develop: not settled yet (step READY, run running): it resumes by itself; system explain run_T225',
+      '  run run_T226 step develop:1 on agent:codex-main/develop: its run failed, not as the host\'s (step FAILED): the attempt counts; system explain run_T226',
+      '  run run_gone step plan:1 on agent:codex-main/develop: the store no longer holds run run_gone step plan:1',
+      '  run run_T227: its tests check, cut by the host, re-run on git:main:v1 (cut 1 time(s)), decision sha256:abc',
+    ])
+    db.close()
+  })
+
+  it('reads a store from before the infrastructure mark, and says when nothing was cut', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`CREATE TABLE workflow_runs (run_id TEXT PRIMARY KEY, status TEXT); CREATE TABLE workflow_nodes (run_id TEXT, node_id TEXT, state TEXT);
+      INSERT INTO workflow_runs VALUES ('run_T223', 'running'); INSERT INTO workflow_nodes VALUES ('run_T223', 'develop:1', 'RUNNING')`)
+    expect(cutOutcomes(db, { cutAt: CUT_AT, steps: [step('run_T223', 'develop:1')] }).steps.map((o) => o.detail))
+      .toEqual(['resumed: the step runs again in its session from its recorded state (run running)'])
+    const none: CutSteps = { cutAt: CUT_AT, steps: [] }
+    expect(cutReportLines(none, cutOutcomes(db, none))).toEqual(['cut at 2026-10-26T10:30:00.000Z: 0 step(s)', '  nothing was cut that the store tells of'])
+    db.close()
   })
 })
 

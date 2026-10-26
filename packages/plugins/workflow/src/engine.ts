@@ -104,7 +104,8 @@ export class Engine {
 
   /** The engine stops: runs stay as they are and resume on the next start (a stop is not a failure). */
   async close(): Promise<void> {
-    this.stopped.abort()
+    // The host stopping, as the reason says (T269): a check it kills is cut by the host, to run again after the restart.
+    this.stopped.abort(Object.assign(new Error('the host stopped'), { hostStopped: true }))
     for (const timer of this.retries) clearTimeout(timer)
     await this.dispatch.close()
     await Promise.allSettled(this.wakeChecks)
