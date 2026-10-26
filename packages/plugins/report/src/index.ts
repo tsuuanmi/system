@@ -426,17 +426,32 @@ const METRICS_INPUT: ToolSpec['inputSchema'] = {
 }
 const METRICS_DESCRIPTION = `The maturity metrics of PROP-0016 §1, from recorded data only, over a rolling window (default the ${METRICS_DEFAULT_DAYS} days before now) for one project or every one: each metric's value, the sample it is over, and the records it read, or why it cannot be measured yet (never 0); a value the records only bound says so. Then the reading against the L3 lines (starting lines, D83): it holds only when every line is met over 30 days and 30 finished tasks. Reads only; changes nothing.`
 
+/**
+ * The input a caller may read (T285, ADR-0076): a project's lead reads its own project only, by
+ * default too; another project, named, is refused with the reason (the string). The operator and a
+ * client token with no project read what they name, or every project.
+ */
+function ownProject(args: Record<string, unknown>, lead: string | undefined): Record<string, unknown> | string {
+  if (lead === undefined) return args
+  if (args.projectId !== undefined && args.projectId !== lead) {
+    return `forbidden: the lead token of project ${lead} reaches only project ${lead}; project ${String(args.projectId)} is another project's, so nothing was read`
+  }
+  return { ...args, projectId: lead }
+}
+
 /** The `report` tool: input and output checked against `mcp-report@1.6`; the text is the rendering. */
 export function registerTool(ctx: Context): void {
-  ctx.mcp.tool('metrics', { scope: 'client', description: METRICS_DESCRIPTION, inputSchema: METRICS_INPUT }, async (args) => {
+  ctx.mcp.tool('metrics', { scope: 'client', description: METRICS_DESCRIPTION, inputSchema: METRICS_INPUT }, async (args, context) => {
     try {
       schemas.assertDef('mcp-report@1.6', 'metrics-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
+    const scoped = ownProject(args, context?.lead)
+    if (typeof scoped === 'string') return refused(scoped)
     let made: Metrics
     try {
-      made = await metrics(ctx, args as MetricsInput)
+      made = await metrics(ctx, scoped as MetricsInput)
     } catch (error) {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `metrics: ${(error as Error).message}`)
     }
@@ -447,15 +462,17 @@ export function registerTool(ctx: Context): void {
     }
     return { content: [{ type: 'text' as const, text: `${renderMetrics(made).join('\n')}\n` }], structuredContent: { ...made } }
   })
-  ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args) => {
+  ctx.mcp.tool('report', { scope: 'client', description: DESCRIPTION, inputSchema: INPUT }, async (args, context) => {
     try {
       schemas.assertDef('mcp-report@1.6', 'report-input', args)
     } catch (error) {
       return refused(`invalid input, nothing read: ${(error as Error).message}`)
     }
+    const scoped = ownProject(args, context?.lead)
+    if (typeof scoped === 'string') return refused(scoped)
     let made: Report
     try {
-      made = await report(ctx, args as ReportInput)
+      made = await report(ctx, scoped as ReportInput)
     } catch (error) {
       return refused(error instanceof ReportError ? `${error.failure}: ${error.message}` : `report: ${(error as Error).message}`)
     }

@@ -123,6 +123,49 @@ describe('a project lead in the approval queue', () => {
     expect((await booted.ctx.approvals.get(main.requestId))!.state).not.toBe('approved')
   })
 
+  it('refuses another project\'s merge, even into a branch its own project lists, and approves its own (T285)', async () => {
+    const booted = await boot({ devBranches: { system: ['dev'], other: ['dev'] } })
+    const theirs = await ask(booted, { class: 'merge', projectId: 'other' }, 'merge-other', 'other')
+    booted.landings.set('run-merge-other', { requestId: theirs.requestId, base: { branch: 'dev' } })
+    await expect(booted.approvals.decideAsLead('system', [verdictOn(theirs)], after(5))).rejects.toThrow(/lead:system decides only for project system; this belongs to project other/)
+    expect((await booted.ctx.approvals.get(theirs.requestId))!.state).not.toBe('approved')
+    const own = await ask(booted, { class: 'merge', projectId: 'system' }, 'merge-own', 'system')
+    booted.landings.set('run-merge-own', { requestId: own.requestId, base: { branch: 'dev' } })
+    expect((await booted.approvals.decideAsLead('system', [verdictOn(own)], after(6)))[0]).toMatchObject({ state: 'approved' })
+  })
+
+  it('lists, reads, and shows the policy of its own project\'s requests only, and refuses another project\'s with the reason (T285)', async () => {
+    const booted = await boot()
+    const tool = (name: string, args: Record<string, unknown>, context: { scope: 'client' | 'operator'; lead?: string } = { scope: 'client', lead: 'system' }) =>
+      booted.mcp.tools.get(name)!.handler(args, context) as unknown as Promise<{ isError?: boolean; content: Array<{ text: string }>; structuredContent?: Record<string, unknown> }>
+    const mine = await ask(booted, { class: 'command', command: ['ls'], projectId: 'system' }, 'mine', 'system')
+    const theirs = await ask(booted, { class: 'command', command: ['ls'], projectId: 'p1' }, 'theirs', 'p1')
+    const worker = (ref: string, taskId: string) => ask(booted, { class: 'command', command: ['ls'] }, ref, undefined, { requester: { component: 'worker', runId: `agent-${ref}`, sessionId: `s-${ref}`, taskId } })
+    const workerMine = await worker('w-mine', 't-system')
+    const workerTheirs = await worker('w-theirs', 't-other')
+    const ids = (reply: { structuredContent?: Record<string, unknown> }) => (reply.structuredContent!.requests as Array<{ requestId: string }>).map((r) => r.requestId).sort()
+    // Its list is its own project's, a Worker's command of its project's task included, by default and when it names its project.
+    expect(ids(await tool('approvals_list', {}))).toEqual([mine.requestId, workerMine.requestId].sort())
+    expect(ids(await tool('approvals_list', { projectId: 'system' }))).toEqual([mine.requestId, workerMine.requestId].sort())
+    // A page at a time: the next page goes on from where the last one stopped.
+    const first = await tool('approvals_list', { limit: 1 })
+    const second = await tool('approvals_list', { limit: 1, after: first.structuredContent!.next })
+    expect([...ids(first), ...ids(second)].sort()).toEqual([mine.requestId, workerMine.requestId].sort())
+    // Another project's list, request, or policy is refused with the reason.
+    expect((await tool('approvals_list', { projectId: 'p1' })).content[0]!.text).toMatch(/^forbidden: the lead token of project system reaches only project system; project p1 belongs to project p1/)
+    expect((await tool('approvals_get', { requestId: theirs.requestId })).content[0]!.text).toMatch(new RegExp(`^forbidden: .*approval request ${theirs.requestId} belongs to project p1`))
+    expect((await tool('approvals_get', { requestId: workerTheirs.requestId })).content[0]!.text).toMatch(/belongs to project other/)
+    expect((await tool('approvals_policy', { projectId: 'p1' })).content[0]!.text).toMatch(/^forbidden: .*project p1 belongs to project p1/)
+    // Its own pass.
+    expect((await tool('approvals_get', { requestId: mine.requestId })).structuredContent).toMatchObject({ request: { requestId: mine.requestId } })
+    expect((await tool('approvals_get', { requestId: workerMine.requestId })).isError).toBeFalsy()
+    expect((await tool('approvals_policy', {})).isError).toBeFalsy()
+    // The operator, and a client token with no project, read every project's.
+    expect(ids(await tool('approvals_list', {}, { scope: 'operator' }))).toHaveLength(4)
+    expect(ids(await tool('approvals_list', {}, { scope: 'client' }))).toHaveLength(4)
+    expect((await tool('approvals_get', { requestId: theirs.requestId }, { scope: 'client' })).isError).toBeFalsy()
+  })
+
   it('decides the commands and dispatch starts of its own project, and no other project\'s', async () => {
     const booted = await boot()
     const own = await ask(booted, { class: 'command', command: ['ls'], projectId: 'system' }, 'own', 'system')

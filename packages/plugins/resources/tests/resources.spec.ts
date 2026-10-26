@@ -378,6 +378,35 @@ describe('paging and the MCP tools', () => {
     expect((await page.handler({ after: 'not-a-cursor' }, { scope: 'client' })).isError).toBe(true)
   })
 
+  it('holds a lead token to its own project\'s usage: its project, task, and run pass, another project\'s are refused (T285)', async () => {
+    const ctx = await boot()
+    // The board and the engine as the ledger reads them: a task's project, and a run's.
+    const provided = (name: string, value: object) => ctx.plugin({ name, apply: (c: Context) => void (c as unknown as { provide(n: string, v: unknown): void }).provide(name, value) })
+    const fibers = [
+      provided('board', { task: async (taskId: string) => ({ 't-a': { projectId: 'pa' }, 't-b': { projectId: 'pb' } } as Record<string, { projectId: string }>)[taskId] }),
+      provided('workflow', { projectOfRun: async (runId: string) => ({ 'r-a': 'pa', 'r-b': 'pb' } as Record<string, string>)[runId] }),
+    ]
+    await Promise.all(fibers)
+    onTestFinished(async () => {
+      for (const fiber of fibers) await fiber.dispose()
+    })
+    const mcp = await withMcp(ctx)
+    await ctx.resources.record(usage('ua', { projectId: 'pa', taskId: 't-a', runId: 'r-a' }))
+    await ctx.resources.record(usage('ub', { projectId: 'pb', taskId: 't-b', runId: 'r-b' }))
+    const page = (args: Record<string, unknown>, context: { scope: 'client'; lead?: string } = { scope: 'client', lead: 'pa' }) =>
+      mcp.tools.get('resources_usage')!.handler(args, context) as unknown as Promise<{ isError?: boolean; content: Array<{ text: string }>; structuredContent?: { records: UsageRecord[] } }>
+    for (const args of [{ projectId: 'pb' }, { taskId: 't-b' }, { runId: 'r-b' }, { taskId: 't-unknown' }]) {
+      const refused = await page(args)
+      expect(refused.isError, JSON.stringify(args)).toBe(true)
+      expect(refused.content[0]!.text, JSON.stringify(args)).toMatch(/^forbidden: the lead token of project pa reaches only project pa; .* belongs to (project pb|no project)/)
+    }
+    for (const args of [{}, { projectId: 'pa' }, { taskId: 't-a' }, { runId: 'r-a' }]) {
+      expect((await page(args)).structuredContent!.records.map((r) => r.requestId), JSON.stringify(args)).toEqual(['ua'])
+    }
+    // A client token with no project reads every project's.
+    expect((await page({}, { scope: 'client' })).structuredContent!.records.map((r) => r.requestId)).toEqual(['ua', 'ub'])
+  })
+
   it('bounds a page to 100 records and usage() to maxRecords, refusing more than either (INV-9)', async () => {
     const ctx = await boot(undefined, { pools: POOLS, maxRecords: 3, pageSize: 2 })
     for (let i = 0; i < 4; i++) await ctx.resources.record(usage(`u${i}`, { runId: i < 2 ? 'r1' : 'r2', observedAt: at(i).toISOString() }))

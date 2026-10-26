@@ -162,7 +162,10 @@ export class Engine {
       throw new WorkflowFailure('invalid_input', refused ? `workflow template ${input.template} was refused at load: ${refused}` : `unknown workflow template ${input.template}`)
     }
     if (!input.input.trim()) throw new WorkflowFailure('invalid_input', 'the input must not be empty')
-    const requestKey = input.clientRequestId ? sha256(`workflow\0${input.clientRequestId}`) : null
+    // A retry key is the caller's within its project (T285): a lead's key names its project, so another
+    // project's lead (or the operator) sending the same key starts its own run and never gets this one back.
+    const requestKey = !input.clientRequestId ? null
+      : input.projectId !== undefined ? sha256(`workflow\0project\0${input.projectId}\0${input.clientRequestId}`) : sha256(`workflow\0${input.clientRequestId}`)
     const unknown = variantProblem(input.template, nodes, input.variant)
     if (unknown) throw new WorkflowFailure('invalid_input', unknown)
     const spec = resolve(input.template, nodes, input)
@@ -245,6 +248,7 @@ export class Engine {
             bound.dispatch ? 'dispatch' : bound.startedBy ?? 'lead', now(), now())
         return view(this, run)
       }
+      if (input.projectId !== undefined) db.prepare('UPDATE workflow_runs SET project_id = ? WHERE run_id = ?').run(input.projectId, run.run_id)
       this.open(run.run_id)
       this.ctx.store.afterCommit(() => this.schedule(run.run_id))
       return view(this, run)

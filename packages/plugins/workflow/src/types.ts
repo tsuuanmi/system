@@ -143,6 +143,8 @@ export interface StartInput extends CallerOptions {
   classification?: Classification | undefined
   /** Retry-safe request key: the same key returns the same run. */
   clientRequestId?: string | undefined
+  /** The project a lead started the run for (T285): a run that serves no board task is tagged with it, and its retry key is the project's. */
+  projectId?: string | undefined
 }
 
 /**

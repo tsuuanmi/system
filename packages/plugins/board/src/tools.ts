@@ -162,22 +162,50 @@ const sees = <T>(check: OutputCheck, out: (value: T) => object): Checked<T> => (
 
 /** The tools' behavior, over a board. */
 function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Record<BoardTool, Handler> {
+  // A lead's token reaches only its own project (T285, ADR-0076): what a call names is checked against the token's project, and another's is refused whole.
+  const other = (lead: string, what: string, of: string | undefined): BoardError => new BoardError('invalid', `the lead token of project ${lead} reaches only project ${lead}; ${what} belongs to ${of === undefined ? 'no project (or is unknown)' : `project ${of}`}, so nothing was done`)
+  // A caller in the same process may call a handler with no context: then no lead called.
+  const leadOf = (context: ToolContext | undefined): string | undefined => context?.lead
+  const ownProject = (context: ToolContext | undefined, projectId: string): void => {
+    const lead = leadOf(context)
+    if (lead !== undefined && lead !== projectId) throw other(lead, `project ${projectId}`, projectId)
+  }
+  const ownTask = async (context: ToolContext | undefined, taskId: string): Promise<void> => {
+    const lead = leadOf(context)
+    if (lead === undefined) return
+    const of = (await board.task(taskId))?.projectId
+    if (of !== lead) throw other(lead, `task ${taskId}`, of)
+  }
   return {
-    board_projects: async (args) => {
+    board_projects: async (args, context) => {
+      const lead = leadOf(context)
+      if (lead !== undefined) {
+        // A lead lists its own project only.
+        const own = await board.project(lead)
+        const shown = own && (!args.state || own.state === args.state) ? [own] : []
+        return { projects: shown.map((p) => ({ projectId: p.projectId, title: p.title, state: p.state, ...withMilestone(p), tasks: board.counts(p.projectId) })) }
+      }
       const { items, next } = board.projectPage({ ...(args.state ? { state: args.state as Project['state'] } : {}), ...pageOf(args) })
       return {
         projects: items.map((p) => ({ projectId: p.projectId, title: p.title, state: p.state, ...withMilestone(p), tasks: board.counts(p.projectId) })),
         ...(next ? { next } : {}),
       }
     },
-    board_charter: async (args, _context, check) => {
+    board_charter: async (args, context, check) => {
+      // A lead amends its own project's charter; it founds none.
+      const lead = leadOf(context)
+      if (lead !== undefined) {
+        if (typeof args.projectId !== 'string') throw new BoardError('invalid', `the lead token of project ${lead} amends project ${lead}'s charter and founds no project: name projectId ${lead}`)
+        ownProject(context, args.projectId)
+      }
       const input = args as unknown as CharterInput & { clientRequestId?: string }
       const { clientRequestId, ...charter } = input
       const out = ({ project, approvalRequest, charterVersion }: Chartered) => ({ projectId: project.projectId, state: project.state, charterVersion, approvalRequest })
       return out(await board.charterProject(charter, new Date(), clientRequestId, sees(check, out)))
     },
-    board_brief: async (args) => {
+    board_brief: async (args, context) => {
       const projectId = String(args.projectId)
+      ownProject(context, projectId)
       const project = await board.project(projectId)
       if (!project) throw new BoardError('unknown-project', `no project ${projectId}`)
       const list = (states: BoardTask['state'][], limit: number) => (limit > 0 ? board.taskPage({ projectId, states, limit }).items.map(summary) : [])
@@ -193,28 +221,35 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
         next: [...ready, ...list(['proposed'], 20 - ready.length)], readFirst, ...(notes.length ? { conventions: notes } : {}),
       }
     },
-    board_tasks: async (args) => {
+    board_tasks: async (args, context) => {
+      ownProject(context, String(args.projectId))
       const { items, next } = board.taskPage({
         projectId: String(args.projectId), ...(args.states ? { states: args.states as BoardTask['state'][] } : {}), ...(args.milestone ? { milestone: String(args.milestone) } : {}), ...pageOf(args),
       })
       if (!items.length && !(await board.project(String(args.projectId)))) throw new BoardError('unknown-project', `no project ${String(args.projectId)}`)
       return { tasks: items.map(summary), ...(next ? { next } : {}) }
     },
-    board_task: async (args) => {
+    board_task: async (args, context) => {
       const task = await board.task(String(args.taskId))
       if (!task) throw new BoardError('unknown-task', `no task ${String(args.taskId)}`)
+      ownProject(context, task.projectId)
       return { task }
     },
-    board_propose: async (args, _context, check) => {
+    board_propose: async (args, context, check) => {
       const { clientRequestId, ...input } = args as unknown as TaskInput & { clientRequestId?: string }
+      ownProject(context, input.projectId)
+      // A lead's task depends on its own project's tasks only.
+      for (const dependency of input.dependsOn ?? []) await ownTask(context, dependency)
       return moved(board.proposeTask(input, new Date(), clientRequestId, sees(check, moved)))
     },
-    board_claim: async (args, _context, check) => {
+    board_claim: async (args, context, check) => {
+      await ownTask(context, String(args.taskId))
       const out = (claim: Claim) => ({ taskId: claim.taskId, state: 'claimed', generation: claim.generation, leaseExpiresAt: claim.leaseExpiresAt })
       return out(await board.claim(String(args.taskId), String(args.owner), (typeof args.ttlSeconds === 'number' ? args.ttlSeconds : options.leaseTtlSeconds) * 1000, new Date(), sees(check, out)))
     },
-    board_update: async (args, _context, check) => {
+    board_update: async (args, context, check) => {
       const taskId = String(args.taskId)
+      await ownTask(context, taskId)
       const answers = args.answers as Array<{ question: number; answer: string }> | undefined
       if (answers && args.generation !== undefined) throw new BoardError('invalid', 'board_update renews a lease (generation) or answers questions (answers), not both')
       if (answers) {
@@ -235,7 +270,9 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
       })
       return out(renewed!)
     },
-    board_cancel: async (args, { scope }, check) => {
+    board_cancel: async (args, context, check) => {
+      const { scope } = context
+      await ownTask(context, String(args.taskId))
       // Who cancelled is who called: the operator's token, else the lead's (a client).
       const out = (task: BoardTask) => ({ taskId: task.taskId, state: 'cancelled', revision: task.revision })
       return out(await board.cancel(String(args.taskId), scope === 'operator' ? 'operator' : 'lead', typeof args.note === 'string' ? args.note : undefined, new Date(), sees(check, out)))
@@ -255,7 +292,9 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
       const out = ({ project, cancelled }: Closed) => ({ projectId: project.projectId, state: 'closed', outcome: project.closure!.outcome, revision: project.revision, decision: project.closure!.decision, cancelled })
       return out(await board.closeProject(String(args.projectId), args.outcome as 'achieved' | 'stopped', new Date(), sees(check, out)))
     },
-    board_escape: async (args, { scope }, check) => {
+    board_escape: async (args, context, check) => {
+      const { scope } = context
+      await ownTask(context, String(args.taskId))
       // Who recorded it is who called: the operator's token, else the lead's (a client).
       const out = ({ escape, breaker }: { escape: Escape; breaker?: Breaker }) => ({
         escapeId: escape.escapeId, taskId: escape.taskId, projectId: escape.projectId, branch: escape.branch, foundAt: escape.foundAt, recordedBy: escape.recordedBy,
@@ -264,8 +303,16 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
       const input = { taskId: String(args.taskId), by: scope === 'operator' ? 'operator' as const : 'lead' as const, note: String(args.note), ...(typeof args.foundAt === 'string' ? { foundAt: new Date(args.foundAt).toISOString() } : {}) }
       return out(await board.recordEscape(input, new Date(), sees(check, out)))
     },
-    board_breakers: async (args) => ({ breakers: (await board.breakers(typeof args.projectId === 'string' ? args.projectId : undefined, new Date())).map(breakerOut) }),
-    board_breaker_reset: async (args, { scope }, check) => breakerOut(await board.resetBreaker(String(args.projectId), String(args.branch), scope === 'operator' ? 'operator' : 'lead', new Date(), sees(check, breakerOut))),
+    board_breakers: async (args, context) => {
+      // A lead's list is its own project's, whether or not it names it.
+      if (typeof args.projectId === 'string') ownProject(context, args.projectId)
+      const projectId = typeof args.projectId === 'string' ? args.projectId : leadOf(context)
+      return { breakers: (await board.breakers(projectId, new Date())).map(breakerOut) }
+    },
+    board_breaker_reset: async (args, context, check) => {
+      ownProject(context, String(args.projectId))
+      return breakerOut(await board.resetBreaker(String(args.projectId), String(args.branch), context.scope === 'operator' ? 'operator' : 'lead', new Date(), sees(check, breakerOut)))
+    },
   }
 
   /** A task's output after a move: its id, state, and revision. */

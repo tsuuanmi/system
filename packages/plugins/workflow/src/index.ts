@@ -324,6 +324,38 @@ export class Workflow extends Service {
     return this.engine.start(input)
   }
 
+  /**
+   * The project a run belongs to (T285, ADR-0076): its board task's project, else the project a lead
+   * tagged it with when it started it, else, for a run derived from a session (a Worker's wake on a
+   * message, a compaction, a continued conversation), the project of the run that session came from.
+   * Undefined for a run of none of these (an operator's ask, say) and for an unknown run: no lead reaches it.
+   */
+  async projectOfRun(runId: string): Promise<string | undefined> {
+    return this.projectOf(runId, new Set())
+  }
+
+  /** The project of a board task, as the board holds it; undefined when there is no board or no such task. */
+  async projectOfTask(taskId: string): Promise<string | undefined> {
+    return (await this.engine.board?.task(taskId))?.projectId
+  }
+
+  /** {@link projectOfRun}, following a session to the run it came from; `seen` ends a cycle. */
+  private async projectOf(runId: string, seen: Set<string>): Promise<string | undefined> {
+    if (seen.has(runId)) return undefined
+    seen.add(runId)
+    const row = this.engine.tasks.row(runId)
+    if (row) return (await this.engine.board?.task(row.task_id))?.projectId
+    const db = this.engine.ctx.store.db
+    const run = db.prepare('SELECT project_id, session_id FROM workflow_runs WHERE run_id = ?').get(runId) as { project_id: string | null; session_id: string | null } | undefined
+    if (!run) return undefined
+    if (run.project_id !== null) return run.project_id
+    if (run.session_id === null) return undefined
+    // The run the Worker session was made for, else the session's first run.
+    const origin = this.engine.ctx.workerSessions.session(run.session_id)?.runId
+      ?? (db.prepare('SELECT run_id FROM workflow_runs WHERE session_id = ? ORDER BY created_at, run_id LIMIT 1').get(run.session_id) as { run_id: string } | undefined)?.run_id
+    return origin === undefined || origin === runId ? undefined : this.projectOf(origin, seen)
+  }
+
   get(runId: string): RunView | undefined {
     return this.engine.get(runId)
   }
