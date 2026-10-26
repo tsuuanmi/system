@@ -1040,7 +1040,7 @@ export class StoreBoard extends Board {
   /** Escapes of a project and branch found within `days` days up to and including `at`, oldest first. */
   private escapesIn(projectId: string, branch: string, days: number, at: Date): Escape[] {
     const from = new Date(at.getTime() - days * 24 * 3600 * 1000).toISOString()
-    const rows = this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE project_id = ? AND branch = ? AND found_at > ? AND found_at <= ? ORDER BY found_at, escape_id')
+    const rows = this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE project_id = ? AND branch = ? AND found_at > ? AND found_at <= ? ORDER BY found_at, rowid')
       .all(projectId, branch, from, at.toISOString()) as unknown as EscapeRow[]
     return rows.map((r) => this.escapeOf(r))
   }
@@ -1110,8 +1110,8 @@ export class StoreBoard extends Board {
   /** Every escape recorded, of one project or all, oldest found first. */
   async escapes(projectId?: string): Promise<Escape[]> {
     const rows = (projectId === undefined
-      ? this.ctx.store.db.prepare('SELECT * FROM board_escapes ORDER BY found_at, escape_id LIMIT 10000').all()
-      : this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE project_id = ? ORDER BY found_at, escape_id LIMIT 10000').all(projectId)) as unknown as EscapeRow[]
+      ? this.ctx.store.db.prepare('SELECT * FROM board_escapes ORDER BY found_at, rowid LIMIT 10000').all()
+      : this.ctx.store.db.prepare('SELECT * FROM board_escapes WHERE project_id = ? ORDER BY found_at, rowid LIMIT 10000').all(projectId)) as unknown as EscapeRow[]
     return rows.map((r) => this.escapeOf(r))
   }
 
