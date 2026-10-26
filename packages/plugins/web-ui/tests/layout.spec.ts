@@ -251,6 +251,102 @@ describe('web UI: the operator\'s iPhone 16 Pro (T240)', () => {
   })
 })
 
+describe('web UI: polish after T256 (T274)', () => {
+  headlessIt('at 1920 px: Home\'s middle column also holds the starts awaiting approval, the "Since you last looked" notes are one quiet line, the run page has its Summary in the right column, and the All projects cards are compact', async () => {
+    const { origin, pages } = await busyBoard()
+    const browser = await launch()
+    const page = await at(browser, origin, 1920)
+    // (1) The second look: no italic explanation line, at most one quiet line for what could not be read.
+    await opened(page, origin + pages.home)
+    await opened(page, origin + pages.home)
+    const since = page.getByRole('region', { name: 'Since you last looked' })
+    await expect.poll(() => since.count()).toBe(1)
+    expect(await since.locator('p.unknown').count()).toBe(0)
+    expect(await since.locator('p.unread').count()).toBeLessThanOrEqual(1)
+    // (2) Three columns side by side from the top; the starts awaiting approval are not in the last one.
+    const boxes = await page.evaluate(() => Object.fromEntries(['.col-main', '.col-more', '.col-side'].map((s) => { const b = document.querySelector(`.page-grid.three > ${s}`)!.getBoundingClientRect(); return [s, { left: b.left, right: b.right, top: b.top }] })))
+    expect(boxes['.col-main']!.right).toBeLessThanOrEqual(boxes['.col-more']!.left)
+    expect(boxes['.col-more']!.right).toBeLessThanOrEqual(boxes['.col-side']!.left)
+    expect(Math.round(boxes['.col-more']!.top)).toBe(Math.round(boxes['.col-main']!.top))
+    expect(await page.locator('.page-grid.three > .col-side [aria-label="Starts awaiting approval"]').count()).toBe(0)
+    await shoot(page, 'home-1920')
+    // (3) The run page: its Summary beside the steps, not below them.
+    await opened(page, origin + pages.run)
+    const summary = page.getByRole('region', { name: 'Summary' })
+    await expect.poll(() => summary.count()).toBe(1)
+    const side = (await summary.boundingBox())!
+    const steps = (await page.getByRole('region', { name: 'Steps' }).boundingBox())!
+    expect(side.x).toBeGreaterThanOrEqual(steps.x + steps.width)
+    await shoot(page, 'run-1920')
+    // (4) All projects: each card at most 420 px wide, the two side by side.
+    await opened(page, origin + pages.board)
+    const cards = await page.locator('.portfolio .projects > .panel').evaluateAll((list) => list.map((c) => { const b = c.getBoundingClientRect(); return { width: b.width, top: Math.round(b.top) } }))
+    expect(cards.length).toBeGreaterThanOrEqual(2)
+    for (const c of cards) expect(c.width).toBeLessThanOrEqual(420)
+    expect(new Set(cards.map((c) => c.top)).size, 'one row').toBe(1)
+    // (5) Wide, the navigation still reads "Autonomy policy".
+    expect(await page.locator('#policy-link').innerText()).toBe('Autonomy policy')
+    await page.context().close()
+  })
+
+  headlessIt('at 402 px: the navigation names Policy like the other pages, and no "?" leaves the line of its word', async () => {
+    const { origin, pages } = await busyBoard()
+    const browser = await launch()
+    const page = await phone(browser, origin, 402)
+    await opened(page, origin + pages.home)
+    // (5) Capitalised, as Home, Board, Workers, and Help are.
+    expect(await page.locator('#policy-link').innerText()).toBe('Policy')
+    for (const id of ['home-link', 'board-link', 'workers-link', 'policy-link', 'help-link']) expect(await page.locator(`#${id}`).innerText()).toMatch(/^[A-Z]/)
+    // (6) Each word's "?" lies on the line of the character before it; a "?" with nothing before it fails the check.
+    let seen = 0
+    for (const path of [pages.workers, pages.home, pages.board]) {
+      await opened(page, origin + path)
+      const found = await page.locator('main button.why').evaluateAll((list) => list.filter((b) => b.checkVisibility()).map((b) => {
+        const before = b.parentElement!.previousSibling
+        const text = before && (before.nodeType === Node.TEXT_NODE ? before : before.lastChild ?? before)
+        if (!text || !text.textContent) return { name: b.getAttribute('aria-label') ?? '', stray: true }
+        const range = document.createRange()
+        range.selectNodeContents(text)
+        const rects = range.getClientRects()
+        const last = rects[rects.length - 1]
+        const middle = b.getBoundingClientRect().top + b.getBoundingClientRect().height / 2
+        return { name: b.getAttribute('aria-label') ?? '', stray: !last || middle < last.top || middle > last.bottom }
+      }))
+      seen += found.length
+      expect(found.filter((f) => f.stray).map((f) => f.name), `${path}: a "?" on a line of its own`).toEqual([])
+      expect(await overflow(page), path).toBeLessThanOrEqual(0)
+    }
+    expect(seen, 'some "?" in sight on these pages').toBeGreaterThan(0)
+    // (1, 2) Home at 402: one column in order (the grid is one track), the quiet line not italic, nothing sideways.
+    await opened(page, origin + pages.home)
+    await opened(page, origin + pages.home)
+    const since = page.getByRole('region', { name: 'Since you last looked' })
+    await expect.poll(() => since.count()).toBe(1)
+    expect(await since.locator('p.unknown').count()).toBe(0)
+    expect(await since.locator('p.unread').count()).toBeLessThanOrEqual(1)
+    expect(await page.locator('main .page-grid').first().evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length)).toBe(1)
+    // (.col-side is display: contents below 1600 px: it has no box of its own, its panels are the grid's items.)
+    const cols = await page.evaluate(() => ['.col-main', '.col-more'].map((s) => { const b = document.querySelector(`.page-grid.three > ${s}`)!.getBoundingClientRect(); return { left: Math.round(b.left), top: b.top } }))
+    expect(new Set(cols.map((c) => c.left)).size, 'Home\'s columns stacked at 402 px').toBe(1)
+    expect(cols[1]!.top, 'the middle column under the first').toBeGreaterThan(cols[0]!.top)
+    expect(await overflow(page), 'home').toBeLessThanOrEqual(0)
+    // (3) The run page at 402: its steps in sight, the Summary (a 1600 px addition) hidden, nothing sideways.
+    await opened(page, origin + pages.run)
+    await expect.poll(() => page.getByRole('region', { name: 'Steps' }).count()).toBe(1)
+    expect(await page.locator('.panel.summary').evaluate((s) => getComputedStyle(s).display)).toBe('none')
+    expect(await page.getByRole('region', { name: 'Summary' }).count()).toBe(0)
+    expect(await overflow(page), 'run').toBeLessThanOrEqual(0)
+    // (4) All projects at 402: the cards one under another, each within the screen.
+    await opened(page, origin + pages.board)
+    const cards = await page.locator('.portfolio .projects > .panel').evaluateAll((list) => list.map((c) => { const b = c.getBoundingClientRect(); return { left: Math.round(b.left), right: b.right, width: b.width } }))
+    expect(cards.length).toBeGreaterThanOrEqual(2)
+    for (const c of cards) { expect(c.right).toBeLessThanOrEqual(402); expect(c.width).toBeLessThanOrEqual(420) }
+    expect(new Set(cards.map((c) => c.left)).size, 'one column').toBe(1)
+    await shoot(page, 'workers-402')
+    await page.context().close()
+  })
+})
+
 /**
  * A page as the operator's iPhone 16 Pro shows it in Safari: 402×874 CSS px at 3 device pixels each, touch (nothing hovers,
  * a finger points), and its safe areas, 62 px under the Dynamic Island and 34 px above the home indicator.

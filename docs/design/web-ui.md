@@ -127,11 +127,18 @@ checks it.
   definition) is capped at 75 characters (`--measure`).
 - **A page's grid.** Home, a run's page, and Workers put their list in a main column and a summary
   or detail beside it from 900 px wide (`--main` 3 : `--side` 1). Home's side column holds the
-  Workers' availability, kept in sight as the cards scroll; the starts awaiting approval, the
-  Workers' capacity, what happened since you last looked, and the recent runs follow the cards. A
-  run's side column holds where it is now and what happened to it. Workers' holds *Right now*.
-  From 1600 px Home has three columns (5 : 4 : 3): the cards; what happened since you last looked
-  and the recent runs; the Workers' availability, their capacity, and the starts awaiting approval.
+  Workers' availability, kept in sight as the cards scroll; the Workers' capacity, the starts
+  awaiting approval, what happened since you last looked, and the recent runs follow the cards. A
+  run's side column holds where it is now, from 1600 px its *Summary* (its steps counted by state,
+  and each decided step as a link to it, so the steps and their decisions are never said twice),
+  and what happened to it. Workers' holds *Right now*.
+  From 1600 px Home has three columns (5 : 4 : 3): the cards; the starts awaiting approval, what
+  happened since you last looked, and the recent runs; the Workers' availability and their
+  capacity (T274). Parts of *Since you last looked* that could not be read are one quiet line, the
+  reasons in its tooltip. The Board's All projects cards are at most 420 px wide, so two projects
+  are a compact grid, not two wide bands. On a phone the navigation's *policy* is capitalised like
+  the other labels (CSS only; wide, it reads *Autonomy policy*), and a word's "?" stays on its
+  word's line (a no-break space joins them).
   Below 900 px every page is one column, in the order main, side, more. The Board keeps its columns
   at full width. `tests/round2.spec.ts` checks the columns at 1920, 1280, and 899 px, and that main
   is the screen's width.

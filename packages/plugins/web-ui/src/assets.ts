@@ -57,13 +57,15 @@ main { padding: var(--s4) var(--safe-right) var(--safe-bottom) var(--safe-left);
 .page-grid > * { min-width: 0; } .page-grid > .col-main { grid-area: main; } .page-grid > .col-side { grid-area: side; } .page-grid > .col-more { grid-area: more; }
 .page-grid > div > :first-child, .page-grid > div > :first-child > :first-child { margin-top: 0; } .page-grid > div > :last-child { margin-bottom: 0; }
 @media (min-width: 900px) { .page-grid { grid-template-columns: minmax(0, var(--main)) minmax(0, var(--side)); grid-template-areas: "main side" "more side"; grid-template-rows: auto 1fr; } }
-/* Home (T256): its Workers in a narrow column beside the cards from 900 px, what else it says below them; from 1600 px what
-   happened and the recent runs a middle column, the Workers' capacity and the starts awaiting approval under their availability. */
+/* Home (T256, T274): its Workers in a narrow column beside the cards from 900 px, what else it says below them; from 1600 px
+   the starts awaiting approval, what happened and the recent runs a middle column, the Workers' availability and capacity the last. */
 .page-grid.three { grid-template-areas: "main" "side" "extra" "more"; } .page-grid.three > .col-side { display: contents; }
 .page-grid.three > .col-side > * { min-width: 0; } .page-grid.three > .col-side > .panel { grid-area: side; margin: 0; } .page-grid.three > .col-side > .side-extra { grid-area: extra; display: flex; flex-direction: column; gap: var(--s3); } .page-grid.three .side-extra > * { margin: 0; }
 @media (min-width: 900px) { .page-grid.three { grid-template-areas: "main side" "extra side" "more side"; grid-template-rows: auto auto 1fr; } .page-grid.three > .col-side > .panel { position: sticky; top: var(--s3); } }
 @media (min-width: 1600px) { .page-grid.three { grid-template-columns: minmax(0, 5fr) minmax(0, 4fr) minmax(0, 3fr); grid-template-areas: "main more side"; grid-template-rows: auto; }
   .page-grid.three > .col-side { display: flex; flex-direction: column; gap: var(--s3); } .page-grid.three > .col-side .panel { margin: 0; } .page-grid.three > .col-side > .panel { position: static; } }
+/* A run's Summary (T274) fills the right column's empty room from 1600 px; below it the page keeps its few words. */
+@media (max-width: 1599px) { .panel.summary { display: none; } }
 .page-bottom { margin-top: var(--s4); }
 h2.page { margin: 0 0 var(--s3); } ul.chips.availability, .status-line, .actions.run-actions { margin: 0 0 var(--s3); } .overview ul.chips.availability { margin: 0; }
 main section > details.fold, main > details.fold { margin-bottom: var(--s2); } .panel .panel { margin: var(--s3) 0 0; } h2.page:has(+ p.lead) { margin-bottom: 0; } p.lead { color: var(--muted); margin: var(--s1) 0 var(--s3); }
@@ -156,7 +158,7 @@ section.group > h4 { display: flex; flex-wrap: wrap; align-items: baseline; just
 /* Started by itself (T256): a compact table at the bottom of Home, one row per task, its attempts folded into its row. */
 table.started td:first-child { min-width: 12em; } table.started td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* The Board's All projects (T253): each project's counts as a card, in aligned columns. */
-.portfolio .projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: var(--s3); } .portfolio .projects > .panel { margin: 0; } .portfolio > h2 .chip { text-transform: none; letter-spacing: normal; }
+.portfolio .projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 420px)); gap: var(--s3); align-items: start; } .portfolio .projects > .panel { margin: 0; } .portfolio > h2 .chip { text-transform: none; letter-spacing: normal; }
 ol.timeline { list-style: none; padding: 0; margin: var(--s2) 0; border-left: 2px solid var(--line); } ol.timeline li.step { padding: var(--s1) 0 var(--s2) var(--s3); position: relative; overflow-wrap: anywhere; color: var(--fg); font-style: normal; }
 ol.timeline li.step::before { content: ''; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px; border-radius: var(--round); background: var(--edge); }
 ol.timeline li.step.COMPLETED::before { background: var(--ok); } ol.timeline li.step.FAILED::before { background: var(--bad); } ol.timeline li.step.RUNNING::before, ol.timeline li.step.BLOCKED::before { background: var(--accent); }
@@ -211,6 +213,7 @@ dl.glossary { margin: var(--s2) 0; } dl.glossary dt { margin-top: var(--s1); } d
 table.modes select { max-width: 100%; } details.advanced { margin: var(--s2) 0; }
 /* A phone (T239): one column, no horizontal scroll, and buttons large enough to press. */
 @media (max-width: 640px) { :root { --safe-right: max(var(--s3), env(safe-area-inset-right)); --safe-left: max(var(--s3), env(safe-area-inset-left)); }
+  header nav a#policy-link { text-transform: capitalize; }
   header { position: sticky; top: 0; z-index: 6; } header h1 { order: 1; } main [id] { scroll-margin-top: calc(var(--safe-top) + var(--s4) * 4); } #status { order: 2; } header nav { order: 3; flex-basis: 100%; justify-content: space-between; } header nav a { padding: var(--s1) var(--s2); } .wide { display: none; } ul.tiles > li > a:first-child { font-size: var(--body); } main { padding-top: var(--s3); }
   button { min-height: 40px; } button.why, button.copy, dl.glossary dt button.term { min-height: 0; } input { min-width: 0; width: 100%; }
   .card .actions > button, .request > .actions > button { flex: 1 1 0; } .actions > button.tips { flex: 0 0 auto; }
@@ -568,7 +571,8 @@ export const APP_JS = `'use strict'
       if (opening) openTerms.add(key)
       else openTerms.delete(key)
     })
-    return el('span', { class: 'explain' }, ' ', button, ' ', note)
+    // A no-break space before the "?" keeps it on its word's line (T274); the note may wrap after it.
+    return el('span', { class: 'explain' }, '\\u00a0', button, ' ', note)
   }
 
   // Help: how System works, in plain words, with links into the real pages, then the glossary.
@@ -1355,6 +1359,10 @@ export const APP_JS = `'use strict'
     }
     return items.sort((a, b) => b.at.localeCompare(a.at))
   }
+  const unreadParts = (activity) => {
+    const parts = [['runs', 'runs that ended'], ['tasks', 'tasks that moved'], ['expired', 'requests that expired']].filter(([k]) => !('value' in activity[k]))
+    return parts.length ? el('p', { class: 'muted unread', title: parts.map(([k, w]) => w + ': ' + activity[k].unknown).join('; ') }, 'Not shown, unreadable now: ' + parts.map(([, w]) => w).join(', ') + '.') : null
+  }
   const sinceView = async (roster, titles) => {
     const seen = seenOf()
     const snapshot = statusSnapshot(roster)
@@ -1375,9 +1383,8 @@ export const APP_JS = `'use strict'
       // The latest 5, then "Show all N" for the rest (T186): every line read stays reachable.
       items.length ? capped('since', el('ul', { class: 'since', id: 'since-list' }), items, (i) => el('li', {}, i.line, i.link, ' ', el('span', { class: 'muted' }, relative(i.at)), i.fold || null))
         : el('p', { class: 'muted' }, 'Nothing happened that needs you.'),
-      'value' in activity.runs ? null : el('p', { class: 'unknown' }, 'The runs that ended are unknown (' + activity.runs.unknown + ').'),
-      'value' in activity.tasks ? null : el('p', { class: 'unknown' }, 'The tasks that moved are unknown (' + activity.tasks.unknown + ').'),
-      'value' in activity.expired ? null : el('p', { class: 'unknown' }, 'The requests that expired are unknown (' + activity.expired.unknown + ').'),
+      // Parts that could not be read: one quiet line naming them, each reason in its tooltip (T274).
+      unreadParts(activity),
       // A part that holds more than it lists, or than one read goes through, says so (T127).
       [['runs', 'runs ended'], ['tasks', 'tasks moved'], ['expired', 'requests may have expired']].filter(([k]) => activity[k].more)
         .map(([k, words]) => el('p', { class: 'muted' }, 'More ' + words + ' than the ' + activity[k].value.length + ' read here.')),
@@ -1696,7 +1703,6 @@ export const APP_JS = `'use strict'
           el('section', { class: 'panel', 'aria-label': 'Workers availability' },
             el('div', { class: 'head' }, el('h3', {}, 'Workers'), pageLink('workers', 'Open Workers')), availability),
           el('div', { class: 'side-extra' },
-      goView(dispatch, q, names, jump),
       el('section', { class: 'panel', 'aria-label': 'Workers at a glance' }, el('h3', {}, 'Capacity'),
         c ? null : el('p', { class: 'unknown' }, 'Workers unknown: the roster could not be read.'),
         // Each account's capacity in one line, its 5 h bar beside it (the CEO's view of what is left).
@@ -1706,6 +1712,7 @@ export const APP_JS = `'use strict'
         // Without Right now, the free Workers and the ready tasks in numbers.
         !rightNow && ready !== undefined ? el('p', { 'aria-label': 'Capacity' }, capacityText(c ? c.ready : undefined, ready), ' ', pageLink('board', 'Open Board')) : null))),
         el('div', { class: 'col-more' },
+      goView(dispatch, q, names, jump),
       since,
       // Each run by its task's title (else its template), its state, its progress and current Worker; every step's Worker, its template, and its id folded (T124, T171).
       el('section', { 'aria-label': 'Recent runs' }, el('h2', {}, 'Recent runs'),
@@ -1873,6 +1880,18 @@ export const APP_JS = `'use strict'
           line.decisions.map((d) => el('div', {}, el('strong', {}, d.type + ' · ' + d.outcome), when(d.at), body(d)))))
       }))
     }
+    // The run's summary and where its decisions sit, beside its steps on a wide screen (T274): the steps counted by state, and
+    // each step that was decided as a link to it, never the steps or their decisions said twice.
+    const summaryPanel = () => {
+      const counts = new Map()
+      for (const n of run.nodes) { const word = (STEP[n.state] || [n.state.toLowerCase()])[0]; counts.set(word, (counts.get(word) || 0) + 1) }
+      const decided = run.nodes.filter((n) => (decisions.get(n.nodeId) || []).length)
+      return el('section', { class: 'panel summary', 'aria-label': 'Summary' }, el('h3', {}, 'Summary'),
+        el('p', {}, qty(run.nodes.length, 'step') + ': ' + [...counts].map(([word, n]) => n + ' ' + word).join(', ')),
+        decided.length ? el('ul', { class: 'plain decided', 'aria-label': 'Decisions by step' }, decided.map((n) => el('li', {},
+          el('a', { href: '#step-' + n.nodeId, onclick: (e) => { e.preventDefault(); const li = document.getElementById('step-' + n.nodeId); if (li) { li.scrollIntoView({ block: 'center' }); li.focus() } } }, stepName(n.nodeId)),
+          el('span', { class: 'muted' }, ' · ' + qty(decisions.get(n.nodeId).length, 'decision'))))) : el('p', { class: 'muted' }, 'No decisions recorded.'))
+    }
     show(
       // Headed by its task's title (else its template); its project and attempt below, its id under Technical details (T171, T239).
       pageHead('run', served ? served.title : run.template + ' run', run.runId),
@@ -1927,7 +1946,7 @@ export const APP_JS = `'use strict'
           const [word, cls] = STEP[n.state] || [n.state.toLowerCase(), 'unknown']
           const made = decisions.get(n.nodeId) || []
           const time = timingOf(n)
-          return el('li', { class: 'step ' + n.state, 'data-step': n.nodeId },
+          return el('li', { class: 'step ' + n.state, 'data-step': n.nodeId, id: 'step-' + n.nodeId, tabindex: '-1' },
             el('div', {}, el('strong', {}, stepName(n.nodeId)), time && time.took ? [' · ', time.took, ' · '] : ' ', el('span', { class: 'state ' + cls }, word),
               time && time.at ? [' ', time.at] : null,
               n.worker ? el('span', { class: 'muted' }, ' · ' + nameOf(n.worker) + (n.attempt > 1 ? ' · attempt ' + n.attempt : '')) : null),
@@ -1949,6 +1968,7 @@ export const APP_JS = `'use strict'
         'value' in now.lastEvent ? el('div', { class: 'muted' }, lastText(now)) : el('div', { class: 'muted' }, 'Last event unknown', keptFold('last-event-' + runId, 'Why', now.lastEvent.unknown)),
         stalledOf(now) ? [stalledOf(now), whatIs('stalled')] : null) : null,
       moving && moving.unknown ? el('p', { class: 'unknown' }, 'Where it is now is unknown (' + moving.unknown + ').') : null,
+      summaryPanel(),
       happened.length ? el('section', { class: 'panel', 'aria-label': 'What happened' }, el('h3', {}, 'What happened'), el('ul', {}, happened)) : null,
       // A check of its result that printed nothing for its bound: told now, long before its deadline (T235).
       explain && explain.stalledChecks && explain.stalledChecks.length ? el('section', { class: 'panel', 'aria-label': 'Checks' }, el('h3', {}, 'Checks'),
