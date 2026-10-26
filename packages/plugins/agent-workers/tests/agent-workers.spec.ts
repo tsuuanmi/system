@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { workspaceReadBounds } from '@tsuuanmi/system-agent-runtime-core'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type WorkRequirement } from '@tsuuanmi/system-workers'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { ScriptedAgent, SlowProbeAgent, WORKSPACE, worker, boot, requirement, chatWorker } from './stack.ts'
 import { checkConfig } from '../src/index.ts'
 
@@ -249,20 +249,25 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
   })
 
   it('runs one thing at a time per Worker: a second run waits for the first (one writer per workspace, INV-15)', async () => {
-    const agent = new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], holdMs: 600 })
+    // Held long enough that a loaded host still sees the second run queued while the first runs; waited
+    // for by what happened, never by a fixed sleep (it failed under load when the first had not started yet).
+    const agent = new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], holdMs: 1500 })
     const { ctx } = await boot(agent, { workers: [worker({ id: 'dev', sandbox: 'workspace-write', tools: [] })] })
     const admitted = await ctx.workers.route(requirement({ capabilities: ['develop'] }))
     const source = ctx.workers.source('agents')!
     const start = (key: string) => source.start({ key, worker: 'agent:dev', prompt: key, requirement: requirement({ capabilities: ['develop'] }), decisions: admitted.decisions })
     const one = start('one')
     const two = start('two')
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    expect(agent.runs.map((r) => r.prompt)).toEqual(['one'])
-    expect(source.get(two.id)).toMatchObject({ status: 'queued', submitted: false })
-    await source.wait(one.id, 10_000)
-    expect((await source.wait(two.id, 10_000)).status).toBe('completed')
-    expect(agent.runs.map((r) => r.prompt)).toEqual(['one', 'two'])
-  })
+    // One of them runs, the other waits: which goes first is not promised (the two starts race), only that
+    // never both at once (INV-15).
+    await vi.waitFor(() => expect(agent.runs).toHaveLength(1), { timeout: 10_000, interval: 20 })
+    const first = agent.runs[0]!.prompt === 'one' ? one : two
+    const second = first === one ? two : one
+    expect(source.get(second.id)).toMatchObject({ status: 'queued', submitted: false })
+    expect((await source.wait(first.id, 10_000)).status).toBe('completed')
+    expect((await source.wait(second.id, 10_000)).status).toBe('completed')
+    expect(agent.runs.map((r) => r.prompt).sort()).toEqual(['one', 'two'])
+  }, 20_000)
 
   it('cancels a running run, and a queued one never starts (REQ-WRK-4)', async () => {
     const agent = new ScriptedAgent({ holdMs: 30_000 })
