@@ -317,6 +317,16 @@ export function secondFamily(risk: AcceptanceRisk | undefined, subject: string):
 }
 
 /**
+ * The review a result's verdict is read from (T287): the last of `reviews` (in run order) whose
+ * subject is the result's final git tree; when none is on it, the last of all. An earlier round's
+ * review, though a later verification gate re-judged it, is of a tree the fixes replaced.
+ */
+export function finalTreeReview<T extends { subject: { ref: string; version: string } }>(reviews: readonly T[], tree?: { type?: string; ref: string; version?: string }): T | undefined {
+  const onTree = tree?.version !== undefined ? reviews.filter((r) => r.subject.ref === tree.ref && r.subject.version === tree.version) : []
+  return (onTree.length ? onTree : reviews).at(-1)
+}
+
+/**
  * Why a heavy result is not accepted on its reviews (T280), in order: the run's last review did not
  * approve (its verdict, blocking findings, and cycle of the bound), then the second-family check on
  * the git tree the reviews judged (`review.subject`), whatever artifact the result is bound to.

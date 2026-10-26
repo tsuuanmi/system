@@ -391,7 +391,10 @@ holds, each read from the record the decision names, never from its own account:
   the operator's acceptance accepts it then.
 - A rejection, the operator's decision, another project's task, and a result on no working tree go as
   without the setting. The workflow engine's task acceptance names the run's last review and its
-  landing target (`workflow.task-acceptance` version 3,
+  landing target. The review it names is the last review of the result's final tree (T287): a
+  first round's review, or the verification gate that re-judged it before the fix, is of a tree the
+  fix replaced, and a verification step's verdict is about its review's findings, never the
+  result's. When no review is of the final tree, the run's last review is named (`workflow.task-acceptance` version 3,
   [a board task's run](workflow-engine.md#a-runs-required-checks)).
 - **A heavy result** ([ADR-0071](../decisions/adr/0071-a-changes-risk-tier-comes-from-the-policys-path-map.md),
   [process tiered by risk](workflow-engine.md#process-tiered-by-risk)) is never accepted unattended,
