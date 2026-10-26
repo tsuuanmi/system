@@ -21,7 +21,9 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import { runSuite } from '../../../libs/conformance/runner.ts'
-import { advisorSuite, type DispatchHarness, FEATURES } from '../conformance/advisor.ts'
+import { DISPATCH_ADVISOR_CONTRACT } from '@tsuuanmi/system-decision-core'
+import { dispatchAdvisorSuite, type DispatchHarness, FEATURES } from '../../../decision-core/conformance/dispatch-advisor.ts'
+import { dispatchHarness, type Placement, provideAdvisor } from '../conformance/advisor.ts'
 import { type Labelled, ModelAdvisor } from '../src/advisor.ts'
 import type { Engine } from '../src/engine.ts'
 import Workflow, { type Advice, type Advisor, type AdvisorFeatures, type AdvisorSignal, type Config, type DispatchConfig, dispatchProblems, dispatchSettings, type DispatchStatus, LocalAdvisor, OUTCOME_EVENT } from '../src/index.ts'
@@ -948,13 +950,16 @@ const adviceOf = (ctx: Context, choice: Decision): Answered => {
   return decisionOf(ctx, ids[0]) as Answered
 }
 
-/** The dispatch the advisor seam's suite runs in: two free Workers on two accounts, acc-a's chosen (more headroom, the sooner reset). */
-const advisorHarness = async (): Promise<DispatchHarness> => {
+/**
+ * The dispatch the advisor seam's suite runs in: two free Workers on two accounts, acc-a's chosen
+ * (more headroom, the sooner reset); the advisor put in place by `placement`.
+ */
+const advisorHarness = (placement: Placement) => async (): Promise<DispatchHarness> => {
   const { ctx, workers, read } = await boot({ accounts: ['acc-a', 'acc-b'] })
   workers.extra = [agent('agent:acc-a/develop', 'acc-a'), agent('agent:acc-b/develop', 'acc-b')]
   await read('acc-a', 10, 40)
   await read('acc-b', 30, 200)
-  return { ctx, chosen: 'agent:acc-a/develop', hidden: ['acc-a', 'acc-b', 'agent:', 'p1'], ready: (title, goal) => ready(ctx, title, { goal }) }
+  return dispatchHarness({ ctx, chosen: 'agent:acc-a/develop', hidden: ['acc-a', 'acc-b', 'agent:', 'p1'], ready: (title, goal) => ready(ctx, title, { goal }) }, placement)
 }
 /** `n` labelled attempts for the local adapter: accepted with headroom, limited without. */
 const labelled = (n: number): Labelled[] => Array.from({ length: n }, (_, i) => {
@@ -979,13 +984,21 @@ const scriptedModel = (): Advisor => {
   return new ModelAdvisor(engine, 'model:advice', 256)
 }
 
-// The seam's conformance suite, run by every advisor System has, and by a fake (plugin rule 7).
-for (const [name, advisor] of [
+// The seam's conformance suite (decision-core), run by every advisor System has, and by a fake (plugin
+// rule 7): each set through setDispatchAdvisor, and each as the provider of ctx.dispatchAdvisor.
+const ADVISORS: Array<[string, () => Advisor]> = [
   ['a fake whose advice is contrary to the choice', () => contrary],
   ['local, fitted on 40 labelled attempts', () => new LocalAdvisor(() => labelled(40), 30, 1)],
   ['local, with too few labelled attempts', () => new LocalAdvisor(() => labelled(5), 30, 1)],
   ['model, over a scripted model Worker', scriptedModel],
-] as Array<[string, () => Advisor]>) runSuite(advisorSuite, { name, contract: '1.0', boot: { advisor, dispatch: advisorHarness } })
+]
+const PLACEMENTS: Placement[] = ['setDispatchAdvisor', 'seam']
+for (const [name, advisor] of ADVISORS) {
+  for (const placement of PLACEMENTS) {
+    const through = placement === 'seam' ? 'ctx.dispatchAdvisor' : 'setDispatchAdvisor'
+    runSuite(dispatchAdvisorSuite, { contract: DISPATCH_ADVISOR_CONTRACT, name: `${name}, through ${through}`, boot: { advisor, dispatch: advisorHarness(placement) } })
+  }
+}
 
 describe('the dispatch advisor in shadow (PROP-0015 J1)', () => {
   it('records the full distribution of an advice as the choice\'s input, and, with no advisor, the features as unavailable (INV-13)', async () => {
@@ -1063,6 +1076,37 @@ describe('the dispatch advisor in shadow (PROP-0015 J1)', () => {
     // Later turns of the event loop, where an EventTarget would have rethrown a listener's error.
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(uncaught).toEqual([])
+  })
+
+  it('asks the provider of ctx.dispatchAdvisor in place of the configured advisor, one set through setDispatchAdvisor in place of both, and the configured one again once the provider is gone (contract 1.12)', async () => {
+    const swapped = new FakeAdvisor(async (f) => ({ status: 'advice', provider: 'swapped', modelVersion: 'swapped@1', candidates: f.candidates.map((c) => ({ alias: c.alias, accepted: 0.5, limit: 0.5, needsOperator: 0.5 })) }))
+    /** One choice under the configured local advisor, after `put` placed others; `put` may return the provider's fiber, removed once the choice is read. */
+    const choose = async (title: string, put: (ctx: Context) => Promise<Fiber | undefined>): Promise<Answered> => {
+      const { ctx, workers, read } = await boot({ workflow: { dispatch: { advisor: { provider: 'local' } } } })
+      workers.extra = [agent('agent:acc-a/develop', 'acc-a')]
+      await read('acc-a', 0)
+      const fiber = await put(ctx)
+      try {
+        const task = await ready(ctx, title)
+        await ctx.workflow.sweepDispatch()
+        return adviceOf(ctx, decisionOf(ctx, askOf(ctx.workflow.dispatchStatus(), task.taskId)!.decisions[1]))
+      } finally {
+        await fiber?.dispose()
+      }
+    }
+    // The seam's provider answers in place of the configured local advisor.
+    expect(await choose('the seam', (ctx) => provideAdvisor(ctx, contrary))).toMatchObject({ decider: { type: 'model', id: 'advisor.dispatch', version: 'fake@1' }, outcome: { option: 'advice', detail: { provider: 'fake', chosen: 'A', aliases: { A: 'agent:acc-a/develop' } } } })
+    // One set through setDispatchAdvisor answers in place of both.
+    expect(await choose('the thin path', async (ctx) => {
+      const fiber = await provideAdvisor(ctx, contrary)
+      ctx.workflow.setDispatchAdvisor(swapped)
+      return fiber
+    })).toMatchObject({ decider: { type: 'model', version: 'swapped@1' }, outcome: { option: 'advice', detail: { provider: 'swapped' } } })
+    // The provider gone, the configured one answers again.
+    expect(await choose('the provider gone', async (ctx) => {
+      await (await provideAdvisor(ctx, contrary)).dispose()
+      return undefined
+    })).toMatchObject({ decider: { type: 'rule', id: 'advisor.dispatch' }, outcome: { option: 'unavailable', detail: { provider: 'local-logistic' } } })
   })
 
   it('is off unless configured: by default, or with a model named but provider not model, the model adapter is never called, and each choice records that no advisor was asked', async () => {

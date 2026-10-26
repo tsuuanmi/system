@@ -377,9 +377,11 @@ export class Workflow extends Service {
   }
 
   /**
-   * The dispatch advisor seam (PROP-0015 J1): `advisor` answers every dispatch choice in place of the
-   * one `dispatch.advisor.provider` names, until set back with undefined. Its advice is recorded in
-   * shadow, as an input of the choice, and never changes it; its failures are recorded and ignored.
+   * A thin path to the dispatch advisor seam (PROP-0015 J1; the seam is `ctx.dispatchAdvisor`, defined
+   * in `@tsuuanmi/system-decision-core`): `advisor` answers every dispatch choice in place of the
+   * seam's provider and of the one `dispatch.advisor.provider` names, until set back with undefined.
+   * Its advice is recorded in shadow, as an input of the choice, and never changes it; its failures
+   * are recorded and ignored.
    */
   setDispatchAdvisor(advisor: Advisor | undefined): void {
     this.engine.dispatch.setAdvisor(advisor)

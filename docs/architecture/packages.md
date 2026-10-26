@@ -29,6 +29,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `accounts` (optional), `agentWorkers` (optional), `approvals` (optional), `artifacts` (optional), `board` (optional), `eventLog` (optional), `resources` (optional), `workers` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs`, `workers-core` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
+| [decision-core](../../packages/decision-core/README.md) | orchestration | defines `dispatchAdvisor` | — | — | `libs` |
 | [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
 | [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `gateway-core`, `libs` |
 | [digest-extractive](../../packages/plugins/digest-extractive/README.md) | orchestration | `digests` | `digest-extractive` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
@@ -38,7 +39,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | `workers-core` |
 | [statistics](../../packages/statistics/README.md) | orchestration | — | — | — | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
@@ -100,6 +101,7 @@ flowchart TB
   end
   subgraph orchestration ["orchestration"]
     board["board<br/>ctx.board"]
+    decision_core["decision-core<br/>defines dispatchAdvisor"]
     digest["digest<br/>ctx.digests"]
     digest_extractive["digest-extractive<br/>ctx.digests"]
     profile_scientific_research["profile-scientific-research"]
@@ -294,6 +296,7 @@ flowchart TB
   workflow -.-> approvals
   workflow -.-> board
   workflow -.-> digest
+  workflow -.-> decision_core
   workflow -.-> mcp_server
   workflow -.-> resources
 ```
@@ -347,6 +350,7 @@ flowchart TB
   subgraph orchestration ["orchestration"]
     board["board<br/>ctx.board"]
     board_core["board-core<br/>defines board"]
+    decision_core["decision-core<br/>defines dispatchAdvisor"]
     digest["digest<br/>ctx.digests"]
     digest_core["digest-core<br/>defines digests"]
     digest_extractive["digest-extractive<br/>ctx.digests"]
@@ -482,6 +486,7 @@ flowchart TB
   workers --> workers_core
   workflow --> approvals_core
   workflow --> board_core
+  workflow --> decision_core
   workflow --> digest_core
   workflow --> gateway_core
   workflow --> leases

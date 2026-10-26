@@ -23,6 +23,7 @@
     "@tsuuanmi/system-approvals-core": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board-core": "workspace:*",
+    "@tsuuanmi/system-decision-core": "workspace:*",
     "@tsuuanmi/system-digest-core": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",

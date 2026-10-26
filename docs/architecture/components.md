@@ -280,7 +280,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   ([dispatch](../design/workflow-engine.md#dispatch-starting-ready-work-by-itself)). Once one is
   configured (none by default), a dispatch advisor is asked about each choice after it is made,
   its advice recorded beside the choice and never changing it
-  ([the dispatch advisor in shadow](../design/workflow-engine.md#the-dispatch-advisor-in-shadow)).
+  ([the dispatch advisor in shadow](../design/workflow-engine.md#the-dispatch-advisor-in-shadow));
+  the advisor is the decision-family seam `ctx.dispatchAdvisor`, defined in `decision-core`.
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
@@ -337,6 +338,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   [board-core](../../packages/board-core/README.md), [board](../../packages/plugins/board/README.md),
   [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md),
   [digest-extractive](../../packages/plugins/digest-extractive/README.md),
+  [decision-core](../../packages/decision-core/README.md),
   [experiments-core](../../packages/experiments-core/README.md),
   [evaluations-core](../../packages/evaluations-core/README.md),
   [statistics](../../packages/statistics/README.md).

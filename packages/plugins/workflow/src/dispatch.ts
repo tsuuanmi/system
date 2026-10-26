@@ -328,7 +328,7 @@ export class Dispatcher {
   readonly history: OutcomeHistory
   /** The advisor `dispatch.advisor.provider` names; undefined for `none`. */
   private readonly configured: Advisor | undefined
-  /** Another provider set through the seam ({@link setAdvisor}), in place of the configured one. */
+  /** Another provider set through `setDispatchAdvisor` ({@link setAdvisor}), in place of every other. */
   private swapped: Advisor | undefined
   /** When the advisor was asked in the last hour (INV-9: `dispatch.advisor.maxPerHour`). */
   private calls: number[] = []
@@ -342,11 +342,21 @@ export class Dispatcher {
   }
 
   /**
-   * The advisor seam (PROP-0015 J1): another provider answers in place of the configured one, until
-   * set back with undefined. Its advice is recorded in shadow like any other, and changes no choice.
+   * The thin path to the advisor seam (contract 1.11): `advisor` answers in place of the provider of
+   * `ctx.dispatchAdvisor` and of the configured one, until set back with undefined. Its advice is
+   * recorded in shadow like any other, and changes no choice.
    */
   setAdvisor(advisor: Advisor | undefined): void {
     this.swapped = advisor
+  }
+
+  /**
+   * The advisor in force, asked at each choice (PROP-0015 J1): one set through {@link setAdvisor};
+   * else the provider of the seam `ctx.dispatchAdvisor`, while a plugin registers one (contract 1.12);
+   * else the one `dispatch.advisor.provider` names; else none.
+   */
+  private advisor(): Advisor | undefined {
+    return this.swapped ?? this.e.ctx.get('dispatchAdvisor') ?? this.configured
   }
 
   /** Wait for a pass in flight, for a stop. */
@@ -944,7 +954,7 @@ export class Dispatcher {
         ...(node.kind !== undefined ? { kind: node.kind } : {}), template, step: node.nodeId, reservePercent: settings.reservePercent, chosen, candidates: facts,
         counts: (key, kind) => this.history.countsOf(key, kind),
       })
-      const advisor = this.swapped ?? this.configured
+      const advisor = this.advisor()
       const hourAgo = Date.now() - 3_600_000
       this.calls = this.calls.filter((t) => t > hourAgo)
       let shadow: ShadowAdvice

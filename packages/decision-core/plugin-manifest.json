@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-decision-core",
+  "version": "0.0.0",
+  "description": "Decision seam definitions: ctx.dispatchAdvisor, the dispatch advisor asked in shadow at every dispatch choice with features only (dispatch-features@1), answering dispatch-advice@1 or unavailable and never changing the choice; with its conformance suite",
+  "class": {
+    "kind": "family",
+    "family": "decision"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "dispatchAdvisor",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

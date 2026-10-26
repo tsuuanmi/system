@@ -28,7 +28,7 @@ describe('architecture rules', () => {
   it('routing, workflows, profiles, presets, the models seam, the client edge, and the gateways\' shared turns name capabilities, never a model, vendor, client, or browser, and set no provider family (INV-11, QA-13, ADR-0027)', () => {
     const governed = [
       join(packages, 'workers-core', 'src'), join(plugins, 'workers', 'src'), join(plugins, 'workflow', 'src'), join(packages, 'gateway-turns', 'src'),
-      join(packages, 'models-core', 'src'), join(plugins, 'models', 'src'),
+      join(packages, 'models-core', 'src'), join(plugins, 'models', 'src'), join(packages, 'decision-core', 'src'),
       // The feedback loop's seams compare provider families for independence; they never name one.
       join(packages, 'experiments-core', 'src'), join(packages, 'evaluations-core', 'src'),
       // The client edge and the other control-plane plugins: one MCP interface for every client (ADR-0011).
@@ -122,7 +122,7 @@ describe('architecture rules', () => {
       if (defines) expect(readdirSync(join(packages, core, 'conformance')).filter((f) => f.endsWith('.ts')).length, core).toBeGreaterThan(0)
     }
     expect(existsSync(join(plugins, 'workflow', 'conformance', 'profiles.ts'))).toBe(true)
-    expect(existsSync(join(plugins, 'workflow', 'conformance', 'advisor.ts'))).toBe(true)
+    expect(existsSync(join(packages, 'decision-core', 'conformance', 'dispatch-advisor.ts'))).toBe(true)
   })
 
   it('holds every guarantee seam to a conformance suite at a pinned contract, so a worse provider cannot pass unnoticed (ADR-0036, ADR-0037)', () => {

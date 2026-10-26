@@ -11,7 +11,7 @@
   "consumes": [
     {
       "seam": "workflow",
-      "range": "^1.11.0"
+      "range": "^1.12.0"
     }
   ],
   "config": [

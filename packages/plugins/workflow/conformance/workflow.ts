@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { BoardTask, BudgetLine, TaskInput } from '@tsuuanmi/system-board-core'
+import { type Advice, type AdvisorFeatures, DispatchAdvisor } from '@tsuuanmi/system-decision-core'
 import { captureGitSubject, SchemaRegistry, sha256, startPrompt } from '@tsuuanmi/system-libs'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionInfrastructure, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
@@ -494,9 +495,12 @@ export const workflowSuite = defineSuite<Boot>({
   // (`maxPerHour`, `maxPerHourPerProject`) and paused per project (`pauseDispatch(reason, projectId)`).
   // 1.11 (PROP-0015 J1): every dispatch choice records an advice decision (`advisor.dispatch`) as its
   // input, unavailable while no advisor is configured (the default); `setDispatchAdvisor(advisor)`
-  // swaps one in, whose advice is recorded in shadow and never changes the choice. The advisor seam
-  // has its own suite (conformance/advisor.ts).
-  contract: '1.11',
+  // swaps one in, whose advice is recorded in shadow and never changes the choice. 1.12 (ADR-0037,
+  // T228): the engine consumes the advisor seam `ctx.dispatchAdvisor` (decision-core): while a plugin
+  // provides it, its provider is asked in place of the configured advisor, and one set through
+  // `setDispatchAdvisor` in place of both. The advisor seam has its own suite
+  // (decision-core/conformance/dispatch-advisor.ts).
+  contract: '1.12',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -1479,6 +1483,25 @@ export const workflowSuite = defineSuite<Boot>({
       expect(choice).toMatchObject({ outcome: { option: 'w:max' } })
       expect(adviceOf(h.ctx, choice)).toMatchObject({ decisionType: 'route', decider: { type: 'model', id: 'advisor.dispatch', version: 'conformance@1' }, outcome: { option: 'advice' } })
     }, {}, '1.11'),
+
+    scenario('dispatch-advice-seam', 'asks the provider of the advisor seam ctx.dispatchAdvisor at a dispatch choice while one is registered, and records its advice beside the choice, as its input, in shadow: the choice is the one dispatch makes without it (PROP-0015 J1, ADR-0037, INV-13)', async (h) => {
+      class Provider extends DispatchAdvisor {
+        readonly id = 'conformance-seam'
+        // Advice against the chosen Worker: if shadow could change the choice, it would.
+        async advise(features: AdvisorFeatures): Promise<Advice> {
+          return { status: 'advice', provider: 'conformance-seam', modelVersion: 'seam@1', candidates: features.candidates.map((c) => ({ alias: c.alias, accepted: 0, limit: 1, needsOperator: 1 })) }
+        }
+      }
+      const fiber = h.ctx.plugin({ name: 'conformance-dispatch-advisor', apply: (c: Context) => void new Provider(c) })
+      await fiber
+      try {
+        const choice = await dispatchChoice(h, 'advised by the seam')
+        expect(choice).toMatchObject({ outcome: { option: 'w:max' } })
+        expect(adviceOf(h.ctx, choice)).toMatchObject({ decisionType: 'route', decider: { type: 'model', id: 'advisor.dispatch', version: 'seam@1' }, outcome: { option: 'advice', detail: { provider: 'conformance-seam' } } })
+      } finally {
+        await fiber.dispose()
+      }
+    }, {}, '1.12'),
   ],
 })
 

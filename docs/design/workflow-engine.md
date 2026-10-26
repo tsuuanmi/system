@@ -1415,9 +1415,11 @@ flowchart TD
 > T194 research found Jev not verifiably usable yet), so the seam is provider-neutral, with a local
 > adapter and a configured model Worker. D73 (features only) and D74 (100 dispatched attempts with
 > outcomes in shadow) apply. Implemented in [`workflow`](../../packages/plugins/workflow/README.md)
-> (`src/advisor.ts`). Contract 1.11 of the `workflow` seam; the advisor seam's own contract 1.0, its
-> suite `conformance/advisor.ts` ([seam catalog](../architecture/plugin-model.md#seam-catalog)). Not
-> built: J2 (the advice beside each ask on Home), J3 (any effect on a choice).
+> (`src/advisor.ts`). Contracts 1.11 and 1.12 of the `workflow` seam; the advisor seam
+> `dispatchAdvisor` is defined in [`decision-core`](../../packages/decision-core/README.md)
+> (ADR-0037, T228) at its own contract 1.0, its suite `decision-core/conformance/dispatch-advisor.ts`
+> ([seam catalog](../architecture/plugin-model.md#seam-catalog)). Not built: J2 (the advice beside
+> each ask on Home), J3 (any effect on a choice).
 
 Once `dispatch.advisor.provider` names an advisor (it is `none` by default: off), every dispatch
 choice asks it, once, **after** `quota-score@2` has chosen the Worker. The advice is recorded and
@@ -1426,7 +1428,7 @@ no advisor.
 
 | Part | What it does |
 |---|---|
-| the seam ([catalog](../architecture/plugin-model.md#seam-catalog)) | `Advisor.advise(features, signal)` returns `dispatch-advice@1`: for each candidate alias, `accepted`, `limit` (a window closes mid-task), and `needsOperator`, each a probability, with the provider's id and a pinned model version; or `unavailable` with why. `ctx.workflow.setDispatchAdvisor(advisor)` swaps in another provider, which must pass the seam's conformance suite (`packages/plugins/workflow/conformance/advisor.ts`). It is stopped through an `AdvisorSignal`, not an `AbortSignal` (an `EventTarget` rethrows a listener's error as an uncaught exception, past any try/catch): each stop listener runs inside a guard, so one that throws is recorded with the timeout and ignored, and the process lives on |
+| the seam ([catalog](../architecture/plugin-model.md#seam-catalog)) | `Advisor.advise(features, signal)` returns `dispatch-advice@1`: for each candidate alias, `accepted`, `limit` (a window closes mid-task), and `needsOperator`, each a probability, with the provider's id and a pinned model version; or `unavailable` with why. The seam is `ctx.dispatchAdvisor`, the abstract `DispatchAdvisor` in `decision-core`: while a plugin provides it, its provider is asked in place of the configured one (contract 1.12); `ctx.workflow.setDispatchAdvisor(advisor)`, the thin path, swaps one in place of both, until set back with undefined. One method picks the advisor in force at each choice, and the same bounds apply to each. Every provider must pass the seam's conformance suite (`packages/decision-core/conformance/dispatch-advisor.ts`). It is stopped through an `AdvisorSignal`, not an `AbortSignal` (an `EventTarget` rethrows a listener's error as an uncaught exception, past any try/catch): each stop listener runs inside a guard, so one that throws is recorded with the timeout and ignored, and the process lives on |
 | the features (D73) | `dispatch-features@1`: the step's kind, the template, the step, the reserve, and each admitted candidate under an alias (`A` the chosen one, then the score's order, at most 8): tier, quota class, metered, free, load, each window's length, used share, headroom, and minutes to reset, and its recorded counts for the kind (attempts, accepted, limited, needs the operator). Never a task's title or goal, a Worker id, or an account; the snapshot given is frozen |
 | `none` (default) | no advisor is asked; the features are still recorded (outcome `unavailable`, `no advisor`), so the local adapter can learn from them once it is turned on |
 | `local` (off by default) | an L2-regularized logistic regression per question (Newton's method, deterministic), fitted in this process on the latest 2,000 labelled dispatched attempts; `insufficient data` until `dispatch.advisor.minLabelled` (30; at most 2,000, the examples it keeps) exist. Nothing leaves the host. Its version names the fit (`logistic-l2@1:n<count>:<hash>`) |

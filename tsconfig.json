@@ -141,6 +141,9 @@
       "@tsuuanmi/system-digest-core": [
         "packages/digest-core/src/index.ts"
       ],
+      "@tsuuanmi/system-decision-core": [
+        "packages/decision-core/src/index.ts"
+      ],
       "@tsuuanmi/system-digest": [
         "packages/plugins/digest/src/index.ts"
       ],

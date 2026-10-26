@@ -283,6 +283,16 @@ importers:
         specifier: workspace:*
         version: link:../plugins/store
 
+  packages/decision-core:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+
   packages/digest-core:
     dependencies:
       '@tsuuanmi/system-gateway-core':
@@ -1639,6 +1649,9 @@ importers:
       '@tsuuanmi/system-board-core':
         specifier: workspace:*
         version: link:../../board-core
+      '@tsuuanmi/system-decision-core':
+        specifier: workspace:*
+        version: link:../../decision-core
       '@tsuuanmi/system-digest-core':
         specifier: workspace:*
         version: link:../../digest-core

@@ -1,17 +1,18 @@
 /**
  * The dispatch advisor (PROP-0015 J1, in shadow; docs/design/workflow-engine.md#the-dispatch-advisor-in-shadow):
- * one provider-neutral seam that, for one dispatch choice, is given a snapshot of **features only**
- * (D73: kind, template, step, the admitted candidates by alias with their quota lines and recorded
- * counts; never a task's title, goal, or any other text) and answers, in one call, three typed
- * probabilities per candidate (`dispatch-advice@1`): accepted, a limit mid-task, and needs the operator,
- * with the provider's model and version id.
+ * the consumer side of the seam `ctx.dispatchAdvisor`, whose definition, vocabulary, and conformance
+ * suite are in `@tsuuanmi/system-decision-core` (ADR-0037). For one dispatch choice an advisor is
+ * given a snapshot of **features only** (D73: kind, template, step, the admitted candidates by alias
+ * with their quota lines and recorded counts; never a task's title, goal, or any other text) and
+ * answers, in one call, three typed probabilities per candidate (`dispatch-advice@1`): accepted, a
+ * limit mid-task, and needs the operator, with the provider's model and version id.
  *
  * - **Shadow only.** Dispatch chooses its Worker by `quota-score@2` before the advisor is asked; the
  *   advice is recorded as a `route` decision (rule or model `advisor.dispatch`) that the `dispatch.choice`
  *   decision names as an input (INV-13), and nothing reads it to choose.
  * - **Fail closed, with a defined path.** An error, a timeout, a malformed answer, the call bound, or a
  *   provider without enough data is recorded as `unavailable` with why, and the choice proceeds as before.
- * - **Adapters:** `none` (the default: off, nothing is asked); `local`, a regularized logistic regression
+ * - **Providers:** `none` (the default: off, nothing is asked); `local`, a regularized logistic regression
  *   fitted on System's own recorded dispatch outcomes, in this process (no data leaves the host),
  *   `insufficient data` until `minLabelled` labelled attempts exist; `model`, a configured model Worker
  *   (a metered entry of the models row, say) called through `ctx.workers` with a JSON schema, off
@@ -21,154 +22,27 @@
  *
  * Nothing here names a vendor (INV-11): the model adapter names a Worker id from configuration.
  */
-import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ADVICE_QUESTION_SET, ADVICE_QUESTIONS, ADVICE_SHADOW_ATTEMPTS, type AdviceQuestion, brierScores, contentId, type QuestionScore, type ScoredCandidate } from '@tsuuanmi/system-libs'
+import {
+  adviceProblem, type Advice, type Advisor, type AdvisorCandidate, type AdvisorCounts, type AdvisorFeatures, type AdvisorSignal, type AdvisorWindow, advisorStop, ALIASES,
+  type CandidateAdvice, FEATURES_SCHEMA, MAX_CANDIDATES, messageOf, type Question, QUESTION_SET, QUESTIONS,
+} from '@tsuuanmi/system-decision-core'
+import { ADVICE_EVENT, ADVICE_OUTCOME_EVENT, ADVICE_SHADOW_ATTEMPTS, brierScores, contentId, type QuestionScore, type ScoredCandidate } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, WorkerExecution, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { newId } from './types.ts'
 
-/** The question set every adapter answers (`modelAnswers[].questionSetVersion`). */
-export const QUESTION_SET = ADVICE_QUESTION_SET
-/** The feature snapshot's version. */
-export const FEATURES = 'dispatch-features@1'
-/** The questions, per candidate alias: `accepted:<alias>`, `limit:<alias>`, `needs-operator:<alias>`. */
-export const QUESTIONS = ADVICE_QUESTIONS
-export type Question = AdviceQuestion
+// The seam's vocabulary, defined in decision-core, as this package has exported it since contract 1.11.
+export { adviceProblem, advisorStop, QUESTION_SET, QUESTIONS }
+export type { Advice, Advisor, AdvisorCandidate, AdvisorCounts, AdvisorFeatures, AdvisorSignal, AdvisorWindow, CandidateAdvice, Question }
 /** D74: dispatched attempts with outcomes the shadow period runs for before the advice may be shown (J2). */
 export const SHADOW_ATTEMPTS = ADVICE_SHADOW_ATTEMPTS
 /** The event a choice's advice decision is announced in. */
 export const ADVISED_EVENT = ADVICE_EVENT
 export { brierScores, type QuestionScore }
 /** Candidates one snapshot holds at most (INV-9; PROP-0015 `advisor.maxCandidates`). */
-export const MAX_ADVISED = 8
+export const MAX_ADVISED = MAX_CANDIDATES
 /** Outcomes the local adapter fits on at most, the latest (INV-9). */
 export const MAX_TRAINING = 2000
-const ALIASES = 'ABCDEFGH'
-
-/** One window of a candidate's account, as the quota score read it: numbers only. */
-export interface AdvisorWindow {
-  /** The window's length in seconds, when known. */
-  seconds?: number
-  known: boolean
-  used?: number
-  headroom?: number
-  resetsInMinutes?: number
-}
-
-/** A candidate's recorded outcomes for this kind of work, at the time of the choice (from `workflow.dispatch.outcome`). */
-export interface AdvisorCounts {
-  attempts: number
-  accepted: number
-  limited: number
-  operator: number
-}
-
-/** One admitted candidate, by alias: never its Worker id, account, or anything a person wrote. */
-export interface AdvisorCandidate {
-  alias: string
-  tier: string
-  tierRank: number
-  quotaClass: string
-  metered: boolean
-  free: boolean
-  load?: { running: number; slots: number }
-  windows: AdvisorWindow[]
-  counts: AdvisorCounts
-}
-
-/** What an advisor is given for one dispatch choice (`dispatch-features@1`). */
-export interface AdvisorFeatures {
-  schema: typeof FEATURES
-  questionSet: typeof QUESTION_SET
-  /** The step's kind (ADR-0057), when it names one. */
-  kind?: string
-  template: string
-  step: string
-  reservePercent: number
-  candidates: AdvisorCandidate[]
-}
-
-/** The three probabilities for one candidate. */
-export interface CandidateAdvice {
-  alias: string
-  accepted: number
-  limit: number
-  needsOperator: number
-}
-
-/** An advisor's answer: every candidate's probabilities, or why there are none. */
-export type Advice =
-  | { status: 'advice'; provider: string; modelVersion: string; candidates: CandidateAdvice[] }
-  | { status: 'unavailable'; provider: string; modelVersion?: string; reason: string }
-
-/**
- * How an advisor learns that its call was stopped (its time is up). Deliberately not an
- * `AbortSignal`: an `EventTarget` reports a listener's throw as an uncaught exception on a later
- * tick, which no try/catch around the abort contains, so one advisor's faulty listener would end
- * the process. Here every listener is called inside a guard: one that throws or rejects is recorded
- * with the call and ignored. An advisor that needs an `AbortSignal` (for `fetch`, say) makes its own
- * controller and aborts it from {@link AdvisorSignal.onAbort}; that controller's listeners are its own.
- */
-export interface AdvisorSignal {
-  /** True once the call is stopped. */
-  readonly aborted: boolean
-  /** Call `listener` once when the call is stopped (soon after, if it already is); returns what removes it. */
-  onAbort(listener: () => unknown): () => void
-}
-
-/**
- * The seam: one call per dispatch choice. An implementation answers every candidate of `features`
- * once, or says why it cannot; it may throw, and it should stop when `signal` says the call is
- * stopped. It never sees the Worker ids behind the aliases, and nothing it answers changes the
- * choice. A replacement passes the seam's conformance suite (`conformance/advisor.ts`).
- */
-export interface Advisor {
-  /** The provider's id, recorded as `modelAnswers[].provider` (at most 64 characters). */
-  readonly id: string
-  advise(features: AdvisorFeatures, signal: AdvisorSignal): Promise<Advice>
-}
-
-/**
- * A call's stop: the signal an advisor is given, and `stop`, which marks it stopped and calls every
- * listener inside a guard, returning what each one that threw said (a rejection is caught too). Its
- * failures can only be recorded: nothing an advisor registers runs where its throw could escape.
- */
-export function advisorStop(): { signal: AdvisorSignal; stop: () => string[] } {
-  let aborted = false
-  const listeners = new Set<() => unknown>()
-  const failures: string[] = []
-  const call = (listener: () => unknown): void => {
-    try {
-      const result = listener() as unknown
-      if (result && typeof (result as PromiseLike<unknown>).then === 'function') Promise.resolve(result as PromiseLike<unknown>).catch((error: unknown) => void failures.push(messageOf(error)))
-    } catch (error) {
-      failures.push(messageOf(error))
-    }
-  }
-  const signal: AdvisorSignal = Object.freeze({
-    get aborted() {
-      return aborted
-    },
-    onAbort(listener: () => unknown): () => void {
-      if (typeof listener !== 'function') throw new TypeError('onAbort takes a function')
-      if (aborted) {
-        queueMicrotask(() => call(listener))
-        return () => undefined
-      }
-      listeners.add(listener)
-      return () => void listeners.delete(listener)
-    },
-  })
-  const stop = (): string[] => {
-    if (!aborted) {
-      aborted = true
-      const all = [...listeners]
-      listeners.clear()
-      for (const listener of all) call(listener)
-    }
-    return [...failures]
-  }
-  return { signal, stop }
-}
 
 /** The advisor's settings (`dispatch.advisor`). */
 export interface AdvisorConfig {
@@ -270,33 +144,9 @@ export function featuresOf(input: { kind?: string; template: string; step: strin
     }
   })
   return {
-    features: { schema: FEATURES, questionSet: QUESTION_SET, ...(input.kind !== undefined ? { kind: input.kind } : {}), template: input.template, step: input.step, reservePercent: input.reservePercent, candidates },
+    features: { schema: FEATURES_SCHEMA, questionSet: QUESTION_SET, ...(input.kind !== undefined ? { kind: input.kind } : {}), template: input.template, step: input.step, reservePercent: input.reservePercent, candidates },
     aliases,
   }
-}
-
-const isProbability = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1
-
-/** Why an answer is not advice on exactly these candidates, or undefined when it is. */
-export function adviceProblem(advice: unknown, features: AdvisorFeatures): string | undefined {
-  if (!advice || typeof advice !== 'object') return 'the answer is not an object'
-  const a = advice as { status?: unknown; provider?: unknown; reason?: unknown; modelVersion?: unknown; candidates?: unknown }
-  if (a.provider !== undefined && (typeof a.provider !== 'string' || !a.provider)) return `the provider must be a non-empty string, not ${a.provider === null ? 'null' : typeof a.provider}`
-  if (a.status === 'unavailable') {
-    if (a.modelVersion !== undefined && (typeof a.modelVersion !== 'string' || !a.modelVersion)) return 'a model version, when given, must be a non-empty string'
-    return typeof a.reason === 'string' && a.reason ? undefined : 'unavailable with no reason'
-  }
-  if (a.status !== 'advice') return `status ${JSON.stringify(a.status)} is neither advice nor unavailable`
-  if (typeof a.modelVersion !== 'string' || !a.modelVersion || a.modelVersion.length > 64) return 'no model version (1 to 64 characters): an unpinned answer is not recorded as advice'
-  if (!Array.isArray(a.candidates)) return 'no candidates'
-  const answered = a.candidates as Array<Partial<CandidateAdvice> | null | undefined>
-  const want = features.candidates.map((c) => c.alias)
-  const got = answered.map((c) => String(c?.alias))
-  if (got.length !== want.length || want.some((alias) => !got.includes(alias))) return `it answers ${got.join(', ') || 'no candidate'}, not exactly ${want.join(', ')}`
-  for (const c of answered) {
-    if (!isProbability(c?.accepted) || !isProbability(c?.limit) || !isProbability(c?.needsOperator)) return `candidate ${String(c?.alias)}: every probability must be a number from 0 to 1`
-  }
-  return undefined
 }
 
 // --- the local adapter: a regularized logistic regression ---
@@ -571,14 +421,6 @@ export async function adviseInShadow(advisor: Advisor, features: AdvisorFeatures
     return { advice, elapsedMs: Date.now() - started }
   } finally {
     clearTimeout(timer)
-  }
-}
-
-function messageOf(error: unknown): string {
-  try {
-    return (error instanceof Error ? error.message : String(error)).slice(0, 240)
-  } catch {
-    return 'an error that cannot be shown'
   }
 }
 

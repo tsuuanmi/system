@@ -1,0 +1,15 @@
+{
+  "name": "@tsuuanmi/system-decision-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Decision seam definitions: ctx.dispatchAdvisor, the dispatch advisor asked in shadow at every dispatch choice with features only (dispatch-features@1), answering dispatch-advice@1 or unavailable and never changing the choice; with its conformance suite",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib", "plugin-manifest.json"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-libs": "workspace:*" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" }
+}
