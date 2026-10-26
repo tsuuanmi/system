@@ -12,9 +12,13 @@
  * command itself reported, in its report file, that a nested bubblewrap it needed was refused); any
  * other nonzero exit is the check's own failure. A command that reports its browser tests did not run
  * there keeps its outcome, and its reason and answer say so (T247). Each check that ran is stored with its outcome, bound
- * to the subject, its argv, and the setup, and reused, never run again on that subject; one a crash or
- * a stop interrupted is an `error`, and one that ended before a stop keeps what it came to: neither is
- * run again to replace it (INV-4). What ran is recorded as one `check-run@1.0` evidence
+ * to the subject, its argv, and the setup, and reused, never run again on that subject: one that ended
+ * before a stop keeps what it came to (INV-4). One the host cut (T269: the daemon stopped, by a stop or
+ * a crash, with its command running) came to nothing, so it is run again on the same subject at the
+ * next ask after the restart, the re-run a `gate` decision of its own (rule
+ * `agent-workers.check-cut-rerun`), at most {@link MAX_CHECK_CUTS} cuts (INV-9); one a stop of its run
+ * killed within the same daemon (the operator's stop, a lost lease) stays an `error`, never run again
+ * on that subject. What ran is recorded as one `check-run@1.0` evidence
  * artifact before the outcome is returned (INV-13: the workflow engine's acceptance decision names it).
  * The setup owns installation (T235): a result that changed the setup's dependency files has its
  * worktree set up again first (./setup.ts `refresh`), refused as `dependency_unavailable` when that
@@ -22,6 +26,7 @@
  * never installs; and one quiet for `checkStallSeconds` is told as stalled ({@link CHECK_EVENT}).
  * @module @tsuuanmi/system-agent-workers/checks
  */
+import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ArtifactRef } from '@tsuuanmi/system-approvals-core'
@@ -46,6 +51,15 @@ const CHECK_OUTPUT_TAIL =4000
 /** How long a check's reason its record keeps (`check-run@1.0`). */
 const CHECK_REASON_CHARS = 2000
 
+/** The event a check the host cut and that runs again is told by (T269). */
+const RERUN_EVENT = 'agent-workers.check.rerun'
+
+/** How many times the host may cut one check on one subject: one cut that often stays an `error`, never run again (INV-9, T269). */
+export const MAX_CHECK_CUTS = 3
+
+/** The rule of the decision that runs again a check the host cut (T269). */
+const RERUN_RULE = { type: 'rule', id: 'agent-workers.check-cut-rerun', version: '1' } as const
+
 /** Each check that ran, by run, worktree, subject, check, argv, and setup: its outcome, reused on that subject, never run again (INV-4). */
 export const CHECKS_MIGRATION = {
   version: 17,
@@ -69,6 +83,37 @@ interface CheckRecord {
   output?: { tail: string; bytes: number; sha256: string }
   /** What the command reported it did not run (its browser tests, with why); kept in the store, said in `reason` in the evidence. */
   notRun?: string
+  /** A stop killed its command before its end in this daemon (its instance): a later daemon reads that as the host's cut (T269). The store's only. */
+  cutIn?: string
+  /** How many times the host cut it on this subject so far (T269). The store's only. */
+  cuts?: number
+}
+
+/** What a started check's row holds until it ends: the daemon that started it, and the cuts before it (T269). */
+interface StartedMark { instance: string; cuts: number }
+
+/** A check's row of `agent_check_runs`, as the store holds it. */
+interface StoredRow { state: string; record: string | null; started_at: string; ended_at: string | null }
+
+/**
+ * Whether the host itself stopped: `signal` was aborted with a reason that says so (the engine's
+ * stop, `HOST_STOPPED`), or this source is stopping (`hostStopped`). An operator's stop of a run and
+ * a lost lease abort with neither (T269).
+ */
+export function hostStop(signal: AbortSignal | undefined, hostStopped?: AbortSignal): boolean {
+  return hostStopped?.aborted === true || (signal?.aborted === true && (signal.reason as { hostStopped?: unknown } | undefined)?.hostStopped === true)
+}
+
+/** A check the host cut, to run again: how many times it was cut, and what says so. */
+interface Cut { cuts: number; why: string }
+
+/** The fields of a stored record that are the store's only, never in `check-run@1.0` or an answer. */
+const evidenceOf = (record: CheckRecord): CheckRecord => {
+  const copy: CheckRecord = { ...record }
+  delete copy.notRun
+  delete copy.cutIn
+  delete copy.cuts
+  return copy
 }
 
 type Allowed = { check: RunCheck; line: string; argv: string[]; autonomy: ArtifactRef }
@@ -81,6 +126,8 @@ export interface RunChecksOptions {
   commandEnded?: (check: RunCheck) => void
   /** The source's worktree setups, so a setup run again for a result waits for one in flight in its worktree (one at a time per worktree). */
   setups?: WorktreeSetups
+  /** Aborted when this source is stopping with the host: a check it kills then is cut by the host (T269). */
+  hostStopped?: AbortSignal
 }
 
 /** What the run of one check came to. */
@@ -106,6 +153,9 @@ const now = (): string => new Date().toISOString()
 export class RunChecks {
   /** Keys of checks running in this process now: one is never started twice at once. */
   private readonly running = new Set<string>()
+
+  /** This daemon's checks, as told apart from an earlier daemon's: a check an earlier one left cut was cut by the host (T269). */
+  private readonly instance = randomUUID()
 
   /** What sets a worktree up again for a result that changed its dependencies (T235). */
   private readonly worktreeSetups: WorktreeSetups
@@ -174,7 +224,7 @@ export class RunChecks {
         }
       }
     }
-    if (allowed.length) await this.execute(found, setup!, step, allowed, records, signal)
+    const reruns = allowed.length ? await this.execute(found, setup!, step, allowed, records, signal) : []
     const results: CheckResult[] = names.map((check) => {
       const r = records.get(check)!
       return { check, outcome: r.outcome, ...(r.exitCode !== undefined ? { exitCode: r.exitCode } : {}), reason: r.reason, ...(r.notRun ? { notRun: r.notRun } : {}) }
@@ -187,12 +237,11 @@ export class RunChecks {
         subject: { type: 'git-head', ref: step.subject.ref, version: step.subject.version }, setup: setup!.hash,
         // check-run@1.0 says what did not run in the reason; the field is the store's and the answer's.
         checks: names.map((check) => {
-          const record: CheckRecord = { ...records.get(check)! }
-          delete record.notRun
+          const record = evidenceOf(records.get(check)!)
           return { ...record, reason: record.reason.slice(0, CHECK_REASON_CHARS) }
         }),
       },
-      inputs: [...new Set([...allowed.map((a) => a.autonomy), ...(again ? [again] : [])])],
+      inputs: [...new Set([...allowed.map((a) => a.autonomy), ...(again ? [again] : []), ...reruns])],
       classification: step.classification, producer: { type: 'system', ref: 'agent-workers' }, runId: step.runId,
     }).id as string
     this.ctx.logger.info(`agent Workers: the checks of run ${step.runId} on ${subjectId({ type: 'git-head', ...step.subject })}: ${results.map((r) => `${r.check} ${r.outcome}`).join(', ')} (evidence ${evidence})`)
@@ -210,20 +259,38 @@ export class RunChecks {
   }
 
   /**
-   * The stored outcome of a check that ran on this key before (a restart's, or an earlier call's):
-   * the record it ended with, reused as it is; or, when it started and never recorded an end (the
-   * daemon stopped meanwhile), an `error` stored in its place, never run again to replace whatever it
-   * came to (INV-4). Undefined when it never started.
+   * What a check that started on this key before (a restart's, or an earlier call's) came to. The
+   * record it ended with is reused as it is (INV-4). One the host cut (T269), so that it came to
+   * nothing, is to run again (`cut`): it started in an earlier daemon and recorded no end (the daemon
+   * stopped, or crashed, meanwhile), or an earlier daemon's stop killed it before its end. Past
+   * {@link MAX_CHECK_CUTS} cuts it stays an `error`, stored in its place (INV-9). One a stop killed in
+   * this daemon (its run stopped, or its lease lost) stays the `error` it was stored as. Undefined
+   * when it never started.
    */
-  private stored(key: string[], a: Allowed): CheckRecord | undefined {
-    const row = this.ctx.store.db.prepare('SELECT state, record, started_at FROM agent_check_runs WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?')
-      .get(...key) as { state: string; record: string | null; started_at: string } | undefined
+  private stored(key: string[], a: Allowed): { record: CheckRecord } | { cut: Cut; prior: StoredRow } | undefined {
+    const row = this.ctx.store.db.prepare('SELECT state, record, started_at, ended_at FROM agent_check_runs WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?')
+      .get(...key) as StoredRow | undefined
     if (!row) return undefined
-    if (row.state === 'done' && row.record) return JSON.parse(row.record) as CheckRecord
-    const record: CheckRecord = {
-      check: a.check, outcome: 'error', argv: a.argv, autonomy: a.autonomy,
-      reason: `its command (${a.line}) started at ${row.started_at} and recorded no end (the daemon stopped meanwhile); it is not run again on this subject, so what it came to is never replaced (INV-4)`,
+    let cut: Cut
+    if (row.state === 'done' && row.record) {
+      const record = JSON.parse(row.record) as CheckRecord
+      if (record.cutIn === undefined || record.cutIn === this.instance) return { record }
+      cut = { cuts: record.cuts ?? 1, why: `its command (${a.line}) was stopped before its end by the host's stop, in the daemon before this one (started at ${row.started_at})` }
+    } else {
+      const mark = row.record ? JSON.parse(row.record) as Partial<StartedMark> : {}
+      // Started in this daemon and not running: nothing of this daemon stops without storing its end.
+      if (mark.instance === this.instance) return { record: this.storeError(key, a, `its command (${a.line}) started at ${row.started_at} and recorded no end; it is not run again on this subject (INV-4)`) }
+      cut = { cuts: (mark.cuts ?? 0) + 1, why: `its command (${a.line}) started at ${row.started_at} and recorded no end: the daemon stopped meanwhile` }
     }
+    if (cut.cuts >= MAX_CHECK_CUTS) {
+      return { record: this.storeError(key, a, `${cut.why}; the host has cut it ${cut.cuts} times on this subject, so it is not run again (at most ${MAX_CHECK_CUTS}, INV-9)`) }
+    }
+    return { cut, prior: row }
+  }
+
+  /** Store an `error` in place of what a check came to, its end: it stands from now on. */
+  private storeError(key: string[], a: Allowed, reason: string): CheckRecord {
+    const record: CheckRecord = { check: a.check, outcome: 'error', argv: a.argv, autonomy: a.autonomy, reason }
     this.ctx.store.transaction((db) => {
       db.prepare('UPDATE agent_check_runs SET state = ?, record = ?, ended_at = ? WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?').run('done', JSON.stringify(record), now(), ...key)
     })
@@ -231,11 +298,44 @@ export class RunChecks {
   }
 
   /**
-   * Run each allowed check in order, confined, recording each; a check that changed the tree ends the
-   * run of the rest. A check stored on this key is not run again: its stored outcome stands.
+   * Run again a check the host cut (T269): a `gate` decision of rule `agent-workers.check-cut-rerun`
+   * says so (INV-13) and an {@link RERUN_EVENT} event tells it. Its stored row stays, with its cuts,
+   * until the check starts again and replaces it in one statement (`execute`).
    */
-  private async execute(found: { repository: string; path: string }, setup: Setup, step: CheckStep, allowed: Allowed[], records: Map<RunCheck, CheckRecord>, signal: AbortSignal | undefined): Promise<void> {
+  private rerun(step: CheckStep, workspace: string, a: Allowed, cut: Cut): ArtifactRef {
+    const subject = subjectId({ type: 'git-head', ...step.subject })
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: `May the ${a.check} check of workflow run ${step.runId} run again on its result ${subject}, the host having cut it?`.slice(0, 500),
+      inputs: [a.autonomy],
+      candidates: [
+        { option: 'run', selected: true, reasons: [`cut by the host, re-run: ${cut.why}; it came to no outcome, so running it again on the same tree replaces nothing (INV-4), and the check is read-only to the tree (INV-5)`.slice(0, 500)] },
+        { option: 'hold', selected: false, reasons: [`not hold: the host has cut it ${cut.cuts} time(s) on this subject, fewer than ${MAX_CHECK_CUTS}`] },
+      ],
+      decider: RERUN_RULE,
+      outcome: { option: 'run', detail: { check: a.check, command: a.line, workspace, subject, cuts: cut.cuts, maxCuts: MAX_CHECK_CUTS, cause: 'cut-by-host' } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, runId: step.runId, classification: step.classification }).id as ArtifactRef
+    try {
+      this.ctx.get('eventLog')?.append({ type: RERUN_EVENT, runId: step.runId, decision, data: { check: a.check, command: a.line, workspace, subject, cuts: cut.cuts, reason: cut.why.slice(0, 500) } })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the re-run event of the ${a.check} check of run ${step.runId} was not appended: ${(error as Error).message}`)
+    }
+    this.ctx.logger.info(`agent Workers: the ${a.check} check of run ${step.runId} on ${subject} was cut by the host (${cut.cuts} time(s)); it runs again (decision ${decision})`)
+    return decision
+  }
+
+  /**
+   * Run each allowed check in order, confined, recording each; a check that changed the tree ends the
+   * run of the rest. A check stored on this key is not run again: its stored outcome stands; but one
+   * the host cut runs again (T269). Returns the decisions of those re-runs.
+   */
+  private async execute(found: { repository: string; path: string }, setup: Setup, step: CheckStep, allowed: Allowed[], records: Map<RunCheck, CheckRecord>, signal: AbortSignal | undefined): Promise<ArtifactRef[]> {
     const todo: Allowed[] = []
+    const reruns: ArtifactRef[] = []
+    /** The cuts each check to run again had so far, carried into its started mark. */
+    const cutsOf = new Map<RunCheck, number>()
+    /** The rows those checks had, to put back when the re-run's command was never started. */
+    const priors = new Map<RunCheck, StoredRow>()
     for (const a of allowed) {
       const key = this.keyOf(step, found.path, setup, a)
       if (this.running.has(JSON.stringify(key))) {
@@ -243,10 +343,18 @@ export class RunChecks {
         continue
       }
       const before = this.stored(key, a)
-      if (before) records.set(a.check, before)
-      else todo.push(a)
+      if (before && 'record' in before) {
+        records.set(a.check, before.record)
+        continue
+      }
+      if (before) {
+        reruns.push(this.rerun(step, found.path, a, before.cut))
+        cutsOf.set(a.check, before.cut.cuts)
+        priors.set(a.check, before.prior)
+      }
+      todo.push(a)
     }
-    if (!todo.length) return
+    if (!todo.length) return reruns
     const worktree = real(found.path)
     const tree = subjectId({ type: 'git-head', ...step.subject })
     const stopped = (): unknown => signal?.reason ?? new ProviderError('aborted', 'stopped')
@@ -274,24 +382,37 @@ export class RunChecks {
       this.running.add(id)
       try {
         if (signal?.aborted) throw stopped()
-        // Stored before it starts: a crash from here on leaves it interrupted, never run again on this subject (INV-4).
+        // Stored before it starts, with this daemon's mark: a crash from here on leaves it cut by the
+        // host, run again by the next daemon within the bound (T269), never by this one. A check run
+        // again replaces its stored row in this one statement, so the cuts it had are never absent
+        // from the store: a crash at any point keeps the count (INV-9).
+        const mark: StartedMark = { instance: this.instance, cuts: cutsOf.get(a.check) ?? 0 }
         this.ctx.store.transaction((db) => {
-          db.prepare('INSERT INTO agent_check_runs (workflow_run_id, workspace, subject, check_name, argv, setup_hash, state, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...key, 'started', now())
+          db.prepare(`INSERT INTO agent_check_runs (workflow_run_id, workspace, subject, check_name, argv, setup_hash, state, record, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (workflow_run_id, workspace, subject, check_name, argv, setup_hash) DO UPDATE SET state = excluded.state, record = excluded.record, started_at = excluded.started_at, ended_at = NULL`)
+            .run(...key, 'started', JSON.stringify(mark), now())
         })
         const ran = await this.runOne(confined, setup, a, base, tree, found.path, env, signal, step.runId)
         if ('unstarted' in ran) {
-          // Its command was never executed: nothing of the check ran, so a later call may run it.
-          this.forget(key)
+          // Its command was never executed: nothing of the check ran, so a later call may run it. A
+          // check that was to run again goes back to the row it had, its cuts with it.
+          const prior = priors.get(a.check)
+          if (prior) this.restore(key, prior)
+          else this.forget(key)
           if (signal?.aborted) throw stopped()
           records.set(a.check, ran.record)
           continue
         }
         if ('moved' in ran) moved = ran.moved
         records.set(a.check, ran.record)
-        // Stored before a stop is honoured: a check that ended keeps what it came to, and one a stop
-        // killed is an error; neither is run again on this subject to replace it (INV-4).
+        // Stored before a stop is honoured: a check that ended keeps what it came to, never run again
+        // on this subject to replace it (INV-4). One a stop killed is an error marked with this daemon:
+        // this one never runs it again. Only the host's own stop (the engine's or this source's stopping,
+        // not an operator's stop of the run or a lost lease) marks it cut: a later daemon reads that
+        // and runs it again (T269); any other stop leaves the `error` final (INV-4).
+        const stored = 'interrupted' in ran && hostStop(signal, this.options.hostStopped) ? { ...ran.record, cutIn: this.instance, cuts: mark.cuts + 1 } : ran.record
         this.ctx.store.transaction((db) => {
-          db.prepare('UPDATE agent_check_runs SET state = ?, record = ?, ended_at = ? WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?').run('done', JSON.stringify(ran.record), now(), ...key)
+          db.prepare('UPDATE agent_check_runs SET state = ?, record = ?, ended_at = ? WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?').run('done', JSON.stringify(stored), now(), ...key)
         })
         if ('interrupted' in ran || signal?.aborted) throw stopped()
       } finally {
@@ -299,6 +420,15 @@ export class RunChecks {
         confined.dispose()
       }
     }
+    return reruns
+  }
+
+  /** Put a check's row back as it was before its re-run started (its command was never executed). */
+  private restore(key: string[], row: StoredRow): void {
+    this.ctx.store.transaction((db) => {
+      db.prepare('UPDATE agent_check_runs SET state = ?, record = ?, started_at = ?, ended_at = ? WHERE workflow_run_id = ? AND workspace = ? AND subject = ? AND check_name = ? AND argv = ? AND setup_hash = ?')
+        .run(row.state, row.record, row.started_at, row.ended_at, ...key)
+    })
   }
 
   private forget(key: string[]): void {
@@ -336,7 +466,7 @@ export class RunChecks {
       return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) was not started by the confinement (an infrastructure failure, not a failed check)${said ? `: ${said}` : ''}` }, unstarted: true }
     }
     if (ended.stopped && signal?.aborted && !deadline.aborted) {
-      return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) was stopped before its end (a stop or a lost lease of the run); what it would have come to is not known, and it is not run again on this subject (INV-4)` }, interrupted: true }
+      return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) was stopped before its end (a stop or a lost lease of the run, or the host's stop); what it would have come to is not known, and it is not run again on this subject, unless the host's stop cut it: then it runs again after the restart (T269)` }, interrupted: true }
     }
     // INV-5: a check is the subject's only while the tree it ran on is still the subject (the worktree is read-only to it; this is the proof).
     let after: string | undefined

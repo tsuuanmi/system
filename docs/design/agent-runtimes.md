@@ -632,13 +632,22 @@ worktreeSetup:
   checks are not run. A timeout or a signal is an `error`.
 - **Stored per check, reused, never re-run** (INV-4): each check that ran is kept in
   `agent_check_runs`, keyed by the workflow run, the worktree, the subject, the check, its argv, and
-  the setup's hash, `started` before its command starts and `done` with its record after. Asked
-  again on that key (a restart before the run finished, or the engine's next turn), the stored
-  record is the answer, byte for byte; one left `started` (the daemon stopped meanwhile) becomes an
-  `error` stored in its place, never run again to replace what it came to. A stop of the run (an
-  operator's stop, a lost lease) loses nothing: a command that ended before it is judged and stored
-  as it ended, before the stop is honoured; one the stop killed before its end is stored as an
-  `error`. Only a command the confinement never started is forgotten (nothing of it ran).
+  the setup's hash, `started` before its command starts (marked with the daemon that started it, an
+  id per start, and the cuts so far) and `done` with its record after. Asked again on that key (a
+  restart before the run finished, or the engine's next turn), the stored record of a check that
+  ended is the answer, byte for byte. A stop of the run (an operator's stop, a lost lease) loses
+  nothing: a command that ended before it is judged and stored as it ended, before the stop is
+  honoured; one the stop killed before its end is stored as an `error`, which this daemon never runs
+  again. Only a command the confinement never started is forgotten (nothing of it ran).
+- **A check the host cut runs again** (T269): one left `started` by an earlier daemon (it stopped or
+  crashed meanwhile), or killed before its end by the host's own stop (the engine's stop reason says
+  so, or this source stopping; never an operator's stop of the run or a lost lease), came to nothing, so
+  running it again replaces nothing. At the next ask it runs again on the same subject, a `gate`
+  decision of rule `agent-workers.check-cut-rerun` ("cut by the host, re-run": the check, its
+  command, the subject, the cuts) among the `check-run@1.0` evidence's inputs, told by an
+  `agent-workers.check.rerun` event. Bounded (INV-9): one the host cut three times on that subject
+  stays an `error` stored in its place, its reason saying so. What the store keeps of a cut (the
+  daemon, the count) is never in the evidence or the answer.
 - **Recorded:** one `check-run@1.0` `evidence` artifact at the run's classification, its inputs the
   commands' `autonomy` decisions; per check the argv, exit code or signal, duration, and the last
   4000 characters of its output with the length and SHA-256 of all of it. The answer carries it.

@@ -6,7 +6,9 @@
  *   node scripts/live-update-check.ts capture <cli> <DSH_HOME> <before.json>
  *   node scripts/live-update-check.ts verify <cli> <DSH_HOME> <before.json> <snapshot dir> [--new-workers <prefix,…>] [--settle <seconds>] [--workers-wait <seconds>]
  *   node scripts/live-update-check.ts running <cli> <DSH_HOME>
- *   node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running]
+ *   node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running [--cut-file <path>]]
+ *   node scripts/live-update-check.ts stop-cut <cli> <DSH_HOME> --deadline <seconds>
+ *   node scripts/live-update-check.ts cut-report <cli> <DSH_HOME> <cut file>
  *   node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
  *   node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
  *   node scripts/live-update-check.ts hold-steps <cli> <DSH_HOME> <reason>
@@ -20,6 +22,10 @@
  * noted), saying what it waits for: each run, its step, the Worker, and for how long; `running` is one such
  * read, for the dry run; `dispatch-resume` lifts the update's own pause once the profile runs again, and
  * `release-steps` the hold when the update stops before the stop (the restart ends it otherwise).
+ * When the update cuts (T269, its default), `await-idle --cut-file` writes the steps the stop is
+ * about to cut, `stop-cut` stops the daemon with the CLI's `shutdownHost` and a short drain (60 s
+ * by default, instead of the unit's 600 s), and `cut-report`, after the restart, says how each cut
+ * step resumed (a free retry, its session resumed) and which cut checks ran again.
  *
  * `<cli>` is the installed CLI module, `packages/cli/lib/index.js` of the checkout the profile runs:
  * every call goes through its `callTool`, as the operator. `capture`, before the update, records the
@@ -672,25 +678,152 @@ export async function running(cli: string, home: string): Promise<number> {
 }
 
 /**
+ * The steps an update's stop cut (T269), as `await-idle` wrote them before the stop (`--cut-file`):
+ * when, and each step running then; `unread` when what ran could not be read.
+ */
+export interface CutSteps { cutAt: string; steps: RunningStep[]; unread?: string }
+
+/**
  * Wait, up to `waitSeconds`, until no workflow step runs, reading the roster and the store every
  * `everySeconds` and saying what it waits for. Exit 0 when nothing runs; 1 at the bound, naming what
- * still runs (with `cut`, as what the stop is about to cut).
+ * still runs (with `cut`, as what the stop is about to cut, and written to `cutFile` for the update's
+ * report, T269).
  */
-export async function awaitIdleCommand(cli: string, home: string, waitSeconds: number, everySeconds: number, cut: boolean): Promise<number> {
+export async function awaitIdleCommand(cli: string, home: string, waitSeconds: number, everySeconds: number, cut: boolean, cutFile?: string): Promise<number> {
   const call = await callToolOf(cli)
   const outcome = await awaitIdle(() => runningNow(call, home), {
     waitMs: waitSeconds * 1000, everyMs: everySeconds * 1000, reportEveryMs: 300_000, report: (lines) => { for (const line of lines) console.log(line) },
   })
+  // What the stop may cut, for the report after the restart: the steps running now (none when idle;
+  // a run's checks, which are no step, are told by their re-run after it).
+  if (cut && cutFile) {
+    const cutSteps: CutSteps = {
+      cutAt: new Date().toISOString(), steps: !outcome.idle && 'steps' in outcome.last ? outcome.last.steps : [], ...('unread' in outcome.last ? { unread: outcome.last.unread } : {}),
+    }
+    writeFileSync(cutFile, `${JSON.stringify(cutSteps, null, 2)}\n`, { mode: 0o600 })
+  }
   if (outcome.idle) {
     console.log(`nothing runs: no workflow step runs${outcome.waitedMs >= 1000 ? ` (after ${duration(outcome.waitedMs)})` : ''}`)
     for (const line of runningLines(outcome.last, Date.now())) console.log(`  ${line}`)
     return 0
   }
   console.log(cut
-    ? `still running after ${duration(outcome.waitedMs)}, the bound; --cut-running: the stop cuts`
+    ? `still running after ${duration(outcome.waitedMs)}, the bound; the stop cuts each step below, and each resumes by itself after the restart`
     : `still running after ${duration(outcome.waitedMs)}, the bound:`)
   for (const line of runningLines(outcome.last, Date.now())) console.log(`  ${line}`)
   return 1
+}
+
+/** What `system shutdown` does, as the CLI module exports it: drain up to the deadline, then stop the daemon. */
+type ShutdownHost = (deadlineMs: number, options: { home?: string; call?: (name: string, args: Record<string, unknown>) => Promise<ToolOutcome>; onActive?: (active: string[]) => void }) => Promise<{ drained: boolean; active: string[]; pid: number; undrained?: string }>
+
+/**
+ * The cut (T269): stop the daemon with a short drain, `deadlineSeconds`, instead of the unit's
+ * ExecStop's (600 s), which waited for every step anyway. The CLI's own `shutdownHost`: no new run is
+ * admitted, the drain waits up to the deadline, then the daemon is sent SIGTERM and exits. Agent
+ * runs are cut at once then (their sessions and worktrees kept, marked host-stopped: a free retry,
+ * ADR-0069); a website turn already sent is reconciled at the next start, never resent (INV-4). Exit
+ * 0 once the daemon exited; 3 when the CLI has no `shutdownHost` (code from before it): the
+ * caller then refuses the cut, never falling back to the unit's drain.
+ */
+export async function stopCut(cli: string, home: string, deadlineSeconds: number): Promise<number> {
+  const module = (await import(pathToFileURL(resolve(cli)).href)) as { shutdownHost?: ShutdownHost; callTool?: CallTool }
+  const { shutdownHost, callTool } = module
+  if (typeof shutdownHost !== 'function' || typeof callTool !== 'function') {
+    console.log(`${cli} has no shutdownHost: the short stop cannot be made`)
+    return 3
+  }
+  let said = ''
+  const outcome = await shutdownHost(deadlineSeconds * 1000, {
+    // This home's daemon, whatever DSH_HOME this process has.
+    home, call: (name, args) => callTool(name, args, home),
+    onActive: (active) => {
+      const now = active.join(', ')
+      if (now !== said) console.log(`draining, up to ${duration(deadlineSeconds * 1000)}: ${active.length} run(s) still running: ${now}`)
+      said = now
+    },
+  })
+  console.log(outcome.undrained
+    ? `not drained (${outcome.undrained}); the daemon (pid ${outcome.pid}) was stopped`
+    : outcome.drained
+      ? `drained; the daemon (pid ${outcome.pid}) was stopped`
+      : `cut at the deadline (${duration(deadlineSeconds * 1000)}): ${outcome.active.length} run(s) still running were cut (${outcome.active.join(', ')}); the daemon (pid ${outcome.pid}) was stopped, and each resumes on the next start`)
+  return 0
+}
+
+/** How one cut step resumed after the restart, as the store tells it (T269). */
+export interface CutOutcome { step: RunningStep; how: 'free-retry' | 'resumed' | 'counted' | 'pending' | 'unknown'; detail: string }
+
+/** A check the host cut that ran again after the restart (`agent-workers.check.rerun`, T269). */
+export interface CheckRerun { runId: string; check: string; subject?: string; cuts?: number; decision?: string }
+
+/**
+ * How each step the stop cut resumed (T269), read from the store (opened read-only) after the
+ * restart: a free retry (its step ended host-stopped, so its run's failure spends no attempt, ADR-0069;
+ * the task's next run named when there is one), resumed in place (its run went on, the step in its
+ * session from its recorded state), counted (its run failed for a reason not the host's), or not
+ * settled yet (it resumes by itself; `system explain` follows it). And each check the host cut that
+ * ran again since the cut (`agent-workers.check.rerun`): a check is no step, so the wait never named it.
+ */
+export function cutOutcomes(db: DatabaseSync, cut: CutSteps): { steps: CutOutcome[]; checks: CheckRerun[] } {
+  const optional = <T>(read: () => T): T | undefined => {
+    try {
+      return read()
+    } catch {
+      return undefined
+    }
+  }
+  const steps = cut.steps.map((step): CutOutcome => {
+    const node = optional(() => db.prepare('SELECT state, infrastructure FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as { state: string; infrastructure: string | null } | undefined)
+      ?? optional(() => db.prepare('SELECT state, NULL AS infrastructure FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(step.runId, step.nodeId) as { state: string; infrastructure: null } | undefined)
+    const run = optional(() => db.prepare('SELECT status FROM workflow_runs WHERE run_id = ?').get(step.runId) as { status: string } | undefined)
+    if (!node || !run) return { step, how: 'unknown', detail: `the store no longer holds run ${step.runId} step ${step.nodeId}` }
+    const taskId = step.taskId
+    const next = taskId
+      ? optional(() => db.prepare('SELECT t.run_id AS runId, r.status FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id WHERE t.task_id = ? AND t.run_id != ? AND r.created_at >= ? ORDER BY r.created_at DESC LIMIT 1')
+        .get(taskId, step.runId, cut.cutAt) as { runId: string; status: string } | undefined)
+      : undefined
+    if (node.infrastructure === 'host-stopped') {
+      return {
+        step, how: 'free-retry',
+        detail: `free retry (T218): the step ended host-stopped, so its run's failure spends no attempt${next ? `; run ${next.runId} serves task ${step.taskId} now (${next.status})` : step.taskId ? `; task ${step.taskId} goes back for the same attempt` : ''}`,
+      }
+    }
+    if (run.status === 'failed') return { step, how: 'counted', detail: `its run failed, not as the host's (step ${node.state}): the attempt counts; system explain ${step.runId}` }
+    if (node.state === 'COMPLETED' || run.status === 'completed') return { step, how: 'resumed', detail: `resumed: the step went on in its session from its recorded state, and is ${node.state.toLowerCase()} (run ${run.status})` }
+    if (node.state === 'RUNNING') return { step, how: 'resumed', detail: `resumed: the step runs again in its session from its recorded state (run ${run.status})` }
+    return { step, how: 'pending', detail: `not settled yet (step ${node.state}, run ${run.status}): it resumes by itself; system explain ${step.runId}` }
+  })
+  const rows = optional(() => db.prepare("SELECT run_id, entry FROM events WHERE type = 'agent-workers.check.rerun' AND at >= ? ORDER BY seq").all(cut.cutAt) as Array<{ run_id: string; entry: string }>) ?? []
+  const checks = rows.map((row): CheckRerun => {
+    const entry = optional(() => JSON.parse(row.entry) as { decision?: string; data?: { check?: string; subject?: string; cuts?: number } }) ?? {}
+    return {
+      runId: row.run_id, check: entry.data?.check ?? '?',
+      ...(entry.data?.subject ? { subject: entry.data.subject } : {}), ...(typeof entry.data?.cuts === 'number' ? { cuts: entry.data.cuts } : {}), ...(entry.decision ? { decision: entry.decision } : {}),
+    }
+  })
+  return { steps, checks }
+}
+
+/** The report's lines: each cut step and how it resumed, then each check re-run (T269). */
+export function cutReportLines(cut: CutSteps, outcomes: { steps: CutOutcome[]; checks: CheckRerun[] }): string[] {
+  const lines = [`cut at ${cut.cutAt}: ${cut.steps.length} step(s)${cut.unread ? ` (what ran could not be read whole: ${cut.unread})` : ''}`]
+  for (const o of outcomes.steps) lines.push(`  run ${o.step.runId} step ${o.step.nodeId}${o.step.worker ? ` on ${o.step.worker}` : ''}${o.step.taskId ? ` (task ${o.step.taskId})` : ''}: ${o.detail}`)
+  for (const c of outcomes.checks) lines.push(`  run ${c.runId}: its ${c.check} check, cut by the host, re-run${c.subject ? ` on ${c.subject}` : ''}${c.cuts ? ` (cut ${c.cuts} time(s))` : ''}${c.decision ? `, decision ${c.decision}` : ''}`)
+  if (!outcomes.steps.length && !outcomes.checks.length) lines.push('  nothing was cut that the store tells of')
+  return lines
+}
+
+/** The update's report of what its stop cut (T269): read-only, never a problem of the update. */
+export function cutReport(home: string, cutFile: string): number {
+  const cut = JSON.parse(readFileSync(cutFile, 'utf8')) as CutSteps
+  const db = new DatabaseSync(join(home, 'system', 'system.db'), { readOnly: true })
+  try {
+    for (const line of cutReportLines(cut, cutOutcomes(db, cut))) console.log(line)
+  } finally {
+    db.close()
+  }
+  return 0
 }
 
 /** How long `verify` waits for the Workers to take work again by default: two of agent-workers' default `probeTtlMs` (5 min). */
@@ -699,7 +832,9 @@ export const WORKERS_WAIT_SECONDS = 600
 const USAGE = `usage: node scripts/live-update-check.ts capture <cli> <DSH_HOME> <before.json>
        node scripts/live-update-check.ts verify <cli> <DSH_HOME> <before.json> <snapshot dir> [--new-workers <prefix,…>] [--settle <seconds>] [--workers-wait <seconds>]
        node scripts/live-update-check.ts running <cli> <DSH_HOME>
-       node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running]
+       node scripts/live-update-check.ts await-idle <cli> <DSH_HOME> --wait <seconds> [--every <seconds>] [--cut-running [--cut-file <path>]]
+       node scripts/live-update-check.ts stop-cut <cli> <DSH_HOME> --deadline <seconds>
+       node scripts/live-update-check.ts cut-report <cli> <DSH_HOME> <cut file>
        node scripts/live-update-check.ts dispatch-pause <cli> <DSH_HOME> <reason>
        node scripts/live-update-check.ts dispatch-resume <cli> <DSH_HOME>
        node scripts/live-update-check.ts hold-steps <cli> <DSH_HOME> <reason>
@@ -718,8 +853,14 @@ async function main(argv: string[]): Promise<number> {
     if (cut) args.splice(args.indexOf('--cut-running'), 1)
     const wait = Number(option('--wait', 'none'))
     const every = Number(option('--every', '30'))
-    if (args.length === 2 && Number.isInteger(wait) && wait >= 0 && Number.isInteger(every) && every >= 1) return awaitIdleCommand(args[0]!, args[1]!, wait, every, cut)
+    const cutFile = option('--cut-file', '')
+    if (args.length === 2 && Number.isInteger(wait) && wait >= 0 && Number.isInteger(every) && every >= 1) return awaitIdleCommand(args[0]!, args[1]!, wait, every, cut, cutFile || undefined)
   }
+  if (command === 'stop-cut') {
+    const deadline = Number(option('--deadline', 'none'))
+    if (args.length === 2 && Number.isInteger(deadline) && deadline >= 0) return stopCut(args[0]!, args[1]!, deadline)
+  }
+  if (command === 'cut-report' && args.length === 3) return cutReport(args[1]!, args[2]!)
   if (command === 'dispatch-pause' && args.length === 3) {
     const paused = await pauseDispatch(await callToolOf(args[0]!), args[1]!, args[2]!)
     console.log(`${paused.outcome}: ${paused.detail}`)

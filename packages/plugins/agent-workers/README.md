@@ -439,14 +439,20 @@ The **`agents` Worker source**: agent runtimes as Workers
       again, and a check that changed it is an `error`, the later ones not run;
     - each check that ran is stored (`agent_check_runs`: run, worktree, subject,
       check, argv, setup hash; `started`, then `done` with its record) and its
-      record is the answer when asked again on that key, after a restart too; one
-      left `started` by a crash is an `error` stored in its place; a stop of the
-      run (a lost lease) is honoured only once the check's outcome is stored: as
-      it ended, or an `error` when the stop killed it (INV-4);
+      record is the answer when asked again on that key, after a restart too; a
+      stop of the run (a lost lease) is honoured only once the check's outcome is
+      stored: as it ended, or an `error` when the stop killed it (INV-4). Each row
+      names the daemon that started it (an id per start): one the host cut (left
+      `started` by a stop or a crash of an earlier daemon, or killed by the host's
+      own stop, never an operator's stop of the run or a lost lease) came to nothing, and runs again on the same subject at the
+      next ask, a `gate` decision of rule `agent-workers.check-cut-rerun` among the
+      evidence's inputs and an `agent-workers.check.rerun` event (T269); one cut
+      three times stays an `error` (INV-9), and one a stop killed in this daemon
+      stays the `error` it was stored as;
     - what ran is one `check-run@1.0` evidence artifact (its inputs the commands'
       `autonomy` decisions; per check the argv, exit code, duration, and the last
       4000 characters of its output with its length and SHA-256), at the run's
-      classification, returned with the results. Nothing is retried; the engine's
+      classification, returned with the results. Nothing is retried but a check the host cut; the engine's
       acceptance reports each `passed` or `failed`, and an `error` stays pending;
     - **the setup owns installation** (T235, `src/dependencies.ts`, `refresh` in
       `src/setup.ts`, [design](../../../docs/design/workflow-engine.md#a-result-that-changes-its-dependencies)):

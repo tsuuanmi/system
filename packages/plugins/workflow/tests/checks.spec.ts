@@ -63,6 +63,8 @@ class Checker {
   /** What a check's command reported it did not run, by check. */
   notRun: Record<string, string> = {}
   refuse: Checked | undefined
+  /** The next check runs until its caller's signal stops it (the host's stop cutting it), then throws as a cut check does. */
+  cutNext = false
   /** The repository's checked-out branch the run's worktree was cut from, as the source tells it (`changes`); none when unset. */
   base: string | undefined
   /** The run's worktree. */
@@ -80,8 +82,13 @@ class Checker {
         throw new Error('the checker runs no Worker')
       },
       get: () => undefined, wait: () => Promise.reject(new Error('the checker runs no Worker')),
-      check: async (step) => {
+      check: async (step, signal) => {
         this.steps.push(step)
+        if (this.cutNext) {
+          this.cutNext = false
+          await new Promise<void>((resolve) => (signal?.aborted ? resolve() : signal?.addEventListener('abort', () => resolve(), { once: true })))
+          throw signal?.reason ?? new Error('stopped')
+        }
         if (this.refuse) return this.refuse
         const results = step.checks.map((check) => {
           const outcome = this.outcomes[check] ?? 'error'
@@ -147,7 +154,7 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
     ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0, ...board }),
   ]
   await Promise.all(fibers)
-  const engine = ctx.plugin(Workflow, config)
+  let engine = ctx.plugin(Workflow, config)
   await engine
   onTestFinished(async () => {
     await engine.dispose()
@@ -162,7 +169,13 @@ async function boot(checker: Checker | undefined, { onTree = true, review, board
     const run = await ctx.workflow.start({ template, input: 'change it', classification: 'public', task: { taskId: ready.taskId } })
     return { taskId: ready.taskId, runId: run.runId }
   }
-  return { ctx, workspace, subject, task }
+  /** The engine stops (its runs' turns aborted, as at the host's stop) and starts again on the same store. */
+  const restart = async (): Promise<void> => {
+    await engine.dispose()
+    engine = ctx.plugin(Workflow, config)
+    await engine
+  }
+  return { ctx, workspace, subject, task, restart }
 }
 
 /** The task once its run's result reached the board: done, held for the operator, or sent back. */
@@ -280,6 +293,23 @@ describe('ctx.workflow runs a written result\'s required checks on its exact tre
     expect(back.attempts.count).toBe(1)
     expect(acceptanceOf(ctx, runId).outcome).toMatchObject({ option: 'reject', detail: { checks: { tests: true, lint: false } } })
     expect(ctx.workflow.get(runId)).toMatchObject({ status: 'completed' })
+  })
+
+  it('asks again, after the restart, for the checks the host\'s stop cut, on the same tree, and accepts the result they pass without the operator (T269)', async () => {
+    const checker = new Checker()
+    checker.cutNext = true
+    const { ctx, workspace, subject, task, restart } = await boot(checker)
+    const { taskId, runId } = await task()
+    // The checks run when the host stops: the stop cuts them, and no acceptance is decided.
+    await vi.waitFor(() => expect(checker.steps).toHaveLength(1), { timeout: 30_000, interval: 25 })
+    await restart()
+    const done = await settled(ctx, taskId)
+    expect(done).toMatchObject({ state: 'done' })
+    expect(done.waiting).toBeUndefined()
+    // Asked again on the exact tree the result is on, the cut check's source runs it there again.
+    const asked = { runId, workspace, subject: { ref: subject.ref, version: subject.version }, checks: ['tests', 'lint'], classification: 'public' }
+    expect(checker.steps).toEqual([asked, asked])
+    expect(acceptanceOf(ctx, runId).outcome).toMatchObject({ option: 'accept', detail: { checks: { tests: true, lint: true }, checkRun: { outcome: 'checked' } } })
   })
 
   it('asks for no check the task\'s class does not require', async () => {

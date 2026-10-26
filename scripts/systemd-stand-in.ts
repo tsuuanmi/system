@@ -123,7 +123,9 @@ export interface FakeSystem {
   holdDelay: (ms: number) => void
   /** Dispatch as `dispatch_status` answers it. */
   dispatch: (status: { enabled: boolean; paused?: { since: string; reason?: string } }) => void
-  /** The tools called, in order. */
+  /** The profile's CLI stops no daemon itself (code from before `shutdownHost`). */
+  noShutdown: () => void
+  /** The tools called, in order, and each `shutdown <seconds> <home>` of the CLI's shutdownHost. */
   calls: () => string[]
 }
 
@@ -188,6 +190,31 @@ exports.callTool = async (name, args) => {
   }
   return { isError: true, text: 'fake system: no tool ' + name, structured: undefined }
 }
+// The CLI's shutdownHost (\`system shutdown --deadline\`): its drain finds the steps of the last read
+// still running at the deadline, then the daemon is sent SIGTERM and has exited. Absent when the
+// profile's CLI is one from before it (no-shutdown).
+if (!fs.existsSync(path.join(dir, 'no-shutdown'))) exports.shutdownHost = async (deadlineMs, options) => {
+  fs.appendFileSync(path.join(dir, 'calls'), 'shutdown ' + (deadlineMs / 1000) + (options.home ? ' ' + options.home : '') + '\\n')
+  const { pid } = JSON.parse(fs.readFileSync(path.join(options.home, 'system', 'mcp.json'), 'utf8'))
+  const db = new DatabaseSync(${JSON.stringify(db)})
+  let active
+  try {
+    active = [...new Set(db.prepare("SELECT run_id FROM workflow_runs WHERE status = 'running'").all().map((r) => r.run_id))]
+  } finally {
+    db.close()
+  }
+  if (active.length) options.onActive?.(active)
+  process.kill(pid, 'SIGTERM')
+  for (const until = Date.now() + 10000; Date.now() < until;) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return { drained: !active.length, active, pid }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('process ' + pid + ' did not exit')
+}
 `
 
 /**
@@ -195,8 +222,9 @@ exports.callTool = async (name, args) => {
  * (`packages/cli/lib/index.js` of the live checkout), whose `callTool` answers `status`, `roster`
  * (each read the next steps given, those on a Worker; every one of them is written to the store
  * too, which the wait reads next), dispatch's status, pause, and resume, and, when given `holds`,
- * the hold between steps (`hold_steps`, set and released); with a store the
- * capture can read (no run until the first roster read, no migration).
+ * the hold between steps (`hold_steps`, set and released); and whose `shutdownHost` stops the
+ * daemon (T269), unless `noShutdown`; with a store the capture can read (no run until the first
+ * roster read, no migration).
  */
 export function fakeSystem(root: string, live: string, home: string): FakeSystem {
   const dir = join(root, 'fake-system')
@@ -217,7 +245,11 @@ export function fakeSystem(root: string, live: string, home: string): FakeSystem
   const holds = (...reads: FakeWork[][]): void => writeFileSync(join(dir, 'holds.json'), JSON.stringify(reads))
   work([])
   dispatch({ enabled: true })
-  return { work, holds, held: () => existsSync(join(dir, 'held')), holdDelay: (ms) => writeFileSync(join(dir, 'hold-delay.json'), JSON.stringify(ms)), dispatch, calls: () => (existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n') : []) }
+  return {
+    work, holds, held: () => existsSync(join(dir, 'held')), holdDelay: (ms) => writeFileSync(join(dir, 'hold-delay.json'), JSON.stringify(ms)), dispatch,
+    noShutdown: () => writeFileSync(join(dir, 'no-shutdown'), ''),
+    calls: () => (existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n') : []),
+  }
 }
 
 /** A daemon environment file, owner-only, naming `home`. */
