@@ -2268,7 +2268,7 @@ export class AgentWorkers extends Service {
     const setup = workspace !== worker.workspace ? this.setups.get(resolve(worker.workspace)) : undefined
     if (setup) {
       const outcome = await this.worktreeSetups.ensure({
-        agentRun: row.run_id, worker: row.worker, workflowRunId: row.workflow_run_id!, sessionId: row.session_id ?? undefined,
+        agentRun: row.run_id, worker: row.worker, workflowRunId: row.workflow_run_id!, sessionId: row.session_id ?? undefined, taskId: row.task_id ?? undefined,
         classification: row.classification as 'public' | 'operator-shared' | 'local-private', worktree: workspace, repository: realpathSync(worker.workspace),
       }, setup, signal)
       this.update(row.run_id, { setup_decision: outcome.decision }, lease)
@@ -2296,7 +2296,7 @@ export class AgentWorkers extends Service {
       runId: row.run_id, worker: row.worker, workerKind: worker.runtime, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
       classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : worker.research ? { profile: 'research' as const } : {}),
       // A research run's web calls are judged under its task's project's policy and grant too, and name its step (T262).
-      ...(row.project_id ? { projectId: row.project_id } : {}), ...(row.step_node ? { nodeId: row.step_node } : {}),
+      ...(row.project_id ? { projectId: row.project_id } : {}), ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.step_node ? { nodeId: row.step_node } : {}),
       // A shell command is taken for a read only where the runtime enforces shells that read no startup code (T198).
       shellReads: evidence.cleanShells === true,
       // The workspace reads server's tools are reads only where the runtime gives its agent that server (T200b).

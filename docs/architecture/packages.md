@@ -42,7 +42,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [statistics](../../packages/statistics/README.md) | orchestration | — | — | — | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
 | [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `agentWorkers` (optional), `approvals` (optional), `board` (optional), `digests` (optional), `dispatchAdvisor` (optional), `landing` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `decision-core`, `digest-core`, `gateway-core`, `landing-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
-| [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
+| [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `board` (optional), `eventLog` (optional), `mcp` (optional), `workflow` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
 | [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
@@ -165,8 +165,10 @@ flowchart TB
   agent_workers -.-> workflow
   approvals --> store
   approvals --> artifacts
+  approvals -.-> board
   approvals -.-> event_log
   approvals -.-> mcp_server
+  approvals -.-> workflow
   artifacts --> store
   board --> store
   board --> artifacts
@@ -319,7 +321,9 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `agent-workers` (capabilities) | `resources` | `resources` (routing) | optional |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
 | `agent-workers` (capabilities) | `workflow` | `workflow` (orchestration) | optional |
+| `approvals` (routing) | `board` | `board` (orchestration) | optional |
 | `approvals` (routing) | `mcp` | `mcp-server` (gateways) | optional |
+| `approvals` (routing) | `workflow` | `workflow` (orchestration) | optional |
 | `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `digest-extractive` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `digest` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |

@@ -301,6 +301,8 @@ export interface SetupRun {
   worker: string
   workflowRunId: string
   sessionId?: string | undefined
+  /** The board task the run serves: its setup's requests name it, so that task's project's lead may answer them (ADR-0076). */
+  taskId?: string | undefined
   classification: 'public' | 'operator-shared' | 'local-private'
   /** The worktree (its stored path) and the repository it belongs to (real path). */
   worktree: string
@@ -499,7 +501,7 @@ export class WorktreeSetups {
         consequences: `Runs this exact command in the run's new worktree ${run.worktree}, before any agent works in it: the host read-only but the worktree${setup.views.length ? ` and ${setup.views.length} private view(s)` : ''}, no network, host state hidden, at most ${setup.timeoutSeconds} s. `
           + 'Approved: this worktree\'s setup runs it once, under exactly this setup. Rejected, or unanswered when the request expires: this worktree is never set up, and every run in it fails at start.',
       },
-      requester: { component: 'worker', runId: run.agentRun, ...(run.sessionId ? { sessionId: run.sessionId } : {}) },
+      requester: { component: 'worker', runId: run.agentRun, ...(run.sessionId ? { sessionId: run.sessionId } : {}), ...(run.taskId ? { taskId: run.taskId } : {}) },
       verdict, command: setup.commands[i]!, classification: run.classification,
     })
     this.ctx.store.transaction((tx) => {

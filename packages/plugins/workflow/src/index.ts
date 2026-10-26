@@ -526,7 +526,7 @@ export class Workflow extends Service {
    * the exact tie decision the caller read, recorded with the caller (`client`) or the operator
    * as the decider. `inconclusive` ends the team without forcing a choice.
    */
-  vote(runId: string, input: { decision: string; option: string; rationale: string; by: 'client' | 'operator' }): RunView {
+  vote(runId: string, input: { decision: string; option: string; rationale: string; by: 'client' | 'operator'; lead?: string }): RunView {
     return vote(this.engine, runId, input)
   }
 }

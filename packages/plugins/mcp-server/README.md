@@ -161,6 +161,13 @@ one scope another's rights).
 | `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `result`, `status`, `roster`, `explain`, `usage`, `session_send`, `session_inbox`, `resources_pools`, `resources_usage`, the `board_*` tools except `board_pause`, `board_resume`, and `board_close`, and `approvals_list`, `approvals_get`, `approvals_policy` | `system mcp-headers` (an HTTP client's headers, such as Claude Code's `headersHelper`), `system mcp-stdio` (a stdio client, such as Codex) |
 | `model` | `model.token` | `/anthropic` and `/openai` only; `/mcp` and `/ui` answer `401` | `system claude-env`, `system codex-env`, `system mcp-token --scope model` (a Codex Worker on the Responses gateway); each refuses while its gateway row is off ([runbook](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)) |
 
+- **A lead token** ([ADR-0076](../../../docs/decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md)):
+  `lead-<project>.token` beside the three, issued and revoked with `system lead-token`, read on each
+  request (a revoked token is `401` at once; its file is registered as a secret path when first seen).
+  It is a `client` token that names its project (`ToolContext.lead`), and reaches the client tools and
+  the operator tools whose spec says `lead: true`: today `approvals_decide`, whose handler holds it to the
+  lead's closed list of rights. Every other operator tool answers `403` `insufficient_scope` naming whose
+  it is.
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its
   `ToolSpec`. A tool that declares none is the operator's (fail closed), so
   `approve`, `approvals_decide`, `approvals_policy_propose`, `board_pause`, `board_resume`, `board_close`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,

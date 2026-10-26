@@ -1,0 +1,51 @@
+{
+  "schema": "decision@1.10",
+  "decisionType": "approval",
+  "question": "Is approval request apr-0041 (merge into dev) approved?",
+  "inputs": [
+    "sha256:9f3018a1535ee75522e0f968b73f3064d739c7bb7afeb41e060feb49f4ed468e",
+    "sha256:3c1b8a0d6d5d0d3c2f6c0e8a6a8c0f2b6f2a4f4b3d9b8e7c6a5f4e3d2c1b0a99"
+  ],
+  "candidates": [
+    {
+      "option": "approved",
+      "selected": true,
+      "reasons": [
+        "approved"
+      ]
+    },
+    {
+      "option": "rejected",
+      "selected": false,
+      "reasons": [
+        "not rejected: lead:system's verdict is approved"
+      ]
+    },
+    {
+      "option": "denied:expired",
+      "selected": false,
+      "reasons": [
+        "not denied:expired: a verdict came first"
+      ]
+    },
+    {
+      "option": "withdrawn",
+      "selected": false,
+      "reasons": [
+        "not withdrawn: a verdict came first"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "client",
+    "id": "lead:system",
+    "version": "1"
+  },
+  "outcome": {
+    "option": "approved",
+    "detail": {
+      "requestId": "apr-0041"
+    }
+  },
+  "deterministic": false
+}

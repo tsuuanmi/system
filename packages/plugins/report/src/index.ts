@@ -56,10 +56,10 @@ function readEvents(ctx: Context, filter: { type: string; runId?: string; since?
 function decisionOf(ctx: Context, id: string): DecisionRead | undefined {
   const envelope = ctx.artifacts.get(id)
   if (envelope?.kind !== 'decision') return undefined
-  const body = envelope.body as { decisionType: string; decider: { type: string; id: string }; outcome: { option: string; detail?: Record<string, unknown> } }
+  const body = envelope.body as { decisionType: string; decider: { type: string; id: string; version?: string }; outcome: { option: string; detail?: Record<string, unknown> } }
   const checks = body.outcome.detail?.['checks']
   return {
-    createdAt: envelope.createdAt, decisionType: body.decisionType, deciderType: body.decider.type, deciderId: body.decider.id, option: body.outcome.option,
+    createdAt: envelope.createdAt, decisionType: body.decisionType, deciderType: body.decider.type, deciderId: body.decider.id, ...(typeof body.decider.version === 'string' ? { deciderVersion: body.decider.version } : {}), option: body.outcome.option,
     ...(checks && typeof checks === 'object' && !Array.isArray(checks) ? { checks: checks as Record<string, boolean> } : {}),
   }
 }
@@ -300,6 +300,15 @@ export async function metrics(ctx: Context, input: MetricsInput, now: Date = new
     if (read) decisions.set(id, read)
   }
 
+  // Who gave each verdict in the queue (ADR-0076): the decider of the decision that resolved the request. A verdict
+  // whose decision cannot be read is not attributed: it counts as the operator's, as every verdict did before the lead principal.
+  const verdictBy = new Map<string, DecisionRead>()
+  for (const r of requests) {
+    if (r.resolution?.cause !== 'verdict' || Date.parse(r.resolution.at) >= until) continue
+    const read = decisionOf(ctx, r.resolution.decision)
+    if (read) verdictBy.set(r.requestId, read)
+  }
+
   // What the agent runs of the window drew (`quota.draw`): an entry that is not a valid record is not counted, and said.
   const draws: QuotaDraw[] = []
   let invalidDraws = 0
@@ -371,8 +380,13 @@ export async function metrics(ctx: Context, input: MetricsInput, now: Date = new
   // The escaped defects recorded against auto-accepted results (D93): read when the board records them.
   const escapes = board.escapes ? await board.escapes(projectId) : undefined
 
+  // Records before the lead principal name the operator whoever used the token (the lead's scripts used it): said, never migrated (ADR-0076).
+  const before = [...verdictBy.entries()].filter(([, d]) => d.deciderType === 'operator' && d.deciderVersion === '1' && inWindow(d.createdAt)).length
+    + [...decisions.values()].filter((d) => d.decisionType === 'acceptance' && d.deciderType === 'operator' && d.deciderVersion === '1' && inWindow(d.createdAt)).length
+  if (before) notes.push(`${before} verdict(s) or acceptance(s) of the window were recorded before the lead principal (decider operator, version 1): they count as the operator's, whoever used the token`)
+
   return buildMetrics(period, {
-    asOf, tasks, requests, usage, events, decisions, runDecisions, readyAt, usageUnknown, draws, notes,
+    asOf, tasks, requests, usage, events, decisions, runDecisions, verdictBy, readyAt, usageUnknown, draws, notes,
     ...(escapes ? { escapes } : {}),
     ...(truncatedRuns.length ? { truncatedRuns } : {}), ...(unreadDecisions ? { unreadDecisions } : {}), ...(readyReadFrom ? { readyReadFrom } : {}),
   }, projectId)

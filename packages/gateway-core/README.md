@@ -58,6 +58,15 @@ MCP endpoint, both protocol gateways (through
   path, `<dir>/<scope>.token`. The scopes are `SCOPES`
   ([ADR-0023](../../docs/decisions/adr/0023-scoped-control-credentials.md),
   [scopes](../plugins/mcp-server/README.md#scopes)).
+- **The lead principal** ([ADR-0076](../../docs/decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md)):
+  `guardRequest` also takes `leads`, a function reading the issued lead tokens by project on each request
+  (`leadTokens(dir)`: `<dir>/lead-<project>.token`, owner-only like the scope tokens, issued and revoked
+  with `issueLeadToken` and `revokeLeadToken`, which `system lead-token` calls). A matching lead token is
+  `{ ok: true, scope: 'client', lead: <project> }`; a revoked one is `401`. **`leadMayDecide`** is the
+  closed list of the lead's rights (`LEAD_RIGHTS`): a command or dispatch start of its project, a merge
+  or a result on one of its listed dev branches; anything else, another project's, or an unread branch is
+  refused with the reason. A tool spec's `lead: true` lets a lead call an operator tool, and
+  `ToolContext.lead` names the project.
 - **`assertSafeBind(bound)`** throws on plain HTTP on a non-loopback host, so
   the token never travels in clear text over a network. Every endpoint calls it
   before it registers its route.
@@ -66,7 +75,7 @@ MCP endpoint, both protocol gateways (through
 - **`readJsonBody(req, maxBytes)`** reads a bounded JSON body: empty is
   `undefined`, invalid is `400`, too large is `413`.
 
-Tests: `tests/guard.spec.ts`.
+Tests: `tests/guard.spec.ts`, `tests/lead.spec.ts`.
 
 ## The roster
 

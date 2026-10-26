@@ -15,7 +15,7 @@ import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { type DrawFigure, drawFigureText, dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
+import { type DrawFigure, drawFigureText, dshHome, issueLeadToken, leadId, leadTokenFile, listLeads, revokeLeadToken, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 const require = createRequire(import.meta.url)
@@ -433,6 +433,41 @@ function discovery(home: string): Discovery {
     throw new Error(`the running profile predates scoped tokens (${path}); run \`system shutdown\`, then \`system start\` with this version`)
   }
   return found as Discovery
+}
+
+/** Where the scope token files are: beside the running profile's operator token, else the default `<home>/system`. */
+function tokenDirOf(home: string): string {
+  try {
+    return dirname(discovery(home).tokenFiles.operator)
+  } catch {
+    return join(home, 'system')
+  }
+}
+
+/**
+ * `system lead-token issue|revoke|list [<project>]` (ADR-0076): the operator's command for a project's
+ * lead principal. The token file `lead-<project>.token` sits beside `operator.token` with the same
+ * permissions; the host reads it on each request, so a revoked token is refused at once. The token
+ * itself is never printed. Returns the lines to print; refuses (throws) what cannot be done.
+ */
+export function leadToken(action: string | undefined, project: string | undefined, home: string = dshHome()): string[] {
+  const dir = tokenDirOf(home)
+  if (action === 'list' && project === undefined) {
+    const leads = listLeads(dir)
+    return leads.length ? leads.map((p) => `${p}  ${leadTokenFile(dir, p)}  decider ${leadId(p)}`) : ['no lead token is issued']
+  }
+  if ((action === 'issue' || action === 'revoke') && project !== undefined) {
+    if (action === 'revoke') {
+      if (!revokeLeadToken(dir, project)) throw new Error(`no lead token is issued for project ${project}`)
+      return [`revoked the lead token of project ${project}: requests with it are refused from now on`]
+    }
+    const { file, replaced } = issueLeadToken(dir, project)
+    return [
+      `issued the lead token of project ${project}: ${file} (owner-only, like the operator's)${replaced ? '; the one issued before no longer works' : ''}`,
+      `what it decides is recorded as ${leadId(project)}; its rights are a closed list System enforces, and everything else stays the operator's`,
+    ]
+  }
+  throw new Error('usage: system lead-token issue <project> | revoke <project> | list')
 }
 
 /** A runtime's own sign-in command for one home, as `account_enroll` gives it (ADR-0051). */

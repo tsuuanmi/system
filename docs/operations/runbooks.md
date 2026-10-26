@@ -2168,6 +2168,29 @@ Rotate a scope's token when it may have leaked
    - an open web UI tab holds the old operator token: open the new link from
      `system ui`.
 
+## Give a project's lead its own token
+
+A project's lead decides on a token of its own, never the operator's
+([ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md),
+[the lead principal](../design/approvals.md#the-lead-principal)). What it decides is recorded as
+`lead:<project>`, and a closed list of rights is enforced by System.
+
+1. List the project's dev branches in the `approvals` row's configuration (a profile patch replaces the
+   row's whole config, so carry the policies too): `devBranches: { <project>: [dev] }`. `main` and
+   `master` are refused there. Without a branch the lead decides no merge and no acceptance, only
+   commands and dispatch starts. `system check` names a bad entry; a restart applies it.
+2. `system lead-token issue <project>`. The file `lead-<project>.token` sits beside `operator.token`
+   with the same permissions, and is never printed. The lead's scripts read it and send it as the bearer
+   token on `/mcp` (`approvals_decide`, the board tools) and `/ui/api` (`approvals/decide`,
+   `reviews/<task>/decide`), in place of the operator's.
+3. **Rotate** by issuing again: the old token stops working at once. **Revoke** with `system lead-token
+   revoke <project>`: the host refuses the token on its next request, with no restart.
+   `system lead-token list` names the projects that have one.
+
+What the token is refused (a policy or charter change, `main`, a deploy, an external send, issuing a
+token, every other tool and route) answers `403` with the reason. Decisions the lead made on the
+operator's token before this are not migrated: `/ui` and the metrics say "before the lead principal".
+
 ## A Worker source does not answer
 
 `system health` shows `workers` degraded or down, naming a Worker source, for example

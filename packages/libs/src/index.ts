@@ -7,6 +7,7 @@ export {
 } from './briefs.ts'
 export { extractJson, SchemaError, SchemaRegistry } from './schemas.ts'
 export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileDurable } from './files.ts'
+export { issueLeadToken, LEAD_PROJECT, leadId, leadTokenFile, leadTokens, listLeads, revokeLeadToken } from './lead-tokens.ts'
 export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runtime.ts'
 export { registerSecretPath, secretPaths } from './secrets.ts'
 export { GIT_FLOOR, GLOB_BUDGET, type GlobBudget, globMatches, isPrivateAddress, pinnedTo, type RepositorySnapshot, selectFiles, type SnapshotBounds, SnapshotError, type SnapshotFile, type SnapshotRequest, snapshotRepository, type UnreadReason } from './repositories.ts'

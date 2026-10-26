@@ -20,6 +20,7 @@ export {
   type CapacityReady, type CapacityStalled, type CapacityStep, type CapacityTaskRead, type CapacityUnread, type CapacityWindow, formatCapacity, projectCapacity, quotaPoolsOf,
 } from './capacity.ts'
 export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
+export { issueLeadToken, LEAD_PROJECT, LEAD_QUEUE_CLASSES, LEAD_RIGHTS, type LeadDecision, leadId, leadMayDecide, leadTokenFile, leadTokens, listLeads, revokeLeadToken } from './lead.ts'
 export { outline, reply } from './reply.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -36,11 +37,21 @@ export interface ToolSpec {
   inputSchema: ZodRawShape
   /** Default `operator`: a tool that declares nothing is the operator's (fail closed). */
   scope?: ToolScope
+  /**
+   * An `operator` tool a project's lead may also call (ADR-0076): the closed list of them. A tool
+   * without it is never served to a lead token; one with it checks the lead's rights itself, from
+   * `ToolContext.lead`, and refuses what is not on the list.
+   */
+  lead?: true
 }
 
-/** What a handler knows of its caller: the scope of the token presented (ADR-0023). */
+/**
+ * What a handler knows of its caller: the scope of the token presented (ADR-0023), and, for a
+ * project's lead token, the project (the scope is then `client`, and the decider `lead:<project>`).
+ */
 export interface ToolContext {
   scope: ToolScope
+  lead?: string
 }
 
 export type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Promise<CallToolResult>

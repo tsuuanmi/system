@@ -384,3 +384,45 @@ describe('the maturity metrics, computed (docs/design/maturity-metrics.md)', () 
     expect(renderReport(report)).not.toMatch(/Maturity/)
   })
 })
+
+// The lead principal (ADR-0076): what a project's lead decides on its own token is recorded as a `client`
+// decider `lead:<project>`, a lead touch of its task, never an operator decision.
+describe('the lead principal in the metrics', () => {
+  const leadVerdict = (): DecisionRead => ({ createdAt: at(6, 13), decisionType: 'approval', deciderType: 'client', deciderId: 'lead:p1', deciderVersion: '1', option: 'approved' })
+  const operatorVerdict = (): DecisionRead => ({ createdAt: at(6, 13), decisionType: 'approval', deciderType: 'operator', deciderId: 'operator', deciderVersion: '2', option: 'approved' })
+
+  it('counts a lead\'s merge approval as a lead touch of its task, not as an operator decision', () => {
+    const before = buildMetrics(WINDOW, { ...month(), verdictBy: new Map([['apr-m1', operatorVerdict()]]) }, 'p1')
+    const sources: MetricSources = { ...month(), verdictBy: new Map([['apr-m1', leadVerdict()]]) }
+    const read = buildMetrics(WINDOW, sources, 'p1')
+    // The operator's verdict was an operator decision and no touch; the lead's is the reverse.
+    expect(metricOf(before.metrics, 'operator-decisions')).toMatchObject({ sample: 4, figures: { verdicts: 2 } })
+    expect(metricOf(read.metrics, 'operator-decisions')).toMatchObject({ sample: 3, figures: { decisions: 3, verdicts: 1, acceptances: 1, onRuns: 1 } })
+    expect(metricOf(before.metrics, 'lead-touches')).toMatchObject({ value: 0.5, figures: { starts: 2, decisions: 1 } })
+    // t1 gains the merge approval: touches 1, 2, 1, 0 → median 1; t1's other touches are still none.
+    expect(metricOf(read.metrics, 'lead-touches')).toMatchObject({ value: 1, figures: { starts: 2, decisions: 2 } })
+    expect(() => schemas.assertDef('mcp-report@1.6', 'metrics-output', read)).not.toThrow()
+    // A merge approval is allowed to an unattended completion, whoever gave it: the share does not move.
+    expect(metricOf(read.metrics, 'unattended-completion')).toMatchObject({ value: metricOf(before.metrics, 'unattended-completion').value })
+  })
+
+  it('counts a lead\'s verdict on a task\'s command, and its acceptance of the result, as touches; the operator\'s are decisions', () => {
+    const sources: MetricSources = {
+      ...month(),
+      requests: [...month().requests, request('apr-c1', 'command', at(7), 'verdict', { taskId: 't1' })],
+      verdictBy: new Map([['apr-c1', { ...leadVerdict(), createdAt: at(7) }]]),
+      decisions: new Map([...month().decisions, [ref(20), decision(at(5), { decisionType: 'acceptance', deciderType: 'client', deciderId: 'lead:p1', deciderVersion: '1' })]]),
+    }
+    const read = buildMetrics(WINDOW, sources, 'p1')
+    // t1: the lead's command verdict and its acceptance: 2 touches, so it is no longer unattended.
+    expect(metricOf(read.metrics, 'lead-touches')).toMatchObject({ figures: { starts: 2, decisions: 3 } })
+    expect(metricOf(read.metrics, 'operator-decisions').figures).toMatchObject({ verdicts: 2 })
+    expect(metricOf(read.metrics, 'unattended-completion').value).toBeLessThan(0.25)
+  })
+
+  it('reads a verdict with no readable decision as the operator\'s, as every verdict was before the lead principal', () => {
+    const read = buildMetrics(WINDOW, { ...month(), verdictBy: new Map() }, 'p1')
+    expect(metricOf(read.metrics, 'operator-decisions')).toMatchObject({ sample: 4, figures: { verdicts: 2 } })
+    expect(metricOf(read.metrics, 'lead-touches')).toMatchObject({ value: 0.5 })
+  })
+})

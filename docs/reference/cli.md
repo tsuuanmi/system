@@ -108,6 +108,9 @@ planned; website accounts are configuration ([`accounts`](configuration.md#accou
 | `system mcp-config <claude\|codex>` | print client configuration for the running MCP server |
 | `system mcp-stdio` | serve the running profile's client-scope MCP tools on stdio (Codex and other clients) |
 | `system mcp-token --scope model` | print the model gateways' token, for a model client's environment variable. Only the model scope is printed: the CLI uses the operator token itself, and the client helpers read the client token on each connection ([scopes](../../packages/plugins/mcp-server/README.md#scopes)). Refused while both gateway rows are off |
+| `system lead-token issue <project>` | issue a project's lead token ([ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md)): `lead-<project>.token` beside `operator.token`, owner-only like it (32 random bytes), never printed; a token issued before is replaced and stops working. Its holder decides as `lead:<project>`, within a closed list of rights System enforces ([approvals](../design/approvals.md#the-lead-principal)); the operator's token file is not touched. The project id is letters, digits, `.`, `_`, `-` |
+| `system lead-token revoke <project>` | revoke it: its file is removed and the host refuses the token at once, with no restart. Refused when none was issued |
+| `system lead-token list` | the projects a lead token is issued for, with each file and decider |
 | `system mcp-headers` | print the `Authorization` header with the client token as JSON (Claude Code `headersHelper`) |
 | `system claude-env` | print a command that runs Claude Code with website Workers as its model ([gateways](../design/gateways.md)). Refused while the `gateway-anthropic` row is off |
 | `system codex-env` | print a command that runs Codex with website Workers as its model. Refused while the `gateway-responses` row is off |

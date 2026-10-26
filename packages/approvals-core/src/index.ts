@@ -285,7 +285,7 @@ export type Refusal = 'unknown-request' | 'already-resolved' | 'expired' | 'subj
 export interface VerdictResult { requestId: string; state: RequestState; approval?: ArtifactRef; refused?: Refusal }
 
 /** Why an approvals call was refused. Nothing changed. */
-export type ApprovalsFailure = 'not-asked' | 'unknown-request' | 'invalid'
+export type ApprovalsFailure = 'not-asked' | 'unknown-request' | 'invalid' | 'forbidden'
 export class ApprovalsError extends Error {
   constructor(readonly failure: ApprovalsFailure, message: string) {
     super(message)
@@ -339,6 +339,22 @@ export abstract class Approvals extends Service {
    * its own: one result per verdict, in order. Only an operator channel calls it (INV-6).
    */
   abstract decide(verdicts: Verdict[], at?: Date): Promise<VerdictResult[]>
+
+  /**
+   * Optional (ADR-0076): a project's lead gives verdicts on its own token, not the operator's. The
+   * rights are a closed list the provider enforces: the commands and dispatch starts of the lead's
+   * project, and merges into the project's listed dev branches; any verdict outside it refuses the
+   * whole call (`forbidden`, with the reason), and nothing is decided. What is decided is recorded
+   * with the decider `lead:<project>` (a `client` decider), never as the operator's. A provider
+   * without it takes no lead's verdict.
+   */
+  decideAsLead?(project: string, verdicts: Verdict[], at?: Date): Promise<VerdictResult[]>
+
+  /** Optional (ADR-0076): the branches a project lists as dev branches, where its lead decides merges and results. */
+  devBranches?(project: string): string[]
+
+  /** Optional (ADR-0076): the project a request belongs to, for a lead's rights: its requester's, else its requester's board task's. */
+  projectOfRequest?(request: ApprovalRequest): Promise<string | undefined>
 
   /** Close a request whose waiting work ended first: it is rejected with cause `withdrawn`. */
   abstract withdraw(requestId: string, at?: Date): Promise<ApprovalRequest>

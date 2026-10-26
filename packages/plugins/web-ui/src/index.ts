@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { assertSafeBind, canTakeStep, guardRequest, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, canTakeStep, guardRequest, leadId, leadMayDecide, leadTokenFile, leadTokens, LOOPBACK_HOSTS, readJsonBody, readRoster, type RosterServices, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
 import { ALWAYS_ASK, type ApprovalRequest, ApprovalsError, applyingPolicies, type AutonomyPolicy, type Check, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
@@ -120,6 +120,34 @@ function subjectOf(subject: unknown): Subject | undefined {
 
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
 
+/** Who decided, as the page shows it (ADR-0076): the operator, a project's lead, or System. */
+export interface Decided {
+  kind: 'operator' | 'lead' | 'system'
+  /** The decider's id as recorded (`operator`, `lead:<project>`, a rule or policy id). */
+  id: string
+  /** In words, for the page. */
+  label: string
+  /** True for a record made before the lead principal: the lead's scripts then used the operator's token, so it names the operator or a client token without a project. */
+  beforeLeadPrincipal?: true
+}
+
+/**
+ * The decider of a `decision` artifact's body, or undefined when it names none. A decider of type
+ * `operator` at version 1 and a `client` without a `lead:<project>` id were recorded before the
+ * lead principal and are marked so; they are not migrated (ADR-0076).
+ */
+export function decidedBy(body: unknown): Decided | undefined {
+  const decider = isObject(body) && isObject(body.decider) ? body.decider : undefined
+  if (!decider || typeof decider.type !== 'string' || typeof decider.id !== 'string') return undefined
+  const { type, id } = decider
+  if (type === 'client' && id.startsWith('lead:')) return { kind: 'lead', id, label: id }
+  if (type === 'client') return { kind: 'lead', id, label: 'the lead (before the lead principal)', beforeLeadPrincipal: true }
+  if (type === 'operator') return decider.version === '1'
+    ? { kind: 'operator', id, label: 'the operator (before the lead principal)', beforeLeadPrincipal: true }
+    : { kind: 'operator', id, label: 'the operator' }
+  return { kind: 'system', id, label: 'System' }
+}
+
 /** A task in review as the page shows it: what it is, its exact result, what is still pending, and until when the operator has it. */
 export function reviewOf(task: BoardTask, project: { projectId: string; title: string } | undefined): Record<string, unknown> {
   const result = task.result!
@@ -163,6 +191,32 @@ export function acceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (ref: 
   if (!found) return undefined
   const detail = found.outcome?.detail
   return isObject(detail) ? detail : {}
+}
+
+/** What a lead's acceptance carries over from the run's own (ADR-0076): the facts System recorded of the result. */
+const RECORDED_FACTS = ['checks', 'checkRun', 'risk', 'review', 'landing'] as const
+
+/**
+ * The run's own acceptance a task in review was judged on (as {@link acceptanceOf} finds it), with its
+ * ref and inputs: what a lead's acceptance builds on, so the board judges it on the facts System
+ * recorded of the result (its checks, check run, risk tier, review, and landing), never the lead's word
+ * (ADR-0076). Undefined when none can be read.
+ */
+export function runAcceptanceOf(task: Pick<BoardTask, 'lastDecision'>, read: (ref: ArtifactRef) => unknown): { ref: ArtifactRef; inputs: ArtifactRef[]; facts: Record<string, unknown> } | undefined {
+  const body = (ref: unknown): DecisionBody | undefined => {
+    if (typeof ref !== 'string') return undefined
+    const value = read(ref as ArtifactRef)
+    return isObject(value) ? value as DecisionBody : undefined
+  }
+  const last = body(task.lastDecision)
+  const refs = [task.lastDecision, ...(Array.isArray(last?.inputs) ? last.inputs : [])]
+  const ref = refs.find((r) => body(r)?.decisionType === 'acceptance') as ArtifactRef | undefined
+  if (!ref) return undefined
+  const found = body(ref)!
+  const outcome = found.outcome?.detail
+  const detail: Record<string, unknown> = isObject(outcome) ? outcome : {}
+  const inputs = (Array.isArray(found.inputs) ? found.inputs : []).filter((i): i is ArtifactRef => typeof i === 'string')
+  return { ref, inputs, facts: Object.fromEntries(RECORDED_FACTS.filter((k) => detail[k] !== undefined).map((k) => [k, detail[k]])) }
 }
 
 /**
@@ -237,7 +291,7 @@ const ALL_STATES: readonly TaskState[] = [...OPEN_STATES, 'done', 'cancelled']
  * most {@link CARDS_PER_STATE} each (`more` counts the rest): what it is, its run, its lease's
  * holder, and what it waits on (an approval request the page links to its card).
  */
-export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) => TaskLanding | undefined = () => undefined): { tasks: Array<Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
+export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) => TaskLanding | undefined = () => undefined, by?: (ref: string) => Decided | undefined): { tasks: Array<Record<string, unknown>>; more: Partial<Record<TaskState, number>> } {
   const out: Array<Record<string, unknown>> = []
   const more: Partial<Record<TaskState, number>> = {}
   const changed = (t: BoardTask): string => t.updatedAt ?? t.createdAt
@@ -251,7 +305,7 @@ export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) 
         ...(t.run ? { run: { runId: t.run.runId, startedAt: t.run.startedAt } } : {}),
         ...(t.holder ? { holder: { owner: t.holder.owner, leaseExpiresAt: t.holder.leaseExpiresAt } } : {}),
         ...(t.waiting ? { waiting: { reason: t.waiting.reason, ...(t.waiting.approvalRequest ? { approvalRequest: t.waiting.approvalRequest } : {}), since: t.waiting.since, expiresAt: t.waiting.expiresAt } } : {}),
-        ...(t.state === 'done' && t.run ? landingCard(landingOf(t.run.runId)) : {}),
+        ...(t.state === 'done' && t.run ? landingCard(landingOf(t.run.runId), by) : {}),
       })
     }
   }
@@ -263,11 +317,13 @@ export function cardsOf(tasks: readonly BoardTask[], landingOf: (runId: string) 
  * shows it: the merge request it waits on, the merge commit, or why it was not merged. Nothing when
  * there is nothing to land.
  */
-function landingCard(landing: TaskLanding | undefined): Record<string, unknown> {
+function landingCard(landing: TaskLanding | undefined, by: (ref: string) => Decided | undefined = () => undefined): Record<string, unknown> {
   if (!landing || landing.state === 'none') return {}
+  const accepted = landing.acceptance ? by(landing.acceptance) : undefined
+  const approved = landing.approval ? by(landing.approval) : undefined
   return {
     landing: {
-      state: landing.state, ...(landing.branch ? { branch: landing.branch } : {}), ...(landing.base ? { base: landing.base.branch } : {}),
+      state: landing.state, ...(accepted ? { acceptedBy: accepted } : {}), ...(approved ? { approvedBy: approved } : {}), ...(landing.branch ? { branch: landing.branch } : {}), ...(landing.base ? { base: landing.base.branch } : {}),
       ...(landing.head ? { head: landing.head } : {}), ...(landing.requestId ? { requestId: landing.requestId } : {}), ...(landing.commit ? { commit: landing.commit } : {}),
       ...(landing.reason && (landing.state === 'refused' || landing.state === 'rejected' || landing.state === 'returned') ? { reason: landing.reason } : {}),
     },
@@ -290,6 +346,20 @@ export function apply(ctx: Context, config: Config = {}): void {
   // Agent Workers never read the operator token, wherever tokenDir puts it (ADR-0024).
   ctx.effect(() => registerSecretPath(tokenFile(config.tokenDir ?? join(dshHome(), 'system'), 'operator')))
   const hosts = config.allowedHosts ?? LOOPBACK_HOSTS
+  const tokenDir = config.tokenDir ?? join(dshHome(), 'system')
+  // A lead token's file is as secret as the operator's: registered when seen (the CLI issues them while the host runs).
+  const leadFiles = new Map<string, () => void>()
+  ctx.effect(() => () => {
+    for (const u of leadFiles.values()) u()
+    leadFiles.clear()
+  })
+  const seeLeads = (): ReadonlyMap<string, string> => {
+    const found = leadTokens(tokenDir)
+    for (const project of found.keys()) if (!leadFiles.has(project)) leadFiles.set(project, registerSecretPath(leadTokenFile(tokenDir, project)))
+    return found
+  }
+  /** Who decides what the caller of a request decides: a decision as a decision artifact's body names it (ADR-0076). */
+  const decider = (ref: string): Decided | undefined => decidedBy(ctx.get('artifacts')?.get(ref as ArtifactRef)?.body)
 
   const send = (res: ServerResponse, status: number, body: string, type: string): void => {
     res.writeHead(status, {
@@ -299,10 +369,15 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   const json = (res: ServerResponse, status: number, value: unknown): void => send(res, status, JSON.stringify(value), 'application/json; charset=utf-8')
 
-  /** Loopback host, no foreign Origin, the bearer token: or the reason it is refused. */
-  const refuse = (req: IncomingMessage): [number, string] | undefined => {
-    const verdict = guardRequest(req, { tokens: { operator }, allowedHosts: hosts, sameOrigin: true })
-    return verdict.ok ? undefined : [verdict.status, verdict.reason]
+  /**
+   * Loopback host, no foreign Origin, the bearer token: or the reason it is refused. A project's lead
+   * token is accepted too (ADR-0076), and the caller is then that lead: `api` serves it the lead's
+   * closed list of routes only.
+   */
+  const authenticate = (req: IncomingMessage): { refused: [number, string] } | { lead?: string } => {
+    const verdict = guardRequest(req, { tokens: { operator }, allowedHosts: hosts, sameOrigin: true, leads: seeLeads })
+    if (!verdict.ok) return { refused: [verdict.status, verdict.reason] }
+    return verdict.lead !== undefined ? { lead: verdict.lead } : {}
   }
 
   const readJson = async (req: IncomingMessage, maxBytes: number = MAX_BODY): Promise<Record<string, unknown>> => {
@@ -319,10 +394,17 @@ export function apply(ctx: Context, config: Config = {}): void {
    * batch, or nothing is decided. The UI is the operator's channel (ADR-0023): its verdicts go to
    * `ctx.approvals.decide` as the operator's (INV-6), at the wall clock.
    */
-  const queue = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
+  const queue = async (req: IncomingMessage, res: ServerResponse, path: string, lead?: string): Promise<void> => {
     const approvals = ctx.get('approvals')
     if (!approvals) return json(res, 503, { error: 'the approval queue is not running' })
-    if (path === 'approvals') return req.method === 'GET' ? json(res, 200, { batches: byBatch(await approvals.list()) }) : json(res, 405, { error: 'method not allowed' })
+    if (path === 'approvals') {
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+      if (lead === undefined) return json(res, 200, { batches: byBatch(await approvals.list()) })
+      // A lead lists its project's requests: those its requester names, and a Worker's command whose board task is the project's (ADR-0076).
+      const mine: ApprovalRequest[] = []
+      for (const r of await approvals.list()) if ((approvals.projectOfRequest ? await approvals.projectOfRequest(r) : r.requester.projectId) === lead) mine.push(r)
+      return json(res, 200, { batches: byBatch(mine) })
+    }
     if (path !== 'approvals/decide') return json(res, 404, { error: 'not found' })
     if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
     try {
@@ -343,9 +425,14 @@ export function apply(ctx: Context, config: Config = {}): void {
           if ((await approvals.get(v.requestId))?.batchId !== body.batchId) return json(res, 409, { error: `${v.requestId} is not in batch ${body.batchId}; nothing was decided` })
         }
       }
+      if (lead !== undefined) {
+        // A project's lead gives verdicts on its own token, held to the closed list of its rights (ADR-0076); recorded as lead:<project>.
+        if (!approvals.decideAsLead) return json(res, 501, { error: 'this approval queue takes no lead verdicts' })
+        return json(res, 200, { results: await approvals.decideAsLead(lead, verdicts, new Date()) })
+      }
       return json(res, 200, { results: await approvals.decide(verdicts, new Date()) })
     } catch (error) {
-      const status = error instanceof ApprovalsError ? 400 : (error as { status?: number }).status ?? 409
+      const status = error instanceof ApprovalsError ? (error.failure === 'forbidden' ? 403 : 400) : (error as { status?: number }).status ?? 409
       return json(res, status, { error: (error as Error).message })
     }
   }
@@ -398,10 +485,12 @@ export function apply(ctx: Context, config: Config = {}): void {
    * and producer are the operator's, it names the task and the result's subject, and every result
    * artifact is among its inputs, as the board requires; then `ctx.board.accept` applies it.
    */
-  const reviews = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
+  const reviews = async (req: IncomingMessage, res: ServerResponse, path: string, lead?: string): Promise<void> => {
     const board = ctx.get('board')
     const artifacts = ctx.get('artifacts')
     if (!board || !artifacts) return json(res, 503, { error: 'the board is not running' })
+    // A project's lead sees and decides its own project's results only (ADR-0076).
+    const projectsOf = async (): Promise<Project[]> => (await board.projects()).filter((p) => lead === undefined || p.projectId === lead)
     if (path === 'reviews') {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
       const listed: Array<Record<string, unknown>> = []
@@ -413,7 +502,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         if (!policies.has(projectId)) policies.set(projectId, approvals.policy(projectId).then((p) => p.policies, (error: unknown) => `the policy could not be read: ${(error as Error).message.slice(0, 200)}`))
         return policies.get(projectId)!
       }
-      for (const project of await board.projects()) {
+      for (const project of await projectsOf()) {
         for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) {
           const read = await policiesOf(project.projectId)
           const pending = task.waiting?.pendingChecks ?? []
@@ -429,10 +518,10 @@ export function apply(ctx: Context, config: Config = {}): void {
       listed.sort((a, b) => (a.heldFor === b.heldFor ? String(a.expiresAt ?? '').localeCompare(String(b.expiresAt ?? '')) : a.heldFor === 'operator' ? -1 : 1))
       // The results accepted and still on their way into the repository (ADR-0060), the latest first: a verdict's consequence stays in sight.
       const accepted: Array<{ at: string; entry: Record<string, unknown> }> = []
-      for (const project of await board.projects()) {
+      for (const project of await projectsOf()) {
         for (const task of await board.tasks({ projectId: project.projectId, states: ['done'] })) {
           const landing = task.run ? ctx.workflow.landing(task.run.runId) : undefined
-          if (landing && LANDING_OPEN.has(landing.state)) accepted.push({ at: task.updatedAt ?? task.createdAt, entry: { taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, run: task.run, landing: landingCard(landing).landing } })
+          if (landing && LANDING_OPEN.has(landing.state)) accepted.push({ at: task.updatedAt ?? task.createdAt, entry: { taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, run: task.run, landing: landingCard(landing, decider).landing } })
         }
       }
       accepted.sort((a, b) => b.at.localeCompare(a.at))
@@ -453,21 +542,36 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (task.state !== 'review' || !task.result) return json(res, 409, { error: `task ${taskId} is ${task.state}, not in review; nothing was decided` })
       // The verdict binds to the result the operator was shown: a result changed since is refused (INV-5).
       if (!sameSubject(subject, task.result.subject)) return json(res, 409, { error: `task ${taskId}'s result is on another subject than the page showed; nothing was decided` })
+      // A project's lead accepts or rejects a result of its own project that lands on one of its listed dev branches, and no other (ADR-0076):
+      // the branch is the one System recorded in the run's own acceptance (`landing.branch`), never the lead's word.
+      const recorded = lead !== undefined ? runAcceptanceOf(task, (ref) => artifacts.get(ref)?.body) : undefined
+      if (lead !== undefined) {
+        const landing = recorded?.facts['landing']
+        const branch = isObject(landing) && typeof landing['branch'] === 'string' ? landing['branch'] : undefined
+        const may = leadMayDecide({ project: lead, of: task.projectId, action: 'acceptance', branch, devBranches: ctx.get('approvals')?.devBranches?.(lead) ?? [] })
+        if (!may.ok) return json(res, 403, { error: `${may.reason}; nothing was decided` })
+      }
       const option = body.verdict
       const other = option === 'accept' ? 'reject' : 'accept'
+      const who = lead !== undefined ? leadId(lead) : 'the operator'
       const decision = artifacts.recordDecision({
+        // A lead's acceptance has a `client` decider that is no vote: decision@1.10 (ADR-0076).
+        ...(lead !== undefined ? { schema: 'decision@1.10' as const } : {}),
         decisionType: 'acceptance',
-        question: `Does the operator accept the result of board task ${taskId}, attempt ${task.attempts.count}?`,
-        inputs: [...task.result.artifacts, ...(task.result.digest ? [task.result.digest] : [])],
+        question: `Does ${who} accept the result of board task ${taskId}, attempt ${task.attempts.count}?`,
+        // A lead's acceptance builds on the run's own: that acceptance and what it stood on (its check run, review, risk decision) are its inputs too.
+        inputs: [...task.result.artifacts, ...(task.result.digest ? [task.result.digest] : []), ...(recorded ? [recorded.ref, ...recorded.inputs] : [])],
         candidates: [
-          { option, selected: true, reasons: [`the operator ${option}s the result on ${task.result.subject.type} ${task.result.subject.ref}${task.result.subject.version ? ` at ${task.result.subject.version}` : ''}, on the web UI${note ? `: ${note}` : ''}`] },
-          { option: other, selected: false, reasons: [`not ${other}: the operator chose ${option}`] },
+          { option, selected: true, reasons: [`${who} ${option}s the result on ${task.result.subject.type} ${task.result.subject.ref}${task.result.subject.version ? ` at ${task.result.subject.version}` : ''}, on the web UI${note ? `: ${note}` : ''}`] },
+          { option: other, selected: false, reasons: [`not ${other}: ${who} chose ${option}`] },
         ],
-        decider: { type: 'operator', id: 'operator.review', version: '1' },
-        outcome: { option, detail: { taskId, subject: task.result.subject } },
+        // The operator's decider is version 2 from the lead principal on: a record at version 1 is from before it, when the lead used the operator's token.
+        decider: lead !== undefined ? { type: 'client', id: leadId(lead), version: '1' } : { type: 'operator', id: 'operator.review', version: '2' },
+        // The facts System recorded of the result, carried over whole, so the board judges a lead's acceptance on its checks and risk tier (ADR-0076).
+        outcome: { option, detail: { taskId, subject: task.result.subject, ...(recorded ? { ...recorded.facts, acceptance: recorded.ref } : {}) } },
         ...(note ? { rationale: note } : {}),
         deterministic: false,
-      }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
+      }, { producer: lead !== undefined ? { type: 'system', ref: leadId(lead) } : { type: 'operator', ref: 'operator' } }).id as ArtifactRef
       return json(res, 200, { task: await board.accept(taskId, decision, new Date()), decision })
     } catch (error) {
       if (error instanceof BoardError) return json(res, error.failure === 'unknown-task' ? 404 : 409, { error: `${error.failure}: ${error.message}` })
@@ -495,7 +599,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         // Where the auto-accept circuit breaker has turned auto-accept off for the project (D93): shown on Home, turned on by the operator or the lead only.
         const tripped = board.breakers ? await board.breakers(project.projectId, new Date()) : []
         listed.push({
-          ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks, (runId) => ctx.workflow.landing(runId)),
+          ...projectOf(project, tasks.filter((t) => OPEN_STATES.includes(t.state))), ...cardsOf(tasks, (runId) => ctx.workflow.landing(runId), decider),
           autoAcceptBreakers: tripped.map((b) => ({ branch: b.branch, trippedAt: b.trippedAt, decision: b.decision, line: b.line, escapes: b.escapes.map((e) => ({ taskId: e.taskId, foundAt: e.foundAt, note: e.note })), ...(b.now ? { now: b.now } : {}) })),
         })
       }
@@ -644,7 +748,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             if (changed <= at && !landed) continue
             moved.push({ taskId: task.taskId, title: task.title, project: { projectId: project.projectId, title: project.title }, state: task.state, at: landed && landed > changed ? landed : changed,
               ...(task.waiting ? { waiting: { reason: task.waiting.reason, ...(task.waiting.approvalRequest ? { approvalRequest: task.waiting.approvalRequest } : {}) } } : {}),
-              ...(task.run ? { run: { runId: task.run.runId } } : {}), ...landingCard(landing) })
+              ...(task.run ? { run: { runId: task.run.runId } } : {}), ...landingCard(landing, decider) })
           }
         }
         tasks = shown(moved.sort((a, b) => b.at.localeCompare(a.at)))
@@ -873,7 +977,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     const text = run.answer
     const report = text !== undefined && last ? { nodeId: last.nodeId, text: text.slice(0, REVIEW_REPORT_CHARS), ...(text.length > REVIEW_REPORT_CHARS ? { truncated: true } : {}) } : undefined
     const landing = ctx.workflow.landing(runId)
-    return json(res, 200, { runId, change, assessments, ...(report ? { report } : {}), ...(landing && landing.state !== 'none' ? { landing: landingCard(landing).landing } : {}) })
+    return json(res, 200, { runId, change, assessments, ...(report ? { report } : {}), ...(landing && landing.state !== 'none' ? { landing: landingCard(landing, decider).landing } : {}) })
   }
 
   /**
@@ -915,8 +1019,16 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
-    const refused = refuse(req)
-    if (refused) return json(res, refused[0], { error: refused[1] })
+    const caller = authenticate(req)
+    if ('refused' in caller) return json(res, caller.refused[0], { error: caller.refused[1] })
+    const { lead } = caller
+    // A project's lead token reaches the approval queue and the reviews, held to the closed list of its rights (ADR-0076), and nothing else here:
+    // policy, projects, starts, runs, and the roster are the operator's.
+    if (lead !== undefined) {
+      if (path === 'approvals' || path.startsWith('approvals/')) return queue(req, res, path, lead)
+      if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path, lead)
+      return json(res, 403, { error: `the lead token of project ${lead} (decider ${leadId(lead)}) reaches the approval queue and the reviews of its project only; ${path} is the operator's` })
+    }
     if (path === 'roster') return roster(req, res)
     if (path === 'approvals' || path.startsWith('approvals/')) return queue(req, res, path)
     if (path === 'policy' || path.startsWith('policy/')) return policy(req, res, path)

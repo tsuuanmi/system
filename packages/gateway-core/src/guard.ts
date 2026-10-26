@@ -50,9 +50,14 @@ export interface GuardOptions {
   apiKeyHeader?: boolean
   /** Accept the endpoint's own origin (an endpoint that serves a page, the web UI); any other is refused. */
   sameOrigin?: boolean
+  /**
+   * The lead tokens this endpoint accepts, by project, read on each request (so a revoked token is
+   * refused at once). A lead token's scope is `client`, and the result names its project (ADR-0076).
+   */
+  leads?: () => ReadonlyMap<string, string>
 }
 
-export type GuardResult = { ok: true; scope: Scope } | { ok: false; status: 401 | 403 | 421; reason: string }
+export type GuardResult = { ok: true; scope: Scope; lead?: string } | { ok: false; status: 401 | 403 | 421; reason: string }
 
 /**
  * SHA-256 here only gives both sides one length for `timingSafeEqual`; it is not password
@@ -88,8 +93,16 @@ export function guardRequest(req: IncomingMessage, options: GuardOptions): Guard
     const token = options.tokens[candidate]
     if (token !== undefined && tokenMatches(presented, token)) scope ??= candidate
   }
-  if (!scope) return { ok: false, status: 401, reason: 'missing or invalid token' }
-  return { ok: true, scope }
+  // A lead token is a client's with a project: compared every time too, after the scope tokens.
+  let lead: string | undefined
+  if (options.leads) {
+    for (const [project, token] of options.leads()) {
+      if (tokenMatches(presented, token)) lead ??= project
+    }
+  }
+  if (scope) return { ok: true, scope }
+  if (lead !== undefined) return { ok: true, scope: 'client', lead }
+  return { ok: false, status: 401, reason: 'missing or invalid token' }
 }
 
 const LOOPBACK = /^(127(?:\.\d{1,3}){3}|::1|::ffff:127(?:\.\d{1,3}){3}|localhost)$/i

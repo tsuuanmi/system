@@ -52,9 +52,10 @@ export interface Decision {
    * `@1.3`: a `retention` decision; `@1.4`: an `autonomy`, `approval`, `board`, or `budget` decision;
    * `@1.5`: a `lifecycle` decision; `@1.6`: a `policy-change` decision; `@1.7`: a `registration` or `verdict` decision;
    * `@1.8`: an `enrollment` decision, or a `recovery` decision whose outcome is `wait`; `@1.9`: a
-   * `recovery` decision whose outcome is `resend`).
+   * `recovery` decision whose outcome is `resend`; `@1.10`: a project's lead's approval or acceptance, a
+   * `client` decider that is no vote, ADR-0076).
    */
-  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6' | 'decision@1.7' | 'decision@1.8' | 'decision@1.9'
+  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6' | 'decision@1.7' | 'decision@1.8' | 'decision@1.9' | 'decision@1.10'
   decisionType: string
   question: string
   inputs: ContentId[]

@@ -49,7 +49,7 @@ export function periodOf(input: ReportInput, now: Date): Period {
 export interface Recorded { seq: number; at: string; type: string; runId?: string; decision?: string; data?: Record<string, unknown> }
 
 /** A decision the report reads: who made it, when, and what it decided. */
-export interface DecisionRead { createdAt: string; decisionType: string; deciderType: string; deciderId: string; option: string; checks?: Record<string, boolean> }
+export interface DecisionRead { createdAt: string; decisionType: string; deciderType: string; deciderId: string; deciderVersion?: string; option: string; checks?: Record<string, boolean> }
 
 /** A settled digest request as its provider holds it. */
 export interface DigestRead { kept?: number; dropped?: number; escalated: boolean }

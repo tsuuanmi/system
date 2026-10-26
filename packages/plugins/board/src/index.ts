@@ -172,7 +172,11 @@ interface Stored { task: BoardTask; token?: string; ttlMs?: number }
 /** A project as stored: its record and its pending charter request, with the version it asks about and when it expires. */
 interface StoredProject { project: Project; request?: string; version?: number; expiresAt?: string }
 /** An `acceptance` decision bound to a task's result: its outcome, whether the operator made it, and the checks it reports. */
-interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
+/**
+ * An acceptance decision as the board reads it. `lead`: it is the task's project's lead's, on its own
+ * token (ADR-0076): a `client` decider `lead:<project>` the system produced under that id.
+ */
+interface Acceptance { option: 'accept' | 'reject'; operator: boolean; lead?: boolean; checks?: Partial<Record<Check, boolean>> }
 /** The policy's verdict for a task's next attempt, and the approval request it opened on ask. */
 interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
 /**
@@ -1833,7 +1837,7 @@ export class StoreBoard extends Board {
     this.knownResult(result)
     const envelope = this.ctx.artifacts.get(acceptance)
     const body = envelope?.kind === 'decision'
-      ? envelope.body as { decisionType?: string; inputs?: string[]; decider?: { type?: string }; outcome?: { option?: string; detail?: Record<string, unknown> } }
+      ? envelope.body as { decisionType?: string; inputs?: string[]; decider?: { type?: string; id?: string }; outcome?: { option?: string; detail?: Record<string, unknown> } }
       : undefined
     if (body?.decisionType !== 'acceptance') throw new BoardError('invalid', `${acceptance} is not an acceptance decision`)
     const detail = body.outcome?.detail ?? {}
@@ -1850,8 +1854,10 @@ export class StoreBoard extends Board {
     if (checks !== undefined && (!isObject(checks) || Object.entries(checks).some(([k, v]) => !CHECKS.includes(k as Check) || typeof v !== 'boolean'))) {
       throw new BoardError('invalid', `${acceptance} reports checks that are not ${CHECKS.join(', ')} with true or false (outcome.detail.checks)`)
     }
+    const leadId = `lead:${task.projectId}`
     return {
       option, operator: body.decider?.type === 'operator' && envelope!.producer.type === 'operator',
+      ...(body.decider?.type === 'client' && body.decider.id === leadId && envelope!.producer.type === 'system' && envelope!.producer.ref === leadId ? { lead: true } : {}),
       ...(checks !== undefined ? { checks: checks as Partial<Record<Check, boolean>> } : {}),
     }
   }
@@ -1875,6 +1881,9 @@ export class StoreBoard extends Board {
     // A heavy result is never accepted unattended (ADR-0071), by the policy or by the auto-accept rule: the operator decides it.
     const heavy = await this.heavyOf(acceptance, task.projectId)
     if (heavy) return { held: { verdict, pendingChecks: [], seconds: await seconds(), heavy } }
+    // The project's lead decides a result the policy lets apply (ADR-0076): its acceptance is a person's, not the
+    // auto-accept rule's, so that rule (which accepts only the run owner's) does not hold it.
+    if (read.lead) return {}
     // The auto-accept rule (D80, ADR-0067) is for a listed project's results that land: on a git working tree.
     if (!this.autoAccept?.projects.includes(task.projectId) || result.subject.type !== 'git-head') return {}
     const judged = this.autoAccepted(task.projectId, result, acceptance, read)

@@ -22,7 +22,7 @@ import {
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
-import type {} from '@tsuuanmi/system-gateway-core'
+import { LEAD_PROJECT, leadId, leadMayDecide } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank, webAccessEffect } from './policy.ts'
@@ -50,6 +50,36 @@ export interface Config {
    * (docs/design/approvals.md#the-queue-proposes-a-policy-change).
    */
   repeatedApprovals?: RepeatedApprovals
+  /**
+   * The dev branches of each project, by project id (ADR-0076): the branches where the project's lead,
+   * on its own token, may approve a merge and accept a result. A branch not listed (a protected one,
+   * `main`) stays the operator's; a project not listed has none, so its lead decides no merge or
+   * acceptance. Each name is a plain branch name, never `main` or `master`.
+   */
+  devBranches?: Record<string, string[]>
+}
+
+/** Branch names no project may list as a dev branch: the lead never decides on them (ADR-0076). */
+const PROTECTED_BRANCHES: readonly string[] = ['main', 'master']
+const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/
+
+/** Every problem of a `devBranches` value; none when it is absent or valid. */
+function devBranchProblems(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!isObject(value)) return ['devBranches must be an object: {<projectId>: [<branch>, …]}']
+  const problems: string[] = []
+  for (const [project, branches] of Object.entries(value)) {
+    if (!LEAD_PROJECT.test(project)) problems.push(`devBranches names project ${JSON.stringify(project)}, which is not a project id a lead token can be issued for`)
+    if (!Array.isArray(branches) || branches.some((b) => typeof b !== 'string')) {
+      problems.push(`devBranches.${project} must be a list of branch names`)
+      continue
+    }
+    for (const branch of branches as string[]) {
+      if (!BRANCH.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.endsWith('.lock')) problems.push(`devBranches.${project}: ${JSON.stringify(branch)} is not a branch name`)
+      else if (PROTECTED_BRANCHES.includes(branch)) problems.push(`devBranches.${project}: ${branch} is a protected branch; only the operator decides on it, so it cannot be listed`)
+    }
+  }
+  return problems
 }
 
 /** When the queue proposes a policy change from repeated approvals of one shape. */
@@ -199,6 +229,7 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
   const problems = policyProblems(config.policies)
   if (config.supersedes !== undefined && (typeof config.supersedes !== 'string' || !CONTENT_ID.test(config.supersedes))) problems.push('supersedes must be the sha256:… hash of a stored policy set')
   problems.push(...repeatedProblems(config.repeatedApprovals))
+  problems.push(...devBranchProblems(config.devBranches))
   return problems
 }
 
@@ -220,6 +251,8 @@ export class StoreApprovals extends Approvals {
         .description('The window in seconds: the requests made in it count, and none of the shape may have been rejected or have expired'),
     }).description('Off unless enabled. The queue proposes, never applies, a policy change adding one exact studio command (its argv, nothing more) to the studio policy\'s commands list, '
       + 'once the operator approved it often enough in the window and rejected or let expire none; never for a class that always asks, never again for a command whose proposal was rejected or expired, at most one proposal open'),
+    devBranches: z.dict(z.array(z.string())).description('The dev branches of each project, by project id: the branches where the project\'s lead, on its own token (`system lead-token issue`), may approve a merge and accept a result. '
+      + 'A branch not listed, and main and master always, stay the operator\'s; a project not listed has none (ADR-0076)'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
@@ -230,6 +263,8 @@ export class StoreApprovals extends Approvals {
   private readonly repeated: Threshold | undefined
   /** The set in force as last read from the store (see {@link current}). */
   private state: InForce | undefined
+  /** Each project's dev branches (ADR-0076). */
+  private readonly dev: Map<string, string[]>
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -240,6 +275,9 @@ export class StoreApprovals extends Approvals {
     this.supersedes = config.supersedes
     const repeated = repeatedProblems(config.repeatedApprovals)
     if (repeated.length) throw new Error(`approvals: ${repeated.join('; ')}`)
+    const branches = devBranchProblems(config.devBranches)
+    if (branches.length) throw new Error(`approvals: ${branches.join('; ')}`)
+    this.dev = new Map(Object.entries(config.devBranches ?? {}).map(([project, list]) => [project, [...list]]))
     this.repeated = config.repeatedApprovals?.enabled !== true ? undefined : {
       approvals: config.repeatedApprovals.approvals ?? REPEATED_APPROVALS.approvals.default,
       windowSeconds: config.repeatedApprovals.windowSeconds ?? REPEATED_APPROVALS.windowSeconds.default,
@@ -425,21 +463,77 @@ export class StoreApprovals extends Approvals {
    * open request is judged again under a policy one would have approved only once all committed.
    */
   async decide(verdicts: Verdict[], at: Date = new Date(), check?: (results: VerdictResult[]) => void): Promise<VerdictResult[]> {
+    return this.decideBy(verdicts, this.instant(at), check)
+  }
+
+  /**
+   * A project's lead gives verdicts on its own token (ADR-0076): each is checked against the lead's
+   * closed list of rights first ({@link leadMayDecide}), and one outside it refuses the whole call,
+   * with the reason, before anything is decided. What is decided is recorded with the decider
+   * `lead:<project>`, never as the operator's.
+   */
+  async decideAsLead(project: string, verdicts: Verdict[], at: Date = new Date(), check?: (results: VerdictResult[]) => void): Promise<VerdictResult[]> {
     const when = this.instant(at)
+    if (typeof project !== 'string' || !LEAD_PROJECT.test(project)) throw invalid('a lead decides for a project')
+    if (!Array.isArray(verdicts)) throw invalid('verdicts is not a list')
+    verdicts.forEach((v, i) => this.validVerdict(v, i))
+    const refused: string[] = []
+    for (const v of verdicts) {
+      const request = this.read(v.requestId)?.request
+      if (!request) continue
+      const may = leadMayDecide({
+        project, of: await this.projectOfRequest(request), action: request.action.class,
+        branch: request.action.class === 'merge' ? this.baseBranchOf(request) : undefined, devBranches: this.devBranches(project),
+      })
+      if (!may.ok) refused.push(`${v.requestId} (${request.action.class}): ${may.reason}`)
+    }
+    if (refused.length) throw new ApprovalsError('forbidden', `${leadId(project)} may not give ${refused.length === 1 ? 'this verdict' : 'these verdicts'}; nothing was decided. ${refused.join(' | ')}`)
+    return this.decideBy(verdicts, when, check, project)
+  }
+
+  /**
+   * The project a request belongs to, for a lead's rights (ADR-0076): the project its requester names;
+   * else, for a Worker's command (judged under the studio policy, so its requester names no project),
+   * the board project of the task the requester names, as the board holds it. Undefined when neither
+   * is known: then no lead decides it.
+   */
+  async projectOfRequest(request: ApprovalRequest): Promise<string | undefined> {
+    if (request.requester.projectId !== undefined) return request.requester.projectId
+    const taskId = request.requester.taskId
+    if (taskId === undefined) return undefined
+    const board = this.ctx.get('board' as never) as { task?: (taskId: string) => Promise<{ projectId?: string } | undefined> } | undefined
+    return (await board?.task?.(taskId))?.projectId
+  }
+
+  /** The branches a project lists as dev branches (ADR-0076); none for a project not listed. */
+  devBranches(project: string): string[] {
+    return [...(this.dev.get(project) ?? [])]
+  }
+
+  /** The branch a `merge` request merges into, read from the landing of its run (the workflow engine); undefined when it cannot be read. */
+  private baseBranchOf(request: ApprovalRequest): string | undefined {
+    const runId = request.requester.runId
+    if (runId === undefined) return undefined
+    const workflow = this.ctx.get('workflow' as never) as { landing?: (runId: string) => { base?: { branch?: string }; requestId?: string } | undefined } | undefined
+    const landing = workflow?.landing?.(runId)
+    return landing?.requestId === request.requestId ? landing.base?.branch : undefined
+  }
+
+  private decideBy(verdicts: Verdict[], when: Date, check?: (results: VerdictResult[]) => void, lead?: string): VerdictResult[] {
     if (!Array.isArray(verdicts)) throw invalid('verdicts is not a list')
     verdicts.forEach((v, i) => this.validVerdict(v, i))
     // A stored record that fails its schema refuses the whole call before any verdict applies.
     for (const v of verdicts) this.read(v.requestId)
-    if (!check) return this.applyVerdicts(verdicts, when)
+    if (!check) return this.applyVerdicts(verdicts, when, lead)
     return this.ctx.store.transaction(() => {
-      const results = this.applyVerdicts(verdicts, when)
+      const results = this.applyVerdicts(verdicts, when, lead)
       check(results)
       return results
     })
   }
 
   /** {@link decide}'s verdicts, each in its own transaction (a savepoint inside the caller's). */
-  private applyVerdicts(verdicts: Verdict[], when: Date): VerdictResult[] {
+  private applyVerdicts(verdicts: Verdict[], when: Date, lead?: string): VerdictResult[] {
     // Each verdict is its own transaction: a refused one changes nothing, and the others still
     // apply. One that fails (a busy store, a write that went stale) is reported as failed, never
     // hidden behind an error that drops the outcomes of the others.
@@ -458,11 +552,15 @@ export class StoreApprovals extends Approvals {
           const change = this.changeOf(request)
           if (change && v.verdict === 'approved' && change.baseHash !== this.set.setHash()) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
           // INV-5: the verdict is written on the request's own subject, the one the operator saw.
+          // A lead's verdict is the lead's (ADR-0076): approval@1.0's `by` is closed to operator and policy, so the
+          // artifact says who gave it in its producer (system, `lead:<project>`) and its note, and the decision names the decider.
+          const note = lead !== undefined ? `[${leadId(lead)}] ${v.note ?? ''}`.trim().slice(0, 2000) : v.note
           const approval = this.ctx.artifacts.put({
-            kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(v.note ? { note: v.note } : {}) },
-            classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: request.subject,
+            kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(note ? { note } : {}) },
+            classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared',
+            producer: lead !== undefined ? { type: 'system', ref: leadId(lead) } : { type: 'operator', ref: 'operator' }, subject: request.subject,
           }).id as ArtifactRef
-          const resolved = this.resolve(request, 'verdict', v.verdict, when, approval)
+          const resolved = this.resolve(request, 'verdict', v.verdict, when, approval, undefined, lead)
           if (change && v.verdict === 'approved') changed = true
           return { requestId: v.requestId, state: resolved.state, approval }
         })
@@ -971,17 +1069,21 @@ export class StoreApprovals extends Approvals {
    * candidate says why it was or was not the outcome. A resolution no verdict made names its
    * decider rule and reason (`by`).
    */
-  private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef, by?: Withdrawal): ApprovalRequest {
+  private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef, by?: Withdrawal, lead?: string): ApprovalRequest {
     const verdicts = ['approved', 'rejected']
-    const lost = (o: string): string => cause === 'verdict' ? (verdicts.includes(o) ? `the operator's verdict is ${option}` : 'a verdict came first')
+    const lost = (o: string): string => cause === 'verdict' ? (verdicts.includes(o) ? `${lead !== undefined ? `${leadId(lead)}'s` : 'the operator\'s'} verdict is ${option}` : 'a verdict came first')
       : cause === 'expired' ? (o === 'withdrawn' ? 'it was not withdrawn before it expired' : 'no verdict came before it expired')
       : o === 'denied:expired' ? `${by!.before} before it expired` : `${by!.before} before a verdict`
     const decision = this.ctx.artifacts.recordDecision({
-      schema: 'decision@1.4', decisionType: 'approval', question: `Is approval request ${request.requestId} approved?`, inputs: [request.policy.decision, ...(approval ? [approval] : [])],
+      // A lead's verdict has a `client` decider that is no vote: decision@1.10 (ADR-0076); every other is decision@1.4 as before.
+      schema: cause === 'verdict' && lead !== undefined ? 'decision@1.10' : 'decision@1.4', decisionType: 'approval', question: `Is approval request ${request.requestId} approved?`, inputs: [request.policy.decision, ...(approval ? [approval] : [])],
       candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: [o === option ? (by?.why ?? cause) : `not ${o}: ${lost(o)}`] })),
-      decider: cause === 'verdict' ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: by!.rule, version: '1' },
+      // Who decided: the operator (version 2: a record at version 1 is from before the lead principal, when the lead's scripts
+      // used the operator's token), a project's lead (a `client` decider, `lead:<project>`), or the rule that withdrew it.
+      decider: cause !== 'verdict' ? { type: 'rule', id: by!.rule, version: '1' }
+        : lead !== undefined ? { type: 'client', id: leadId(lead), version: '1' } : { type: 'operator', id: 'operator', version: '2' },
       outcome: { option, detail: { requestId: request.requestId } }, deterministic: cause !== 'verdict',
-    }, { producer: { type: cause === 'verdict' ? 'operator' : 'system', ref: 'approvals' }, classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared' })
+    }, { producer: { type: cause === 'verdict' && lead === undefined ? 'operator' : 'system', ref: cause === 'verdict' && lead !== undefined ? leadId(lead) : 'approvals' }, classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared' })
     const next: ApprovalRequest = {
       ...request, state: option === 'approved' ? 'approved' : 'rejected', revision: request.revision + 1,
       resolution: { cause, ...(approval ? { approval } : {}), decision: decision.id as ArtifactRef, at: at.toISOString() },

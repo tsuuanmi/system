@@ -998,7 +998,16 @@ export const APP_JS = `'use strict'
   // The board's tasks in review, one card each: the operator's Accept or Send back names the exact
   // result shown (INV-5). Absent when no board runs.
   // Where an accepted result stands on its way into the repository (ADR-0060), in words, each pending step linked to where it is decided.
-  const landingLine = (l) => l.state === 'asked' && l.requestId ? el('div', {}, 'Accepted — waiting to merge into ' + (l.base || 'its base') + ': ', decideLink(l.requestId, 'approve'))
+  // Who decided each step (ADR-0076): the operator, a project's lead (lead:<project>), or System; a record from before the lead principal says so.
+  const landingLine = (l) => {
+    const line = landingText(l)
+    const by = []
+    if (l.acceptedBy) by.push('accepted by ' + l.acceptedBy.label)
+    if (l.approvedBy) by.push('merge approved by ' + l.approvedBy.label)
+    if (by.length) line.append(el('span', { class: 'muted decider' }, ' · ' + by.join(' · ')))
+    return line
+  }
+  const landingText = (l) => l.state === 'asked' && l.requestId ? el('div', {}, 'Accepted — waiting to merge into ' + (l.base || 'its base') + ': ', decideLink(l.requestId, 'approve'))
     : l.state === 'merged' ? el('div', {}, 'Accepted and merged into ' + (l.base || 'its base') + (l.commit ? ' as ' : ''), l.commit ? shortId(l.commit, 'Copy commit') : null, el('span', { class: 'muted' }, ' · not pushed'))
       : l.state === 'refused' ? el('div', {}, 'Accepted — not merged: ' + (l.reason || 'refused'))
         : l.state === 'rejected' ? el('div', {}, 'Accepted — the merge was not approved; ' + (l.branch || 'its branch') + ' keeps the commit')

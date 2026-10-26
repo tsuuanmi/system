@@ -12,7 +12,7 @@ import { readFileSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { assertSafeBind, endpointUrl, formatRoster, guardRequest, LOOPBACK_HOSTS, McpTools, readJsonBody, readRoster, reply, type RosterServices, scopeTokens, SCOPES, tokenFile, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, endpointUrl, formatRoster, guardRequest, leadId, leadTokenFile, leadTokens, LOOPBACK_HOSTS, McpTools, readJsonBody, readRoster, reply, type RosterServices, scopeTokens, SCOPES, tokenFile, type ToolHandler, type ToolScope, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -74,7 +74,8 @@ function withoutZodDefaults(schema: unknown): unknown {
 }
 
 /** Whether a caller holding `scope` may see and call a tool of `tool` scope. */
-const visible = (tool: ToolScope, scope: ToolScope): boolean => scope === 'operator' || tool === 'client'
+const visible = (tool: Pick<ToolSpec, 'scope' | 'lead'>, scope: ToolScope, lead?: string): boolean =>
+  scope === 'operator' || (tool.scope ?? 'operator') === 'client' || (lead !== undefined && tool.lead === true)
 
 const NOT_INSTALLED =
   'The workflow engine is not mounted in this composition, so this tool has nothing to run; mount the workflow plugin (the system bundle does).'
@@ -126,19 +127,32 @@ export class McpEndpoint extends McpTools {
     const tokens = scopeTokens(tokenDir)
     const tokenFiles = Object.fromEntries(SCOPES.map((scope) => [scope, tokenFile(tokenDir, scope)]))
     // Agent Workers never read a control token, wherever tokenDir puts them (ADR-0024).
+    // A lead token's file is as secret as the operator's: registered when seen, for the endpoint's lifetime (the CLI issues them while the host runs).
+    const leadFiles = new Map<string, () => void>()
+    const seeLeads = (): ReadonlyMap<string, string> => {
+      const found = leadTokens(tokenDir)
+      for (const project of found.keys()) if (!leadFiles.has(project)) leadFiles.set(project, registerSecretPath(leadTokenFile(tokenDir, project)))
+      return found
+    }
     ctx.effect(() => {
       const unregister = Object.values(tokenFiles).map(registerSecretPath)
-      return () => unregister.forEach((u) => u())
+      seeLeads()
+      return () => {
+        unregister.forEach((u) => u())
+        for (const u of leadFiles.values()) u()
+        leadFiles.clear()
+      }
     })
 
     const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      // The model token reaches only the model gateways, never /mcp.
-      const verdict = guardRequest(req, { tokens: { operator: tokens.operator, client: tokens.client }, allowedHosts })
+      // The model token reaches only the model gateways, never /mcp. A lead token is a client's, with its project (ADR-0076).
+      const verdict = guardRequest(req, { tokens: { operator: tokens.operator, client: tokens.client }, allowedHosts, leads: seeLeads })
       if (!verdict.ok) {
         res.writeHead(verdict.status, { 'content-type': 'text/plain' }).end(verdict.reason)
         return
       }
       const scope = verdict.scope as ToolScope
+      const lead = verdict.lead
       let body: unknown
       try {
         body = await readJsonBody(req, maxBodyBytes)
@@ -146,14 +160,19 @@ export class McpEndpoint extends McpTools {
         res.writeHead((error as { status?: number }).status ?? 400, { 'content-type': 'text/plain' }).end('invalid request body')
         return
       }
-      const denied = this.outOfScope(body, scope)
+      const denied = this.outOfScope(body, scope, lead)
       if (denied) {
         // The MCP authorization error for a token without the scope a call needs.
         res.writeHead(403, { 'content-type': 'application/json', 'www-authenticate': `Bearer error="insufficient_scope", scope="${denied.scope}"` })
-          .end(JSON.stringify({ error: 'insufficient_scope', error_description: `tool ${denied.tool} needs the ${denied.scope} scope` }))
+          .end(JSON.stringify({
+            error: 'insufficient_scope',
+            error_description: lead !== undefined
+              ? `tool ${denied.tool} is the operator's alone: the lead token of project ${lead} (decider ${leadId(lead)}) reaches the client tools and the lead's closed list of decisions, never this`
+              : `tool ${denied.tool} needs the ${denied.scope} scope`,
+          }))
         return
       }
-      const server = this.createServer(scope)
+      const server = this.createServer(scope, lead)
       // Stateless mode needs an explicit `sessionIdGenerator: undefined`; the SDK's option and
       // Transport types are not written for exactOptionalPropertyTypes, hence the boundary casts.
       type TransportOptions = ConstructorParameters<typeof StreamableHTTPServerTransport>[0]
@@ -206,14 +225,14 @@ export class McpEndpoint extends McpTools {
    * validates each call's arguments with the tool's zod schema; `tools/list` is this endpoint's own
    * (`listing`), so what every client pays for each session carries no boilerplate.
    */
-  createServer(scope: ToolScope): McpServer {
+  createServer(scope: ToolScope, lead?: string): McpServer {
     const server = new McpServer({ name: 'system', version: '0.0.0' })
     const listed: ListedTool[] = []
     for (const [name, tool] of this.tools) {
-      const { scope: declared = 'operator', ...spec } = tool.spec
-      if (!visible(declared, scope)) continue
+      const { scope: _scope, lead: _lead, ...spec } = tool.spec
+      if (!visible(tool.spec, scope, lead)) continue
       // The SDK passes (args, extra) to a tool with an input schema and (extra) alone otherwise.
-      const handler = (args: unknown, extra: unknown): ReturnType<ToolHandler> => tool.handler((extra === undefined ? {} : args) as Record<string, unknown>, { scope })
+      const handler = (args: unknown, extra: unknown): ReturnType<ToolHandler> => tool.handler((extra === undefined ? {} : args) as Record<string, unknown>, { scope, ...(lead !== undefined ? { lead } : {}) })
       server.registerTool(name, spec, handler as never)
       listed.push(this.listing(name, tool))
     }
@@ -244,12 +263,12 @@ export class McpEndpoint extends McpTools {
   }
 
   /** The first registered tool a JSON-RPC message (or batch) calls that `scope` may not use. */
-  private outOfScope(body: unknown, scope: ToolScope): { tool: string; scope: ToolScope } | undefined {
+  private outOfScope(body: unknown, scope: ToolScope, lead?: string): { tool: string; scope: ToolScope } | undefined {
     for (const message of Array.isArray(body) ? body : [body]) {
       const call = message as { method?: unknown; params?: { name?: unknown } } | null
       if (call?.method !== 'tools/call' || typeof call.params?.name !== 'string') continue
-      const declared = this.tools.get(call.params.name)?.spec.scope ?? 'operator'
-      if (this.tools.has(call.params.name) && !visible(declared, scope)) return { tool: call.params.name, scope: declared }
+      const spec = this.tools.get(call.params.name)?.spec
+      if (spec && !visible(spec, scope, lead)) return { tool: call.params.name, scope: spec.scope ?? 'operator' }
     }
     return undefined
   }

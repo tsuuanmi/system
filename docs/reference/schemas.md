@@ -205,6 +205,16 @@ guesses.
   turn, and `conversation: new`). A site's own error that is not resent fails as before, at its own
   version, with a candidate `resend` saying why not. Example:
   [`decision.recovery-resend.json`](../../schemas/examples/decision.recovery-resend.json).
+- `decision@1.10` lets the `client` decider decide more than a vote: a project's lead, on its own token,
+  gives an approval or an acceptance as the decider `{ type: client, id: lead:<project> }`
+  ([ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md)).
+  Before it a `client` decider carried its vote (a tie's deciding vote still does, at every version from
+  `@1.1`); from it a `client` decider with no vote is valid, and only at `@1.10`. An `approval`
+  decision (and an `autonomy`, `board`, or `budget` one) may be `@1.4` or `@1.10`: the queue records a
+  lead's verdict as `@1.10` and every other as `@1.4`, so earlier decisions keep their ids. The operator's
+  decider on a verdict or an acceptance is version `2` from the lead principal on; a record at version `1`
+  is from before it and is not migrated. Example:
+  [`decision.approval-lead.json`](../../schemas/examples/decision.approval-lead.json).
 - The dispatch pass's decisions ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md))
   are existing types at their own versions, their rule ids new values: an `admission` (decider rule
   `dispatch.select` version 1) whose candidates are the ready tasks a pass looked at, the one it

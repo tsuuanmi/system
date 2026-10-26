@@ -113,11 +113,11 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       option: zod.string().max(16).describe('One of the tie\'s options, or inconclusive'),
       rationale: zod.string().min(1).max(2000),
     },
-  }, async (args, { scope }) => {
+  }, async (args, { scope, lead }) => {
     try {
-      // The decider is whoever's token it was: a client's vote is the caller's, never the operator's.
+      // The decider is whoever's token it was: a client's vote is the caller's, never the operator's; a lead's is lead:<project> (ADR-0076).
       const by = scope === 'operator' ? 'operator' : 'client'
-      const view = w.vote(String(args.runId), { decision: String(args.decision), option: String(args.option), rationale: String(args.rationale), by })
+      const view = w.vote(String(args.runId), { decision: String(args.decision), option: String(args.option), rationale: String(args.rationale), by, ...(lead !== undefined ? { lead } : {}) })
       return shape(await w.wait(view.runId, 10_000))
     } catch (error) {
       return failure(error)

@@ -569,7 +569,7 @@ export function tieOf(e: Engine, node: NodeRow): Extract<RunView['blocked'], { k
  * tie decision the caller read, as `approve` is bound to a plan. The caller (client scope) or the
  * operator picks an option or `inconclusive`; the decider is whoever's token it was.
  */
-export function vote(e: Engine, runId: string, input: { decision: string; option: string; rationale: string; by: 'client' | 'operator' }): RunView {
+export function vote(e: Engine, runId: string, input: { decision: string; option: string; rationale: string; by: 'client' | 'operator'; lead?: string }): RunView {
   const run = e.runRow(runId)
   if (!run) throw new WorkflowFailure('invalid_input', `unknown run ${runId}`)
   if (!input.rationale.trim()) throw new WorkflowFailure('invalid_input', 'a deciding vote needs its rationale')
@@ -593,9 +593,11 @@ export function vote(e: Engine, runId: string, input: { decision: string; option
       if (input.option !== 'inconclusive' && !tie.options.some((o) => o.option === input.option)) {
         throw new WorkflowFailure('invalid_input', `option ${input.option} is not one of ${tie.options.map((o) => o.option).join(', ')}, or inconclusive`)
       }
+      // A project's lead votes as lead:<project> (ADR-0076): the decider names who, not just that a client did.
+      const id = input.lead !== undefined ? `lead:${input.lead}` : 'workflow.vote'
       conclude(e, run, node, specOf(node), e.nodeRows(runId), input.option === 'inconclusive'
-        ? { method: 'inconclusive', winner: null, by: input.by, id: 'workflow.vote', rationale: input.rationale.slice(0, 2000) }
-        : { method: 'caller-tiebreak', winner: input.option, by: input.by, id: 'workflow.vote', rationale: input.rationale.slice(0, 2000) }, () => lease)
+        ? { method: 'inconclusive', winner: null, by: input.by, id, rationale: input.rationale.slice(0, 2000) }
+        : { method: 'caller-tiebreak', winner: input.option, by: input.by, id, rationale: input.rationale.slice(0, 2000) }, () => lease)
     }
   } finally {
     e.ctx.leases.release(lease)

@@ -142,6 +142,7 @@
 | `repeatedApprovals.enabled` | boolean | `false` | Whether the queue proposes such a change at all; off by default |
 | `repeatedApprovals.approvals` | number (3…100) | `5` | Approvals of one exact studio command, among the requests made in the window, before the queue proposes listing it |
 | `repeatedApprovals.windowSeconds` | number (3600…7776000) | `604800` | The window in seconds: the requests made in it count, and none of the shape may have been rejected or have expired |
+| `devBranches` | Record<string, string[]> | `{}` | The dev branches of each project, by project id: the branches where the project's lead, on its own token (`system lead-token issue`), may approve a merge and accept a result. A branch not listed, and main and master always, stay the operator's; a project not listed has none (ADR-0076) |
 
 ## `artifacts`
 

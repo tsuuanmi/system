@@ -937,6 +937,11 @@ export interface GateRun {
    * prohibition binds and its grant narrows the studio's.
    */
   projectId?: string | undefined
+  /**
+   * The board task the run serves (its brief's, from the engine's own record): a request it asks names
+   * it, so the task's project's lead may give its verdict (ADR-0076). It never changes how a call is judged.
+   */
+  taskId?: string | undefined
   /** The workflow step (node id) the run serves, from the engine's own start: its web calls' decisions name it. */
   nodeId?: string | undefined
   /**
@@ -1209,6 +1214,8 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
         component: 'worker', runId: run.runId, sessionId: run.sessionId,
         // Judged again under the project its verdict was (a research run's, T262).
         ...(researchProject() !== undefined ? { projectId: researchProject()! } : {}),
+        // The board task it serves, so that task's project's lead may answer it (ADR-0076); never judged on.
+        ...(run.taskId ? { taskId: run.taskId } : {}),
         ...(call.callId && call.callId.length <= 128 ? { toolUseId: call.callId } : {}),
       },
       verdict, ...(action.command ? { command: action.command } : {}), classification: run.classification,

@@ -10,6 +10,17 @@ Every route is under `/ui/api` and passes the shared request guard first
 (`content-type: application/json`, else `415`), of at most 16 KiB (else `413`; 128 KiB for
 `policy/propose`). Errors are `{error}`.
 
+A project's **lead token** (`system lead-token issue <project>`,
+[ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md))
+is accepted in place of the operator's, and reaches `approvals` (listing that project's requests only)
+and `approvals/decide`, `reviews` (that project's reviews) and `reviews/<taskId>/decide`; every other
+route answers `403` with the reason. Its verdicts are held to the lead's closed list of rights (commands
+and dispatch starts of its project; merges into, and results accepted on, the project's listed dev
+branches): one outside it answers `403` with the reason and decides nothing. What it decides is recorded
+as the `client` decider `lead:<project>`, and the accepted-result cards say who accepted it and who
+approved its merge (`acceptedBy`, `approvedBy`: operator, lead, or System; "before the lead principal"
+for an older record). A revoked token is `401` at once.
+
 ## Home
 
 One navigation on every page, **Home**, **Board**, **Workers**, **Autonomy policy**, and **Help**, the

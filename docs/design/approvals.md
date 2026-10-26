@@ -52,6 +52,8 @@ verified runs without asking. Code decides, never a model.
 | `get`, `list` | read the queue |
 | `batch(at)` | group open requests into batches by the policy's batch rule |
 | `decide(verdicts)` | the operator's verdicts, each bound to its request's exact subject |
+| `decideAsLead(project, verdicts)` | optional ([ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md)): a project's lead's verdicts, held to its closed list of rights ([below](#the-lead-principal)); recorded as `lead:<project>` |
+| `devBranches(project)` | optional: the branches the project lists as dev branches, where its lead decides merges and results |
 | `withdraw(requestId)` | close a request whose waiting work ended |
 | `sweep(at)` | reject every request unanswered at `at`, then withdraw every open one the loaded policies no longer ask for |
 | `proposePolicy(proposal)` | 1.1, optional: the operator's proposed record, asked as one `policy-change` request on the hash of the set it makes, applied only on approval ([below](#a-policy-change)) |
@@ -707,13 +709,59 @@ replaced.
 - A provider at contract 1.0 (none in the bundle) takes no proposal: its policy changes by
   configuration and a restart.
 
+## The lead principal
+
+Each project's lead acts on its own token, not the operator's
+([ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md),
+PROP-0016 §7 and I2): what it decides is recorded as `lead:<project>`, and what only the operator may
+decide is refused for it by System, never left to the lead's scripts.
+
+- **The token.** `system lead-token issue <project>` writes `lead-<project>.token` beside
+  `operator.token`, owner-only like it; `revoke` removes it, and the host reads the files on each
+  request, so a revoked token is refused at once ([CLI](../reference/cli.md)). To the MCP endpoint and
+  `/ui` it is a `client` token that names its project.
+- **What it reaches.** The client tools (the board moves, answers to Workers), `approvals_decide`, and
+  in `/ui` the approval queue and the reviews of its own project. Every other tool and route is the
+  operator's and is refused for it with the reason (`403`; MCP `insufficient_scope`).
+- **Its rights, a closed list** (`leadMayDecide`; the lead decides these alone, PROP-0016 §7):
+
+  | It may | When |
+  |---|---|
+  | approve or deny a `command` or a `dispatch` start | the request is its project's: its `requester.projectId`, else, for a Worker's command (judged under the studio policy), the board project of the task its `requester.taskId` names, which the gate and the worktree setup record from the run's brief |
+  | approve or deny a `merge` | its project's, and the landing's base branch is one of the project's `devBranches` |
+  | accept or reject a result | its project's, and the run's own acceptance recorded a landing on one of its `devBranches` (`outcome.detail.landing.branch`, written by System) |
+  | move the project's tasks and answer Workers | its token reaches the board and Worker-session tools as a client |
+
+  `devBranches` is a map of project id to branch names in the `approvals` row's configuration; `main`
+  and `master` cannot be listed, and a project not listed has none, so its lead decides no merge or
+  acceptance. A branch that cannot be read is not a listed branch.
+- **What stays the operator's.** A policy or charter change, a merge or push to a protected branch, a
+  deploy beyond the dev live update, a security alert dismissal, an external send, issuing tokens, and
+  every other action class. A call with one verdict off the list is refused whole (`forbidden`, with the
+  reason, `403` on `/ui`): nothing of it is decided. A lead's acceptance carries over what the run's own
+  acceptance recorded of the result (`checks`, `checkRun`, `risk`, `review`, `landing`, and that acceptance
+  with its inputs), so the board judges it on those facts: a result whose required checks passed is
+  accepted on the lead's word, while one whose checks did not pass, and a heavy-tier one, stay the
+  operator's. The board's auto-accept rule, which accepts only the run owner's decision, does not hold a
+  lead's acceptance.
+- **Recorded.** The `approval` decision of a lead's verdict has the decider `{ type: client, id:
+  lead:<project>, version: 1 }`, and its artifacts have the producer `system`, `lead:<project>`; the
+  approval artifact's `by` stays `operator`, as `approval@1.0` allows no other value, and its note starts
+  `[lead:<project>]`. The operator's verdicts have the decider `operator` at **version 2**: a record at
+  version 1 is from before the lead principal, when the lead's scripts used the operator's token. It is
+  not migrated, and `/ui` and the metrics say "before the lead principal".
+- **Read.** The [metrics](maturity-metrics.md) count a lead's verdicts and acceptances as lead touches of
+  the task, and operator decisions per day for the operator principal only. `/ui` shows who decided each
+  accepted result and its merge approval: the operator, a lead, or System.
+
 ## Fail-closed rules
 
-1. Only an operator verdict approves. Expiry and withdrawal only reject.
+1. Only an operator verdict approves, or a project's lead's within the closed list of its rights
+   ([above](#the-lead-principal)). Expiry and withdrawal only reject.
 2. A verdict binds to the exact subject the operator was shown; the request's subject, action,
    and expiry never change after it is created
    ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)).
-3. A verdict comes only from the operator's channel, never from model text
+3. A verdict comes only from the operator's channel or a lead's own token, never from model text
    ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
 4. Every request expires, and an unanswered request is denied.
 5. With `ctx.approvals` unavailable, an action that needs a person waits; one that does not

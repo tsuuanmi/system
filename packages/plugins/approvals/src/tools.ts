@@ -57,7 +57,7 @@ export const INPUTS: Record<ApprovalTool, ToolSpec['inputSchema']> = {
 const DESCRIPTIONS: Record<ApprovalTool, string> = {
   approvals_list: 'List approval requests (default: open and batched), by batch then expiry; a page at a time.',
   approvals_get: 'Read one approval request: its exact subject, action, requester, policy decision, expiry, and resolution.',
-  approvals_decide: 'Verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.',
+  approvals_decide: 'Verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply. A project\'s lead token (decider lead:<project>) may give verdicts only on that project\'s commands and dispatch starts, and merges into its listed dev branches; any other verdict refuses the whole call.',
   approvals_policy: 'The studio autonomy policy, the project\'s when it has one, the effective mode per action class, and the policy set in force.',
   approvals_policy_propose: 'Propose one autonomy policy record. The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.',
 }
@@ -87,9 +87,13 @@ export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handle
       if (!request) throw new ApprovalsError('unknown-request', `no approval request ${String(args.requestId)}`)
       return { request }
     },
-    approvals_decide: async (args, { scope }, check) => {
-      // The host lists and serves this tool to the operator only; a verdict from any other caller is never taken (INV-6).
-      if (scope !== 'operator') throw new ApprovalsError('invalid', 'verdicts come only from the operator')
+    approvals_decide: async (args, { scope, lead }, check) => {
+      // The host lists and serves this tool to the operator, and to a project's lead (ADR-0076), which the queue holds to
+      // its closed list of rights; a verdict from any other caller is never taken (INV-6).
+      if (scope !== 'operator') {
+        if (lead === undefined) throw new ApprovalsError('invalid', 'verdicts come only from the operator')
+        return decided(await approvals.decideAsLead(lead, args.verdicts as Verdict[], new Date(), (results) => check(decided(results))))
+      }
       return decided(await approvals.decide(args.verdicts as Verdict[], new Date(), (results) => check(decided(results))))
     },
     approvals_policy: async (args) => approvals.policy(typeof args.projectId === 'string' ? args.projectId : undefined),
@@ -139,5 +143,6 @@ export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
 /** Contribute the tools to `ctx.mcp` for the queue's lifetime. */
 export function registerTools(ctx: Context, approvals: StoreApprovals): void {
   const behavior = handlers(approvals)
-  for (const name of APPROVAL_TOOLS) ctx.mcp.tool(name, { scope: SCOPES[name], description: DESCRIPTIONS[name], inputSchema: INPUTS[name] }, tool(name, behavior[name]))
+  // `approvals_decide` is the one operator tool a project's lead may call too: the closed list of rights is the queue's (ADR-0076).
+  for (const name of APPROVAL_TOOLS) ctx.mcp.tool(name, { scope: SCOPES[name], ...(name === 'approvals_decide' ? { lead: true as const } : {}), description: DESCRIPTIONS[name], inputSchema: INPUTS[name] }, tool(name, behavior[name]))
 }

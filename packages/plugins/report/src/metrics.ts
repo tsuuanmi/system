@@ -108,6 +108,12 @@ export interface MetricSources {
   decisions: ReadonlyMap<string, DecisionRead>
   /** By workflow run id: the decisions a client (the lead) or the operator made on it. */
   runDecisions: ReadonlyMap<string, RunDecision[]>
+  /**
+   * By request id: the decision that resolved each request a verdict resolved, as read (ADR-0076).
+   * Its decider says who gave the verdict: the operator, or a project's lead (`client`, `lead:<project>`).
+   * A verdict not in it is attributed to the operator, as every verdict was before the lead principal.
+   */
+  verdictBy?: ReadonlyMap<string, DecisionRead>
   /** By task id: when a `board` decision first moved it to `ready`. */
   readyAt: ReadonlyMap<string, string>
   /**
@@ -233,20 +239,34 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
   // The touches recorded on each finished task. A task with a run whose starter is not recorded, or whose
   // decisions were not all read, counts what is recorded: a lower bound of its own touches, so the median
   // over every finished task is still a lower bound of the true median.
-  const touches = new Map<string, { starts: number; decisions: number; operatorStarted: boolean; partial: boolean }>()
+  // Who gave a verdict in the queue (ADR-0076): a project's lead on its own token is a `client` decider; any other reading is the operator's.
+  const verdictByLead = (requestId: string): boolean => sources.verdictBy?.get(requestId)?.deciderType === 'client'
+  // `unmerged`: the same decisions but the lead's merge approvals, which unattended completion allows as it allows the operator's.
+  const touches = new Map<string, { starts: number; decisions: number; unmerged: number; operatorStarted: boolean; partial: boolean }>()
   for (const task of finished) {
     const runs = runsOfTask.get(task.taskId) ?? []
     const starts = runs.filter((r) => r.startedBy === 'lead').length
     const ids = new Set<string>()
+    const merges = new Set<string>()
     for (const r of runs) {
       for (const d of sources.runDecisions.get(r.runId) ?? []) if (d.deciderType === 'client' && ms(d.createdAt) >= ms(task.createdAt) && beforeEnd(d.createdAt)) ids.add(d.id)
     }
+    // The lead's verdicts in the queue on this task's requests, and its acceptance of the task's result, are its touches too.
+    const runIds = new Set(runs.map((r) => r.runId))
+    for (const r of sources.requests) {
+      if (r.resolution?.cause !== 'verdict' || !verdictByLead(r.requestId) || !beforeEnd(r.resolution.at) || ms(r.resolution.at) < ms(task.createdAt)) continue
+      if (r.requester.taskId !== task.taskId && !(r.requester.runId !== undefined && runIds.has(r.requester.runId))) continue
+      ids.add(`request:${r.requestId}`)
+      if (r.action.class === 'merge') merges.add(`request:${r.requestId}`)
+    }
+    const accepting = task.result?.acceptance
+    if (accepting !== undefined && sources.decisions.get(accepting)?.deciderType === 'client') ids.add(accepting)
     const partial = !runs.length || runs.some((r) => r.startedBy === undefined || truncated.has(r.runId))
-    touches.set(task.taskId, { starts, decisions: ids.size, operatorStarted: runs.some((r) => r.startedBy === 'operator'), partial })
+    touches.set(task.taskId, { starts, decisions: ids.size, unmerged: ids.size - merges.size, operatorStarted: runs.some((r) => r.startedBy === 'operator'), partial })
   }
   const unattributed = [...touches.values()].filter((t) => t.partial).length
   const unattributedText = unattributed ? `; ${unattributed} finished task(s) count only the touches recorded: a run of theirs was started before its started entry named who started it, the log no longer holds its start, or its decisions were not all read` : ''
-  const leadGap = 'the lead\'s moves on its own coordination board (accepts, rejects, salvage notes, retries by hand) and its messages to a session leave no System record yet (PROP-0016 I2 records them), so the count misses them'
+  const leadGap = 'the lead\'s moves on its own coordination board (salvage notes, retries by hand) and its messages to a session leave no System record yet, so the count misses them; what the lead decides on its own token (lead:<project>: verdicts in the queue, acceptances) is counted, and decisions it made on the operator\'s token before the lead principal are not told from the operator\'s'
 
   const drafts: Draft[] = []
 
@@ -268,7 +288,7 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
   }
 
   // Lead touches per finished task: the median.
-  const touchSources = ['the board (done tasks)', 'acceptance decisions', 'workflow.run.started (startedBy)', 'decisions on the task\'s runs (client deciders)']
+  const touchSources = ['the board (done tasks)', 'acceptance decisions', 'workflow.run.started (startedBy)', 'decisions on the task\'s runs (client deciders)', 'approval requests (verdicts by a lead principal)']
   if (!finished.length) {
     drafts.push(unmeasurable('lead-touches', 'Lead touches per task', 'touches', 'no task finished in the window', touchSources))
   } else if (unattributed === finished.length) {
@@ -285,7 +305,8 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
 
   // Operator decisions per day: verdicts in the queue, acceptances, and decisions on runs, each once.
   const operatorIds = new Set<string>()
-  const verdicts = sources.requests.filter((r) => r.resolution?.cause === 'verdict' && inWindow(r.resolution.at))
+  // Only the operator principal's: a lead's verdict is a lead touch of its task, never an operator decision (ADR-0076).
+  const verdicts = sources.requests.filter((r) => r.resolution?.cause === 'verdict' && inWindow(r.resolution.at) && !verdictByLead(r.requestId))
   for (const r of verdicts) operatorIds.add(`request:${r.requestId}`)
   let acceptances = 0
   for (const [id, d] of sources.decisions) {
@@ -327,7 +348,7 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
   }
   const touchedByOperator = (task: BoardTask): boolean => {
     const runs = new Set((runsOfTask.get(task.taskId) ?? []).map((r) => r.runId))
-    if (sources.requests.some((r) => r.resolution?.cause === 'verdict' && beforeEnd(r.resolution.at) && r.action.class !== 'merge'
+    if (sources.requests.some((r) => r.resolution?.cause === 'verdict' && !verdictByLead(r.requestId) && beforeEnd(r.resolution.at) && r.action.class !== 'merge'
       && (r.requester.taskId === task.taskId || (r.requester.runId !== undefined && runs.has(r.requester.runId))))) return true
     if (sources.decisions.get(task.result!.acceptance!)?.deciderType === 'operator') return true
     for (const e of reported) {
@@ -348,7 +369,7 @@ export function buildMetrics(period: Period, sources: MetricSources, projectId?:
     let readyNotRead = 0
     const untouched = landed.filter((task) => {
       const t = touches.get(task.taskId)!
-      const known = t.starts + t.decisions > 0 || t.operatorStarted || touchedByOperator(task)
+      const known = t.starts + t.unmerged > 0 || t.operatorStarted || touchedByOperator(task)
       if (!known && t.partial) unknown += 1
       if (!known && !(sources.readyAt.has(task.taskId) && ms(sources.readyAt.get(task.taskId)) <= ms(landedAt.get(task.taskId)))) readyNotRead += 1
       return !known

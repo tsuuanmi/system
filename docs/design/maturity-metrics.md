@@ -45,15 +45,24 @@ run that served the task:
    `startedBy: lead` (MCP `run` or `task`, the CLI, `scripts/sysrun.mjs`). A start by `dispatch`
    is not a touch; a start by the `operator` (Start on `/ui`) is the operator's;
 2. a decision on one of its runs whose decider is a **client**: the lead's own token (a tie's
-   deciding vote, say).
+   deciding vote, say);
+3. what the project's **lead principal** decided on its own token
+   ([ADR-0076](../decisions/adr/0076-the-lead-is-a-principal-of-its-own-with-a-closed-list-of-rights.md)):
+   its verdicts in the approval queue on the task's requests (`approval` decisions whose decider is the
+   `client` `lead:<project>`), and its acceptance of the task's result. Each counts once. A lead's merge
+   approval is a touch, and unattended completion allows it as it allows the operator's.
 
-The operator's decisions are counted apart (operator decisions per day), and are touches for
-unattended completion.
+The operator's decisions are counted apart (operator decisions per day: the **operator principal's**
+verdicts, acceptances, and decisions on runs, never a lead's), and are touches for unattended
+completion. A verdict whose resolving decision cannot be read counts as the operator's, as every verdict
+did before the lead principal; a record from before it (decider `operator` at version 1) is the
+operator's whoever used the token, and a note on the reading says how many there are in the window.
 
-**What it misses, and so why it is a lower bound.** The lead accepts, rejects, notes a salvage, and
-retries by hand on its own coordination board, outside System, and messages a session through the
-client scope. None of that leaves a System record yet: PROP-0016 I2 records the lead's touches. Until
-then the value is a **lower bound** (`bound: lower`), and the reason says what it leaves out.
+**What it misses, and so why it is a lower bound.** The lead notes a salvage and retries by hand on its
+own coordination board, outside System, and messages a session through the client scope. None of that
+leaves a System record yet, and what the lead decided on the operator's token before the lead principal
+is not told from the operator's. Until those records are gone from the window, the value is a **lower
+bound** (`bound: lower`), and the reason says what it leaves out.
 
 **Only before the window's end.** A run started, a decision made, or a verdict given at or after
 the window's end never counts: a later retry or decision leaves an earlier window's reading as it was.
