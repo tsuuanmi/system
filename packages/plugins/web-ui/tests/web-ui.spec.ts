@@ -53,7 +53,9 @@ class StubWorkflow extends Service {
   gone = false
   get(id: string) { return this.gone ? undefined : id === RUN.runId ? RUN : id === CARRIED.runId ? CARRIED : undefined }
   explain(id: string) {
-    if (id === CARRIED.runId) return { runId: id, nodes: [{ nodeId: 'develop:1', state: 'COMPLETED', decisions: [] }, { nodeId: 'review:m1:propose', state: 'COMPLETED', decisions: [{ id: 'sha256:44', type: 'recovery', outcome: 'resend', reasons: ['the site answered the sent prompt with its own error'] }] }] }
+    if (id === CARRIED.runId) return { runId: id, nodes: [{ nodeId: 'develop:1', state: 'COMPLETED', decisions: [] }, { nodeId: 'review:m1:propose', state: 'COMPLETED', decisions: [{ id: 'sha256:44', type: 'recovery', outcome: 'resend', reasons: ['the site answered the sent prompt with its own error'] },
+      // D89: it then ran on the family it should differ from, for want of another.
+      { id: 'sha256:45', type: 'admission', outcome: 'single-family', reasons: ['no Worker of another provider family is admitted'] }] }] }
     return id === RUN.runId ? { runId: id, nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', decisions: [{ id: 'sha256:22', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason'] }] }] } : undefined
   }
   landing() { return undefined }
@@ -850,6 +852,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(folded).toContain('That change was already in its worktree, saved as cccccccccccc; its writing step built on it instead of starting over.')
     expect(folded).toContain('The site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker; never a third time.')
     expect(await happened.getByRole('link', { name: 'its run' }).getAttribute('href')).toBe('?run=run_first')
+    // A step that ran on one provider family is a chip beside the run's state, never folded (D89); the run
+    // page shows it once its decisions are read, so the test waits for it.
+    await expect.poll(() => page.locator('.status-line .chip', { hasText: 'single family' }).count()).toBe(1)
     // Each new word has its "?" (T126); the run is headed by its template with no task; the step reads by member, its id folded.
     for (const word of ['continued from earlier work', 'retried after a service error']) expect(await happened.getByRole('button', { name: `What is ${word}?` }).count(), word).toBe(1)
     const steps = page.locator('ol.timeline > li')

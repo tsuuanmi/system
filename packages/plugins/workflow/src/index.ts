@@ -121,6 +121,7 @@ export class Workflow extends Service {
       grows: z.any().description('Planner policy {maxNodes, capabilities, approvalRequired}; checked by preflight'),
       resultSchema: z.string().description('Schema tag the answer\'s JSON must be valid against (REQ-ART-5)'),
       differentFrom: z.array(z.string()).description('Nodes whose Workers this node\'s Worker must differ from in provider family (ADR-0027)'),
+      diversity: z.union(['required', 'preferred']).description('With differentFrom: required (default) fails closed with no Worker of another family; preferred runs once on their family in a conversation of its own, recorded as a single-family decision its later steps and the answer state (D89)'),
       // Not z.object, for the same reason as grows.
       team: z.any().description('Team policy {kind: brainstorm | review, members, debateRounds}; checked by preflight'),
     }))).default({}).description('Workflow templates by name, added to the built-in ones (a same-named one replaces it)'),

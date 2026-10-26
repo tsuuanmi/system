@@ -101,6 +101,9 @@ export const RESEARCH: NodeTemplate[] = [
     // Two reviews in parallel on different provider families (PROP-0004, ADR-0027). Review A must
     // prove web search; review B is held to its citations, since its provider cannot prove a search.
     // Deep research needs a persistent conversation: each review has its own (`own`), never a shared one.
+    // Review B and the critique prefer another family (`diversity: preferred`, D89): when none can
+    // take them, each runs once on the first family's provider in a fresh conversation, marked
+    // single-family, and every later step and the answer say so; the run never fails or waits for it.
     {
       nodeId: 'literature:1', objective: 'Review the published evidence, with citations (review A)', dependsOn: ['frame:1'], prompt: LITERATURE,
       capabilities: ['reason', 'web-search'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited',
@@ -108,7 +111,7 @@ export const RESEARCH: NodeTemplate[] = [
     },
     {
       nodeId: 'literature:2', objective: 'Review the published evidence, with citations (review B)', dependsOn: ['frame:1'], prompt: LITERATURE,
-      capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited', differentFrom: ['literature:1'],
+      capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited', differentFrom: ['literature:1'], diversity: 'preferred',
       variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'own' } },
     },
     {
@@ -117,7 +120,7 @@ export const RESEARCH: NodeTemplate[] = [
     },
     {
       nodeId: 'critique:1', objective: 'Critique the evidence independently', dependsOn: ['frame:1', 'evidence:1'], prompt: CRITIQUE, capabilities: ['reason'],
-      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', differentFrom: ['evidence:1'],
+      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', differentFrom: ['evidence:1'], diversity: 'preferred',
     },
     {
       nodeId: 'conclusion:1', objective: 'Conclude per hypothesis, citing the evidence', dependsOn: ['frame:1', 'evidence:1', 'critique:1'], prompt: CONCLUDE,

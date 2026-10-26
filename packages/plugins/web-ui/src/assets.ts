@@ -1618,6 +1618,8 @@ export const APP_JS = `'use strict'
     // after a site's own error (ADR-0062), and where its accepted result stands (ADR-0060).
     const carry = run.task && run.task.carry
     const resent = (explain ? explain.nodes : []).flatMap((n) => n.decisions.filter((d) => d.type === 'recovery' && d.outcome === 'resend').map(() => n.nodeId))
+    // A step that ran on the family it should differ from, for want of another (D89): a chip beside its state, never folded.
+    const singleFamily = (explain ? explain.nodes : []).filter((n) => n.decisions.some((d) => d.type === 'admission' && d.outcome === 'single-family')).map((n) => n.nodeId)
     // Its risk tier, by the paths its change touches, and why (ADR-0071): light, normal, or heavy.
     const risk = explain && explain.risk
     const happened = [
@@ -1658,7 +1660,8 @@ export const APP_JS = `'use strict'
       pageHead('run', served ? served.title : run.template + ' run', run.runId),
       served ? el('p', { class: 'muted' }, served.project + (carry && carry.from ? ' · Attempt ' + (carry.from.attempt + 1) + ' of ' + served.attempts.max : '')) : null,
       // Its state as a chip, where it is (unless a card below says what it waits on), when it started, and Stop run or Retry.
-      el('div', { class: 'status-line' }, runChip(run), run.blocked ? null : el('span', {}, where), el('span', { class: 'muted' }, 'started ', ago(run.createdAt))),
+      el('div', { class: 'status-line' }, runChip(run), singleFamily.length ? [' ', el('span', { title: singleFamily.map(stepName).join(', ') + ': on one provider family, no Worker of another could take it' }, chip('single family', 'warn'))] : null,
+        run.blocked ? null : el('span', {}, where), el('span', { class: 'muted' }, 'started ', ago(run.createdAt))),
       // Stop run or Retry failed step under it; on a phone the page's primary action is a bar at the bottom of the screen,
       // in reach of a thumb (T240): the plan's verdict when it waits on one, else this row.
       run.status === 'running' || run.status === 'failed' ? el('div', { class: 'actions run-actions' + (planWaits ? '' : ' bar') },

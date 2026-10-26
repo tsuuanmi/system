@@ -64,6 +64,14 @@ export interface NodeTemplate {
    */
   differentFrom?: string[]
   /**
+   * How firmly `differentFrom` holds. `required` (the default): with no Worker of another family the
+   * step fails closed (ADR-0027), unless the operator's `allowSameFamily` lets it run on one
+   * (ADR-0029). `preferred`: it then runs once on the family of the steps it differs from, in a
+   * conversation of its own, recorded as a `single-family` decision that its later steps and the
+   * run's answer state; the run never fails or waits for the other family (./single-family.ts, D89).
+   */
+  diversity?: 'required' | 'preferred'
+  /**
    * A source step (PROP-0004 Phase 4), run by the engine and no Worker: the caller's repository at
    * one pinned commit, or else the caller's text, as line-numbered files a review quotes. Its
    * result renders as `{{node:<id>}}`.
@@ -372,6 +380,9 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
     }
     if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)
+    }
+    if (node.diversity !== undefined && (!['required', 'preferred'].includes(node.diversity) || !node.differentFrom?.length)) {
+      throw new TypeError(`node ${node.nodeId}: diversity is required or preferred, on a node with differentFrom`)
     }
     for (const dep of node.dependsOn ?? []) if (!byId.has(dep)) throw new TypeError(`node ${node.nodeId} depends on unknown node ${dep}`)
     for (const other of node.differentFrom ?? []) {

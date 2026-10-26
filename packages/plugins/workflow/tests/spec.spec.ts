@@ -93,6 +93,13 @@ describe('workflow specs', () => {
     expect(() => preflight([node('t', { team: { kind: 'brainstorm' } }), node('b', { dependsOn: ['t'], prompt: '{{node:t}}', differentFrom: ['t'] })])).toThrow('node b differs from team t, which has several Workers')
   })
 
+  it('takes diversity only on a node that differs from another, as required or preferred (D89)', () => {
+    expect(() => preflight([node('a'), node('b', { differentFrom: ['a'], diversity: 'preferred' }), node('c', { dependsOn: ['a', 'b'] })])).not.toThrow()
+    expect(() => preflight([node('a'), node('b', { differentFrom: ['a'], diversity: 'required' }), node('c', { dependsOn: ['a', 'b'] })])).not.toThrow()
+    expect(() => preflight([node('a', { diversity: 'preferred' })])).toThrow('node a: diversity is required or preferred, on a node with differentFrom')
+    expect(() => preflight([node('a'), node('b', { differentFrom: ['a'], diversity: 'sometimes' as never }), node('c', { dependsOn: ['a', 'b'] })])).toThrow('node b: diversity is required or preferred')
+  })
+
   it('records where each value came from, and hashes what was admitted (REQ-WF-2)', () => {
     const nodes = [node('a', { callerTier: true, tier: 'economy' }), node('b', { dependsOn: ['a'] })]
     const asked = resolve('t', nodes, { tier: 'frontier' })

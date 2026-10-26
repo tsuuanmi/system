@@ -128,6 +128,20 @@ provider family than the Workers that served those nodes
   the node's decisions, and the run's answer starts with a line naming those steps (`Same
   provider family (allowSameFamily): …`; a team says it in its own answer). Off by default:
   then the node fails as above.
+- A node may set `diversity: preferred` (default `required`; operator decision D89, for a
+  provider that is often down, such as Gemini web). With no Worker of another family admitted,
+  it routes again without the family rule, still without the Workers that failed it, and runs
+  in a conversation of its own; an `admission` decision (`workflow.diversity`, outcome
+  `single-family`) names why. When the Worker of another family that took it fails its
+  execution, sent or not (a stall, the infrastructure, the site's own error), a `recovery`
+  decision `single-family` readies it again at once, before any retry, failover, or resend, with
+  that Worker and its account left out for good (never resent there) and, for an `own`
+  conversation, a new session; it then routes as above. Once per step: an attempt that was the
+  fallback ends the step on any failure, and once a fallback was admitted the family rule is
+  never lifted again, at any escalation: a fallback whose result was rejected escalates only onto
+  another family, if one is admitted, or the step fails. Each later step built on it is told in its brief (`Single family: …`),
+  and the run's answer starts with `Single family: …`. It decides before `allowSameFamily`, and
+  never applies to a team member or a heavy change's second review (`./single-family.ts`).
 - If a named node failed, the node sends nothing and the run fails on that node. If a named
   node's Worker declares no family or is no longer listed, no Worker can be shown to differ:
   the node fails as `config_error`, with nothing sent (fail closed). With only Workers of the
