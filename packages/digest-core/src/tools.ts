@@ -43,7 +43,7 @@ const DESCRIPTIONS: Record<DigestTool, string> = {
 }
 
 /** Checks the output a call would give: `digests_request` runs it before its request is recorded. */
-export type OutputCheck = (output: DigestView) => void
+type OutputCheck = (output: DigestView) => void
 type Handler = (args: Record<string, unknown>, check: OutputCheck) => Promise<DigestView>
 
 /** The output a call would give, refused by its schema before its request was recorded. */
