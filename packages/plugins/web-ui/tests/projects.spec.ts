@@ -157,14 +157,14 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await card.locator('details.card-details').textContent()).toContain('Forproject project p1No responsedenied')
     expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     // Who asked, what it is about, what each verdict does, the request's id, its exact expiry, and the board's sweep are under one closed Details, never dropped (T171, T186).
-    for (const folded of ['Asked by', 'charter version 1 of project p1', 'Cannot be undone.', 'request ' + approvalRequest]) expect(text, folded).not.toContain(folded)
+    for (const folded of ['Asked by', 'charter version 1 of project p1', 'Cannot be undone.', 'request apr-']) expect(text, folded).not.toContain(folded)
     expect(await card.locator('details.card-details').getAttribute('open')).toBeNull()
     await card.getByText('Details', { exact: true }).click()
     const opened = await card.innerText()
     for (const said of ['Asked by the board of project project p1', 'charter version 1 of project p1',
       '2 proposed task(s) go through the autonomy policy. No run starts by itself.', 'is closed as abandoned, and 2 open task(s) are cancelled. Cannot be undone.',
-      'request ' + approvalRequest, 'The board activates it on its next sweep, within a minute']) expect(opened, said).toContain(said)
-    expect(await card.locator('button.copy', { hasText: 'Copy request ID' }).getAttribute('data-copy')).toBe(approvalRequest)
+      'request apr-', 'The board activates it on its next sweep, within a minute']) expect(opened, said).toContain(said)
+    expect(await card.getByRole('button', { name: 'Copy request ID' }).getAttribute('data-copy')).toBe(approvalRequest)
     await card.getByRole('textbox', { name: 'Note (optional)' }).fill('go')
     // Approve / Deny, each described by what it does to the project (T191).
     expect(await decisionsIn(card)).toEqual([{ label: 'Approve', description: 'activates the project' }, { label: 'Deny', description: 'abandons the project' }])
@@ -175,7 +175,9 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(request).toMatchObject({ state: 'approved', resolution: { cause: 'verdict' } })
     // What happens next in sight; the request and approval record ids under Record IDs.
     expect(await outcome.innerText()).toContain('The board activates project project p1 on its next sweep')
-    expect(await outcome.textContent()).toContain(`Recorded as your verdict on request ${approvalRequest} (approval record ${request!.resolution!.approval})`)
+    // Its ids shortened, each whole behind its copy button (T256).
+    expect(await outcome.textContent()).toContain('Recorded as your verdict on request apr-')
+    expect(await outcome.locator('button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toEqual([approvalRequest, request!.resolution!.approval])
     expect(ctx.artifacts.get(request!.resolution!.approval!)!.body).toMatchObject({ verdict: 'approved', by: 'operator', note: 'go' })
     // The queue no longer lists it; the board's next sweep activates the project.
     await expect.poll(() => page.locator('main').innerText()).toContain('No approvals needed.')
@@ -197,7 +199,10 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     const page = await browser.newPage()
     await page.goto(`${origin}/ui/#token=${OPERATOR}`)
     const waiting = page.getByRole('region', { name: 'Needs your attention', exact: true })
-    await expect.poll(() => waiting.innerText()).toMatch(/Reviews · 1\s+first expires in \d+ (h|min|days)/)
+    // When it expires: a day away, beside its name under the tile's Names; in sight only within the hour (T239, T256).
+    await expect.poll(() => waiting.innerText()).toContain('Reviews · 1')
+    expect(await waiting.innerText()).not.toContain('first expires')
+    expect(await waiting.textContent()).toMatch(/· expires in \d+ (h|min|days)/)
     // Above the Reviews, folded until within the hour (T239).
     expect(await page.getByRole('region', { name: 'Reviews' }).textContent()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
   }, 60_000)
@@ -240,8 +245,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await column('Review').innerText()).toContain('Fix the slow image build')
     expect(await column('Needs your attention').innerText()).toContain('Merge the login fix')
     const card = column('Working').getByRole('article', { name: 'Research the hosting options' })
-    // Which account and role took it, and for how long (T119).
-    expect(await card.innerText()).toMatch(/Conformance · standard · standard, <1 min/)
+    // Which account and role took it, when it last changed, and for how long (T119; its meta line, T256).
+    expect(await card.innerText()).toMatch(/Conformance · standard · standard · <1 min ago\nfor \d+ s/)
     await card.getByRole('link', { name: 'Open the run of Research the hosting options' }).click()
     // A task's run is headed by its task's title, its project below, its run id behind a copy button (T141, T171).
     await expect.poll(() => page.getByRole('heading', { name: 'Research the hosting options', exact: true }).count()).toBe(1)
@@ -361,7 +366,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await asked.locator('.line').innerText()).toContain('task "Band the inner loop"')
     expect(await asked.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny'])
     expect(await asked.innerText()).not.toContain('bbbbbbbbbbbb')
-    expect(await asked.textContent()).toContain('branch ' + branch + ' at bbbbbbbbbbbb, onto the base at aaaaaaaaaaaa')
+    expect(await asked.textContent()).toContain('branch ' + branch + ' at bbbbbbbb…, onto the base at aaaaaaaa…')
     await asked.getByText('Details', { exact: true }).click()
     expect(await asked.innerText()).toContain('the accepted change of "Band the inner loop" · not pushed')
     expect(await asked.innerText()).toContain('Asked by the run of the task "Band the inner loop"')
@@ -376,7 +381,8 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     await waiting.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await ctx.approvals.get(request.requestId))?.state).toBe('approved')
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('Approved: ')
-    expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
+    expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request apr-')
+    expect((await page.locator('#outcome button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy'))))).toContain(request.requestId)
   }, 60_000)
 
   headlessIt('pauses a project in a real browser only after a confirmation that says what a pause does, and closes it after one that counts what a close cancels; Cancel moves nothing', async () => {

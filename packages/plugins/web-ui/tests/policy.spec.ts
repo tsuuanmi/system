@@ -236,7 +236,7 @@ describe('web UI: the policy page in a real browser', () => {
     // The queue entry shows the change it asks for, then the operator approves it there.
     await page.getByRole('link', { name: 'system' }).click()
     const queue = page.getByRole('region', { name: 'Approval queue' })
-    const entry = queue.locator('article', { hasText: `request ${request!.requestId}` })
+    const entry = queue.locator(`#request-${request!.requestId}`)
     // What a verdict does is under the card's Details (T186); Show change is beside the two verdicts, never folded.
     await expect.poll(() => entry.locator('details.card-details > summary').count()).toBe(1)
     await entry.locator('details.card-details > summary').click()
@@ -251,7 +251,7 @@ describe('web UI: the policy page in a real browser', () => {
       { label: 'Show change', description: 'shows what this request changes, below; decides nothing' }])
     await entry.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
-    await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request!.requestId)
+    await expect.poll(async () => (await page.locator('#outcome button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy'))))).toContain(request!.requestId)
     expect(await page.locator('#outcome').innerText()).toContain('Approved: ')
     await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: 'Autonomy policy' }).click()
     await expect.poll(() => page.locator('main').innerText()).toContain('Active policy · Approved change')
@@ -276,7 +276,7 @@ describe('web UI: the policy page in a real browser', () => {
     expect(main).not.toContain('it waits for your approval on Home')
     expect(await page.locator('details', { hasText: 'About modes' }).textContent()).toContain('Ask approval: it waits for your approval on Home')
     expect(await page.locator('details', { hasText: 'Exact set' }).getAttribute('open')).toBeNull()
-    const card = waiting.locator('article', { hasText: `request ${request.requestId}` })
+    const card = waiting.locator(`#request-${request.requestId}`)
     // One line and two buttons (T186); what a verdict does, what it is about, and the set's hashes under its closed Details.
     // A policy change's card keeps its diff one press away, beside the two verdicts (T186).
     expect(await card.getByRole('button').allInnerTexts()).toEqual(['Approve', 'Deny', 'Show change'])
@@ -302,10 +302,12 @@ describe('web UI: the policy page in a real browser', () => {
     await card.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect.poll(async () => (await booted.ctx.approvals.policy()).set?.source).toBe('store')
     expect((await booted.ctx.approvals.policy()).set?.changeId).toBe(change.changeId)
-    await expect.poll(() => page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request ' + request.requestId)
+    await expect.poll(async () => (await page.locator('#outcome button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy'))))).toContain(request.requestId)
     // Re-rendered: nothing waits any more, and the change is in force.
     await expect.poll(() => page.locator('main').innerText()).toContain('Active policy · Approved change')
-    expect(await page.locator('details', { hasText: 'Exact set' }).textContent()).toContain(`The change ${change.changeId} you approved`)
+    const exactSet = page.locator('details', { hasText: 'Exact set' })
+    expect(await exactSet.textContent()).toContain('The change pch-')
+    expect(await exactSet.locator('button.copy').first().getAttribute('data-copy')).toBe(change.changeId)
     expect(await waiting.count()).toBe(0)
   }, 60_000)
 
@@ -361,7 +363,8 @@ describe('web UI: the policy page in a real browser', () => {
     const change = ((await booted.call('policy')).value.changes as PolicyChange[])[0]!
     // What is next in sight; the change and request ids under Record IDs.
     expect(await page.locator('#outcome').innerText()).toContain('Approval needed — nothing changes until you approve it')
-    expect(await page.locator('#outcome').textContent()).toContain(`Recorded as change ${change.changeId}; request ${request!.requestId}.`)
+    expect(await page.locator('#outcome').textContent()).toContain('Recorded as change pch-')
+    expect(await page.locator('#outcome button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toEqual([change.changeId, request!.requestId])
     expect(change.policy).toMatchObject({ version: 2, commands: ['pnpm lint', 'pnpm test'], expiry: { defaultSeconds: 43_200 }, batch: { maxSize: 5, maxWaitSeconds: 1800 } })
   }, 60_000)
 })

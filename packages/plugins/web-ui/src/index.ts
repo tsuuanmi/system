@@ -56,6 +56,10 @@ export const LIVE_RUNS = 50
  */
 export const WAITING_RUNS = 50
 const WAITING_READ = 100
+/** Steps of one run whose start and end a run's page reads from the event log at most (T256); a team run has a few dozen. */
+export const STEPS_TIMED = 200
+/** When a step's current attempt started, and, once it is done or failed, when it ended (T256). */
+export interface StepTiming { startedAt: string; endedAt?: string }
 /** Workers named per step of a start's preview, free and busy each. */
 export const LIKELY_WORKERS = 8
 /** Accepted results on their way into the repository that the reviews list, the latest first. */
@@ -866,6 +870,44 @@ export function apply(ctx: Context, config: Config = {}): void {
     return json(res, 200, { runId, change, assessments, ...(report ? { report } : {}), ...(landing && landing.state !== 'none' ? { landing: landingCard(landing).landing } : {}) })
   }
 
+  /**
+   * When each step of a run started and ended (T256), for its page's timings: the step's latest
+   * `workflow.node.started` (its current attempt's), and, for a step that is done or failed, its latest
+   * `workflow.node.completed` or `workflow.node.failed` at or after that start. Read newest first, one
+   * entry per type and step (bounded, T127); a log that is not mounted or cannot be read is `{unknown}`
+   * with why, never a run with no timings (INV-2).
+   */
+  const stepTimings = (run: { runId: string; nodes: Array<{ nodeId: string; state: string }> }): { value: Record<string, StepTiming> } | { unknown: string } => {
+    const eventLog = ctx.get('eventLog' as never) as EventReads | undefined
+    if (!eventLog) return { unknown: 'the event log (ctx.eventLog) is not mounted' }
+    try {
+      const latest = (type: string, nodeId: string): string | undefined => newestFirst(eventLog.query({ type, runId: run.runId, nodeId, order: 'desc', limit: 1 }))[0]?.at
+      const value: Record<string, StepTiming> = {}
+      for (const node of run.nodes.slice(0, STEPS_TIMED)) {
+        const startedAt = latest('workflow.node.started', node.nodeId)
+        if (!startedAt) continue
+        const ended = node.state === 'COMPLETED' ? latest('workflow.node.completed', node.nodeId) : node.state === 'FAILED' ? latest('workflow.node.failed', node.nodeId) : undefined
+        value[node.nodeId] = { startedAt, ...(ended && ended >= startedAt ? { endedAt: ended } : {}) }
+      }
+      return { value }
+    } catch (error) {
+      return { unknown: `the event log could not be read: ${(error as Error).message.slice(0, 200)}` }
+    }
+  }
+
+  /** Each decision of a run's explanation with when it was made (its artifact's `createdAt`), when the artifact store is mounted (T256). */
+  const decisionTimes = <E extends { nodes: Array<{ decisions: Array<{ id: string }> }> }>(explain: E): E => {
+    const artifacts = ctx.get('artifacts')
+    if (!artifacts) return explain
+    return {
+      ...explain,
+      nodes: explain.nodes.map((n) => ({ ...n, decisions: n.decisions.map((d) => {
+        const at = (artifacts.get(d.id as ArtifactRef) as { createdAt?: unknown } | undefined)?.createdAt
+        return typeof at === 'string' ? { ...d, at } : d
+      }) })),
+    }
+  }
+
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const refused = refuse(req)
     if (refused) return json(res, refused[0], { error: refused[1] })
@@ -888,7 +930,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     const [, runId, action] = match as unknown as [string, string, string | undefined]
     if (!action && req.method === 'GET') {
       const run = workflow.get(runId)
-      return run ? json(res, 200, { run, explain: workflow.explain(runId) }) : json(res, 404, { error: `unknown run ${runId}` })
+      if (!run) return json(res, 404, { error: `unknown run ${runId}` })
+      const explain = workflow.explain(runId)
+      return json(res, 200, { run, explain: explain ? decisionTimes(explain) : explain, timings: stepTimings(run) })
     }
     if (action === 'review') return req.method === 'GET' ? review(res, runId) : json(res, 405, { error: 'method not allowed' })
     if (!action || req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

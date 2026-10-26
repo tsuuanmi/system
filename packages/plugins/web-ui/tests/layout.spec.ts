@@ -36,7 +36,7 @@ const launch = async (): Promise<Browser> => {
 
 /** A page at this width, signed in with the operator's token. */
 async function at(browser: Browser, origin: string, width: number): Promise<Page> {
-  const context = await browser.newContext({ viewport: { width, height: width >= 1280 ? 800 : 740 } })
+  const context = await browser.newContext({ viewport: { width, height: width === 1920 ? 1080 : width >= 1280 ? 800 : 740 } })
   const page = await context.newPage()
   await opened(page, `${origin}/ui/#token=${OPERATOR}`)
   return page
@@ -82,7 +82,8 @@ describe('web UI: clearer at a glance (T239)', () => {
     const { origin, pages } = await busyBoard()
     const browser = await launch()
     let words = 0
-    for (const width of [1280, 360]) {
+    // At 1920 px too, for the design note's screenshots of the full-width grid (T256); the words are counted at 1280×800.
+    for (const width of [1920, 1280, 360]) {
       const page = await at(browser, origin, width)
       await opened(page, origin + pages.board)
       if (width === 1280) noteWords('board', words = await wordsInSight(page))

@@ -297,9 +297,12 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.getByRole('list', { name: 'Required checks' }).innerText()).toBe('tests: ▲ Pending\nlint: ▲ Pending')
     expect(await card.getByRole('list', { name: 'Reviewers\' verdicts' }).innerText()).toBe('● Approved · w:standard')
     expect(await card.locator(':scope > .actions').getByRole('button').allInnerTexts()).toEqual(['Accept', 'Send back'])
-    // Its title, then one line of context (T239); what no response does is under its Details.
+    // Its title, then one line of context (T239): when it expires; its project is its group's heading on Home, so the line
+    // does not say it again (T256), and it is under its Details with what no response does.
     expect(await card.locator('.line').innerText()).toBe('Keep the rate-limit header')
-    expect(await card.locator('.meta').innerText()).toMatch(/^Project project p1 · Expires in .+$/)
+    expect(await card.locator('.meta').innerText()).toMatch(/^Expires in .+$/)
+    expect(await page.getByRole('region', { name: 'Project project p1', exact: true }).getByRole('article', { name: 'Keep the rate-limit header' }).count()).toBe(1)
+    expect(await card.locator('details.card-details').textContent()).toContain('project project p1 · task ')
     expect(await card.locator('details.card-details').textContent()).toContain('No response: it waits for input')
     // The long texts are under one Details, closed by default: the diff, the findings, the report, why each check is pending.
     expect(await card.locator('details.card-details').getAttribute('open')).toBeNull()
@@ -316,7 +319,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     expect(await card.innerText()).toContain('tests: ▲ Pending — the run recorded no result of it')
     expect(await card.innerText()).toContain('lint: ▲ Pending — the run recorded no result of it')
     const change = card.getByRole('group', { name: `Change on system/run/${run.runId}` })
-    expect(await change.locator('.stat').innerText()).toBe(`3 files changed +251 −1 · on system/run/${run.runId}, against main at aaaaaaaaaaaa`)
+    expect(await change.locator('.stat').innerText()).toBe(`3 files changed +251 −1 · on system/run/${run.runId}, against main at aaaaaaaa…`)
     // Each file folded: opened, its diff in lines; a long one shows its first 200 lines, then all.
     expect(await change.innerText()).not.toContain('return { limit, header }')
     await change.locator('summary', { hasText: 'src/limits.ts' }).click()
@@ -353,7 +356,7 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     landing({ state: 'committed', head: 'b'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) } })
     const accepted = page.getByRole('region', { name: 'Accepted, on their way in' }).getByRole('article', { name: 'Accepted: Keep the rate-limit header' })
     await expect.poll(() => accepted.count(), { timeout: 15_000 }).toBe(1)
-    expect(await accepted.innerText()).toContain(`Accepted and committed on system/run/${run.runId} as bbbbbbbbbbbb; its merge request comes next`)
+    expect(await accepted.innerText()).toContain(`Accepted and committed on system/run/${run.runId} as bbbbbbbb…; its merge request comes next`)
     landing({ state: 'asked', head: 'b'.repeat(40), base: { branch: 'main', sha: 'a'.repeat(40) }, requestId: 'apr-merge-1' })
     await expect.poll(() => accepted.innerText(), { timeout: 15_000 }).toContain('Accepted — waiting to merge into main: approve')
     expect(await accepted.getByRole('link', { name: 'approve', exact: true }).getAttribute('href')).toBe('/ui/?request=apr-merge-1')

@@ -1,0 +1,12 @@
+---
+"@tsuuanmi/system-web-ui": minor
+---
+
+The operator's web UI, round 2 (T256; rules in `docs/design/web-ui.md`):
+- Pages are full width, with no maximum width. Home, a run's page, and Workers are laid out on a responsive grid: the list in the main column, a summary beside it from 900 px, and a third column on Home from 1600 px. Below 900 px there is one column, and the phone layout (T240) is unchanged. Prose alone is capped at 75 characters.
+- "Started by itself" (dispatch's own starts) moves to the bottom of Home as a table: task, state chip, Worker, run time, started. Each task has one row, with its attempts folded into the row. The newest 5 tasks are shown, then "Show all".
+- Every step on a run's page shows how long it ran and when it ended ("develop:1 · 14 min · done 07:42"). A running step's elapsed time ticks. The exact start and end show on hover and focus, and also under the step's Details. A run that ended says how long it took, and every run with timed steps shows a timeline bar of its steps. `GET /ui/api/runs/<id>` now also returns `timings`, each step's start and end read from the event log (`{unknown}` with why when the log is missing or fails), and each decision's `at`.
+- "How it was decided" lists one line per decision (type · outcome · time), and its reasons open on click. The decisions about a deferred tool call (its wait, then its continue or deny) collapse into one line per call ("1 tool call approved by you · 2 min"). Long hashes, ids, commits, branches, and paths are shortened wherever they show, sentences included, with the full value on hover and behind a small copy icon; an approval's exact subject stays whole.
+- A Board card's meta line keeps only the Worker and the time. Its project, kind of work, template, and attempt are its tooltip and are also under its Details.
+- Inside a project's group on Home, a review card no longer repeats the project, and a review tile says when the first review expires only within the hour (else beside each name), which brings Home with two projects to 67 words on its first screen, from 84. Each project's weekly report and maturity metrics have a small page of their own (`/ui/?view=reports&project=<id>`), linked from the project's group on Home and from its Details on the Board.
+- Visual system: neutral surfaces with one accent colour, thin borders and no shadows, an 8 px spacing grid, three type sizes in system fonts, and one status chip style. Every colour, space, type size, and radius is a CSS variable, defined once.

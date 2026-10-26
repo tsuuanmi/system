@@ -19,11 +19,20 @@ with **Try again** when a page never loaded, a confirmation only before a destru
   by project, each group headed by the project's name and its own count tiles, the most urgent
   first (what expires within the hour, then the most that waits, then the earliest deadline), what
   is in no project under *Other*, a batch whole in its first request's project; a project's name
-  filters Home to it, its recent runs too (`/ui/?project=<id>`, until **All projects**); each project's group holds its
-  weekly report and its metrics under **Reports**, as the commands that print them (`system report
+  filters Home to it, its recent runs too (`/ui/?project=<id>`, until **All projects**); each project's
+  weekly report and its metrics have a small page of their own (T256, `/ui/?view=reports&project=<id>`,
+  linked as **Reports** beside its group's name), a table of the commands that print them (`system report
   --project <id>`, `system metrics --project <id>`) with copy buttons. The Board shows one project
   at a time, or **All projects** as each project's counts only; the Workers page stays shared, each
   step a Worker runs naming its run's project.
+- **Round 2** (T256): every page full width, Home, a run, and Workers on a responsive grid (a side
+  column from 900 px, a third column on Home from 1600 px, one column below 900 px), prose capped at
+  75 characters; each step's run time and when it ended (a running step's ticking), a run's total
+  and a timeline bar, from `timings` in `GET runs/<id>` (each step's latest start and end in the
+  event log, `{unknown}` with why without one) and each decision's `at`; one line per decision, its
+  reasons on a click, a deferred call's wait and verdict one line; *Started by itself* a table at
+  the bottom of Home, one row per task; long hashes, ids, and paths shortened behind copy buttons;
+  every colour, space, type size, and radius a CSS variable written once (`tests/round2.spec.ts`).
 - **Home**, a dashboard: what needs the operator's attention and they can act on (open approval
   requests, reviews held for them, runs that wait for their own move or failed outside the board
   since they last looked, each a tile with its label and its count, *Approvals · 3*, linked, then named one by one

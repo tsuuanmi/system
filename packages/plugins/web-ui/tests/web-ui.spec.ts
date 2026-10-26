@@ -471,7 +471,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // A batch by its size, its id folded behind its copy button (T171).
     const batch = queue.getByRole('region', { name: 'Batch batch-1' })
     await expect.poll(() => batch.getByRole('heading', { level: 3 }).first().innerText()).toMatch(/^2 related requests/)
-    expect(await batch.locator('button.copy', { hasText: 'Copy batch ID' }).getAttribute('data-copy')).toBe('batch-1')
+    expect(await batch.locator('button.copy[aria-label="Copy batch ID"]').getAttribute('data-copy')).toBe('batch-1')
     for (const text of ['merge apr-1', 'the branch lands on main', 'deploy', 'content board-task:apr-1:attempt:0 @ approval-needed', 'Decided one by one',
       'Allow a merge step: merge apr-1', 'batch-1']) {
       expect(await queue.getByText(text, { exact: true }).count(), text).toBeGreaterThan(0)
@@ -518,7 +518,8 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     // The result counted, what happens next for each; the records' ids folded.
     await expect.poll(() => page.locator('#outcome').innerText()).toContain('2 approved')
     expect(await page.locator('#outcome').innerText()).not.toContain('approval record')
-    expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request apr-1 (approval record sha256:')
+    expect(await page.locator('#outcome').textContent()).toContain('Recorded as your verdict on request apr-1 (approval record ')
+    expect((await page.locator('#outcome button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).some((id) => id?.startsWith('sha256:'))).toBe(true)
     await thirdDeny.click()
     await expect.poll(() => approvals().calls.length).toBe(2)
     expect(approvals().calls[1]![0]).toEqual([{ requestId: 'apr-3', subject: QUEUE[2]!.subject, verdict: 'rejected' }])
@@ -676,7 +677,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await runs.count()).toBe(5)
     await look.getByRole('button', { name: 'Show all 8' }).click()
     await expect.poll(() => runs.count()).toBe(8)
-    for (let i = 1; i <= 7; i++) expect(await look.locator('button.copy', { hasText: 'Copy run ID' }).evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toContain(`run_f${i}`)
+    for (let i = 1; i <= 7; i++) expect(await look.getByRole('button', { name: 'Copy run ID' }).evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toContain(`run_f${i}`)
 
     // A refresh keeps both lists as the operator left them.
     await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); document.querySelector('main section[aria-label="Since you last looked"]')!.setAttribute('data-old', '1') })
@@ -807,6 +808,11 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(await page.locator('details', { hasText: 'How it was decided (1)' }).getAttribute('open')).toBeNull()
     expect(await page.getByText('proves reason').isVisible()).toBe(false)
     await steps.nth(0).locator('summary', { hasText: 'Details' }).click()
+    // One line a decision, its type and outcome (T256); its reasons open on a click of that line.
+    const decided = steps.nth(0).getByRole('list', { name: 'How it was decided' }).locator(':scope > li')
+    expect(await decided.allInnerTexts()).toEqual(['route · worker:a/standard'])
+    expect(await page.getByText('proves reason').isVisible()).toBe(false)
+    await decided.first().locator('summary').click()
     expect(await page.getByText('proves reason').isVisible()).toBe(true)
     expect(await page.getByText('sha256:00').isVisible()).toBe(false)
     await page.getByText('Technical details', { exact: true }).click()
@@ -846,10 +852,10 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const said = await happened.innerText()
     expect(said).toContain('Continued from attempt 1 (its run)')
     expect(said).toContain('Team member 1\'s answer: retried once after a service error.')
-    expect(said).toContain('Accepted and merged into main as eeeeeeeeeeee · not pushed')
+    expect(said).toContain('Accepted and merged into main as eeeeeeee… · not pushed')
     expect(said).not.toContain('worktree')
     const folded = await happened.textContent()
-    expect(folded).toContain('That change was already in its worktree, saved as cccccccccccc; its writing step built on it instead of starting over.')
+    expect(folded).toContain('That change was already in its worktree, saved as cccccccc…; its writing step built on it instead of starting over.')
     expect(folded).toContain('The site answered with its own error instead of an answer, so it was sent again once, in a new conversation on the same Worker; never a third time.')
     expect(await happened.getByRole('link', { name: 'its run' }).getAttribute('href')).toBe('?run=run_first')
     // A step that ran on one provider family is a chip beside the run's state, never folded (D89); the run
@@ -973,8 +979,9 @@ describe('web UI: clearer at a glance (T239)', () => {
     const browser = await chromium.launch(headlessLaunchOptions())
     onTestFinished(() => browser.close())
     const words: Record<string, number> = {}
-    for (const width of [1280, 360]) {
-      const context = await browser.newContext({ viewport: { width, height: width === 1280 ? 800 : 740 }, timezoneId: 'UTC', locale: 'en-GB' })
+    // At 1920 px too, for the design note's screenshots of the full-width grid (T256); the words are counted at 1280×800.
+    for (const width of [1920, 1280, 360]) {
+      const context = await browser.newContext({ viewport: { width, height: width === 1920 ? 1080 : width === 1280 ? 800 : 740 }, timezoneId: 'UTC', locale: 'en-GB' })
       const page = await context.newPage()
       await page.clock.setFixedTime(NOW)
       await opened(page, `${origin}/ui/#token=${token}`)
@@ -982,6 +989,8 @@ describe('web UI: clearer at a glance (T239)', () => {
         await opened(page, origin + path)
         if (width === 1280) noteWords(name, words[name] = await wordsInSight(page))
         await shoot(page, `${name}-${width}`)
+        // Home in the dark theme too, for the design note (T256).
+        if (name === 'home' && width === 1920) { await page.emulateMedia({ colorScheme: 'dark' }); await shoot(page, 'home-1920-dark'); await page.emulateMedia({ colorScheme: 'light' }) }
       }
       await context.close()
     }

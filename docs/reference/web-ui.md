@@ -237,7 +237,7 @@ attempt failed: …* under *Attempt history*, never as the step's failure.
 | Route | Body | Answer |
 |---|---|---|
 | `GET runs` | — | `{runs}`: the latest 100 runs |
-| `GET runs/<runId>` | — | `{run, explain}`; `404` for an unknown run |
+| `GET runs/<runId>` | — | `{run, explain, timings}` ([below](#a-steps-timings)); `404` for an unknown run |
 | `POST runs/<runId>/approve` | `{verdict: approved \| rejected, note?, plan?}`: `plan` the `sha256:` id of the plan the page shows (INV-5). A remediation fix's plan on the approval queue (the run's `blocked.approvalRequest`) is refused (`409`): decide its request in the queue | `{run}` |
 | `POST runs/<runId>/vote` | `{decision, option, rationale}`: the tie decision the page shows, an option or `inconclusive` | `{run}`; the vote is the operator's |
 | `POST runs/<runId>/stop` | `{reason?}` | `{run}` |
@@ -246,6 +246,22 @@ attempt failed: …* under *Attempt history*, never as the step's failure.
 | `GET runs/<runId>/review` | — | `{runId, change, assessments, report?, landing?}`: what the operator reads before a review verdict ([below](#what-a-review-shows)); `404` for an unknown run |
 
 A refused action is `400` (a malformed body) or `409` (the engine refused it).
+
+### A step's timings
+
+`GET runs/<runId>` gives, beside the engine's `run` and `explain` (T256):
+
+- `timings`: `{value}` or `{unknown}` with why. `value` maps each step's `nodeId` to
+  `{startedAt, endedAt?}`. `startedAt` is the step's latest `workflow.node.started` (its current
+  attempt's start). `endedAt`, only for a `COMPLETED` or `FAILED` step, is its latest
+  `workflow.node.completed` or `workflow.node.failed` at or after that start. A step with no start
+  recorded is left out. The event log is read newest first, one entry per type and step, for at
+  most 200 steps of the run. `{unknown}` is returned when the event log (`ctx.eventLog`) is not
+  mounted ("the event log (ctx.eventLog) is not mounted") or a read throws ("the event log could
+  not be read: …"); it is never an empty `value`. The run's page then says *Times unknown*, why
+  under that fold, and each step only its state.
+- each decision of `explain.nodes[].decisions[]` gains `at`: when it was made, its artifact's
+  `createdAt`, when `ctx.artifacts` is mounted and holds it; absent otherwise.
 
 ## Reviews
 

@@ -85,11 +85,14 @@ describe('web UI: the starts System proposes, on Home (ADR-0064)', () => {
     await ctx.workflow.sweepDispatch()
     await vi.waitFor(() => expect(workers.started.map((s) => s.worker)).toEqual(['w:max']), { timeout: 15_000 })
     expect((await ctx.board.task(task.taskId))!.state).toBe('running')
-    // Started by itself (PROP-0014 D2): one line, its run's state as a chip, the task, the Worker, and how it was let start.
+    // Started by itself (PROP-0014 D2, T256): a row of its table at the bottom of Home, the task, its run's state as a chip,
+    // and the Worker in sight; how it was let start folded into the row.
     await page.reload()
     const started = page.getByRole('region', { name: 'Started by itself' })
     await expect.poll(() => started.innerText()).toContain('Write the release notes')
-    expect(await started.innerText()).toMatch(/running\s+Write the release notes · .+ · on your approval · /)
+    const row = started.getByRole('row', { name: 'Started by itself: Write the release notes' })
+    expect(await row.locator('td').allInnerTexts()).toEqual([expect.stringMatching(/^Write the release notes\s+attempt 1$/), '◆ running', expect.any(String), expect.any(String), expect.stringMatching(/ ago$/)])
+    expect(await row.textContent()).toMatch(/attempt 1 · running · .+ · on your approval · /)
     ctx.workflow.pauseDispatch('a quiet afternoon')
     await page.reload()
     await expect.poll(() => go.innerText()).toMatch(/Automatic starts paused · a quiet afternoon · since /)

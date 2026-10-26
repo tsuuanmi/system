@@ -64,7 +64,13 @@ async function phone(browser: Browser, origin: string): Promise<Page> {
 /** The groups in "Needs your attention", in order, by their headings; and the card groups below it, by their names. */
 const attention = (page: Page) => page.getByRole('region', { name: 'Needs your attention', exact: true })
 const groupHeads = (page: Page): Promise<string[]> => attention(page).locator('section.group > h4').allInnerTexts()
-const cardGroups = (page: Page): Promise<Array<string | null>> => page.locator('main > section.group').evaluateAll((list) => list.map((s) => s.getAttribute('aria-label')))
+const cardGroups = (page: Page): Promise<Array<string | null>> => page.locator('main section.group[id^="group-"]').evaluateAll((list) => list.map((s) => s.getAttribute('aria-label')))
+/** A project's reports page (T256), opened from its group's Reports link: each report's command, behind its copy button. */
+async function reportCommands(page: Page, group: ReturnType<Page['getByRole']>, project: string): Promise<Array<string | null>> {
+  await group.getByRole('link', { name: `Reports of ${project}` }).click()
+  await expect.poll(() => page.locator('main h2.page').innerText()).toBe(`Reports · ${project}`)
+  return page.locator('main table.reports button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))
+}
 
 /** Unfold the Workers page's Workers, each account's (they are folded by default, T239). */
 async function openWorkers(page: Page): Promise<void> {
@@ -88,7 +94,7 @@ describe('web UI: every project in one UI (T253)', () => {
     expect(await cardGroups(page)).toEqual(['Project project p2', 'Project project p1', 'Project project p3'])
     const cards3 = page.getByRole('region', { name: 'Project project p3', exact: true })
     expect(await cards3.innerText()).toContain('Nothing needs you here.')
-    expect(await cards3.locator('details.reports button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toEqual(['system report --project p3', 'system metrics --project p3'])
+    expect(await cards3.getByRole('link', { name: 'Reports of project p3' }).getAttribute('href')).toBe('/ui/?view=reports&project=p3')
     const cards2 = page.getByRole('region', { name: 'Project project p2', exact: true })
     const cards1 = page.getByRole('region', { name: 'Project project p1', exact: true })
     expect(await cards2.getByRole('heading', { level: 2 }).innerText()).toBe('project p2')
@@ -99,14 +105,18 @@ describe('web UI: every project in one UI (T253)', () => {
     // A count leads to its kind's cards in its group.
     await p2.getByRole('link', { name: 'Reviews · 1' }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('reviews-p-p2')
-    // Each project's weekly report and its metrics, from its group: the commands that print them, behind a closed fold, each with its copy button.
-    const reports = cards2.locator('details.reports')
-    expect(await reports.getAttribute('open')).toBeNull()
-    await reports.locator('summary').click()
-    expect(await reports.locator('button.copy').evaluateAll((list) => list.map((b) => b.getAttribute('data-copy')))).toEqual(['system report --project p2', 'system metrics --project p2'])
-    expect(await reports.innerText()).toContain('Weekly report: system report --project p2')
-    expect(await cards1.locator('details.reports button.copy').first().getAttribute('data-copy')).toBe('system report --project p1')
     expect(await sectionsWithoutHeading(page)).toEqual([])
+    // Each project's weekly report and its metrics on a small page of their own (T256), one link from its group: the
+    // commands that print them in a table, each with its copy button; Back returns to Home.
+    expect(await reportCommands(page, cards2, 'project p2')).toEqual(['system report --project p2', 'system metrics --project p2'])
+    expect(new URL(page.url()).search).toBe('?view=reports&project=p2')
+    expect(await page.locator('main table.reports').innerText()).toContain('Weekly report')
+    expect(await sectionsWithoutHeading(page)).toEqual([])
+    await page.goBack()
+    await expect.poll(() => groupHeads(page)).toEqual(['project p2', 'project p1'])
+    expect((await reportCommands(page, cards1, 'project p1'))[0]).toBe('system report --project p1')
+    await page.goBack()
+    await expect.poll(() => groupHeads(page)).toEqual(['project p2', 'project p1'])
 
     // The filter: a project's name shows it alone, kept in the address through a reload; All projects shows every one again.
     await p1.getByRole('link', { name: 'Show only project p1' }).click()
@@ -129,7 +139,7 @@ describe('web UI: every project in one UI (T253)', () => {
     await page.goto(`${origin}/ui/?project=p3`)
     await expect.poll(() => groupHeads(page)).toEqual(['project p3'])
     expect(await cardGroups(page)).toEqual(['Project project p3'])
-    expect(await page.getByRole('region', { name: 'Project project p3', exact: true }).locator('details.reports button.copy').first().getAttribute('data-copy')).toBe('system report --project p3')
+    expect((await reportCommands(page, page.getByRole('region', { name: 'Project project p3', exact: true }), 'project p3'))[0]).toBe('system report --project p3')
   })
 
   headlessIt('shows the Board one project at a time with a switcher, and All projects as each project\'s counts only, the choice in the address', async () => {
@@ -194,10 +204,10 @@ describe('web UI: every project in one UI (T253)', () => {
       await opened(page, origin + path)
       const words = await wordsInSight(page)
       noteWords(name, words)
+      if (name !== 'workers') await shoot(page, `portfolio-${name}-1280`)
       expect(words, `${name}'s first screen with two projects: ${words} words, ${BEFORE_WORDS[name]} before T239`).toBeLessThanOrEqual(Math.floor(BEFORE_WORDS[name] / 2))
       // Workers' screenshot with its Workers unfolded, so each running step's project is in it.
-      if (name === 'workers') await openWorkers(page)
-      await shoot(page, `portfolio-${name}-1280`)
+      if (name === 'workers') { await openWorkers(page); await shoot(page, `portfolio-${name}-1280`) }
     }
     // One project's board holds it too.
     await opened(page, `${origin}/ui/?view=board&project=p2`)
