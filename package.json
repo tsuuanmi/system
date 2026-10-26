@@ -13,7 +13,7 @@
     "check:schemas": "node --import tsx scripts/check-schemas.ts",
     "check:migrations": "node --import tsx scripts/check-migrations.ts",
     "audit:deps": "\"$npm_execpath\" audit --prod --audit-level high",
-    "lint": "oxlint scripts spikes packages",
+    "lint": "oxlint scripts packages",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:group": "node --import tsx scripts/test-groups.ts group",

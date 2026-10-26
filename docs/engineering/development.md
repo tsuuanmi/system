@@ -15,7 +15,7 @@ are canonical.
 | language | TypeScript, `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax` |
 | typecheck | `tsc --noEmit` over the whole workspace (root [`tsconfig.json`](../../tsconfig.json), whose `paths` map each package to its `src/`) |
 | build | `tsc -p tsconfig.build.json` per package, into `lib/` ([`tsconfig.build.base.json`](../../tsconfig.build.base.json)) |
-| lint | `oxlint` over `scripts/`, `spikes/`, and `packages/`, with its default rules (no configuration file) |
+| lint | `oxlint` over `scripts/` and `packages/`, with its default rules (no configuration file) |
 | tests | Vitest; bare workspace imports resolve to `src/` ([`vitest.config.ts`](../../vitest.config.ts)) |
 | scripts | `tsx` for the checks and generators in [`scripts/`](../../scripts/), loaded in the process (`node --import tsx <script>`, never the `tsx` CLI, whose IPC pipe is a unix socket an agent's command sandbox refuses; [confined commands](../design/agent-runtimes.md#confined-commands)) |
 | browser automation | `patchright-core` against a system or pinned managed Chrome (CON-7) |
@@ -37,7 +37,7 @@ pnpm workspaces ([`pnpm-workspace.yaml`](../../pnpm-workspace.yaml)):
 | `packages/plugins/*` | every Cordis plugin, one package each |
 | `packages/system-bundle` | the bundle that mounts the plugins ([`cordis.patch.yml`](../../packages/system-bundle/cordis.patch.yml)) |
 | `packages/cli` | the `system` command |
-| `scripts/`, `spikes/` | repository checks and generators; the test groups ([testing](testing.md#test-groups)); the release scripts ([releasing](releasing.md)); the live install's update ([runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)); the experiments' helpers ([experiments](../validation/experiments/README.md)); the statistics goldens' generator ([golden tests](../design/statistics.md#golden-tests)); the M0 spike |
+| `scripts/` | repository checks and generators; the test groups ([testing](testing.md#test-groups)); the release scripts ([releasing](releasing.md)); the live install's update ([runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)); the experiments' helpers ([experiments](../validation/experiments/README.md)); the statistics goldens' generator ([golden tests](../design/statistics.md#golden-tests)) |
 
 Each package has a colocated `README.md` that says what it owns, what it does not
 own, its entry points, and its dependency direction, and links back to

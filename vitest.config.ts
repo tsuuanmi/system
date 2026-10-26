@@ -82,7 +82,6 @@ export default defineConfig({
     },
   },
   test: {
-    // The M0 spike is not part of the suite: its probe runs by hand (spikes/m0-dsh-core/README.md).
     include: ['scripts/**/*.spec.ts', 'packages/**/tests/**/*.spec.ts'],
     // One temporary parent per run, removed at its end (and a killed run's, at the next start).
     globalSetup: ['./scripts/test-tmp.ts'],

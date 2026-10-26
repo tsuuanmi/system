@@ -71,7 +71,6 @@ export const scenarioTitle = (text: string): string | undefined =>
 /** Test and suite titles that cite an id, with where they are. */
 export function evidence(): Map<string, Evidence[]> {
   const found = new Map<string, Evidence[]>()
-  // Spikes are not part of the suite (vitest.config.ts): their titles are no evidence.
   for (const file of [...testFiles(join(root, 'packages')), ...testFiles(join(root, 'scripts'))].sort()) {
     const suite = file.includes(`${sep}conformance${sep}`)
     readFileSync(file, 'utf8').split('\n').forEach((text, index) => {

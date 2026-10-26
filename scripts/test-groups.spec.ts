@@ -44,14 +44,13 @@ describe('test groups (docs/engineering/testing.md#test-groups)', () => {
     expect(of('packages/system-bundle/cordis.patch.yml').groups).toContain('workers')
   })
 
-  it('runs every group for a schema, a root configuration, CI, or a path it cannot place; the scripts\' group for documentation; none for a spike', () => {
+  it('runs every group for a schema, a root configuration, CI, or a path it cannot place; the scripts\' group for documentation', () => {
     for (const path of ['schemas/brief.v1.json', 'package.json', 'pnpm-lock.yaml', 'vitest.config.ts', '.github/workflows/ci.yml', 'somewhere/new.ts']) {
       expect(of(path).groups, path).toEqual(names)
     }
     expect(of('schemas/brief.v1.json').everything).toBeUndefined()
     expect(of('package.json').everything).toBe('package.json')
     for (const path of ['docs/engineering/testing.md', 'README.md', '.changeset/kept-tabs.md']) expect(of(path).groups, path).toEqual(['libs'])
-    expect(of('spikes/m0-dsh-core/sqlite.spec.ts').groups).toEqual([])
     expect(of().groups).toEqual([])
   })
 })

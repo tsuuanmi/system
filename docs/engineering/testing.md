@@ -254,7 +254,7 @@ a test file is in no group, or in two.
   changed package's data file. The `libs` group runs for every change, since the scripts' tests
   check the whole repository, and documentation reaches it alone. A schema reaches every package;
   a root configuration file, CI, or a path the script cannot place runs every group (fail
-  closed). A spike runs none: spikes are not part of the suite.
+  closed).
 
 The rule:
 

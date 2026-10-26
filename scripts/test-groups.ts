@@ -19,8 +19,7 @@
  * configuration or a fixture), that far and no further. A group is affected when the tests of one
  * of its packages are reached. The repository scripts' tests check the whole repository, so every
  * change affects their group. A schema reaches every package through libs; a root configuration
- * file, CI, or any path no rule places affects every group (fail closed); a spike affects none
- * (spikes are not part of the suite).
+ * file, CI, or any path no rule places affects every group (fail closed).
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -171,7 +170,6 @@ export function affected(changed: readonly string[], all: Package[] = packages()
   // Documentation and changesets are read by the repository checks alone (the scripts' tests).
   let repository = false
   for (const path of changed) {
-    if (path.startsWith('spikes/')) continue
     if (EVERYTHING.some((re) => re.test(path))) return { groups: names, everything: path, changed: [] }
     const pkg = packageAt(all, path)
     if (pkg) touched.add(side(pkg, path))

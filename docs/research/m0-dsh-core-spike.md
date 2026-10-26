@@ -3,7 +3,8 @@
 Non-normative evidence for the verification points in
 [ADR-0018](../decisions/adr/0018-build-on-dsh-core.md). Run on 2026-10-11 on
 Linux x64 with Node 22.23.2 and `@deepseek-ai/dsh@0.2.1-alpha.2` (563 packages
-installed). Reproducible code is in [`spikes/m0-dsh-core/`](../../spikes/m0-dsh-core/README.md).
+installed). The spike's code (`spikes/m0-dsh-core/`) was removed from the tree once
+the spike was done (T246); it stays in git history, last at commit `28d9a815`.
 
 ## Results
 
@@ -44,6 +45,8 @@ served `initialize`. It used **about 91 MB RSS, against about 153 MB** for the
   CI caches the pnpm store.
 
 ## Reproduce
+
+From a checkout of commit `28d9a815`, which still holds the spike's code:
 
 ```sh
 cd spikes/m0-dsh-core/bundle && npm i            # MCP SDK for the probe plugin
