@@ -40,6 +40,8 @@ describe('agents source: a run is gone only on a liveness verdict (PROP-0013, AD
     const { ctx, again, stop } = await restart(dir)
     const done = await ctx.workers.source('agents')!.wait(id, 10_000)
     expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed', disposition: 'USER_ACTION', message: expect.stringContaining('it is gone (liveness dead') } })
+    // Its holder's stop alone ended it, and this source says so: the host's failure, not the run's (ADR-0069).
+    expect(done.error).toMatchObject({ infrastructure: 'host-stopped' })
     expect(again.runs).toEqual([])
     const decision = decisionOf(ctx, done)!
     expect(decision).toMatchObject({ decider: { id: 'agent-workers.reconcile', version: '2' }, outcome: { option: 'dead', detail: { verdict: 'dead', rule: 'liveness@1', looks: 1, deadAfterSeconds: 1 } } })

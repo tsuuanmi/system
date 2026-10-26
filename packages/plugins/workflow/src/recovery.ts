@@ -2,6 +2,7 @@
  * Recovery after a failed attempt (REQ-WF-6, INV-4) and tier escalation after a rejected result
  * (REQ-WRK-9). Each choice is a decision artifact (INV-13).
  */
+import type { InfrastructureFailure } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, type RouteOptions, TIERS, type WorkerAccount, type WorkerExecution } from '@tsuuanmi/system-workers-core'
@@ -343,7 +344,7 @@ function resend(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, exe
  * over instead: the next attempt leaves the failed Worker out (ADR-0034), unless the node's session
  * is held to it.
  */
-export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; execution?: WorkerExecution; decisions?: ArtifactRef[] }, lease: () => Lease): void {
+export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; execution?: WorkerExecution; decisions?: ArtifactRef[]; infrastructure?: InfrastructureFailure }, lease: () => Lease): void {
   // A site's own error after the send, as its source read it on the execution's page (ADR-0062).
   const siteError = attempt.sent && attempt.execution?.error?.siteError === true ? attempt.execution : undefined
   const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
@@ -438,7 +439,9 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
     ? { ...error, disposition: 'USER_ACTION', message: `${error.message} (the prompt was sent, so it is not resent automatically)` }
     : error
   e.ctx.store.transaction(() => {
-    e.writeNode(node, { state: 'FAILED', attempt: node.attempt, error: JSON.stringify(final), ...decisions }, (r) => ({ ...r, lastDecision: decision.id as ArtifactRef }), lease)
+    // Marked when it failed only on the infrastructure (ADR-0069): its task's attempt is then not spent on it.
+    const mark = attempt.infrastructure ? { infrastructure: JSON.stringify(attempt.infrastructure) } : {}
+    e.writeNode(node, { state: 'FAILED', attempt: node.attempt, error: JSON.stringify(final), ...decisions, ...mark }, (r) => ({ ...r, lastDecision: decision.id as ArtifactRef }), lease)
     e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { attempt: node.attempt, kind: final.kind, disposition: final.disposition } })
     // A Worker that stopped at a call waiting for the operator: its session continues once that is approved.
     noteDeferral(e, run, node, final, attempt.execution)

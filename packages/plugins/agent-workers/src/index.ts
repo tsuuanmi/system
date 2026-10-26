@@ -50,7 +50,7 @@ import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProvi
 import { type LimitState, type PoolState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import {
-  type ArtifactRef, type CapabilityDescriptor, type CapabilityOffer, type ExecutionStatus, type LivenessQuery, type LivenessReport, type LivenessState, MAX_LIVENESS_RUNS, type QuotaClass, type RunLiveness, type Tier,
+  type ArtifactRef, type CapabilityDescriptor, type CapabilityOffer, type ExecutionInfrastructure, type ExecutionStatus, type LivenessQuery, type LivenessReport, type LivenessState, MAX_LIVENESS_RUNS, type QuotaClass, type RunLiveness, type Tier,
   type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
@@ -1832,7 +1832,8 @@ export class AgentWorkers extends Service {
           this.fail(row, new ProviderError('reconciliation_failed', liveness.verdict === 'dead'
             ? `${row.worker} was running this task when its holder stopped, and it is gone (liveness ${liveness.verdict}, decision ${decision})${row.native_handle ? `; native session ${row.native_handle}` : ''}; it is not run again automatically`
             : `${row.worker} was running this task when its holder stopped, and after ${looks} looks it is not known to be gone (liveness ${liveness.verdict}: ${liveness.reasons.join('; ')}; decision ${decision}); it is not declared dead, so its session stays held, and the operator decides${row.native_handle ? ` (native session ${row.native_handle})` : ''}: system free ${row.run_id} --agent-gone, once its agent is gone`),
-          current, { liveness_looks: looks, liveness_verdict: liveness.verdict, liveness_decision: decision })
+          // Its holder stopped with it in flight, and that alone ended it: the host's, not the run's (ADR-0069).
+          current, { liveness_looks: looks, liveness_verdict: liveness.verdict, liveness_decision: decision }, 'host-stopped')
           if (liveness.verdict !== 'dead') this.toldUnknown(row, liveness.verdict, looks, decision, 'holder')
           // Its usage is not invented: it comes from the agent's transcript, reconciled later. Until
           // then the ledger counts none of it, which is recorded (docs/design/resources.md).
@@ -1872,12 +1873,43 @@ export class AgentWorkers extends Service {
           this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), current)
           return
         }
-        if (row && row.status !== 'completed' && row.status !== 'failed') this.fail(row, error, current)
+        if (row && row.status !== 'completed' && row.status !== 'failed') {
+          // Sent, and its Worker is positively unavailable now: it went away mid-run, and that alone ended the run (ADR-0069).
+          const gone = row.submitted_at ? await this.workerGone(row, error) : undefined
+          if (gone) {
+            const typed = toProviderError(error)
+            this.fail(row, new ProviderError(typed.kind, `${typed.message}; ${row.worker} became unavailable while it ran: ${gone}`, { cause: error }), current, {}, 'worker-unavailable')
+          } else this.fail(row, error, current)
+        }
       } finally {
         this.cancels.delete(runId)
       }
     })
     if (!outcome.held) this.retryLater(runId, outcome.retryInMs)
+  }
+
+  /**
+   * Why a run that was sent and then failed failed only because its Worker became unavailable while
+   * it ran (ADR-0069), or undefined. Only a failure of the runtime or its session (its process or
+   * connection gone, an internal or setup failure), never one of the run's own (a timeout, a limit,
+   * a violation, a denial, its own answer), and only when the Worker, looked at again now, is
+   * positively unavailable: no longer configured, its runtime no longer registered or its probe
+   * failing (or no longer proving what the Worker needs), or its account signed out, quarantined, or
+   * not ready. A look that fails says nothing (fail closed: the attempt pays for the run).
+   */
+  private async workerGone(row: RunRow, error: unknown): Promise<string | undefined> {
+    if (!WORKER_GONE_KINDS.has(toProviderError(error).kind)) return undefined
+    try {
+      const worker = this.workers.get(row.worker)
+      if (!worker) return `${row.worker} is no longer configured`
+      const refusal = refusalOf(await this.evidence(worker, 'proven'), worker)
+      if (refusal) return refusal
+      const enrolled = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : this.handNamedGate(worker)
+      if (enrolled.state === 'unavailable') return enrolled.why
+    } catch (caught) {
+      this.ctx.logger.warn(`agent Workers: whether ${row.worker} became unavailable while ${row.run_id} ran could not be told: ${(caught as Error).message}`)
+    }
+    return undefined
   }
 
   /**
@@ -2611,9 +2643,10 @@ export class AgentWorkers extends Service {
     return scheduler
   }
 
-  private fail(row: RunRow, error: unknown, lease: () => Lease, fields: Partial<Omit<RunRow, 'run_id'>> = {}): void {
+  /** `infrastructure`: what of the infrastructure alone ended it, when this source knows it (ADR-0069). */
+  private fail(row: RunRow, error: unknown, lease: () => Lease, fields: Partial<Omit<RunRow, 'run_id'>> = {}, infrastructure?: ExecutionInfrastructure): void {
     const typed = toProviderError(error)
-    this.update(row.run_id, { ...fields, status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
+    this.update(row.run_id, { ...fields, status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message, ...(infrastructure ? { infrastructure } : {}) }) }, lease)
   }
 
   private update(runId: string, fields: Partial<Omit<RunRow, 'run_id'>>, lease: () => Lease): void {
@@ -2650,6 +2683,13 @@ function closedUntil(pool: PoolState | undefined, windowId: string): number | un
 function admits(evidence: RuntimeEvidence, worker: AgentWorkerConfig): boolean {
   return evidence.available && evidence.readsConfined && evidence.gatesToolCalls === true && evidence.sandboxes.includes(worker.sandbox)
 }
+
+/**
+ * The failures of a sent run that its Worker going away can cause (its runtime, process, session, or
+ * sign-in), so a source looks whether it did (ADR-0069). Never one of the run's own: a timeout, a
+ * limit, a violation (`reconciliation_failed`), a denial, a stop, or its input.
+ */
+const WORKER_GONE_KINDS: ReadonlySet<string> = new Set(['session_broken', 'provider_stalled', 'network', 'internal', 'config_error', 'reauth_required'])
 
 /** The longest reason an unavailable Worker's descriptor carries (`capability-descriptor@1.9`). */
 const MAX_UNAVAILABLE_REASON = 300

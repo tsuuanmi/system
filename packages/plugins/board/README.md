@@ -93,6 +93,16 @@ charters, and their tasks.
   after what approving does, name each run, step, and expiry (`unreleasedText`). They change
   neither the subject nor the wait, and are not kept: a request asked again after a policy change
   does not name them.
+- **A run that failed only on the infrastructure** (`reconcileRun`'s failed `infrastructure`,
+  contract 1.5,
+  [ADR-0069](../../../docs/decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md)):
+  checked with `infrastructureProblem` before anything moves (`invalid` when malformed). While the
+  task has free retries left (`maxFreeRetries`, default 3), the move gives the attempt back
+  (`attempts.count` one lower) and sends the same attempt through the gate, its `board` decision
+  naming the kind, the reason, and the free retries used and allowed; the count is kept in
+  `board_tasks.free_retries` (migration 3) in the move's transaction, beside the record, so the
+  bound holds across restarts. Past the bound it counts as any failed run, its decision saying so
+  with the reason ([attempts](../../../docs/design/board.md#an-attempt-not-spent-on-the-infrastructure)).
 - **A digest on a result** (`attachDigest`, contract 1.1): in one transaction, a stored
   `digest@1.0` report whose sources are exactly the result's artifacts becomes `result.digest`,
   once; the same digest again changes nothing. Refused while the task has no result, while its
@@ -175,14 +185,15 @@ charters, and their tasks.
     charter's constraint notes.
 - **Injects:** `store`, `artifacts`, `leases`, `approvals`; `mcp` is optional.
 - **Config:** `fundingMaxPercent` (default 100, 0 to 1000), `inputExpirySeconds` (default 7
-  days), `leaseTtlSeconds` (600), `maxAttempts` (3), `pageBound` (100), `projectionMaxTasks`
+  days), `leaseTtlSeconds` (600), `maxAttempts` (3), `maxFreeRetries` (3, 0 to 10; validated at
+  start), `pageBound` (100), `projectionMaxTasks`
   (200), `sweepSeconds` (60), `autoAccept` (`{ projects, branches }`, off by default; validated
   at start: project ids and plain branch names, at most 64 each, no repeats).
 - **Bundle:** the `board` row is on, over the `approvals` row
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
   on its `approvals` inject and is not mounted.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
-  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.4
+  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.5
   over `FakeApprovals`, with no expected failures; the approval queue's own tests run it over the
   store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place

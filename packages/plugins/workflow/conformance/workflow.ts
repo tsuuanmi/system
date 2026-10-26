@@ -23,7 +23,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type { BoardTask, BudgetLine, TaskInput } from '@tsuuanmi/system-board-core'
 import { captureGitSubject, SchemaRegistry, sha256, startPrompt } from '@tsuuanmi/system-libs'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
-import type { ArtifactRef, CapabilityDescriptor, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, CapabilityDescriptor, ExecutionInfrastructure, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
 import { expect, vi } from 'vitest'
 import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
@@ -44,9 +44,10 @@ export type Rendered = WorkerStart & { prompt: string }
 
 /**
  * A scripted execution's outcome: an answer, a failure (sent or not; since 1.8 `siteError`, the site
- * answered the sent input with its own error), or `hold` until {@link ScriptedWorkers.release}.
+ * answered the sent input with its own error; `infrastructure`, the source's word that the host's stop
+ * or its Worker going away alone ended it, ADR-0069), or `hold` until {@link ScriptedWorkers.release}.
  */
-export type Reply = { text: string } | { fail: string; disposition: string; sent: boolean; siteError?: true } | 'hold'
+export type Reply = { text: string } | { fail: string; disposition: string; sent: boolean; siteError?: true; infrastructure?: ExecutionInfrastructure } | 'hold'
 
 const PROVES = ['reason', 'develop']
 /** One Worker per tier, each proving `reason` and `develop`, none `deep-research`. */
@@ -76,6 +77,8 @@ export class ScriptedWorkers {
    * as its first execution starts (`native-<sessionId>`). Off, sessions keep no handle.
    */
   keepsHandles = true
+  /** Whether a held execution waits at this runtime before anything of it is sent (not `submitted`, ADR-0069); off, it is sent at start. */
+  holdsUnsent = false
   /** Since 1.5: sets of Workers this runtime names as siblings of one another (one account each); others name none. */
   accounts: string[][] = []
   /** Since 1.6: the sessions this runtime says take no input now, with why (`WorkerSource.held`); others are free. */
@@ -186,7 +189,7 @@ export class ScriptedWorkers {
     this.keys.set(start.key, id)
     this.requests.set(id, request)
     this.started.push({ ...request, id, ...(session?.handle ? { conversation: session.handle } : {}) })
-    this.executions.set(id, { id, status: 'running', submitted: true, decisions: [] })
+    this.executions.set(id, { id, status: 'running', submitted: !this.holdsUnsent, decisions: [] })
     const reply = this.reply(request)
     if (reply !== 'hold') this.finish(id, reply)
     return this.get(id)!
@@ -229,7 +232,7 @@ export class ScriptedWorkers {
     } else {
       execution.status = 'failed'
       execution.submitted = reply.sent
-      execution.error = { kind: reply.fail, disposition: reply.disposition, message: `scripted ${reply.fail}`, ...(reply.siteError ? { siteError: true as const } : {}) }
+      execution.error = { kind: reply.fail, disposition: reply.disposition, message: `scripted ${reply.fail}`, ...(reply.siteError ? { siteError: true as const } : {}), ...(reply.infrastructure ? { infrastructure: reply.infrastructure } : {}) }
     }
     for (const wake of this.waiters.get(id) ?? []) wake()
     this.waiters.delete(id)
@@ -239,7 +242,8 @@ export class ScriptedWorkers {
     const execution = this.executions.get(id)
     if (execution?.status !== 'running') return false
     this.cancelled.push(id)
-    this.finish(id, { fail: 'aborted', disposition: 'NONE', sent: true })
+    // A cancel sends nothing: one held unsent stays unsent.
+    this.finish(id, { fail: 'aborted', disposition: 'NONE', sent: execution.submitted })
     return true
   }
 

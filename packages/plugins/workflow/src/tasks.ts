@@ -22,7 +22,7 @@
  * choices is a decision with a reason for every candidate (INV-13). The board is optional: a run
  * for a task needs it, every other run does not.
  */
-import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
+import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type InfrastructureFailure, type Project, renderTasks, type RunOutcome, type Subject, UNRELEASED_MAX, type UnreleasedHold, unreleasedText } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { takesKind, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
@@ -33,6 +33,7 @@ import type { TaskFrame } from './briefs.ts'
 import { TaskCarries } from './carries.ts'
 import { type LandingTarget, type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
+import { holderLapsedAtStart, infrastructureOf } from './infrastructure.ts'
 import { TaskDigests } from './digests.ts'
 import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
@@ -59,7 +60,8 @@ const FRAME_POINTERS = 16
 const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
 
 type Result = { artifacts: ArtifactRef[]; subject: Subject }
-type Lost = { at: string; decision: ArtifactRef; reason: string }
+/** `infrastructure`: the holder lapsed while the host was stopped, found at the first renewal after the start (ADR-0069). */
+type Lost = { at: string; decision: ArtifactRef; reason: string; infrastructure?: InfrastructureFailure }
 /** The run's last review as a task's acceptance names it (`outcome.detail.review`, D80). */
 type AcceptanceReview = { node: string; gate: ArtifactRef; assessment: ArtifactRef; verdict: string; blocking: number; cycle: number; maxCycles: number; subject: { ref: string; version: string } }
 
@@ -666,8 +668,12 @@ export class TaskRuns {
     } else if (row.lost || this.renewals.has(runId)) {
       return this.carried(runId)
     }
-    // After a restart, the lease is renewed before anything runs: a lapse shows now, not later.
-    if ((await this.renew(this.row(runId)!, board)) === 'unknown') return 'wait'
+    // After a restart, the lease is renewed before anything runs: a lapse shows now, not later. A run
+    // that was running when this engine started and finds its holder gone at its first renewal lost
+    // it while the host was stopped (ADR-0069).
+    const atStart = this.e.inheritedRuns.has(runId)
+    if ((await this.renew(this.row(runId)!, board, atStart)) === 'unknown') return 'wait'
+    this.e.inheritedRuns.delete(runId)
     return this.carried(runId)
   }
 
@@ -731,14 +737,14 @@ export class TaskRuns {
   }
 
   /** Renew the run's lease on its task; a refusal means the board no longer holds the run's generation. */
-  private async renew(row: TaskRow, board: Board): Promise<'live' | 'lost' | 'unknown'> {
+  private async renew(row: TaskRow, board: Board, atStart = false): Promise<'live' | 'lost' | 'unknown'> {
     try {
       const renewed = await board.renew(row.task_id, row.generation, TASK_LEASE_TTL_MS)
       this.renewLater(row.run_id, { expiresAt: renewed.leaseExpiresAt })
       return 'live'
     } catch (error) {
       if (error instanceof BoardError && error.failure !== 'conflict') {
-        this.markLost(row, refusal(error))
+        this.markLost(row, refusal(error), atStart ? holderLapsedAtStart(row.task_id, row.generation, refusal(error)) : undefined)
         return 'lost'
       }
       this.warn(`could not renew the lease of run ${row.run_id} on task ${row.task_id}`, error)
@@ -768,7 +774,7 @@ export class TaskRuns {
   }
 
   /** The board no longer holds the run's generation: a `recovery` decision, then the run starts nothing new. */
-  private markLost(row: TaskRow, reason: string): void {
+  private markLost(row: TaskRow, reason: string, infrastructure?: InfrastructureFailure): void {
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'recovery',
       question: `Does run ${row.run_id} go on after the board no longer holds its generation ${row.generation} of task ${row.task_id}?`,
@@ -781,7 +787,7 @@ export class TaskRuns {
       outcome: { option: 'wind-down', detail: { taskId: row.task_id, generation: row.generation } },
       deterministic: true,
     }, { ...PRODUCER, runId: row.run_id }).id as ArtifactRef
-    const lost: Lost = { at: now(), decision, reason }
+    const lost: Lost = { at: now(), decision, reason, ...(infrastructure ? { infrastructure } : {}) }
     this.e.ctx.store.transaction((db) => {
       db.prepare('UPDATE workflow_tasks SET lost = ?, updated_at = ? WHERE run_id = ? AND lost IS NULL').run(JSON.stringify(lost), now(), row.run_id)
       this.e.ctx.eventLog.append({ type: 'workflow.task.lost', runId: row.run_id, decision, data: { taskId: row.task_id, generation: row.generation, reason } })
@@ -1505,7 +1511,30 @@ export class TaskRuns {
       if (waits) return this.reconcile(row, board, outcome, row.lost ? 'the run lost its holder, then completed what was in flight' : `the task waits on the run (${task.state})`)
     } else if (waits) {
       const error = run.error ? (JSON.parse(run.error) as WorkflowError) : undefined
-      return this.reconcile(row, board, { status: 'failed' }, `the run failed${error ? ` (${error.kind})` : ''}: an attempt the board counts`)
+      // A run that failed only on the infrastructure says so (ADR-0069): the board then does not
+      // count it, while the task has free retries left (its bound, INV-9).
+      const lost = row.lost ? (JSON.parse(row.lost) as Lost) : undefined
+      const verdict = infrastructureOf(this.e, run, lost?.infrastructure)
+      if ('infrastructure' in verdict) {
+        const { infrastructure } = verdict
+        // The statement first, the reason last: a decision's reason is clamped, and its detail keeps the reason whole.
+        return this.reconcile(row, board, { status: 'failed', infrastructure },
+          `the run failed${error ? ` (${error.kind})` : ''} only on the infrastructure: reported so, the board does not count it as an attempt while the task has free retries left; ${infrastructure.kind}: ${infrastructure.reason}`)
+      }
+      return this.reconcile(row, board, { status: 'failed' }, `the run failed${error ? ` (${error.kind})` : ''}: an attempt the board counts; ${verdict.counted}`)
+    } else if (run.status === 'failed' && task.state === 'waiting-for-input' && task.waiting?.reason === 'rejected') {
+      // The sweep found the run lost (its lease lapsed while the host was down) and, the policy giving
+      // remediation no ask, left the task waiting for input on it: a failure only on the
+      // infrastructure is still reported, so the board can give the attempt back (ADR-0069).
+      const lost = row.lost ? (JSON.parse(row.lost) as Lost) : undefined
+      const verdict = infrastructureOf(this.e, run, lost?.infrastructure)
+      if ('infrastructure' in verdict) {
+        const { infrastructure } = verdict
+        const error = run.error ? (JSON.parse(run.error) as WorkflowError) : undefined
+        return this.reconcile(row, board, { status: 'failed', infrastructure },
+          `the run failed${error ? ` (${error.kind})` : ''} only on the infrastructure, after the board's sweep left the task waiting for input on it: reported so, the board does not count it as an attempt while the task has free retries left; ${infrastructure.kind}: ${infrastructure.reason}`,
+          true)
+      }
     }
     return this.settled(row, { status: 'moved-on', state: task.state, reason: `task ${task.taskId} is ${task.state}, and takes no report of a ${run.status} run` })
   }
@@ -1528,8 +1557,12 @@ export class TaskRuns {
     }
   }
 
-  /** Report the run's known outcome with `reconcileRun`, after a `reconciliation` decision saying why (INV-4). */
-  private async reconcile(row: TaskRow, board: Board, outcome: RunOutcome, why: string): Promise<void> {
+  /**
+   * Report the run's known outcome with `reconcileRun`, after a `reconciliation` decision saying why
+   * (INV-4). `waited`: the task waits for input on the run, which the board takes only while a free
+   * retry is left; its refusal of the move then leaves the task as it is (`moved-on`), not refused.
+   */
+  private async reconcile(row: TaskRow, board: Board, outcome: RunOutcome, why: string, waited = false): Promise<void> {
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'reconciliation',
       question: `Does run ${row.run_id} report its ${outcome.status} outcome to board task ${row.task_id} as the run's owner?`,
@@ -1538,8 +1571,9 @@ export class TaskRuns {
         { option: 'report', selected: true, reasons: [why, `the run ${outcome.status}, as its own records show: a known outcome, reconciled, never replayed (INV-4)`] },
         { option: 'withhold', selected: false, reasons: ['not withhold: only an unknown outcome is withheld, and this run\'s is known'] },
       ],
-      decider: { type: 'rule', id: 'workflow.task-report', version: '1' },
-      outcome: { option: 'report', detail: { taskId: row.task_id, runId: row.run_id, status: outcome.status } },
+      // Version 2 tells a failure only on the infrastructure apart (ADR-0069), so one input never decides two ways under one version (INV-13).
+      decider: { type: 'rule', id: 'workflow.task-report', version: '2' },
+      outcome: { option: 'report', detail: { taskId: row.task_id, runId: row.run_id, status: outcome.status, ...(outcome.status === 'failed' && outcome.infrastructure ? { infrastructure: outcome.infrastructure } : {}) } },
       deterministic: true,
     }, { ...PRODUCER, runId: row.run_id }).id as ArtifactRef
     try {
@@ -1547,6 +1581,7 @@ export class TaskRuns {
       return this.settled(row, { status: 'reconciled', state: task.state, decision })
     } catch (error) {
       if (!(error instanceof BoardError)) throw error
+      if (waited && error.failure === 'invalid-transition') return this.settled(row, { status: 'moved-on', state: 'waiting-for-input', decision, reason: `the task waits for input on the run, and the board counts it: ${refusal(error)}` })
       return this.settled(row, { status: 'refused', decision, reason: `reconcileRun: ${refusal(error)}` })
     }
   }

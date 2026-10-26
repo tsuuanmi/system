@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import type { Action, ApprovalRequest, NewRequest } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import { type ArtifactRef, BoardError, type BoardTask, type BudgetLine, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
+import { type ArtifactRef, BoardError, type BoardTask, type BudgetLine, freeRetriesOf, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
 import EventLog from '@tsuuanmi/system-event-log'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Leases from '@tsuuanmi/system-leases'
@@ -802,6 +802,54 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
         expect(() => autoAcceptOf({ projects: ['system'], branches }), JSON.stringify(branches)).toThrow(TypeError)
       }
       for (const projects of [['sys tem'], ['system', 'system'], [7 as unknown as string]]) expect(() => autoAcceptOf({ projects, branches: ['dev'] })).toThrow(TypeError)
+    })
+  })
+
+  describe('an attempt not spent on an infrastructure failure (ADR-0069)', () => {
+    /** A run of the task recorded and failed only on the infrastructure, as its owner reports it. */
+    const infraFailed = async (ctx: Context, taskId: string, runId: string, when: Date, reason = `${runId} stopped by a restart`): Promise<BoardTask> => {
+      const { generation } = await ctx.board.claim(taskId, 'lead', 600_000, when)
+      await ctx.board.start(taskId, generation, { runId }, when)
+      return ctx.board.reconcileRun(taskId, runId, { status: 'failed', infrastructure: { kind: 'host-stopped', reason } }, when)
+    }
+
+    it('validates the bound: a whole number from 0 to 10, default 3; the configuration schema refuses any other (INV-2, INV-9)', () => {
+      expect(freeRetriesOf(undefined)).toBe(3)
+      expect(freeRetriesOf(0)).toBe(0)
+      expect(freeRetriesOf(10)).toBe(10)
+      for (const bad of [-1, 11, 1.5, '2', null]) expect(() => freeRetriesOf(bad), String(bad)).toThrow(/board.maxFreeRetries is a whole number from 0 to 10/)
+      const row = { autoAccept: { projects: [], branches: [] } }
+      expect(StoreBoard.Config(row).maxFreeRetries).toBe(3)
+      expect(StoreBoard.Config({ ...row, maxFreeRetries: 0 }).maxFreeRetries).toBe(0)
+      for (const bad of [-1, 11, 1.5]) expect(() => StoreBoard.Config({ ...row, maxFreeRetries: bad }), String(bad)).toThrow()
+    })
+
+    it('keeps the free retries it gave beside the record, across a restart, so the bound holds over the task\'s whole life', async () => {
+      const { ctx, restartBoard } = await boot({ board: { maxFreeRetries: 2 } })
+      await active(ctx)
+      const t = await ready(ctx, task('p2', 'restarts', { maxAttempts: 1 }))
+      expect(await infraFailed(ctx, t.taskId, 'run-1', at(3))).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+      await restartBoard()
+      expect(await infraFailed(ctx, t.taskId, 'run-2', at(4))).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+      // The third is past the bound of 2: it counts, and with no attempt left the task waits for input.
+      const ended = await infraFailed(ctx, t.taskId, 'run-3', at(5), 'the host restarted a third time')
+      expect(ended).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+      const body = ctx.artifacts.get(ended.lastDecision!)!.body as { candidates: Array<{ selected: boolean; reasons: string[] }>; outcome: { detail: Record<string, unknown> } }
+      expect(body.candidates.find((c) => c.selected)!.reasons.join(' ')).toMatch(/2 free retries are used .*counts \(host-stopped: the host restarted a third time\)/)
+      expect(body.outcome.detail).toMatchObject({ infrastructure: { kind: 'host-stopped' }, freeRetry: { used: 2, max: 2, counted: true } })
+    })
+
+    it('with a bound of 0 counts every failure; a plain failure always counts', async () => {
+      const { ctx } = await boot({ board: { maxFreeRetries: 0 } })
+      await active(ctx)
+      const t = await ready(ctx, task('p2', 'none free', { maxAttempts: 2 }))
+      expect(await infraFailed(ctx, t.taskId, 'run-1', at(3))).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+      const plain = await boot()
+      await active(plain.ctx)
+      const p = await ready(plain.ctx, task('p2', 'plain', { maxAttempts: 2 }))
+      const { generation } = await plain.ctx.board.claim(p.taskId, 'lead', 600_000, at(3))
+      await plain.ctx.board.start(p.taskId, generation, { runId: 'run-1' }, at(3))
+      expect(await plain.ctx.board.reconcileRun(p.taskId, 'run-1', { status: 'failed' }, at(3))).toMatchObject({ state: 'ready', attempts: { count: 1 } })
     })
   })
 

@@ -641,6 +641,11 @@ export interface NodeRow {
   assignment?: string | null
   /** When the node first waited for an assigned account's limit: its waits are bounded from here (`maxLimitWaitHours`). */
   limit_wait_since?: string | null
+  /**
+   * JSON `{ kind, reason }` of a `FAILED` node that failed only on the infrastructure (ADR-0069): the
+   * host stopped its execution, or a Worker it needed became unavailable. Cleared on every other failure.
+   */
+  infrastructure?: string | null
   error: string | null
   updated_at: string
 }

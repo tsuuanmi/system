@@ -354,7 +354,18 @@ second execution path (INV-1).
     where the result would land (`landing`, the base branch of its worktree as `ctx.workers.changes`
     tells it), which the board's auto-accept rule reads (D80, ADR-0067), then submitted and accepted; one only the
     operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
-    lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
+    lost, is reported with `reconcileRun` (a `reconciliation` decision, `workflow.task-report`
+    version 2). One that failed only on the infrastructure (`host-stopped`: a step its Worker
+    source says the host's stop alone ended, `error.infrastructure`, or the holder lapsed while the
+    host was down; `unsent`: nothing of it submitted to any Worker, and every failed step failing on a
+    Worker's own failure before the send, never a refusal by the task's own budget, policy, input,
+    or configuration, which counts; `worker-unavailable`: a step
+    failed unsent because a Worker it needed became unavailable, or its source says its Worker going
+    away alone ended it, sent or not) is reported with `infrastructure`, its kind and reason, and the
+    board does not count it, within its `maxFreeRetries`; a restart alone is no proof, and an
+    operator's stop always counts (ADR-0069,
+    [an attempt not spent on the infrastructure](../../../docs/design/workflow-engine.md#an-attempt-not-spent-on-the-infrastructure));
+    a failed step's mark is kept on its row (`workflow_nodes.infrastructure`). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
   - a task that declares a budget runs only where the resource ledger can hold it to its lines:
     with no ledger loaded, or a pool of its budget the ledger does not configure or finds

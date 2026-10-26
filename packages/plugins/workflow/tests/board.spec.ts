@@ -13,7 +13,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import { captureGitSubject, contentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import StoreResources from '@tsuuanmi/system-resources'
-import type { UsageRecord } from '@tsuuanmi/system-resources-core'
+import { ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
@@ -104,7 +104,7 @@ interface Booted {
 /** The store-backed ledger's one pool, as the ledger fake configures it. */
 const POOLS = [{ pool: 'max.programmatic', account: 'max', kind: 'programmatic' as const, windows: [{ id: 'monthly', kind: 'credit' as const }] }]
 
-async function boot(options: { workflow?: Config; board?: boolean | 'short'; boardConfig?: BoardConfig; workspace?: string; resources?: boolean | 'store' } = {}): Promise<Booted> {
+async function boot(options: { workflow?: Config; board?: boolean | 'short'; boardConfig?: BoardConfig; workspace?: string; resources?: boolean | 'store'; policy?: AutonomyPolicy } = {}): Promise<Booted> {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-board-'))
   const ctx = new Context()
   const workers = options.workspace ? new AgentWorkers(options.workspace, () => ctx.artifacts) : new ScriptedWorkers()
@@ -115,7 +115,7 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; boa
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source(c)) }),
-    ...(options.board === false ? [] : [ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 })]),
+    ...(options.board === false ? [] : [ctx.plugin(StoreApprovals, { policies: [options.policy ?? POLICY], sweepSeconds: 3600 })]),
   ]
   const boardAt = fibers.length
   if (options.board !== false) fibers.push(ctx.plugin(boardPlugin, boardConfig))
@@ -388,8 +388,10 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(view.nodes.map((n) => n.state)).toEqual(['COMPLETED', 'FAILED'])
     expect(view.task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
     expect(decisionOf(ctx, view.task!.lost)).toMatchObject({ decisionType: 'recovery', outcome: { option: 'wind-down' } })
+    // The holder lapsed while the host was down: the host's failure, not the attempt's (ADR-0069).
+    expect(decisionOf(ctx, view.task!.outcome!.decision)).toMatchObject({ outcome: { option: 'report', detail: { status: 'failed', infrastructure: { kind: 'host-stopped' } } } })
     const after = (await ctx.board.task(task.taskId))!
-    expect(after).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0 } })
     // The pending reconciliation request was withdrawn once the move committed.
     expect((await ctx.approvals.list({ states: ['open', 'batched'] })).length).toBe(0)
   })
@@ -546,7 +548,8 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
       { pool: 'max.programmatic', unit: 'tokens' as const, amount: 1000 },
     ]
     const task = await ready(ctx, 'metered', { budget })
-    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: false })
+    // Sent, so the failed run is an attempt the board counts (one sending nothing is not, ADR-0069).
+    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: true })
     const one = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
     expect((await reported(ctx, one.runId)).task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
     const record = (requestId: string, extra: Partial<UsageRecord>) => ctx.resources.record({
@@ -1260,5 +1263,237 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(await refusalOf(() => bare.ctx.workflow.start({ template: 'solo', input: 'q', task: { taskId: 'task-1' } }))).toMatch(/^config_error: no board is loaded/)
     // Without a task, a run works as before.
     expect(await settled(bare.ctx, bare.ctx.workflow.start({ template: 'solo', input: 'plain', classification: 'public' }).runId)).toMatchObject({ status: 'completed' })
+  })
+})
+
+describe('an attempt is not spent on an infrastructure failure (ADR-0069, D82 #3)', () => {
+  /** The run's report to its task: its `reconciliation` decision, and the board's decision on the move it made. */
+  const report = async (ctx: Context, runId: string): Promise<{ reported: Decision; board: Decision; task: BoardTask }> => {
+    const view = await reported(ctx, runId)
+    const task = (await ctx.board.task(view.task!.taskId))!
+    return { reported: decisionOf(ctx, view.task!.outcome!.decision), board: decisionOf(ctx, task.lastDecision), task }
+  }
+  const chosen = (d: Decision): string => d.candidates.find((c) => c.selected)!.reasons.join(' ')
+
+  it('does not count a run the host stopped: its step in flight at the restart, then ended by it, gives the attempt back with the reason', async () => {
+    const { ctx, workers, restartWorkflow } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'restarted', { maxAttempts: 1 })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the step started')
+    expect((await ctx.board.task(task.taskId))!.attempts.count).toBe(1)
+    await restartWorkflow()
+    // After the restart its source finds the agent its holder lost at the stop gone, and says the stop alone ended it, as agent Workers do.
+    workers.release(workers.started[0]!.id, { fail: 'reconciliation_failed', disposition: 'USER_ACTION', sent: true, infrastructure: 'host-stopped' })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ status: 'failed', infrastructure: { kind: 'host-stopped', reason: expect.stringMatching(/in flight when the host stopped/) } })
+    // Its one attempt is given back: the task is ready for it again, not waiting for input.
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0, max: 1 } })
+    expect(board.outcome.detail).toMatchObject({ infrastructure: { kind: 'host-stopped' }, freeRetry: { used: 1, max: 3, counted: false } })
+    expect(chosen(board)).toMatch(/failed only on the infrastructure, .*not counted, so attempt 1 of 1 runs again .*; host-stopped: step solo's execution/)
+  })
+
+  it('counts a run whose step outlived a restart and then failed for its own reason: a restart alone is no proof', async () => {
+    const { ctx, workers, restartWorkflow } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'own-reason', { maxAttempts: 1 })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the step started')
+    await restartWorkflow()
+    // In flight across the restart, it fails as a sandbox or .git violation does: `reconciliation_failed`, unmarked by its source.
+    workers.release(workers.started[0]!.id, { fail: 'reconciliation_failed', disposition: 'USER_ACTION', sent: true })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
+    const { reported, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+  })
+
+  it('does not count a run whose Worker became unavailable after its step was sent, when its source says that alone ended it', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'worker-gone-mid-run', { maxAttempts: 1 })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the step started')
+    // Sent, then its Worker went away mid-run: its source ends it for that alone, and says so.
+    workers.release(workers.started[0]!.id, { fail: 'config_error', disposition: 'CODE_FIX', sent: true, infrastructure: 'worker-unavailable' })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ infrastructure: { kind: 'worker-unavailable', reason: expect.stringMatching(/became unavailable while its execution .* ran, after it was sent, and its source ended it for that alone/) } })
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0, max: 1 } })
+    expect(board.outcome.detail).toMatchObject({ infrastructure: { kind: 'worker-unavailable' }, freeRetry: { used: 1, counted: false } })
+  })
+
+  it('counts a run the operator stopped before anything of it was sent: the operator\'s call, not the infrastructure\'s', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'stopped-unsent', { maxAttempts: 1 })
+    // Its step waits at its runtime, nothing of it sent yet.
+    workers.holdsUnsent = true
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the step started')
+    await ctx.workflow.stop(run.runId, 'not needed')
+    expect(ctx.workers.source('scripted')!.get(workers.started[0]!.id)).toMatchObject({ status: 'failed', submitted: false })
+    const { reported, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+  })
+
+  it('does not count a run that sent nothing: every failure a Worker\'s own before any send, as its source tells it', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'unsent', { maxAttempts: 1 })
+    // Its Worker's account is signed out before anything is sent, on each of the step's attempts.
+    workers.reply = () => ({ fail: 'reauth_required', disposition: 'USER_ACTION', sent: false })
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'reauth_required' } })
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ infrastructure: { kind: 'unsent', reason: expect.stringMatching(/nothing of run .* was sent to any Worker/) } })
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    expect(board.outcome.detail).toMatchObject({ infrastructure: { kind: 'unsent' }, freeRetry: { used: 1, counted: false } })
+  })
+
+  it('counts a run once something of it was sent, and says why it is not the infrastructure\'s', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'sent', { maxAttempts: 1 })
+    // Step a is answered (sent); step b fails before its send on its Worker's sign-out, unmarked: with step a sent, the attempt pays for it.
+    workers.reply = (request) => (request.prompt.includes('B:') ? { fail: 'reauth_required', disposition: 'USER_ACTION', sent: false } : { text: 'alpha' })
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
+    const { reported, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(chosen(reported)).toMatch(/an attempt the board counts; .*something of the run was sent/)
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+  })
+
+  it('counts a run that sent nothing when a step failed for the task\'s own reason: its input, policy, or configuration is the attempt\'s, never a free retry', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'own-unsent', { maxAttempts: 1 })
+    // Refused before the send for its own configuration: sending it again would not change it.
+    workers.reply = () => ({ fail: 'config_error', disposition: 'CODE_FIX', sent: false })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(ctx.workers.source('scripted')!.get(workers.started[0]!.id)).toMatchObject({ status: 'failed', submitted: false })
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(chosen(reported)).toMatch(/an attempt the board counts; step solo failed for a reason of its own \(config_error\)/)
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+    expect(board.outcome.detail).not.toHaveProperty('freeRetry')
+  })
+
+  it('counts a last attempt whose first step\'s reservation its task\'s budget refused: never a free retry, so the task waits for input with the budget\'s reason', async () => {
+    const { ctx, workers } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }]
+    const task = await ready(ctx, 'last-spent', { budget, maxAttempts: 1 })
+    // The task already drew its one run: the ledger refuses the first step's reservation for its budget.
+    await drew(ctx, task.taskId, 'r-last-spent')
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', message: expect.stringMatching(/budget is spent .*it was the task's last attempt/) } })
+    expect(failed.nodes.filter((n) => n.state === 'FAILED')).toEqual([])
+    // Nothing of it was sent, and still the attempt is spent: the refusal is the task's own budget's.
+    expect(workers.started).toHaveLength(0)
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ status: 'failed' })
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(chosen(reported)).toMatch(/the run failed \(budget_spent\): an attempt the board counts; it failed for its own reason, not a failed step's \(budget_spent: the task's budget/)
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+    expect(board.outcome.detail).toMatchObject({ runId: run.runId, outcome: 'failed' })
+    expect(board.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(board.outcome.detail).not.toHaveProperty('freeRetry')
+    // No free retry was used, and no other run of the task started to meet the same refusal.
+    expect(ctx.store.db.prepare('SELECT free_retries FROM board_tasks WHERE task_id = ?').get(task.taskId)).toEqual({ free_retries: 0 })
+    await ctx.board.sweep(new Date())
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', run: { runId: run.runId } })
+  })
+
+  it('does not count a run whose step a Worker that became unavailable could not take, though an earlier step was sent', async () => {
+    const deep = { nodeId: 'deep', objective: 'Do deep', prompt: 'D: {{node:a}}', capabilities: ['reason', 'deep-research'], tier: 'standard' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer', dependsOn: ['a'] }
+    const { ctx, workers } = await boot({ workflow: { templates: { 'then-deep': [{ ...deep, nodeId: 'a', objective: 'Do a', prompt: 'A: {{input}}', capabilities: ['reason'], dependsOn: [] }, deep] } } })
+    await project(ctx)
+    const task = await ready(ctx, 'worker-down', { maxAttempts: 1 })
+    // The one Worker that proves deep-research is unavailable by the time step deep routes.
+    workers.extra = [worker('w:deep', { tier: 'standard', proves: ['reason', 'deep-research'], state: 'unavailable' })]
+    workers.reply = () => ({ text: 'alpha' })
+    const run = await ctx.workflow.start({ template: 'then-deep', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
+    expect(workers.started).toHaveLength(1)
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ infrastructure: { kind: 'worker-unavailable', reason: expect.stringMatching(/w:deep, which would otherwise take it, is unavailable/) } })
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    expect(board.outcome.detail).toMatchObject({ infrastructure: { kind: 'worker-unavailable' } })
+  })
+
+  it('counts a run the ledger refused for its task\'s budget before anything of it was sent: the task\'s own budget, never a free retry', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const task = await ready(ctx, 'ledger-refused', { maxAttempts: 1, budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    // The pool is taken away between admission and the first step's reservation: the ledger refuses the request itself.
+    const reserve = vi.spyOn(ctx.resources, 'reserve').mockRejectedValue(new ResourcesError('unknown-pool', 'pool max.programmatic is no longer configured'))
+    onTestFinished(() => reserve.mockRestore())
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'quota_exhausted' } })
+    expect(failed.nodes.filter((n) => n.state === 'FAILED')).toEqual([])
+    expect(workers.started).toHaveLength(0)
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ status: 'failed' })
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(chosen(reported)).toMatch(/it failed for its own reason, not a failed step's \(quota_exhausted: /)
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+    expect(board.outcome.detail).not.toHaveProperty('freeRetry')
+  })
+
+  it('after a restart whose sweep left the task waiting for input (remediation forbidden, so not asked), still gives back the attempt of a run the host stopped', async () => {
+    // remediation always asks (ALWAYS_ASK), so the one verdict on it that asks nothing is forbid.
+    const policy: AutonomyPolicy = { ...POLICY, rules: [...POLICY.rules, { actionClass: 'remediation', mode: 'forbid' }] }
+    const { ctx, workers, restartWorkflow } = await boot({ policy })
+    await project(ctx)
+    const task = await ready(ctx, 'restart-not-asked', { maxAttempts: 1 })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'step a started')
+    await restartWorkflow(async () => {
+      // The host was down past the lease: the sweep finds the holder lost and, remediation forbidden, leaves the task waiting for input.
+      ctx.store.db.prepare('UPDATE leases SET expires_at = 1 WHERE resource = ?').run(`board-task:${task.taskId}`)
+      await ctx.board.sweep(new Date())
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, run: { runId: run.runId } })
+      workers.release(workers.started[0]!.id, { text: 'alpha' })
+    })
+    const view = await reported(ctx, run.runId)
+    expect(view).toMatchObject({ status: 'failed', error: { kind: 'holder_lost' } })
+    expect(view.task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
+    expect(decisionOf(ctx, view.task!.outcome!.decision)).toMatchObject({ outcome: { option: 'report', detail: { status: 'failed', infrastructure: { kind: 'host-stopped' } } } })
+    const after = (await ctx.board.task(task.taskId))!
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0, max: 1 } })
+    expect(decisionOf(ctx, after.lastDecision).outcome.detail).toMatchObject({ infrastructure: { kind: 'host-stopped' }, freeRetry: { used: 1, counted: false } })
+  })
+
+  it('keeps free retries within the board\'s bound: past it the failure counts, and a persistent one ends waiting for input with the reason (INV-9)', async () => {
+    const { ctx, workers } = await boot({ boardConfig: { maxFreeRetries: 1 } })
+    await project(ctx)
+    const task = await ready(ctx, 'persistent', { maxAttempts: 1 })
+    workers.reply = () => ({ fail: 'reauth_required', disposition: 'USER_ACTION', sent: false })
+    const first = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const free = await report(ctx, first.runId)
+    expect(free.task).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    expect(free.board.outcome.detail).toMatchObject({ freeRetry: { used: 1, max: 1, counted: false } })
+    const second = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const counted = await report(ctx, second.runId)
+    expect(counted.reported.outcome.detail).toMatchObject({ infrastructure: { kind: 'unsent' } })
+    expect(counted.task).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+    expect(counted.board.outcome.detail).toMatchObject({ infrastructure: { kind: 'unsent' }, freeRetry: { used: 1, max: 1, counted: true } })
+    expect(chosen(counted.board)).toMatch(/the task's 1 free retry is used \(board.maxFreeRetries; INV-9\), so this failure only on the infrastructure counts \(unsent: nothing of run /)
+    // Each run's step tried its Worker twice (the engine's own attempts), sending nothing.
+    expect(workers.started).toHaveLength(4)
   })
 })

@@ -16,6 +16,7 @@ import { checksFor, landingTargets } from './checks.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { awaitCall, settleCalls, waitsOnCall } from './continuations.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
+import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
@@ -71,6 +72,12 @@ export class Engine {
   readonly heldWakes = new Map<string, string>()
   /** Wakes whose held check is in flight: a stop waits for them. */
   readonly wakeChecks = new Set<Promise<void>>()
+  /**
+   * The runs that were running when this engine started: a holder of theirs found lapsed at their
+   * first renewal lapsed while the host was down (ADR-0069). An execution's failure is never the
+   * host's for this alone: only its source's `infrastructure` mark says the host's stop ended it.
+   */
+  readonly inheritedRuns = new Set<string>()
 
   constructor(readonly ctx: Context, readonly config: Config) {
     // A dispatch setting out of its range refuses the row, with its path (INV-2).
@@ -100,6 +107,15 @@ export class Engine {
     await this.tasks.close()
     for (const set of this.waiters.values()) for (const wake of set) wake()
     this.waiters.clear()
+  }
+
+  /**
+   * At start, before anything is scheduled: the runs a stop or restart left running, so a holder of
+   * theirs that lapsed while the host was down is told apart as the host's, not the attempt's (ADR-0069).
+   */
+  noteInherited(): void {
+    const runs = this.ctx.store.db.prepare("SELECT run_id FROM workflow_runs WHERE status = 'running'").all() as Array<{ run_id: string }>
+    for (const { run_id } of runs) this.inheritedRuns.add(run_id)
   }
 
   /** On start: every running run is scheduled again, then unfinished wakes are settled (REQ-WF-4). */
@@ -742,8 +758,10 @@ export class Engine {
           const waiting = error.limitUntil ? waitForLimit(this, run, node, error, `${team}${error.message}`, lease) : undefined
           if (waiting && 'waited' in waiting) return
           const unwaited = waiting ? `; it does not wait: ${waiting.why}` : ''
+          // A Worker that would otherwise take it is unavailable: the infrastructure's failure, not the attempt's (ADR-0069).
+          const down = admissionInfrastructure(node, error)
           return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}${unwaited}` },
-            { sent: false, decisions: [error.decision] }, lease)
+            { sent: false, decisions: [error.decision], ...(down ? { infrastructure: down } : {}) }, lease)
         }
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
@@ -812,7 +830,7 @@ export class Engine {
       // The Worker's runtime is not loaded now (its row is off): the node fails for the operator.
       // Its execution is never guessed at; `continue` runs the node again as a new attempt.
       return failAttempt(this, run, node, { kind: 'config_error', disposition: dispositionOf('config_error'),
-        message: `Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered (its row is off); turn it back on, then continue the run to run the node again as a new attempt` }, { sent: true }, lease)
+        message: `Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered (its row is off); turn it back on, then continue the run to run the node again as a new attempt` }, { sent: true, infrastructure: sourceGone(node) }, lease)
     }
     let current = source.get(node.execution_id!)
     const stop = aborted(signal)
@@ -831,7 +849,9 @@ export class Engine {
       if (await awaitCall(this, run, node, current, lease)) return
       // The node keeps the failure's kind, disposition, and message; a site's own error is read from the execution (ADR-0062).
       const failed = current.error ? { kind: current.error.kind, disposition: current.error.disposition, message: current.error.message } : { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }
-      return failAttempt(this, run, node, failed, { sent: current.submitted, execution: current }, lease)
+      // Its source says the host's stop or its Worker going away alone ended it, or it is unsent on a Worker that became unavailable: the infrastructure's (ADR-0069).
+      const mark = await executionInfrastructure(this, node, current, failed)
+      return failAttempt(this, run, node, failed, { sent: current.submitted, execution: current, ...(mark ? { infrastructure: mark } : {}) }, lease)
     }
     if (!current.result) {
       return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `${node.source} reported execution ${current.id} completed without a result` }, { sent: true, execution: current }, lease)
@@ -977,7 +997,9 @@ export class Engine {
       const previous = JSON.parse(stored.record) as NodeRecord
       const record: NodeRecord = { ...change(previous), state: fields.state ?? stored.state, revision: previous.revision + 1 }
       this.schemas.assertRecord(record)
-      const entries = Object.entries({ ...fields, record: JSON.stringify(record), updated_at: now() })
+      // A failure is the infrastructure's only when the step that failed says so (ADR-0069): any other clears the mark.
+      const marked = fields.state === 'FAILED' && fields.infrastructure === undefined ? { ...fields, infrastructure: null } : fields
+      const entries = Object.entries({ ...marked, record: JSON.stringify(record), updated_at: now() })
       db.prepare(`UPDATE workflow_nodes SET ${entries.map(([k]) => `${k} = ?`).join(', ')} WHERE run_id = ? AND node_id = ?`)
         .run(...entries.map(([, v]) => v as string | number | null), node.run_id, node.node_id)
     })

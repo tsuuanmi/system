@@ -14,8 +14,8 @@ import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject,
-  type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
+  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, FREE_RETRIES_DEFAULT, FREE_RETRIES_MAX, freeRetriesOf, fundingVersion,
+  type InfrastructureFailure, infrastructureProblem, type Project, type ProjectState, REOPEN_REASON_MAX, type Reopening, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type Unit, type UnreleasedHold, unreleasedProblem, unreleasedText, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { contentId, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -41,6 +41,12 @@ export interface Config {
    * 10): a template whose attempts are each one hypothesis may need more than another's.
    */
   templateAttempts?: Record<string, number>
+  /**
+   * Failed runs of one task that failed only on the infrastructure (the host stopped them, nothing
+   * of them was sent, a Worker became unavailable) and are not counted as attempts, at most (default
+   * 3, 0 to 10; INV-9, ADR-0069). Past it such a run counts as any failed run does.
+   */
+  maxFreeRetries?: number
   /** The most items one page of `board_projects` or `board_tasks` holds (default 100, the tools' own maximum). */
   pageBound?: number
   /** The most tasks the `TASKS.md` projection lists, open ones first (default 200). */
@@ -130,6 +136,11 @@ const MIGRATIONS = [{
   version: 2,
   sql: `ALTER TABLE board_projects ADD COLUMN charter_expires_at TEXT;
   ALTER TABLE board_client_requests ADD COLUMN charter_version INTEGER;`,
+}, {
+  // The failed runs of a task that failed only on the infrastructure and were not counted as
+  // attempts (ADR-0069): bounded by maxFreeRetries (INV-9), kept beside the record, never in it.
+  version: 3,
+  sql: 'ALTER TABLE board_tasks ADD COLUMN free_retries INTEGER NOT NULL DEFAULT 0;',
 }]
 
 type Changes<T> = { [K in keyof T]?: T[K] | undefined }
@@ -204,6 +215,8 @@ const charterHash = (charter: Charter): string => {
 const writesKey = (subject: Subject | undefined): string | null => (subject ? JSON.stringify([subject.type, subject.ref]) : null)
 /** Whether the task may make another attempt: `attempts.count` never exceeds `attempts.max`. */
 const attemptLeft = (task: BoardTask): boolean => task.attempts.count < task.attempts.max
+/** The task with the attempt its last run made given back: that run failed only on the infrastructure (ADR-0069). */
+const refunded = (task: BoardTask): BoardTask => ({ ...task, attempts: { ...task.attempts, count: Math.max(0, task.attempts.count - 1) } })
 /** The earlier of two instants, either of which may be unknown. */
 const earliest = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined || Date.parse(a) <= Date.parse(b) ? a : b)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
@@ -257,6 +270,7 @@ export class StoreBoard extends Board {
     leaseTtlSeconds: z.natural().min(30).max(3600).default(600).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts a task gets when its proposal names none and templateAttempts names none for its template'),
     templateAttempts: z.dict(z.natural().min(1).max(10)).default({}).description('Attempts a task of a template gets when its proposal names none, by template name (1 to 10 each)'),
+    maxFreeRetries: z.natural().max(FREE_RETRIES_MAX).default(FREE_RETRIES_DEFAULT).description('Failed runs of one task that failed only on the infrastructure (the host stopped them, nothing of them was sent, a Worker became unavailable) and are not counted as attempts, at most; past it such a run counts as any failed run (INV-9)'),
     pageBound: z.natural().min(1).max(100).default(100).description('The most items one page of board_projects or board_tasks holds'),
     projectionMaxTasks: z.natural().min(1).max(10_000).default(200).description('The most tasks the TASKS.md projection lists, open ones first'),
     sweepSeconds: z.natural().max(3600).default(60).description('Seconds between the board\'s own sweeps, and one at start; 0 sweeps only when called'),
@@ -269,11 +283,15 @@ export class StoreBoard extends Board {
   private readonly schemas = new SchemaRegistry()
   /** `config.autoAccept`, validated; undefined when off. */
   private readonly autoAccept: AutoAccept | undefined
+  /** `config.maxFreeRetries`, validated: infrastructure failures a task is not charged for, at most (ADR-0069, INV-9). */
+  private readonly freeRetries: number
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx)
     // Refused before anything starts: a malformed setting never accepts anything (INV-2).
     this.autoAccept = autoAcceptOf(config.autoAccept)
+    // A malformed bound on free retries never starts a board (INV-2, INV-9).
+    this.freeRetries = freeRetriesOf(config.maxFreeRetries)
     ctx.store.migrate('board', MIGRATIONS)
     ctx.effect(() => {
       const seconds = config.sweepSeconds ?? 60
@@ -697,11 +715,29 @@ export class StoreBoard extends Board {
 
   async reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at: Date = new Date()) {
     const before = this.taskOf(taskId).task
-    if (!(before.state === 'running' || (before.state === 'waiting-for-approval' && before.waiting?.reason === 'reconciliation-failed'))) {
+    // A lost run the sweep left waiting for input (the policy gave remediation no ask) still takes a
+    // report that it failed only on the infrastructure, while a free retry is left (1.5, ADR-0069).
+    const lostWait = this.waitsOnLostRun(before)
+    if (!(before.state === 'running' || (before.state === 'waiting-for-approval' && before.waiting?.reason === 'reconciliation-failed') || lostWait)) {
       throw new BoardError('invalid-transition', `${taskId} is ${before.state}, not waiting on a run`)
     }
     if (before.run?.runId !== runId) throw new BoardError('invalid', `${taskId} recorded run ${before.run?.runId ?? '(none)'}, not ${runId}`)
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
+    // A failed run that failed only on the infrastructure (1.5, ADR-0069): checked before anything moves.
+    const infrastructure = outcome.status === 'failed' && outcome.infrastructure !== undefined ? outcome.infrastructure : undefined
+    if (infrastructure !== undefined) {
+      const problem = infrastructureProblem(infrastructure)
+      if (problem) throw new BoardError('invalid', problem)
+    }
+    // Not counted while the task has free retries left (INV-9): the attempt it made is given back.
+    // Read again inside the move's transaction, so its decision's numbers are exact.
+    const free = infrastructure !== undefined && this.freeRetriesUsed(taskId) < this.freeRetries && before.attempts.count > 0
+    if (lostWait && !free) {
+      throw new BoardError('invalid-transition', infrastructure
+        ? `${taskId} waits for input on its lost run ${runId}, and its ${this.freeRetries} free retr${this.freeRetries === 1 ? 'y is' : 'ies are'} used (board.maxFreeRetries; INV-9): the failure counts, and the task waits for a person`
+        : `${taskId} waits for input on its lost run ${runId}: only a failure only on the infrastructure, with a free retry left, is reported to it`)
+    }
+    const charged = free ? refunded(before) : before
     // Checked before anything moves, so a report that is refused changes nothing.
     let read: Acceptance | undefined
     let held: Held | undefined
@@ -715,15 +751,27 @@ export class StoreBoard extends Board {
     }
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
-    const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    // A free retry asks the gate about the same attempt again, on that attempt's subject.
+    const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(charged) ? await this.nextAttempt(charged, at) : undefined
     const moved = await this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
       if (outcome.status === 'completed') return held ? this.holdMove(current.task, outcome.result, outcome.acceptance, held, at) : this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at, auto)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
-      const why = `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`
-      if (next) return this.nextAttemptMove(project, task, next, { why, detail: { runId, outcome: 'failed' } }, at)
+      // The free retries used, read in the move's transaction: one the move did not decide on is a conflict.
+      const used = this.freeRetriesUsed(taskId)
+      if (infrastructure !== undefined && (used < this.freeRetries && task.attempts.count > 0) !== free) {
+        throw new BoardError('conflict', `${taskId}'s free retries changed while the board waited on the approval queue`)
+      }
+      if (free) return this.freeRetryMove(project, task, runId, infrastructure!, used, next!, at)
+      // The statement first, the owner's reason last: a decision's reason is clamped, and the detail keeps the reason whole.
+      const bound = infrastructure
+        ? `; the task's ${this.freeRetries} free retr${this.freeRetries === 1 ? 'y is' : 'ies are'} used (board.maxFreeRetries; INV-9), so this failure only on the infrastructure counts (${infrastructure.kind}: ${infrastructure.reason})`
+        : ''
+      const why = `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}${bound}`
+      const detail = { runId, outcome: 'failed', ...(infrastructure ? { infrastructure, freeRetry: { used, max: this.freeRetries, counted: true } } : {}) }
+      if (next) return this.nextAttemptMove(project, task, next, { why, detail }, at)
       const decision = this.decision(project, task, {
-        from: task.state, to: 'waiting-for-input', why, whyNot: 'the run\'s owner reported its outcome, so nothing waits on it', detail: { runId, outcome: 'failed' },
+        from: task.state, to: 'waiting-for-input', why, whyNot: 'the run\'s owner reported its outcome, so nothing waits on it', detail,
       }, at)
       return { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
     }))
@@ -731,6 +779,41 @@ export class StoreBoard extends Board {
     // open request nothing waits on, which expires on its own; the accepted result is kept.
     if (pending) await this.withdrawUnheld(pending, at)
     return moved
+  }
+
+  /**
+   * Whether the task waits for input because its run was lost and the policy gave `remediation` no
+   * ask (the sweep's {@link gate}, or a {@link regate} on a policy change): its run is still its
+   * recorded one, and its `board` decision says so. A wait the operator's denial made is not one.
+   */
+  private waitsOnLostRun(task: BoardTask): boolean {
+    if (task.state !== 'waiting-for-input' || task.waiting?.reason !== 'rejected' || !task.run || !task.lastDecision) return false
+    const body = this.ctx.artifacts.get(task.lastDecision)?.body as { decisionType?: string; outcome?: { option?: string; detail?: { reason?: unknown; actionClass?: unknown } } } | undefined
+    return body?.decisionType === 'board' && body.outcome?.option === 'waiting-for-input'
+      && body.outcome.detail?.reason === 'reconciliation-failed' && body.outcome.detail.actionClass === 'remediation'
+  }
+
+  /** The task's failed runs that were not counted as attempts so far (ADR-0069). */
+  private freeRetriesUsed(taskId: string): number {
+    const row = this.ctx.store.db.prepare('SELECT free_retries FROM board_tasks WHERE task_id = ?').get(taskId) as { free_retries: number } | undefined
+    return Number(row?.free_retries ?? 0)
+  }
+
+  /**
+   * A run that failed only on the infrastructure, with a free retry left (ADR-0069, INV-9): the
+   * attempt it made is given back (`attempts.count` one lower), the free retry is counted beside the
+   * record in the same transaction, and the task goes back for the same attempt through the gate.
+   * The move's `board` decision says why it was not counted, with the kind, the reason, and the free
+   * retries used and allowed.
+   */
+  private freeRetryMove(project: Project, task: BoardTask, runId: string, infrastructure: InfrastructureFailure, used: number, next: NextAttempt, at: Date): Move {
+    const back = refunded(task)
+    this.ctx.store.db.prepare('UPDATE board_tasks SET free_retries = free_retries + 1 WHERE task_id = ?').run(task.taskId)
+    // The statement first, the owner's reason last: a decision's reason is clamped, and the detail keeps it whole.
+    const why = `run ${runId} failed only on the infrastructure, as its owner reconciled it: it is not counted, so attempt ${task.attempts.count} of ${task.attempts.max} runs again `
+      + `(free retry ${used + 1} of ${this.freeRetries}, board.maxFreeRetries; INV-9); ${infrastructure.kind}: ${infrastructure.reason}`
+    const move = this.nextAttemptMove(project, back, next, { why, detail: { runId, outcome: 'failed', infrastructure, freeRetry: { used: used + 1, max: this.freeRetries, counted: false } } }, at)
+    return { ...move, changes: { attempts: back.attempts, ...move.changes } }
   }
 
   async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[]; unreleased?: UnreleasedHold[] }, at: Date = new Date()) {

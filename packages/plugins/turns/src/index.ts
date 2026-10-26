@@ -23,7 +23,7 @@ import { type ContentId, contentId, LABEL, pooledTermsDecision, sha256 } from '@
 import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
-import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
+import type { CapabilityDescriptor, ExecutionInfrastructure, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import { type ConversationView, deleteDue, LEDGER_MIGRATION, type LedgerHost, type LedgerState, listConversations, recordConversation, releaseSessions, sessionReleased } from './ledger.ts'
 
@@ -60,8 +60,11 @@ export interface TurnView {
   routeDecision?: ContentId
   tierDecision?: ContentId
   egressDecision?: ContentId
-  /** `siteError`: the site answered the sent prompt with its own error in place of an answer (ADR-0062). */
-  error?: { kind: string; disposition: Disposition; message: string; siteError?: true }
+  /**
+   * `siteError`: the site answered the sent prompt with its own error in place of an answer (ADR-0062).
+   * `infrastructure`: the host's stop alone ended it (ADR-0069).
+   */
+  error?: { kind: string; disposition: Disposition; message: string; siteError?: true; infrastructure?: ExecutionInfrastructure }
   createdAt: string
   updatedAt: string
 }
@@ -1236,8 +1239,9 @@ export class Turns extends Service {
         continue
       }
       if (outcome === 'AMBIGUOUS' || Date.now() > deadline) {
+        // Its previous owner's stop alone left it unknown: the host's failure, not the turn's (ADR-0069).
         this.fail(row.turn_id, new ProviderError('reconciliation_failed',
-          `the host stopped after this prompt was sent and the outcome cannot be established (decision ${decision}); it is not resent automatically`), lease)
+          `the host stopped after this prompt was sent and the outcome cannot be established (decision ${decision}); it is not resent automatically`), lease, 'host-stopped')
         return 'done'
       }
       // WAIT: the provider is still generating; look again shortly (a cancel or a stop ends the wait).
@@ -1265,7 +1269,8 @@ export class Turns extends Service {
     return this.ctx.store.db.prepare('SELECT * FROM turns WHERE turn_id = ?').get(turnId) as Row | undefined
   }
 
-  private fail(turnId: string, error: unknown, lease?: () => Lease): void {
+  /** `infrastructure`: what of the infrastructure alone ended it, when this runtime knows it (ADR-0069). */
+  private fail(turnId: string, error: unknown, lease?: () => Lease, infrastructure?: ExecutionInfrastructure): void {
     // A finished turn stays as it finished: a later failure (closing its browser turn) never rewrites it.
     if (TERMINAL.has(this.row(turnId)?.status ?? 'queued')) return
     const typed = toProviderError(error)
@@ -1276,7 +1281,7 @@ export class Turns extends Service {
     // written (ADR-0062): told to the caller, whose rule alone may start the work again. Without a
     // receipt nothing was sent, so it is not that.
     const siteError = typed.siteError && row?.submitted_at ? { siteError: true } : {}
-    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message, ...siteError }) }, lease)
+    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message, ...siteError, ...(infrastructure ? { infrastructure } : {}) }) }, lease)
   }
 
   /** Write turn fields; with a lease, only while that lease still holds the turn (fenced). */

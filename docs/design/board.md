@@ -31,7 +31,7 @@ the operator itself: every move that needs a person goes through the
 
 ## Seam
 
-`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.4:
+`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.5:
 
 | Method | Does |
 |---|---|
@@ -44,7 +44,7 @@ the operator itself: every move that needs a person goes through the
 | `start`, `submit` | record the run before it starts; record its result |
 | `accept(taskId, acceptance)` | apply the `acceptance` decision on the result |
 | `block`, `answer` | interrupt a running task, a spent budget naming the funding it asks for (`funding`, 1.2, optional) and the ledger's reservations its holder could not release (`unreleased`, 1.3, optional: [funding a spent budget](#funding-a-spent-budget)); answer a waiting one |
-| `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost |
+| `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost, or that failed; a failed run that failed only on the infrastructure (`infrastructure`, 1.5) is not counted, within a bound ([attempts](#an-attempt-not-spent-on-the-infrastructure)) |
 | `cancel` | cancel a task that is not running or in review |
 | `attachDigest(taskId, digest)` | set the result's `digest`, once (1.1, optional: a provider at 1.0 has none) |
 | `reopen(taskId, { runId, acceptance, decision, reason })` | send a `done` task's accepted result back as another attempt, when its landing found it cannot land on its target as that is now (1.4, optional: [ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)): only while it is done on exactly that run's result and acceptance; the move a rejected attempt makes (through the gate again, or `retries-spent` with none left), its `board` decision naming `decision`; it counts no attempt |
@@ -244,7 +244,7 @@ policy change; the other cases only the store-backed provider checks.
 | running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`), on an `ask` verdict | the `autonomy` decision and an approval request; a spent budget's `funding` ask is bound by the request's subject and kept in `waiting.funding` ([funding a spent budget](#funding-a-spent-budget)) | the run is never started again on its own (INV-4); an invalid ask is refused (`invalid`) and nothing changes |
 | running → waiting-for-input (`rejected`) | the same, on any other verdict: `forbid`, and also `auto` or `notify`, since the queue takes a request only on `ask`; or a `funding` ask past the bound per task, which no request is opened for | a `board` decision naming the `autonomy` decision, or the ask and the bound | a spent or lost run is never readied or cancelled by the policy alone, so it waits for a person; the wait expires (`input-expired`) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
-| running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
+| running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; a failed run that failed only on the infrastructure, with a free retry left, is not counted (`attempts.count` back by one, the same attempt through the gate, the kind and reason in the decision; [attempts](#an-attempt-not-spent-on-the-infrastructure)); the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval; a malformed `infrastructure` is refused (`invalid`) |
 | review → review (held for the operator) | `accept` (or a run owner's completed report) with an accepting decision that is not the operator's, while the class's required checks have not passed or the policy forbids the class | a `board` decision naming the acceptance and the `autonomy` decision; the lease released; `waiting` (`operator-review`, the checks still pending, and the policy's wait for the class) | only the operator's acceptance accepts it now: another such decision is refused (`invalid`); a rejection, or one with the checks passed, applies |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision, or a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay; under `autoAccept`, a `board` decision of rule `board.auto-accept` naming the acceptance, the review, and the check-run record ([System accepts a listed branch's result](#system-accepts-a-listed-branchs-result)) | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed, and under `autoAccept` the rule's conditions met, else it is held for the operator |
@@ -266,7 +266,7 @@ work again as a new task.
 |---|---|---|---|
 | `question` | `block` with questions | `answer` (`board_update` `answers`, one `{question, answer}` per question, `question` its index from 0 in `waiting.questions`), every question once: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked (a policy that does not ask, or a funding ask past the bound) | nothing | expires: `input-expired` |
-| `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
+| `retries-spent` | review rejected the last attempt, a failed run with none left (an infrastructure failure too, once the task's free retries are used, its decision saying so with the reason), or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
 | `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
 
 ### Funding a spent budget
@@ -430,6 +430,51 @@ the board decides and counts attempts as always, and reads nothing new. The prop
 name), else its `maxAttempts` (3). The lead names more where one attempt tests one hypothesis and a
 few may miss; the count never changes once the task is proposed.
 
+#### An attempt not spent on the infrastructure
+
+`start` counts an attempt when it records the run. A run that then fails only on the
+infrastructure is given it back (contract 1.5,
+[ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md); operator
+D82 #3): its owner reports it failed with `infrastructure`, a kind and a reason
+([how the engine tells](workflow-engine.md#an-attempt-not-spent-on-the-infrastructure)):
+
+| Kind | What happened |
+|---|---|
+| `host-stopped` | the host's drain or restart stopped the run: a step in flight at the stop that its Worker source says the stop alone ended, or the holder's lease that lapsed while the host was down (a restart alone is no proof: a step that outlived it and failed for its own reason counts) |
+| `unsent` | nothing of the run was sent to any Worker, every execution unsubmitted, and every step that failed failed on a Worker's own failure before the send (its network, overload, session, account limit, sign-out, or challenge, in routing or in its execution); a refusal by the task's own budget, policy, input, or configuration is never one, and counts |
+| `worker-unavailable` | a step failed only because a Worker it needed became unavailable while the run ran: before anything of it was sent, or after, when its Worker source says that alone ended it |
+
+- **Not counted, within a bound.** While the task has free retries left (`board.maxFreeRetries`,
+  default 3, 0 to 10, validated when the board loads; INV-9), `reconcileRun` sets
+  `attempts.count` back by one and the task goes back for the same attempt through the gate (ready,
+  or `approval-needed` on that attempt's subject, `board-task:<id>:attempt:<n>`). The free retries
+  a task used are kept beside its record (`board_tasks.free_retries`), so the bound holds across
+  restarts and over the task's whole life; the move reads them in its own transaction, so its
+  decision's numbers are exact (a count that changed while the board waited on the approval queue
+  is a `conflict`, and nothing moves).
+- **Recorded.** The move's `board` decision says why it did not count, with the kind and the
+  reason, and names the free retries used and allowed (`outcome.detail.infrastructure`,
+  `outcome.detail.freeRetry`, `counted: false`). A decision's reason is clamped, so it says the
+  outcome first and the owner's reason last; the detail keeps the reason whole.
+- **Past the bound** the failure counts like any other, and its decision says why, with the reason
+  (`counted: true`): an infrastructure failure that persists still ends the task waiting for input
+  (`retries-spent`), never a loop.
+- **After the sweep found the run lost.** When the policy gives `remediation` no ask, the sweep (or
+  a policy change's regate) leaves a lost run's task waiting for input (`rejected`), its run still
+  recorded, and its `board` decision saying so (`outcome.detail.reason` `reconciliation-failed`).
+  `reconcileRun` still takes the run's report from that wait, only a failure only on the
+  infrastructure with a free retry left: the attempt is given back as above. Any other report to
+  that wait (another outcome, or past the bound) is `invalid-transition`, nothing moves, and the
+  task keeps waiting for a person. A wait the operator's denial made is not such a wait.
+- **The count is not the run's identity.** A run not counted leaves `attempts.count` where it was
+  before it, so the next run serves the same attempt number; whoever reads the previous run (as
+  the engine does to [carry its work](workflow-engine.md#starting-from-the-previous-attempts-work))
+  finds it by its own record, never by the count.
+- A failed run without `infrastructure`, a rejected result, a question, and a spent budget count
+  as before; so does a run the operator stopped, even before anything of it was sent (its owner
+  never reports a stop as the infrastructure's). A malformed `infrastructure` (another kind, a reason that is empty or over 500
+  characters, any other field) is `invalid`, and nothing moves.
+
 ## Fail-closed rules
 
 1. No task starts outside an active project with an approved charter.
@@ -450,16 +495,20 @@ few may miss; the count never changes once the task is proposed.
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 29
-scenarios at contract 1.4 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
-1.2, `board.budget-spent-names-unreleased` since 1.3, `board.reopen-sends-back` since 1.4), run against the fake provider and the store-backed provider, both over
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 31
+scenarios at contract 1.5 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
+1.2, `board.budget-spent-names-unreleased` since 1.3, `board.reopen-sends-back` since 1.4,
+`board.infrastructure-failure-not-counted` and `board.infrastructure-failure-after-lost-run-wait`
+since 1.5), run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.
 Contract 1.0 is unreleased and amended in place
 ([ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)); the last amendment
 adds `board.policy-change-asks-again`, for which each harness changes the queue's policies
 (`changePolicies`: the fake's `reload`, or a restart of the store-backed queue over the same
 store). 1.1 adds `attachDigest`, 1.2 the optional `funding` of a `budget-spent` block
-([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)), and 1.3 its optional
+([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)), 1.3 its optional
 `unreleased` ([ADR-0054](../decisions/adr/0054-a-funding-request-names-the-holds-the-ledger-did-not-release.md)),
-and 1.4 the optional `reopen` ([ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)),
-all minors.
+1.4 the optional `reopen` ([ADR-0068](../decisions/adr/0068-an-accepted-result-is-rebased-onto-its-target-and-checked-again-before-it-lands.md)),
+and 1.5 a failed run's optional `infrastructure`
+([ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md)), all
+minors.

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { workspaceReadBounds } from '@tsuuanmi/system-agent-runtime-core'
+import type { RunSpec } from '@tsuuanmi/system-agent-runtimes'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type WorkRequirement } from '@tsuuanmi/system-workers'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -70,6 +71,37 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const done = await source.wait(started.id, 10_000)
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(agent.runs).toEqual([])
+  })
+
+  it('marks a sent run whose Worker became unavailable while it ran worker-unavailable, and one whose Worker is still there not (ADR-0069)', async () => {
+    /** An agent whose process goes away mid-run; with `vanishes`, its runtime's probe fails from then on. */
+    class VanishingAgent extends ScriptedAgent {
+      constructor(private readonly state: { available: boolean; vanishes: boolean }) {
+        super(state)
+      }
+
+      override async run(spec: RunSpec): ReturnType<ScriptedAgent['run']> {
+        this.runs.push(spec)
+        if (this.state.vanishes) this.state.available = false
+        throw new ProviderError('session_broken', 'the agent process exited mid-run')
+      }
+    }
+    const outcome = async (vanishes: boolean) => {
+      const agent = new VanishingAgent({ available: true, vanishes })
+      const { ctx } = await boot(agent, { workers: [worker()], probeTtlMs: 0 })
+      const admitted = await ctx.workers.route(requirement())
+      const source = ctx.workers.source('agents')!
+      const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'review', requirement: requirement(), decisions: admitted.decisions })
+      const done = await source.wait(started.id, 10_000)
+      expect(agent.runs).toHaveLength(1)
+      return done
+    }
+    const gone = await outcome(true)
+    expect(gone).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'session_broken', infrastructure: 'worker-unavailable', message: expect.stringMatching(/the agent process exited mid-run; agent:reviewer became unavailable while it ran: its scripted probe failed/) } })
+    // The same failure on a Worker still there is the run's own: never marked.
+    const there = await outcome(false)
+    expect(there).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'session_broken', message: 'the agent process exited mid-run' } })
+    expect(there.error).not.toHaveProperty('infrastructure')
   })
 
   it('never makes a describe wait for a re-probe: a slow one keeps the Worker routable within probeTtlMs, past it the Worker is unavailable while the source still answers, and a failed one admits nothing (T50)', async () => {

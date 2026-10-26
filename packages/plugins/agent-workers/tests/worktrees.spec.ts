@@ -616,6 +616,8 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
     const done = await run(ctx, 'agent:dev', 'k-1', 'run_moved')
     expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed', message: expect.stringContaining('.git file') } })
+    // Its own violation, not the infrastructure's: never marked so (ADR-0069).
+    expect(done.error).not.toHaveProperty('infrastructure')
     // A later run of the workflow run and the sweep both refuse it, and leave it for the operator.
     expect(await run(ctx, 'agent:dev', 'k-2', 'run_moved')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining('no longer points') } })
     expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [agent.runs[0]!.workspace] })

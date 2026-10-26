@@ -15,7 +15,7 @@ import { type Brief, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import type { Carried, CarryStep } from '@tsuuanmi/system-workers-core'
+import type { Carried, CarryStep, ExecutionInfrastructure } from '@tsuuanmi/system-workers-core'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { activeProject, CONFIG, readyTask, type Rendered, type Reply, ScriptedWorkers } from '../conformance/workflow.ts'
 import Workflow, { type NodeTemplate, type RunView, type TaskCarry } from '../src/index.ts'
@@ -93,8 +93,11 @@ async function boot() {
 
 type Booted = Awaited<ReturnType<typeof boot>>
 
+/** How the step after the writing step fails; `infrastructure`, its source's word that only the infrastructure ended it (ADR-0069). */
+type Failure = { fail: string; disposition: string; infrastructure?: ExecutionInfrastructure }
+
 /** The scripted Workers: a writing step changes its run's worktree; the step after it fails as `failing` says, then answers. */
-function script(b: Booted, failing: Array<{ fail: string; disposition: string }>): void {
+function script(b: Booted, failing: Failure[]): void {
   b.workers.reply = (request: Rendered): Reply => {
     if (request.requirement.capabilities.includes('develop')) {
       writeFileSync(join(b.workers.worktrees.get(request.runId!)!, 'a.c'), `int a = ${b.workers.started.length};\n`)
@@ -120,7 +123,7 @@ const decisionOf = (ctx: Context, ref: ArtifactRef): Decision => {
 }
 
 /** A task that writes the repository at `head`, whose attempt 1 completes its writing step and then fails as `failure`. */
-async function failedOnce(b: Booted, title: string, failure: { fail: string; disposition: string }, extra: Partial<TaskInput> = { writes: { type: 'git-head', ref: b.head } }): Promise<{ task: BoardTask; first: RunView }> {
+async function failedOnce(b: Booted, title: string, failure: Failure, extra: Partial<TaskInput> = { writes: { type: 'git-head', ref: b.head } }): Promise<{ task: BoardTask; first: RunView }> {
   script(b, [failure])
   const task = await readyTask(b.ctx, title, extra)
   const first = await attempt(b.ctx, task)
@@ -211,6 +214,21 @@ describe('ctx.workflow starts a board task\'s next attempt from its previous att
     expect(carry).toMatchObject({ state: 'fresh', reason: `run ${denied.first.runId} failed as egress_denied, which is not a later step's Worker, session, or limit failing, so its change is not carried` })
     expect(carry.decisions.map((d) => decisionOf(b.ctx, d))).toEqual([expect.objectContaining({ decisionType: 'admission', decider: expect.objectContaining({ id: 'workflow.task-worktree' }), outcome: expect.objectContaining({ option: 'fresh' }) })])
     expect(b.carrier.steps).toEqual([])
+  })
+
+  it('carries the work of a run the board did not count: its writing step completed, then a later step failed only on the infrastructure (ADR-0069)', async () => {
+    const b = await boot()
+    // The review's Worker went away after its step was sent: its source says that alone ended it.
+    const { task, first } = await failedOnce(b, 'free retry', { fail: 'config_error', disposition: 'CODE_FIX', infrastructure: 'worker-unavailable' })
+    // The board gave the attempt back: the count is where it was before the run.
+    expect(task).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    const second = await attempt(b.ctx, task)
+    expect(second.status).toBe('completed')
+    const carry = carryOf(b.ctx, second.runId)!
+    expect(carry).toMatchObject({ state: 'carried', from: { runId: first.runId, attempt: 1, nodeId: 'develop:1' }, commit: 'c'.repeat(40) })
+    expect(decisionOf(b.ctx, carry.decisions[0]!)).toMatchObject({ decisionType: 'admission', outcome: { option: 'carry', detail: { attempt: 1, from: first.runId, fromAttempt: 1 } } })
+    expect(b.carrier.steps).toEqual([expect.objectContaining({ runId: second.runId, from: expect.objectContaining({ runId: first.runId }) })])
+    expect(b.carrier.steps[0]!.message).toContain(`attempt 1, run ${second.runId}, starts from it`)
   })
 
   it('decides nothing for a start whose claim the board refuses, and starts from HEAD, recorded with why, when the previous attempt\'s record cannot be read (T127 item 12, INV-2, INV-13)', async () => {

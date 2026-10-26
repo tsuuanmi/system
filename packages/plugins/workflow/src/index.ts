@@ -181,6 +181,8 @@ export class Workflow extends Service {
     const engine = new Engine(ctx, config)
     this.engine = engine
     ctx.store.migrate('workflow', MIGRATIONS)
+    // What a stop or restart left in flight, read before the board's attach or the recovery schedules anything (ADR-0069).
+    engine.noteInherited()
     ctx.effect(() => {
       queueMicrotask(() => {
         purge(engine)

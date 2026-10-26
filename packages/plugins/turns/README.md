@@ -124,7 +124,9 @@ It provides `ctx.turns` at contract 1.0, and its Workers' descriptors are
     so it is AMBIGUOUS. The `reconciliation` decision is recorded first (INV-13).
     Then the turn waits (WAIT), adopts the answer without resending (RECOVER),
     resends within the bound (RESUBMIT), or fails closed with
-    `reconciliation_failed` (AMBIGUOUS).
+    `reconciliation_failed` (AMBIGUOUS), its error marked `infrastructure:
+    host-stopped`: its owner's stop alone left it unknown, so a board task's
+    attempt is not spent on it (ADR-0069).
   - **WAIT** looks again every 5 s with an abortable sleep, so an operator
     cancel or a runtime stop ends the wait at once. Consecutive WAITs are one
     decision (`turnReceipts.reconcile`).

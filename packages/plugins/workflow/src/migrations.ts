@@ -138,4 +138,10 @@ export const MIGRATIONS = [{
   UPDATE workflow_dispatch SET mode = CASE WHEN json_extract(choice, '$.board') IS NOT NULL THEN 'board' ELSE 'ask' END;
   UPDATE workflow_dispatch SET started_at = json_extract(outcome, '$.at') WHERE state = 'started';
   CREATE INDEX workflow_dispatch_started ON workflow_dispatch (started_at) WHERE started_at IS NOT NULL;`,
+}, {
+  // An attempt not spent on the infrastructure (ADR-0069): a failed step's mark, as JSON
+  // `{ kind, reason }`, when it failed only because the host stopped it or a Worker became
+  // unavailable. A step failed before it existed is unmarked, and its attempt counts.
+  version: 22,
+  sql: 'ALTER TABLE workflow_nodes ADD COLUMN infrastructure TEXT;',
 }]

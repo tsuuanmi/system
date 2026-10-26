@@ -26,9 +26,12 @@ declare module '@deepseek-ai/cordis' {
  * optional `unreleased` of a `budget-spent` {@link Board.block}: the ledger's reservations the
  * holder could not release, which still count against the task's budget, named in the request.
  * 1.4 adds the optional {@link Board.reopen} (ADR-0068): a done task's result that could not land
- * on its target as it is now goes back as another attempt.
+ * on its target as it is now goes back as another attempt. 1.5 adds the optional `infrastructure`
+ * of a failed {@link RunOutcome}: a run that failed only on the infrastructure (the host stopped
+ * it, nothing of it was sent, or a Worker became unavailable) is not counted as an attempt, within
+ * a bound of free retries per task (ADR-0069, INV-9).
  */
-export const BOARD_CONTRACT = '1.4'
+export const BOARD_CONTRACT = '1.5'
 
 /** The longest reason a {@link Board.reopen} carries (INV-9). */
 export const REOPEN_REASON_MAX = 2000
@@ -187,12 +190,65 @@ export interface TaskInput {
 export interface Claim { taskId: string; generation: number; leaseExpiresAt: string }
 
 /**
+ * Why a failed run failed only on the infrastructure, as its owner found it (1.5, ADR-0069): the
+ * host stopped it (`host-stopped`: a drain or restart interrupted it), nothing of it was sent
+ * (`unsent`: a Worker's own failure before the send, nothing submitted to any Worker; never a
+ * refusal by the task's own budget, policy, or input), or a Worker it needed
+ * became unavailable while it ran (`worker-unavailable`). `reason` says what happened, in words.
+ */
+export interface InfrastructureFailure { kind: 'host-stopped' | 'unsent' | 'worker-unavailable'; reason: string }
+
+/** The kinds of {@link InfrastructureFailure}. */
+export const INFRASTRUCTURE_KINDS: readonly InfrastructureFailure['kind'][] = ['host-stopped', 'unsent', 'worker-unavailable']
+
+/** The most characters an {@link InfrastructureFailure}'s reason holds. */
+export const INFRASTRUCTURE_REASON_MAX = 500
+
+/**
+ * Failed runs of one task that a board does not count as attempts, at most, by default (1.5, INV-9):
+ * past it, an infrastructure failure counts as any failed run does, so one that persists still ends
+ * the task waiting for input (`retries-spent`), with the reason.
+ */
+export const FREE_RETRIES_DEFAULT = 3
+/** The most a board may be configured to allow (INV-9). */
+export const FREE_RETRIES_MAX = 10
+
+/**
+ * Why `infrastructure` is not what a failed run's outcome may carry ({@link RunOutcome}, 1.5), or
+ * undefined: a known kind and a reason of 1 to {@link INFRASTRUCTURE_REASON_MAX} characters, nothing
+ * else. A provider refuses such a report as `invalid`.
+ */
+export function infrastructureProblem(infrastructure: unknown): string | undefined {
+  const i = infrastructure as Partial<Record<keyof InfrastructureFailure, unknown>> | null
+  if (typeof infrastructure !== 'object' || i === null || Array.isArray(infrastructure)) return 'a failed run\'s infrastructure is an object with its kind and reason'
+  if (Object.keys(i).some((k) => k !== 'kind' && k !== 'reason')) return 'a failed run\'s infrastructure names only its kind and reason'
+  if (!INFRASTRUCTURE_KINDS.includes(i.kind as InfrastructureFailure['kind'])) return `a failed run's infrastructure kind is one of ${INFRASTRUCTURE_KINDS.join(', ')}`
+  if (typeof i.reason !== 'string' || i.reason.length === 0 || [...i.reason].length > INFRASTRUCTURE_REASON_MAX) return `a failed run's infrastructure reason is 1 to ${INFRASTRUCTURE_REASON_MAX} characters`
+  return undefined
+}
+
+/**
+ * The free retries a board allows per task, as configured: {@link FREE_RETRIES_DEFAULT} when unset,
+ * else a whole number from 0 to {@link FREE_RETRIES_MAX}; anything else is refused (TypeError), so a
+ * malformed bound never starts a board (INV-2, INV-9).
+ */
+export function freeRetriesOf(configured: unknown): number {
+  if (configured === undefined) return FREE_RETRIES_DEFAULT
+  if (typeof configured !== 'number' || !Number.isInteger(configured) || configured < 0 || configured > FREE_RETRIES_MAX) {
+    throw new TypeError(`board.maxFreeRetries is a whole number from 0 to ${FREE_RETRIES_MAX}, not ${JSON.stringify(configured)}`)
+  }
+  return configured
+}
+
+/**
  * A run's outcome as its owner (the workflow engine) reconciled it: completed, with its result and
- * the `acceptance` decision on it, or failed. An unknown outcome is never reported.
+ * the `acceptance` decision on it, or failed. An unknown outcome is never reported. A failed run may
+ * say it failed only on the infrastructure (`infrastructure`, 1.5): the board then does not count it
+ * as an attempt while the task has free retries left ({@link FREE_RETRIES_DEFAULT}), and says so.
  */
 export type RunOutcome =
   | { status: 'completed'; result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; next?: string }; acceptance: ArtifactRef }
-  | { status: 'failed' }
+  | { status: 'failed'; infrastructure?: InfrastructureFailure }
 
 /** Why a board call was refused. Nothing changed. */
 export type BoardFailure = 'unknown-project' | 'unknown-task' | 'invalid' | 'invalid-transition' | 'stale-generation' | 'conflict'
@@ -263,6 +319,18 @@ export abstract class Board extends Service {
    * only the operator may accept now, a review held for the operator, as in `accept`), a failed
    * run counts as an attempt. A pending `reconciliation-failed` approval is withdrawn once
    * the move committed. Fenced by the run id: an outcome for another run is refused.
+   *
+   * `infrastructure` (1.5, optional, failed only): the run failed only on the infrastructure. While
+   * the task has free retries left (the provider's bound, {@link FREE_RETRIES_DEFAULT} unless
+   * configured, at most {@link FREE_RETRIES_MAX}), the board does not count it: `attempts.count` goes
+   * back down by one, the free retry is counted instead, and the task goes back for the same attempt
+   * through the gate, on a `board` decision that names the kind, the reason, and the free retries
+   * used and allowed (`outcome.detail.infrastructure`, `outcome.detail.freeRetry`). Past the bound it
+   * counts as any failed run, and its decision says why, with the reason, so one that persists ends
+   * waiting for input (`retries-spent`). Malformed (see {@link infrastructureProblem}), the report is
+   * `invalid` and nothing changes. A task the sweep left waiting for input (`rejected`) on its lost
+   * run, the policy giving `remediation` no ask, still takes such a report while a free retry is
+   * left; any other report to that wait is `invalid-transition`, and nothing changes.
    */
   abstract reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at?: Date): Promise<BoardTask>
 

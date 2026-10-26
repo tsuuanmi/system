@@ -484,7 +484,9 @@ the decision artifact that caused it.
 | invalid input, rejected by acceptance | `NONE` |
 
 Attempts are bounded (default 3). The operator command `continue` reopens exactly
-one `FAILED` node.
+one `FAILED` node. These are a node's attempts; a board task's attempts are the board's, each a run,
+and a run that failed only on the infrastructure is not counted among them, within a bound
+([an attempt not spent on the infrastructure](#an-attempt-not-spent-on-the-infrastructure)).
 
 Every `workflow.node.failed` event names the failure's `kind` and `disposition`, and
 `workflow.run.failed` those of the run's error when it has one, so a reader of the event log tells
@@ -724,7 +726,9 @@ is refused (`config_error`), and every other run is unaffected.
   ([required checks](board.md#required-checks-bind-at-acceptance)). A failed or stopped run, and
   a completed run whose holder was lost, is reported with `reconcileRun`, after a
   `reconciliation` decision. A task that no longer waits on the run takes no report. A board
-  that does not answer is asked again, with a bounded backoff.
+  that does not answer is asked again, with a bounded backoff. A failed run that failed only on the
+  infrastructure says so, and the board does not count it as an attempt, within a bound
+  ([below](#an-attempt-not-spent-on-the-infrastructure)).
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
@@ -748,6 +752,58 @@ is refused (`config_error`), and every other run is unaffected.
   ([below](#a-digest-of-a-tasks-result)), and once the board has the task `done` on a result in
   the run's worktree, that result is landed: committed on the run's branch, then merged on the
   operator's `merge` approval ([below](#landing-an-accepted-result)).
+
+### An attempt not spent on the infrastructure
+
+The board counts an attempt when it records a run (`start`). A run that then fails only because of
+the infrastructure is reported so, and is given its attempt back (operator D82 #3,
+[ADR-0069](../decisions/adr/0069-an-attempt-is-not-spent-on-an-infrastructure-failure.md); board
+contract 1.5, [attempts](board.md#an-attempt-not-spent-on-the-infrastructure)). T213 lost its
+attempts to a live update's restart and to a dispatch refusal: neither was the work's failure.
+
+The engine tells it from its own records when it reports the failed run (`reconcileRun` with
+`infrastructure`, a kind and a reason of at most 500 characters):
+
+| Kind | When | Read from |
+|---|---|---|
+| `host-stopped` | the host's drain or restart stopped the run | a step whose execution its source ended marked `host-stopped` (`WorkerExecution.error.infrastructure`: its holder stopped with it in flight and that alone ended it, as agent Workers mark a run reconciled after its holder stopped and website turns a turn reconciled after its owner stopped); or a run whose board holder lapsed while the host was down, found at its first renewal after the start (the lost holder's `recovery` decision as before, the run then `holder_lost`). A restart alone is no proof: an execution that outlived one and then failed for its own reason (a sandbox or `.git` violation, a result not captured) is unmarked, whatever its kind, and counts |
+| `worker-unavailable` | a step failed only because a Worker it needed became unavailable while the run ran, even after earlier steps were sent | routing refused the step with an otherwise fitting Worker `unavailable` (failing only its state check); the Worker source of a step in flight is no longer loaded; the step's execution ended unsubmitted while its Worker reads `unavailable`; or its source ended it marked `worker-unavailable`, sent or not (its Worker went away mid-run, and that alone ended it: agent Workers mark a sent run that failed on its runtime or session, never for its own reason, when the Worker, looked at again then, is positively unavailable, as no longer configured, its runtime's probe failing, or its account signed out or quarantined) |
+| `unsent` | nothing of the run was sent to any Worker, and every step that failed failed on a Worker's own failure before the send: its network, overload, stalled or broken session, its account's usage limit, sign-out, or challenge (`network`, `overloaded`, `provider_stalled`, `session_broken`, `quota_exhausted`, `reauth_required`, `challenge`), in routing (a dispatch refusal of the Worker dispatch chose, past its hold, among them) or in its execution | every execution the run started (its `workflow.node.started` events) is one its source reports never submitted, none started counting too; one its source no longer knows counts as sent (INV-2) |
+
+- **Marked when a step fails.** A step that fails on `host-stopped` or `worker-unavailable` is
+  marked on its row (`workflow_nodes.infrastructure`, migration 22); any other failure of a step
+  clears the mark. The run's failure is the infrastructure's when it is a failed step's and every
+  failed step is marked (the first mark says how), or when nothing of the run was sent and every
+  failed step failed on one of the Worker failures `unsent` names. Anything else is an attempt the
+  board counts, and the report's decision says why it is not the infrastructure's.
+- **Always the attempt's**, fail closed, sent or not: an operator's stop (the operator's call); a
+  run that failed for its own reason rather than a failed step's, as the task's budget spent
+  (`budget_spent`, also on its last attempt, when the ledger refuses the first step's reservation
+  and nothing was sent) or not reservable (`quota_exhausted` from the ledger, a pool it does not
+  configure), a result off the subject it writes, or no step able to run; and a step that failed
+  for the task's own input, policy, configuration, or code (`invalid_input`, `input_dropped`,
+  `egress_denied`, `config_error`, `ui_drift`, `internal`), a timeout, a rejection, a question, or a
+  reconciliation its source did not mark. Sending again would meet the same refusal, so a free
+  retry would only repeat it until the bound ran out.
+- **Recorded.** The report's `reconciliation` decision (`workflow.task-report`, version 2) names the
+  kind and the reason (`outcome.detail.infrastructure`), and the board's move names them with the
+  free retries used and allowed.
+- **Bounded** by the board, not the engine (INV-9): `board.maxFreeRetries` (default 3, 0 to 10,
+  validated when the board loads) free retries per task, over its whole life. Past it the failure
+  counts like any other, so an infrastructure failure that persists still ends the task waiting
+  for input (`retries-spent`), the reason in its decision.
+- **After a restart's sweep.** A run whose lease lapsed while the host was down is found lost by
+  the board's sweep. On `ask` for `remediation` the task waits for approval, on any other verdict
+  for input (`rejected`), its run still recorded. Either way the run's report that it failed only
+  on the infrastructure still reaches the board, which takes it from that wait while a free retry
+  is left; past the bound the board refuses it and the task keeps waiting for a person (the report
+  is `moved-on`).
+- The run itself is unchanged: it failed, it served its attempt, and `continue` still refuses it.
+  The next run serves the same attempt number, and its brief says so. It may still
+  [start from the work](#starting-from-the-previous-attempts-work) a writing step of the run that was
+  not counted completed: the previous run is found by its own record, never by the count, and one
+  that served the same attempt and was reported failed only on the infrastructure is the immediately
+  previous run, whose failure says nothing about the change.
 
 ### A task's budget
 
@@ -794,7 +850,7 @@ stateDiagram-v2
 | spent → asked | the funding ask and the reservations the ledger did not release ([below](#funding-a-spent-task)), on the run's row (`budget.funding`, `budget.unreleased`, the run's view) before the block | a board or ledger that does not answer: the run waits and asks again |
 | spent → ended | the board shows the run as the task's last attempt (`attempts.count` is `attempts.max`): no funding is asked, since an approval could raise nothing and start no attempt; a `gate` decision (`workflow.task-funding`, `end`, its input the ledger's refusal), and in one transaction with it the decision on the run's row (`budget.lastAttempt`, the run's view) and the run failed as `budget_spent` (`USER_ACTION`), its message saying it was the last attempt and how many steps ran before the refusal; its report is a failed run (`reconcileRun`), which leaves the task waiting for input (`retries-spent`), and nothing is put to the operator | a board that does not answer: the run waits and reads it again; a run the operator stopped meanwhile keeps its own failure, and nothing is recorded |
 | asked → blocked | the holder blocks the task (`board.block`, `budget-spent`, with the ask as `funding` unless it is empty, and the holds as `unreleased` when there are any), so the board asks the policy about `funding` and the operator decides whether the budget is raised by those lines and the task goes on ([board](board.md#funding-a-spent-budget)); then the run fails as `budget_spent` (`USER_ACTION`), its message naming the ask and how many steps ran before the refusal; its outcome is `blocked` | a board that does not answer is asked again; one that refuses the block (the holder lapsed, say) ends the run all the same, and its report reconciles it as a failed run |
-| due → failed | the ledger refused a step for want of a pool (not configured, or unavailable since the start), or refused the request itself: once nothing is in flight, the run fails as `quota_exhausted`, no step started after the refusal | its report is a failed attempt (`reconcileRun`), through the board's gate |
+| due → failed | the ledger refused a step for want of a pool (not configured, or unavailable since the start), or refused the request itself: once nothing is in flight, the run fails as `quota_exhausted`, no step started after the refusal | its report is a failed attempt (`reconcileRun`), through the board's gate; not counted when nothing of the run was sent, within the board's bound ([an attempt not spent on the infrastructure](#an-attempt-not-spent-on-the-infrastructure)) |
 | due → released | when the run finishes, completed or not, every hold left is released and the run's budget is `released`, whether or not a step ever reserved (a run that ended before its first reservation too), so a start selects only rows that still hold something; holds a stop left are released at the next start | a ledger that does not release one: the hold expires on its own (`holdSeconds`, INV-9) |
 
 - **Before each step, never inside one** (resources rule 4, unchanged): every Worker execution is
@@ -811,7 +867,8 @@ stateDiagram-v2
   step's budget is refused, the run's outcome is decided in this order:
   1. a step that failed, for good or with questions: the run fails as that step did; questions
      first raise the board's question wait (the outcome `blocked`) unless the holder was lost, and
-     any other failure is an attempt the board counts (`reconcileRun`);
+     any other failure is an attempt the board counts (`reconcileRun`), unless it failed only on
+     the infrastructure ([above](#an-attempt-not-spent-on-the-infrastructure));
   2. otherwise a lost holder: the run winds down as such (`holder_lost`);
   3. otherwise, once nothing is in flight, the budget's refusal: the funding block, or on the last
      attempt the run's end (`retries-spent`), or `quota_exhausted` for a pool refused.

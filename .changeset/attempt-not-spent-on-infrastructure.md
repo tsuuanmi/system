@@ -1,0 +1,16 @@
+---
+"@tsuuanmi/system-board-core": minor
+"@tsuuanmi/system-board": minor
+"@tsuuanmi/system-workflow": minor
+"@tsuuanmi/system-workers-core": minor
+"@tsuuanmi/system-agent-workers": patch
+"@tsuuanmi/system-turns": patch
+---
+
+A board task no longer spends an attempt on a failure of the infrastructure (D82 #3, ADR-0069):
+- The workflow engine tells, from its own records and its Worker sources' word, when a task's failed run failed only on the infrastructure: the host's drain or restart stopped it (`host-stopped`: a step its source says the stop alone ended, or the task's lease that lapsed while the host was down), nothing of it was sent to any Worker and every step that failed failed on a Worker's own failure before the send (`unsent`: its network, overload, session, account limit, sign-out, or challenge, in routing, dispatch, or its execution), or a Worker a step needed became unavailable while it ran (`worker-unavailable`: before anything of the step was sent, or after, when its source says that alone ended it). A restart alone is no proof, and a run the operator stopped always counts, as does, fail closed, a refusal by the task's own budget, policy, input, or configuration, even with nothing sent (a spent budget on the last attempt, a ledger that cannot reserve the task's budget, `invalid_input`, `config_error`, ...). Its report says so, with the reason, and its `reconciliation` decision names it (`workflow.task-report` version 2); otherwise it says why the attempt counts.
+- A failed `WorkerExecution`'s error may carry `infrastructure` (`host-stopped` or `worker-unavailable`), set only by a source that knows the infrastructure alone ended it. Agent Workers mark a run reconciled after its holder stopped `host-stopped`, and a sent run that failed on its runtime or session `worker-unavailable` when its Worker, looked at again, is positively unavailable (no longer configured, its runtime's probe failing, its account signed out or quarantined); website turns mark a turn reconciled after its owner stopped. A sandbox or `.git` violation, a timeout, or a result not captured is never marked.
+- The board then gives the attempt back: `attempts.count` goes down by one and the same attempt goes through the gate again. Its decision names the kind, the reason, and the free retries used and allowed. The next run still carries the work a writing step of the uncounted run completed: the engine finds the previous run by its own record, not by the count.
+- A task the board's sweep left waiting for input on its lost run (the policy gives `remediation` no ask) still takes its run's report that it failed only on the infrastructure while a free retry is left; any other report to that wait is refused, and the task keeps waiting for a person.
+- The board's new `maxFreeRetries` (default 3, 0 to 10, validated when the board loads) bounds such free retries per task, over its whole life. Past it the failure counts as before, so one that persists still ends the task waiting for input (`retries-spent`), with the reason. `0` keeps the old behaviour.
+- The board's contract is now 1.5 (a failed `RunOutcome`'s optional `infrastructure`), a minor. The board and the workflow engine each add a store migration.

@@ -748,7 +748,10 @@ The **`agents` Worker source**: agent runtimes as Workers
     another host): looked at again after a minute, doubling, at most 15 minutes;
     after `maxUnknownVerdicts` (default 3) in a row it fails as
     `reconciliation_failed` for the operator, the decision saying it is not
-    declared dead, and `agent-workers.run.unknown` is appended. Its session and
+    declared dead, and `agent-workers.run.unknown` is appended. Either way its
+    error is marked `infrastructure: host-stopped` (its holder's stop alone ended
+    it, so a board task's attempt is not spent on it, ADR-0069); a sandbox or
+    `.git` violation, or a result not captured, is never marked. Its session and
     its workflow run's worktree stay held until the operator frees them (below):
     the source runs nothing more in either (`config_error`, unsent), and the
     retention sweep keeps the worktree.

@@ -230,6 +230,9 @@ export interface WorkerSandbox {
 }
 
 /** One execution, as its owning runtime reports it. */
+/** What of the infrastructure alone ended an execution, as its source knows it (ADR-0069). */
+export type ExecutionInfrastructure = 'host-stopped' | 'worker-unavailable'
+
 export interface WorkerExecution {
   id: string
   status: ExecutionStatus
@@ -241,8 +244,16 @@ export interface WorkerExecution {
    * Why it failed. `siteError` (optional, ADR-0062): the input was sent, and the site answered it with
    * its own error in place of an answer, read on the execution's own page; nothing was answered. Only
    * a source that read that says so; absent, nothing is known of it.
+   *
+   * `infrastructure` (optional, ADR-0069): the source knows it failed only on the infrastructure,
+   * whatever was sent: `host-stopped`, its holder stopped with it in flight (a drain or restart of
+   * the host) and the source ended it for that alone when it started again; `worker-unavailable`,
+   * its Worker became unavailable while it ran (its runtime, account, or process gone) and that
+   * alone ended it. Only a source that knows the cause says so; a failure for any reason of the
+   * execution's own (a sandbox or worktree violation, a result not captured, its own answer) never
+   * carries it. A caller does not count such a failure against the work it served.
    */
-  error?: { kind: string; disposition: string; message: string; siteError?: true }
+  error?: { kind: string; disposition: string; message: string; siteError?: true; infrastructure?: ExecutionInfrastructure }
   /** Decisions the runtime made for this execution, such as `egress`. */
   decisions: ArtifactRef[]
 }
