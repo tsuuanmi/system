@@ -495,6 +495,13 @@ D91), and differs in family from `literature:1`:
   cannot be read, the step's tier is unknown, and it is not routed at its template's tier (INV-2): it
   fails unsent and is retried with back-off, failing once its attempts are spent; dispatch does not
   start or score the task meanwhile.
+  A review step does not wait for an earlier decision: on a task's first attempt none exists before its
+  develop step ran. When an independent review (not a second review, a verification, or the author's
+  own review) is first routed, the engine decides the risk tier of the change it reviews (develop's
+  tree) from the policy's path map, a `workflow.risk-tier` decision under the review, once per review
+  step (a retry or a restart finds it again), and takes the step's tier from that decision, so a task's
+  first review is tiered as its later attempts' are (T288;
+  [process tiered by risk](workflow-engine.md#process-tiered-by-risk)).
 - Planning may use a higher tier than the steps it coordinates,
   in line with "spend intelligence where intelligence matters".
 

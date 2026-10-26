@@ -1550,6 +1550,7 @@ everything below is skipped.
 |---|---|---|
 | read | the change's paths from the Worker sources that hold the run's worktrees (`ctx.workers.changes`), a rename's both | a source could not read its worktree, files are past the change's bound, no source holds a worktree of the run, or the read fails: each is a heavy part of the change |
 | tier | each path at the highest tier of the rules that match it, under every applying map (a project's only stricter); the change at the highest of its paths'; a `gate` decision of rule `workflow.risk-tier` with the maps' versions, the counts per tier, and each path (at most 50) with its tier, why, and the patterns | a path no rule matches is heavy; a policy that cannot be read makes the change heavy |
+| a review routed | when the policy also maps tiers by risk (`tierByRisk`), an independent review step (not a second review, a verification, or the author's own review) decides, when it is first routed, the tier of the change it reviews (develop's tree), under that review and worded for it (`outcome.detail.routed`), once per review step: a retry after a back-off or a restart finds it again by its step and run. The step's minimum tier comes from it, a `tier` decision of `workflow.tier-by-risk` naming it ([routing](routing.md#intelligence-tiers), T288), so a task's first review is tiered as its later attempts' are; until a review approves, it is also the run's latest tier, which a fix step reads | as at **read** and **tier** |
 | at a review | when a review of the run approves a change with no blocking finding left, the tier is decided under that review, before anything after the review is promoted, once per review (its decision joins the review's) | |
 | heavy | unless the exact tree already has approving reviews by Workers of two provider families, a second review `<review>:second` is grown right after the review: worded as it, bound to the same change, `differentFrom` it (it routes only to another family, [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)); whatever waited for the review waits for it too; its blocking findings grow a [review cycle](#review-cycles) as any review's | only one family can review: the second review fails admission, and the run fails; `allowSameFamily` never lifts it |
 | light | a waiting final step whose template marks `riskSkip: ['light']` is retired before it starts once every check the policy requires is a command that ran and passed on the exact tree the review approved ([a run's required checks](#a-runs-required-checks)); a `graph-growth` decision of rule `workflow.risk-skip` says `skip`, or why it `run`s | no required check, one failed, pending, or run on another tree: the step runs |
@@ -1569,9 +1570,12 @@ everything below is skipped.
 - **Shown.** `explain` gives `risk`: the run's latest tier, why, and its decision (the acceptance's
   when there is one, else the latest review's); `system explain` prints it first, and the run's page
   on `/ui` lists it under *What happened*.
-- **Restart** (INV-4): a review whose tier was decided holds the decision among its own, so it is
-  never decided twice; the growth and the decision are one transaction.
-- **Bounded** (INV-9): one tier decision per approving review and one per acceptance; one second
+- **Restart** (INV-4): a review whose tier was decided at its approval holds the decision among its
+  own, so it is never decided twice there; the growth and the decision are one transaction. The
+  decision at a review's routing is found again by its step and run, so a retry or a restart never
+  decides it twice either.
+- **Bounded** (INV-9): one tier decision per review step's routing (with `tierByRisk`), one per
+  approving review, and one per acceptance; one second
   review per approving review; at most 50 paths listed in a decision.
 
 ## Dispatch: starting ready work by itself

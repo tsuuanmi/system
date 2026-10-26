@@ -5,6 +5,10 @@
  * rule matches, or a change that cannot be read, is heavy (INV-2). With no applying policy carrying a
  * map, tiering is off and the process is as before.
  *
+ * - When a review step is first routed and the policy maps tiers by risk, the engine decides the tier
+ *   of the change it reviews (develop's tree; `workflow.risk-tier`, under that review, worded for the
+ *   step, once per step), and the step takes the policy's tier by risk from it (T288): a task's first
+ *   review is tiered as its later attempts' are.
  * - When a review approves the change, the engine decides its tier (`workflow.risk-tier`, under that
  *   review). A **heavy** change then needs an approving review of its exact tree by a Worker of
  *   another provider family before anything after the review runs: the engine grows that second
@@ -99,14 +103,17 @@ export async function changePaths(e: Engine, runId: string): Promise<ChangePaths
 export interface Tiered { tier: RiskTier; decision: ArtifactRef; result?: ChangeTier }
 
 /** Record a `workflow.risk-tier` decision: the tier, the maps and paths that gave it, and why. */
-function recordTier(e: Engine, run: RunRow, maps: Maps, change: ChangePaths, where: { nodeId?: string; subject?: string }): Tiered {
+function recordTier(e: Engine, run: RunRow, maps: Maps, change: ChangePaths, where: { nodeId?: string; subject?: string; routed?: string }): Tiered {
   const result = 'maps' in maps ? changeTier(maps.maps, change) : undefined
   const tier: RiskTier = result?.tier ?? 'heavy'
   const why = result ? tierReasons(result) : [`${'problem' in maps ? maps.problem : 'no map'}: the tier cannot be read from the policy, so the change is heavy (INV-2)`]
   const listed = result?.paths.slice(0, MAX_LISTED).map((p) => ({ ...(p.path ? { path: p.path } : {}), tier: p.tier, why: p.why, ...(p.rules ? { rules: p.rules.map((r) => r.pattern) } : {}), ...(p.detail ? { detail: p.detail.slice(0, 300) } : {}) }))
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'gate',
-    question: `What risk tier is the change of run ${run.run_id}${where.subject ? ` on ${where.subject}` : ''}, by the paths it touches?`,
+    // A routing-time decision is worded for its step: never the same body, so never the same artifact, as the run's or a review's.
+    question: where.routed
+      ? `What risk tier is the change step ${where.routed} of run ${run.run_id} reviews, by the paths it touches, for the tier the step is routed at?`
+      : `What risk tier is the change of run ${run.run_id}${where.subject ? ` on ${where.subject}` : ''}, by the paths it touches?`,
     inputs: [],
     candidates: RISK_TIERS.map((t) => ({
       option: t, selected: t === tier,
@@ -116,7 +123,7 @@ function recordTier(e: Engine, run: RunRow, maps: Maps, change: ChangePaths, whe
     outcome: {
       option: tier,
       detail: {
-        taskId: maps.taskId, ...(maps.projectId ? { projectId: maps.projectId } : {}), ...(where.subject ? { subject: where.subject } : {}),
+        taskId: maps.taskId, ...(maps.projectId ? { projectId: maps.projectId } : {}), ...(where.subject ? { subject: where.subject } : {}), ...(where.routed ? { routed: where.routed } : {}),
         ...(result ? { maps: result.maps, counts: result.counts, paths: listed, ...(result.paths.length > MAX_LISTED ? { more: result.paths.length - MAX_LISTED } : {}) } : { problem: (maps as { problem: string }).problem }),
       },
     },
@@ -402,12 +409,16 @@ export interface TierAtRisk {
  * `problem`, never undefined: the step's tier at its risk tier is unknown, so a caller holds it, never
  * routes it at its template's tier (INV-2).
  */
-export async function lookTierAtRisk(e: Engine, task: { taskId: string; projectId: string }, spec: Pick<ResolvedNode, 'capabilities' | 'kind'>, requirement: WorkRequirement): Promise<TierAtRisk | { problem: string } | undefined> {
+export async function lookTierAtRisk(
+  e: Engine, task: { taskId: string; projectId: string }, spec: Pick<ResolvedNode, 'capabilities' | 'kind'>, requirement: WorkRequirement,
+  /** The risk of the step's own change, when it has one (a review's, T288); asked only once a map applies. */
+  own?: () => Promise<{ tier: RiskTier; decision: ArtifactRef; runId: string } | undefined>,
+): Promise<TierAtRisk | { problem: string } | undefined> {
   // The policy first: with no map, nothing is read of the task's runs.
   const maps = await tierMapsFor(e, task.projectId)
   if ('problem' in maps) return { problem: `the tier of task ${task.taskId}'s step at its risk tier cannot be read: ${maps.problem}` }
   if (!maps.length) return undefined
-  const risk = taskRisk(e, task.taskId)
+  const risk = (own ? await own() : undefined) ?? taskRisk(e, task.taskId)
   if (!risk) return undefined
   const step = stepTierByRisk(maps, risk.tier, { capabilities: spec.capabilities, kind: spec.kind })
   if (!step) return undefined
@@ -444,7 +455,7 @@ export async function tierAtRisk(e: Engine, run: RunRow, node: NodeRow, spec: Re
     return { problem: `board task ${row.task_id} could not be read for its step's tier at its risk tier (${(error as Error).message.slice(0, 200)})` }
   }
   if (projectId === undefined) return { problem: `board task ${row.task_id} could not be read for its step's tier at its risk tier (not found)` }
-  const looked = await lookTierAtRisk(e, { taskId: row.task_id, projectId }, spec, requirement)
+  const looked = await lookTierAtRisk(e, { taskId: row.task_id, projectId }, spec, requirement, isReview(spec) ? () => reviewRisk(e, run, node) : undefined)
   if (!looked || 'problem' in looked) return looked
   const { risk, step, from, kept } = looked
   const to = looked.requirement.tier.min
@@ -471,6 +482,30 @@ export async function tierAtRisk(e: Engine, run: RunRow, node: NodeRow, spec: Re
     deterministic: true,
   }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   return { requirement: { ...looked.requirement, tier: { ...looked.requirement.tier, source: 'decision', decision } }, decision }
+}
+
+/** An independent review of the change: not a second review (its tier names its own decision), a verification, or the author's own review. */
+function isReview(spec: ResolvedNode): boolean {
+  return spec.capabilities.includes('review') && spec.secondReview === undefined && spec.verifies === undefined && spec.selfReview === undefined
+}
+
+/**
+ * The risk of the change a review step reviews (develop's tree), decided when the step is first routed
+ * (T288): a `workflow.risk-tier` decision under the step, worded for it. Once per step: a retry after a
+ * back-off or a restart finds it again by its step and run. Undefined when no path map applies (tiering
+ * off): the step then reads its task's risk as any step does.
+ */
+async function reviewRisk(e: Engine, run: RunRow, node: NodeRow): Promise<{ tier: RiskTier; decision: ArtifactRef; runId: string } | undefined> {
+  const earlier = e.ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId: run.run_id, nodeId: node.node_id, limit: 1000 })
+    .find((a) => {
+      const body = a.body as { decider?: { id?: string }; outcome?: { detail?: { routed?: string } } } | undefined
+      return body?.decider?.id === RISK_RULE && body.outcome?.detail?.routed === node.node_id
+    })
+  if (earlier) return { tier: (earlier.body as { outcome: { option: RiskTier } }).outcome.option, decision: earlier.id as ArtifactRef, runId: run.run_id }
+  const maps = await mapsOf(e, run.run_id)
+  if (!maps) return undefined
+  const tiered = recordTier(e, run, maps, await changePaths(e, run.run_id), { nodeId: node.node_id, routed: node.node_id })
+  return { tier: tiered.tier, decision: tiered.decision, runId: run.run_id }
 }
 
 /** The run's latest tier decision, and why, for `explain` and `/ui`: the acceptance's when there is one, else the latest review's. */
