@@ -374,6 +374,9 @@ Projects mirror:
   drift, and only `public` tasks could be shown at all. G4's credential rows in G5 are not needed.
 - **The order is G0, L0, G2, G3, G1** (decision 8). G0 is the operator's: rulesets on `main`,
   tags `v*`, and `dev` (the operator may bypass it), auto-merge on, and a machine identity.
+  On 2026-10-26 the operator protected `main` (PR only, the five required checks, no force push
+  or deletion, no bypass) and chose to leave `dev` and tags `v*` unprotected for now (D85); those
+  two rulesets and auto-merge are still due before G2.
 - Decisions 1 to 6 as recommended: `tsuuanmi/system` only, target `dev`; intake by the `system`
   label from listed logins; intake always asks on a public repository; auto-merge to `dev` only
   after the one `merge` approval at the exact head (D56 kept) and D80's conditions; a GitHub App,
