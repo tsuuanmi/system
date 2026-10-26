@@ -384,7 +384,7 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
       { taskId: 't7', projectId: 'p1', title: 't7', expiresAt: at(7, 4), pendingChecks: [] },
       { taskId: 't8', projectId: 'p1', title: 't8', expiresAt: at(8, 6), pendingChecks: ['tests', 'lint'] },
     ])
-    expect(renderReport(report)).toContain(`- Reviews held for you now: t7 "t7" (expires in 3h, at ${at(7, 4)}), t8 "t8" (expires in 1d 5h, at ${at(8, 6)}; tests, lint not run). Accept or Reject each on /ui before it expires: unanswered, its task waits for input, which nothing revives.`)
+    expect(renderReport(report)).toContain(`- Reviews held for you now: t7 "t7" (expires in 3h, at ${at(7, 4)}), t8 "t8" (expires in 1d 5h, at ${at(8, 6)}; tests, lint not run). Accept or Reject each on /ui before it expires: unanswered, its task waits for input, which only a re-opening revives (board_reopen_review).`)
     // None held: no such field, no such line.
     const none = buildReport(PERIOD, { ...week(), tasks: week().tasks.filter((t) => t.taskId !== 't4') }, 'p1')
     expect(none.attention).not.toHaveProperty('reviewsHeld')

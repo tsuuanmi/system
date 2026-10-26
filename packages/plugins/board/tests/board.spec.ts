@@ -1127,7 +1127,7 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
       ['board_update', { taskId: theirs.taskId, answers: [{ question: 0, answer: 'x' }] }], ['board_task', { taskId: theirs.taskId }], ['board_escape', { taskId: theirs.taskId, note: 'n' }],
       ['board_brief', { projectId: 'p3' }], ['board_tasks', { projectId: 'p3' }], ['board_breakers', { projectId: 'p3' }], ['board_breaker_reset', { projectId: 'p3', branch: 'dev' }],
       ['board_propose', { ...task('p3', 'sneaked') }], ['board_propose', { ...task('p2', 'depends', { dependsOn: [theirs.taskId] }) }],
-      ['board_charter', { projectId: 'p3', title: 't', charter: CHARTER }],
+      ['board_charter', { projectId: 'p3', title: 't', charter: CHARTER }], ['board_reopen_review', { taskId: theirs.taskId, reason: 'r' }],
     ]
     for (const [name, args] of calls) {
       const refused = await call(name, args)
@@ -1409,6 +1409,57 @@ const ok = async (reply: ReturnType<Call>): Promise<Record<string, any>> => {
 const example = (name: string): Record<string, any> => JSON.parse(readFileSync(fileURLToPath(new URL(`../../../../schemas/examples/${name}.json`, import.meta.url)), 'utf8')) as Record<string, any>
 
 describe('ctx.board (store-backed): board_* MCP tools', () => {
+  it('re-opens a review-expired task through board_reopen_review, as the caller, only while its run\'s worktree is recorded and on disk (T286)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    await active(ctx)
+    const t = await ready(ctx, task('p2', 'lapse', { actionClass: 'workspace-write', maxAttempts: 2 }))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-lapse' }, at(3))
+    const r = result(ctx, 'lapse')
+    // Submitted inside the 60 s lease (it ends at at(4)); then the holder is gone past it.
+    await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(3.5))
+    expect(await ctx.board.task(t.taskId)).toMatchObject({ state: 'review' })
+    await ctx.board.sweep(at(30))
+    const held = (await ctx.board.task(t.taskId))!
+    // Held for the operator, with the class's required checks still pending: none was reported.
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: expect.arrayContaining(['tests', 'lint']) } })
+    expect(held.holder).toBeUndefined()
+    // Nobody decides by the policy's wait: it expires.
+    await ctx.board.sweep(new Date(Date.parse(held.waiting!.expiresAt)))
+    expect(await ctx.board.task(t.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
+    // The tool reads now: only Date is faked, at a fixed instant after the review expired.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    vi.setSystemTime(new Date(Date.parse(held.waiting!.expiresAt) + 60_000))
+    // No worktree recorded for its run: refused, nothing changes.
+    expect((await call('board_reopen_review', { taskId: t.taskId, reason: 'approved twice' })).content[0]?.text).toMatch(/^invalid-transition: .*has no worktree left/)
+    expect(await ctx.board.task(t.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
+    // Recorded, but gone from disk: refused too.
+    ctx.store.db.prepare('CREATE TABLE agent_worktrees (repository TEXT, workflow_run_id TEXT, path TEXT, branch TEXT, removed_at TEXT)').run()
+    const dir = mkdtempSync(join(tmpdir(), 'board-worktree-'))
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
+    ctx.store.db.prepare('INSERT INTO agent_worktrees VALUES (?, ?, ?, ?, NULL)').run('/repo', 'run-lapse', join(dir, 'gone'), 'system/run/run-lapse')
+    expect((await call('board_reopen_review', { taskId: t.taskId, reason: 'approved twice' })).content[0]?.text).toMatch(/^invalid-transition: .*has no worktree left/)
+    // Removed by the retention: refused.
+    ctx.store.db.prepare('UPDATE agent_worktrees SET path = ?, removed_at = ?').run(dir, '2026-10-26T00:00:00.000Z')
+    expect((await call('board_reopen_review', { taskId: t.taskId, reason: 'approved twice' })).content[0]?.text).toMatch(/^invalid-transition: .*has no worktree left/)
+    // An input its schema refuses: nothing done.
+    ctx.store.db.prepare('UPDATE agent_worktrees SET removed_at = NULL').run()
+    expect((await call('board_reopen_review', { taskId: t.taskId, reason: '' })).content[0]?.text).toMatch(/^invalid input, nothing done/)
+    expect(await ctx.board.task(t.taskId)).toMatchObject({ state: 'waiting-for-input' })
+    // Its worktree exists: back to review with its result, held for the operator, recorded as the operator's decision.
+    const back = await ok(call('board_reopen_review', { taskId: t.taskId, reason: 'approved twice' }, 'operator'))
+    expect(back).toMatchObject({ taskId: t.taskId, state: 'review' })
+    expect(ctx.artifacts.get(back.decision)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'operator-review', detail: { reopenedBy: 'operator', runId: 'run-lapse' } } })
+    expect(await ctx.board.task(t.taskId)).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: expect.arrayContaining(['tests', 'lint']) }, result: { artifacts: [r] }, attempts: { count: 1 } })
+    // In review, it is not re-opened again.
+    expect((await call('board_reopen_review', { taskId: t.taskId, reason: 'again' })).content[0]?.text).toMatch(/^invalid-transition: /)
+  })
+
   it('contributes the lead\'s board tools at client scope and the operator\'s project moves at operator scope, each input shape taking what its schema definition takes (INV-6)', async () => {
     const b = await boot()
     expect([...b.mcp().tools.keys()].sort()).toEqual([...BOARD_TOOLS].sort())

@@ -8,6 +8,7 @@
  * @module @tsuuanmi/system-board
  */
 import { createHash, randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, riskTierMaps, waitSeconds } from '@tsuuanmi/system-approvals-core'
@@ -377,6 +378,23 @@ export class StoreBoard extends Board {
 
   async task(taskId: string) {
     return this.readTask(taskId)?.task
+  }
+
+  /**
+   * The paths of the worktrees of the workflow run `runId` that are still recorded (agent-workers'
+   * `agent_worktrees`, not removed) and exist on disk. Empty when there are none, or when that table
+   * is not there (no agent-workers): a re-opening then finds no worktree and is refused.
+   */
+  runWorktrees(runId: string): string[] {
+    let rows: Array<{ path: string }>
+    try {
+      rows = this.ctx.store.db.prepare('SELECT path FROM agent_worktrees WHERE workflow_run_id = ? AND removed_at IS NULL ORDER BY path').all(runId) as Array<{ path: string }>
+    } catch (error) {
+      // Only a store with no such table (no agent-workers) reads as none; any other error is not hidden.
+      if (/no such table/.test((error as Error).message)) return []
+      throw error
+    }
+    return rows.map((r) => r.path).filter((p) => existsSync(p))
   }
 
   async tasks(filter: { projectId: string; states?: TaskState[] }) {
@@ -1192,6 +1210,40 @@ export class StoreBoard extends Board {
     if (this.ctx.artifacts.get(back.decision)?.kind !== 'decision') throw new BoardError('invalid', `${back.decision} is not a stored decision`)
   }
 
+  /**
+   * Bring a review-expired task back to review, held for the operator again for the policy's wait for
+   * the class (T286): by the operator or the lead, while the task still has its run and its result
+   * (`board_reopen_review` checks first that the run's worktree exists). Recorded as a `board`
+   * decision; the result is unchanged and no attempt is counted. `check` as {@link answer}'s.
+   */
+  async reopenReview(taskId: string, by: 'operator' | 'lead', reason: string, at: Date = new Date(), check?: Checked<BoardTask>) {
+    if (by !== 'operator' && by !== 'lead') throw new BoardError('invalid', 'an expired review is re-opened by the operator or the lead')
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > REOPEN_REASON_MAX) throw new BoardError('invalid', `a re-opening says why, in 1 to ${REOPEN_REASON_MAX} characters`)
+    const openable = (t: BoardTask): void => {
+      if (t.state !== 'waiting-for-input' || t.waiting?.reason !== 'review-expired') {
+        throw new BoardError('invalid-transition', `${t.taskId} is ${t.state}${t.waiting ? ` (${t.waiting.reason})` : ''}, not a review-expired wait`)
+      }
+      if (!t.result || !t.run) throw new BoardError('invalid-transition', `${t.taskId} has no run's result to put back to review`)
+    }
+    const before = this.taskOf(taskId).task
+    openable(before)
+    const hold = await this.operatorHold(before, at)
+    return this.commitLater(before, at, undefined, (c) => {
+      openable(c.task)
+      return {
+        changes: {
+          state: 'review', holder: undefined, waiting: hold.waiting,
+          lastDecision: this.decision(this.projectOf(before.projectId).project, c.task, {
+            from: 'waiting-for-input', to: 'operator-review',
+            why: `the ${by} re-opened run ${c.task.run!.runId}'s result to review (${reason}): it is held for the operator until ${hold.waiting.expiresAt}, the policy's wait for ${c.task.actionClass}`,
+            whyNot: 'an expired review that still has its run and result is not left to be only cancelled',
+            inputs: [hold.decision], detail: { reason: 'operator-review', pendingChecks: hold.waiting.pendingChecks, expiresAt: hold.waiting.expiresAt, reopenedBy: by, runId: c.task.run!.runId },
+          }, at),
+        },
+      }
+    }, check)
+  }
+
   async sweep(at: Date) {
     const tasks = new Map<string, BoardTask>()
     const projects = new Map<string, Project>()
@@ -1366,17 +1418,23 @@ export class StoreBoard extends Board {
             },
           }))
         }
-        // Review is bounded: no acceptance decision came while the reviewer held the task (INV-9).
+        // A holder's lease that lapsed (its process gone, a host stop across it) never expires a review: the result is
+        // held for the operator for the policy's wait for the class, and only that wait ends it (INV-9, T286).
         if (!this.lost(current, at)) return undefined
-        return this.commitLater(task, at, undefined, (c) => ({
-          changes: {
-            state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('review-expired', at),
-            lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
-              from: 'review', to: 'waiting-for-input', why: `the reviewer's lease (generation ${c.task.holder!.generation}) lapsed with no acceptance decision`,
-              whyNot: 'review is bounded by the reviewer\'s lease, and the board never accepts by default', detail: { reason: 'review-expired' },
-            }, at),
-          },
-        }))
+        {
+          const hold = await this.operatorHold(task, at)
+          return this.commitLater(task, at, undefined, (c) => ({
+            changes: {
+              holder: undefined, waiting: hold.waiting,
+              lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+                from: 'review', to: 'operator-review',
+                why: `the holder's lease (generation ${c.task.holder?.generation ?? 'unknown'}) lapsed with no acceptance decision: the result is held for the operator until ${hold.waiting.expiresAt}, the policy's wait for ${c.task.actionClass}`,
+                whyNot: 'a lapsed lease, or a host stop across it, never expires a review, and the board never accepts by default',
+                inputs: [hold.decision], detail: { reason: 'operator-review', pendingChecks: hold.waiting.pendingChecks, expiresAt: hold.waiting.expiresAt, lease: 'lapsed' },
+              }, at),
+            },
+          }))
+        }
       case 'waiting-for-approval': {
         const requestId = task.waiting!.approvalRequest!
         const request = await this.ctx.approvals.get(requestId)
@@ -2048,6 +2106,21 @@ export class StoreBoard extends Board {
       }, at)
     }
     return { changes: { state: 'waiting-for-input', holder: undefined, result, waiting: this.inputWait('retries-spent', at), lastDecision: acceptance } }
+  }
+
+  /**
+   * The wait of a review held for the operator that no acceptance put there (a lapsed lease, a
+   * re-opening; T286): the policy's wait for the class from `at`, and the class's required checks
+   * still pending, as readiness records them (none reported here, so every required one; none when
+   * the policy forbids the class). `decision` is the autonomy decision that says so.
+   */
+  private async operatorHold(task: BoardTask, at: Date): Promise<{ waiting: { reason: 'operator-review'; pendingChecks: Check[]; since: string; expiresAt: string }; decision: ArtifactRef }> {
+    const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId })
+    const seconds = waitSeconds((await this.ctx.approvals.policy(task.projectId)).policies, task.actionClass)
+    return {
+      waiting: { reason: 'operator-review', pendingChecks: verdict.mode === 'forbid' ? [] : verdict.failedChecks ?? [], since: at.toISOString(), expiresAt: new Date(at.getTime() + seconds * 1000).toISOString() },
+      decision: verdict.decision,
+    }
   }
 
   private inputWait(reason: WaitReason, at: Date, questions?: string[]): NonNullable<BoardTask['waiting']> {

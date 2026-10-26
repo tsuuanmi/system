@@ -4,7 +4,7 @@
  * because a project's state moves only from the operator's channel (INV-6). `board_escape` and
  * `board_breaker_reset` (the auto-accept circuit breaker, D93) are the lead's or the operator's, and
  * the caller's token says which it was. Each call's input and
- * structured output are validated against `schemas/mcp-board.v1.json` (1.3) `$defs/<tool>-input`
+ * structured output are validated against `schemas/mcp-board.v1.json` (1.4) `$defs/<tool>-input`
  * and `-output`; a refused input executes nothing, and a tool that changes the board checks the
  * output it would give inside the move's store transaction, before it commits, so an output its
  * schema refuses (a defect) leaves the board as it was. No tool starts, submits, accepts, blocks, or
@@ -18,7 +18,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { Chartered, Checked, Closed, Renewed, StoreBoard } from './index.ts'
 
-export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close', 'board_escape', 'board_breakers', 'board_breaker_reset'] as const
+export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel', 'board_pause', 'board_resume', 'board_close', 'board_escape', 'board_breakers', 'board_breaker_reset', 'board_reopen_review'] as const
 type BoardTool = typeof BOARD_TOOLS[number]
 
 /**
@@ -28,12 +28,12 @@ type BoardTool = typeof BOARD_TOOLS[number]
 const SCOPES: Record<BoardTool, ToolScope> = {
   board_projects: 'client', board_charter: 'client', board_brief: 'client', board_tasks: 'client', board_task: 'client', board_propose: 'client', board_claim: 'client',
   board_update: 'client', board_cancel: 'client', board_pause: 'operator', board_resume: 'operator', board_close: 'operator',
-  board_escape: 'client', board_breakers: 'client', board_breaker_reset: 'client',
+  board_escape: 'client', board_breakers: 'client', board_breaker_reset: 'client', board_reopen_review: 'client',
 }
 
 const schemas = new SchemaRegistry()
-/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`, 1.3 the circuit breaker's tools. */
-const MCP_BOARD = 'mcp-board@1.3'
+/** The tools' schema: 1.1 adds the operator's project moves, 1.2 `board_propose`'s `maxAttempts`, 1.3 the circuit breaker's tools, 1.4 `board_reopen_review`. */
+const MCP_BOARD = 'mcp-board@1.4'
 /** The `$defs` name of a tool's input or output: underscores written as hyphens. */
 const defOf = (tool: BoardTool, part: 'input' | 'output'): string => `${tool.replaceAll('_', '-')}-${part}`
 
@@ -106,6 +106,7 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   },
   board_breakers: { projectId: id().optional().describe('One project\'s breakers; every project\'s when absent') },
   board_breaker_reset: { projectId: id(), branch: zod.string().min(1).max(200).describe('The landing branch auto-accept turns on again for') },
+  board_reopen_review: { taskId: id().describe('The task waiting for input as review-expired'), reason: shortText().describe('Why it is re-opened') },
 }
 
 const DESCRIPTIONS: Record<BoardTool, string> = {
@@ -124,6 +125,7 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_escape: 'Record a defect found after a result the auto-accept rule accepted (a done task whose last decision is rule board.auto-accept), once per task, as the caller (the operator, else the lead). At the line (board.autoAccept.breaker, default 2 escapes in 7 days) for the result\'s project and landing branch, auto-accept turns off for them: a board decision names every escape counted, and results are held for the operator until the operator or the lead turns it on again with board_breaker_reset. system metrics reads the escapes as escaped defects.',
   board_breakers: 'List where the auto-accept circuit breaker turned auto-accept off: per project and landing branch, the escapes it counted, its decision, and whether the line holds now (fewer escapes than the line in its window). A breaker never resets by itself.',
   board_breaker_reset: 'Turn auto-accept on again for a project and landing branch whose breaker tripped, as the caller (the operator, else the lead): only once the line holds (fewer escapes than the line within its window now), refused otherwise. Recorded as a board decision naming the trip\'s.',
+  board_reopen_review: 'Bring a task that waits for input as review-expired back to review, held for the operator for the policy\'s wait, as the caller (the operator, else the lead, for its own project). Only while the task has its result and its run\'s worktree is still recorded and on disk (refused otherwise). Recorded as a board decision; no attempt is counted.',
 }
 
 const summary = (t: BoardTask) => ({
@@ -312,6 +314,19 @@ function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }): Reco
     board_breaker_reset: async (args, context, check) => {
       ownProject(context, String(args.projectId))
       return breakerOut(await board.resetBreaker(String(args.projectId), String(args.branch), context.scope === 'operator' ? 'operator' : 'lead', new Date(), sees(check, breakerOut)))
+    },
+    board_reopen_review: async (args, context, check) => {
+      const taskId = String(args.taskId)
+      await ownTask(context, taskId)
+      const task = await board.task(taskId)
+      if (!task) throw new BoardError('unknown-task', `no task ${taskId}`)
+      // The board cannot see worktrees itself: the run's must still be recorded and on disk.
+      if (task.run && !board.runWorktrees(task.run.runId).length) {
+        throw new BoardError('invalid-transition', `${taskId}'s run ${task.run.runId} has no worktree left (removed, or never made): its result is not re-opened`)
+      }
+      // Who re-opened it is who called: the operator's token, else the lead's (a client).
+      const out = (t: BoardTask) => ({ taskId: t.taskId, state: 'review', revision: t.revision, decision: t.lastDecision })
+      return out(await board.reopenReview(taskId, context.scope === 'operator' ? 'operator' : 'lead', String(args.reason), new Date(), sees(check, out)))
     },
   }
 

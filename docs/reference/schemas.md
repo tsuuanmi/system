@@ -1004,7 +1004,9 @@ guesses.
   not made by the operator accepts only when the policy finds none of the class's required checks
   failed ([board](../design/board.md#required-checks-bind-at-acceptance)); otherwise the board holds the review for the
   operator. A task in review keeps its holder's lease while verification runs; if the lease
-  lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
+  lapses with no decision, the review is held for the operator (`operator-review`, the policy's
+  wait), and only that wait's expiry makes the task wait for input (`review-expired`), which
+  expires in turn unless the lead or the operator re-opens it (`board_reopen_review`).
 - A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
   applied with its `acceptance` decision, as a review's would be, a failed one counts as an
   attempt, and only an unknown outcome waits for approval to run again (`reconciliation-failed`);
@@ -1517,6 +1519,11 @@ guesses.
 - `mcp-board` 1.2 adds `board_propose`'s optional `maxAttempts` (1 to 10): the attempts the task
   gets, else the board's for its template, else its default
   ([attempts](../design/board.md#attempts)).
+- `mcp-board` 1.4 adds `board_reopen_review` (T286): the caller, the operator's token or else the
+  lead's for its own project, brings a `review-expired` task back to review, held for the
+  operator for the policy's wait, with a reason. Refused unless the task has its result and its
+  run's worktree is still recorded and on disk. The output names the `board` decision that
+  records it.
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
   other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`; 1.2 adds

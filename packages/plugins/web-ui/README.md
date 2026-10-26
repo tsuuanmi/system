@@ -137,7 +137,7 @@ with **Try again** when a page never loaded, a confirmation only before a destru
   where the result stands on its way into the repository, until it is merged or refused
   ([what a review shows](../../../docs/reference/web-ui.md#what-a-review-shows)); above them, and on Home's waiting
   line, when the first review held for the operator expires (marked within the hour), since an
-  unanswered one expires and its task waits for input that nothing revives (T99 D6). Without it
+  unanswered one expires and its task waits for input that only a re-opening revives (T99 D6, T286). Without it
   the reviews routes answer `503`;
 - when `ctx.board` is present, the **board** page (`?view=board`), a Kanban of one project at a
   time: a project switcher (kept in the address as `&project=<id>`; the one project by default, or,

@@ -204,7 +204,7 @@ describe('web UI: the operator pauses, resumes, and closes a project on the boar
     expect(await waiting.innerText()).not.toContain('first expires')
     expect(await waiting.textContent()).toMatch(/· expires in \d+ (h|min|days)/)
     // Above the Reviews, folded until within the hour (T239).
-    expect(await page.getByRole('region', { name: 'Reviews' }).textContent()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which nothing revives\./)
+    expect(await page.getByRole('region', { name: 'Reviews' }).textContent()).toMatch(/1 review is held for you; the first expires in \d+ (h|min|days) — .+\. Unanswered by then, its task waits for input, which only a re-opening revives \(board_reopen_review\)\./)
   }, 60_000)
 
   headlessIt('shows the Board as a Kanban: a column per state with one card per task, who works on it, its run, a project filter, and the moves in each project\'s header (T97)', async () => {

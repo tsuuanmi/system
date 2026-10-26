@@ -425,6 +425,14 @@ export abstract class Board extends Service {
   abstract reopen?(taskId: string, back: Reopening, at?: Date): Promise<BoardTask>
 
   /**
+   * Bring a `review-expired` task back to review, held for the operator for the policy's wait for its
+   * class (optional; T286). By the operator or the lead, with a reason of 1 to
+   * {@link REOPEN_REASON_MAX} characters (`invalid` otherwise), while the task has its run and result
+   * (`invalid-transition` otherwise); recorded as a `board` decision; no attempt is counted.
+   */
+  abstract reopenReview?(taskId: string, by: 'operator' | 'lead', reason: string, at?: Date): Promise<BoardTask>
+
+  /**
    * Record a defect found after a task's auto-accepted result landed (optional; not yet in a contract
    * version, ADR-0067 amendment, D93). Only for a done task whose last decision is the auto-accept
    * rule's (`invalid` otherwise, and once per task). When the project and branch have escapes at the
