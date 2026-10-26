@@ -78,7 +78,10 @@ What constrains it:
 - **Heavy: enforced at acceptance.** The task acceptance (`workflow.task-acceptance`, version 4)
   names the run-level tier decision among its inputs (`outcome.detail.risk`), and rejects a heavy
   result unless approving reviews of its exact tree by Workers of two provider families, read from the
-  live descriptors, are recorded: the work goes back as another attempt.
+  live descriptors, are recorded: the work goes back as another attempt. The tree is the git tree the
+  result is bound to, or, for a result bound to an artifact (a report), the one the run's last review
+  judged (`outcome.detail.review.subject`); a last review that did not approve is the first reason given
+  (verdict, blocking count, cycle of the bound), and an empty subject is an error (T280).
 - **Heavy: never accepted unattended.** The board holds an accepting decision of a heavy result for
   the operator, by the auto-accept rule (ADR-0067) and by the policy alike, the reason in the hold's
   decision (`detail.heavy`). It reads the tier from the `workflow.risk-tier` decision the acceptance

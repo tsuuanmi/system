@@ -39,7 +39,7 @@ import { TaskDossiers } from './dossiers.ts'
 import { TaskLandings } from './landings.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
-import { type AcceptanceRisk, secondFamily } from './risk.ts'
+import { type AcceptanceRisk, heavyReasons } from './risk.ts'
 import { heldWhy } from './sessions.ts'
 import { blocks, clampText, type Finding, type ResolvedNode } from './spec.ts'
 import { admittedRestriction } from './teams.ts'
@@ -1309,13 +1309,14 @@ export class TaskRuns {
     const checks: Partial<Record<Check, boolean>> = { ...this.checksOf(done, subject), ...ranOn(ran, subject) }
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
     // A heavy result needs approving reviews of its exact tree by Workers of two provider families (ADR-0071).
-    const second = secondFamily(risk, subject.type === 'git-head' ? `git:${subject.ref}:${subject.version ?? ''}` : '')
-    const short = second.met ? undefined : `the change is heavy (decision ${risk!.decision}), and ${second.families ? `only ${second.families} provider family has` : 'no provider family listed now has'} approved its exact tree ${describe(subject)}: a heavy result needs approving reviews by Workers of two families`
+    // Judged on the git tree the reviews judged, whatever the result is bound to; a review that did not approve comes first (T280).
+    const review = this.lastReview(done)
+    const second = heavyReasons(risk, subject, review)
+    const short = second.reasons.length ? second.reasons.join('; ') : undefined
     const option = failed.length || short ? 'reject' : 'accept'
     const said = Object.keys(checks).length ? `the checks it ran: ${Object.entries(checks).map(([c, p]) => `${c} ${p ? 'passed' : 'failed'}`).join(', ')}` : 'it ran none of the checks a policy can require; the board binds those'
-    const tierSaid = risk ? [`its risk tier is ${risk.tier} (decision ${risk.decision})${risk.tier === 'heavy' && second.met ? `, and ${second.families} provider families approved its exact tree` : ''}`] : []
+    const tierSaid = risk ? [`its risk tier is ${risk.tier} (decision ${risk.decision})${risk.tier === 'heavy' && !short ?`, and ${second.families} provider families approved its exact tree` : ''}`] : []
     // What the board's auto-accept rule reads (D80, ADR-0067): the run's last review, and where the result would land.
-    const review = this.lastReview(done)
     const landing = this.landingOf(artifacts, subject, targets)
     const rejectWhy = [...(failed.length ? [`the run's own ${failed.join(', ')} check failed on ${describe(subject)}`] : []), ...(short ? [short] : [])]
     const acceptance = this.e.ctx.artifacts.recordDecision({

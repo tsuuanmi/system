@@ -20,7 +20,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, CONFIG, readyTask, type Rendered, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow from '../src/index.ts'
-import { type AcceptanceRisk, secondFamily } from '../src/risk.ts'
+import { type AcceptanceRisk, heavyReasons, secondFamily } from '../src/risk.ts'
 import type { NodeTemplate } from '../src/spec.ts'
 
 // Process tiered by risk (PROP-0016 §4, D83, ADR-0071), over the store-backed board and approval
@@ -285,6 +285,29 @@ describe('the acceptance of a heavy result requires approving reviews of its exa
   it('counts only approvals of the exact tree, and a Worker whose family is not listed now as none (INV-5, ADR-0027)', () => {
     expect(secondFamily(risk([{ node: 'review', worker: 'a', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'b', subject: 'git:abc:v0', family: 'fam-b' }]), at)).toMatchObject({ met: false, families: 1 })
     expect(secondFamily(risk([{ node: 'review', worker: 'a', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'gone', subject: at }]), at)).toMatchObject({ met: false, families: 1 })
+  })
+
+  const reviewed = { node: 'review', verdict: 'approve', blocking: 0, cycle: 1, maxCycles: 3, subject: { ref: 'abc', version: 'v1' } }
+  const both: AcceptanceRisk['reviews'] = [{ node: 'review', worker: 'a', subject: at, family: 'fam-a' }, { node: 'review:second', worker: 'b', subject: at, family: 'fam-b' }]
+  const report = { type: 'artifact', ref: 'sha256:report' }
+
+  it('judges a result bound to a report artifact on the tree its reviews judged (T280)', () => {
+    expect(heavyReasons(risk(both), report, reviewed)).toMatchObject({ met: true, families: 2, reasons: [] })
+  })
+
+  it('names a last review that requested changes at the bound first, before any family reason (T280)', () => {
+    const said = heavyReasons(risk([both[0]!]), report, { ...reviewed, verdict: 'changes-requested', blocking: 1, cycle: 3 })
+    expect(said.met).toBe(false)
+    expect(said.reasons[0]).toMatch(/changes-requested with 1 blocking finding\(s\) at cycle 3 of 3/)
+    expect(said.reasons[1]).toMatch(/only 1 provider family/)
+  })
+
+  it('throws on an empty subject, never reading it as no reviews (T280)', () => {
+    expect(() => secondFamily(risk(both), '')).toThrow(/empty/)
+  })
+
+  it('rejects a heavy result with no review of a git tree, saying so', () => {
+    expect(heavyReasons(risk(both), report, undefined)).toMatchObject({ met: false, reasons: [expect.stringMatching(/no review of a git tree/)] })
   })
 
   it('asks nothing of a light or normal result, or of a run with no tier', () => {

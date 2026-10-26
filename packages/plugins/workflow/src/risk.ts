@@ -308,10 +308,36 @@ export async function riskAtAcceptance(e: Engine, run: RunRow, nodes: readonly N
  * families, and how many it has. Not heavy: always.
  */
 export function secondFamily(risk: AcceptanceRisk | undefined, subject: string): { met: boolean; families: number; reviews: AcceptanceRisk['reviews'] } {
+  // An empty subject matches no review: that is a caller's mistake, never "no reviews" (T280).
+  if (subject === '') throw new Error('secondFamily needs the git tree the reviews judged as its subject, got an empty one')
   if (risk?.tier !== 'heavy') return { met: true, families: 0, reviews: [] }
   const on = risk.reviews.filter((r) => r.subject === subject)
   const families = new Set(on.filter((r) => r.family !== undefined).map((r) => r.family)).size
   return { met: families >= 2, families, reviews: on }
+}
+
+/**
+ * Why a heavy result is not accepted on its reviews (T280), in order: the run's last review did not
+ * approve (its verdict, blocking findings, and cycle of the bound), then the second-family check on
+ * the git tree the reviews judged (`review.subject`), whatever artifact the result is bound to.
+ * `met` and no reasons when the result is not heavy or both hold.
+ */
+export function heavyReasons(
+  risk: AcceptanceRisk | undefined, bound: { type: string; ref: string; version?: string },
+  review: { node: string; verdict: string; blocking: number; cycle: number; maxCycles: number; subject: { ref: string; version: string } } | undefined,
+): { met: boolean; families: number; reviews: AcceptanceRisk['reviews']; reasons: string[] } {
+  if (risk?.tier !== 'heavy') return { met: true, families: 0, reviews: [], reasons: [] }
+  const reasons: string[] = []
+  if (review && review.verdict !== 'approve') reasons.push(`the last review (${review.node}) ${review.verdict} with ${review.blocking} blocking finding(s) at cycle ${review.cycle} of ${review.maxCycles}, the review bound: it did not approve`)
+  // The tree the reviews judged; a result bound to the git tree itself is that tree.
+  const tree = bound.type === 'git-head' ? `git:${bound.ref}:${bound.version ?? ''}` : review ? `git:${review.subject.ref}:${review.subject.version}` : ''
+  if (tree === '') {
+    reasons.push(`the change is heavy (decision ${risk.decision}), and no review of a git tree is recorded for it: a heavy result needs approving reviews by Workers of two families`)
+    return { met: false, families: 0, reviews: [], reasons }
+  }
+  const second = secondFamily(risk, tree)
+  if (!second.met) reasons.push(`the change is heavy (decision ${risk.decision}), and ${second.families ? `only ${second.families} provider family has` : 'no provider family listed now has'} approved its exact tree ${tree}: a heavy result needs approving reviews by Workers of two families`)
+  return { met: second.met && !reasons.length, families: second.families, reviews: second.reviews, reasons }
 }
 
 /** The rule that sets a step's minimum tier at its task's risk tier (ADR-0073). */

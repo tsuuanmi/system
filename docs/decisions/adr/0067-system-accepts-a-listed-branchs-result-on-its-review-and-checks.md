@@ -101,7 +101,10 @@ What constrains a fix:
 - A review of the exact result that requested changes is the run's own failed `review` check: the
   engine rejects it and the work goes back as another attempt, as before. The rule holds the cases the
   engine accepts though the run's last review did not approve (a review of another tree, an approval
-  that still lists a blocking finding).
+  that still lists a blocking finding). A heavy result ([ADR-0071](0071-a-changes-risk-tier-comes-from-the-policys-path-map.md))
+  never reaches the rule that way: the engine rejects it whenever its last review did not approve,
+  that reason first (verdict, blocking findings, cycle of the bound), whatever tree or artifact the
+  result is bound to (T280).
 - The landing target is the base branch when the acceptance is decided; a landing merges into the
   repository's checked-out branch when the operator approves. Those differ only if the checked-out
   branch changed in between, and the merge request names the branch it merges into.
