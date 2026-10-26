@@ -8,10 +8,14 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { awaitWorkers, baselineProblems, type Health, healthOf, healthProblems, runProblems, workerProblems, type Workers, workersNow, workersOf, workersTable } from './live-update-check.ts'
-import { daemonEnv, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
+import {
+  awaitIdle, awaitWorkers, baselineProblems, type Health, healthOf, healthProblems, idle, type Running, runningInStore, runningLines, runningOf, runProblems, workerProblems, type Workers,
+  workersNow, workersOf, workersTable,
+} from './live-update-check.ts'
+import { daemonEnv, type FakeSystem, fakeSystem, type FakeWork, standInUnit, type StandInUnit } from './systemd-stand-in.ts'
 
 // Each test runs the script end to end, once or several times, and each run starts git, Node, and
 // the stand-ins as real processes: 1 to 3 s a test on an idle core, up to 10 s on a loaded one,
@@ -321,6 +325,264 @@ describe('live-update.sh and system.service', () => {
     } finally {
       f.unit.cleanup()
     }
+  })
+})
+
+/** T223's develop step, the one the update to c2a45415 cut on 2026-10-26. */
+const T223: FakeWork = { runId: 'run_T223', nodeId: 'develop:1', worker: 'agent:codex-main/develop', since: '2026-10-26T09:00:00.000Z', taskId: 'T223' }
+const T223_LINE = /run run_T223 step develop:1 on agent:codex-main\/develop, for \d+ (s|min|h \d+ min) \(task T223, algorithm-development\)/
+
+describe('live-update.sh waits for what runs before it stops the unit (T234)', () => {
+  /** The fake `system` answering, and the daemon running under the stand-in unit. */
+  function running(f: Fixture): FakeSystem {
+    const system = fakeSystem(f.root, f.live, f.home)
+    execFileSync(join(f.bin, 'systemctl'), ['--user', 'start', 'system.service'])
+    waitForDaemon(f)
+    return system
+  }
+  const stateOf = (f: Fixture): string => {
+    const dir = readdirSync(f.backups).find((name) => name.includes('-before-base'))
+    return dir ? readFileSync(join(f.backups, dir, 'live-update.state'), 'utf8') : ''
+  }
+
+  it('pauses dispatch, waits until no step runs while saying what runs, and only then stops the unit', () => {
+    const f = fixture()
+    const system = running(f)
+    // The capture's read, then the wait's: T223's develop step runs, then nothing does.
+    system.work([T223], [T223], [])
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-every', '1')
+      expect(output, output).toContain('dispatch paused: live update to')
+      expect(output).toContain('waiting until no workflow step runs: up to 90 min, a look every 1 s')
+      expect(output).toMatch(/waiting for what runs, \d+ s of at most 1 h 30 min:\n {2}run run_T223/)
+      expect(output).toMatch(T223_LINE)
+      expect(output).toMatch(/nothing runs: no workflow step runs \(after \d+ s\)/)
+      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('systemctl --user stop system.service'))
+      // The fixture has no backup to take: the update rolls back, as it did before T234, and the
+      // rollback lifts the update's own pause once the daemon runs again.
+      expect(output).toContain('ROLLING BACK')
+      expect(status).toBe(1)
+      expect(f.unit.calls()).toEqual(['start system.service', 'stop system.service', 'reset-failed system.service', 'start system.service'])
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'roster', 'roster', 'dispatch_resume'])
+      expect(stateOf(f)).toContain('dispatch_paused=resumed')
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('at the bound, stops with what still runs, the unit not stopped and dispatch resumed', () => {
+    const f = fixture()
+    const system = running(f)
+    system.work([T223])
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0')
+      expect(output, output).toContain('still running after 0 s, the bound:')
+      expect(output).toMatch(T223_LINE)
+      expect(output).toContain('STOP: steps still run after 0 min (above): system.service was not stopped')
+      expect(output).toContain('the live install was not changed')
+      expect(status).toBe(1)
+      expect(f.unit.calls()).toEqual(['start system.service'])
+      expect(readFileSync(join(f.unit.dir, 'state'), 'utf8').trim()).toBe('active')
+      expect(system.calls()).toEqual(['status', 'roster', 'dispatch_status', 'dispatch_pause', 'roster', 'dispatch_resume'])
+      expect(stateOf(f)).toContain('phase=captured')
+      expect(f.git('rev-parse', 'HEAD')).toBe(f.from)
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('with --cut-running, stops the unit at the bound and names what it cuts; an operator\'s pause is left as it is', () => {
+    const f = fixture()
+    const system = running(f)
+    system.work([T223])
+    system.dispatch({ enabled: true, paused: { since: '2026-10-26T08:00:00.000Z', reason: 'by hand' } })
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-wait', '0', '--cut-running')
+      expect(output, output).toContain('dispatch is paused already, since 2026-10-26T08:00:00.000Z (by hand): left as it is')
+      expect(output).toContain('still running after 0 s, the bound; --cut-running: the stop cuts')
+      expect(output).toMatch(T223_LINE)
+      expect(output).toContain('--cut-running: stopping system.service with the steps above still running')
+      expect(status).toBe(1)
+      expect(f.unit.calls().slice(0, 2)).toEqual(['start system.service', 'stop system.service'])
+      expect(system.calls()).not.toContain('dispatch_pause')
+      expect(system.calls()).not.toContain('dispatch_resume')
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('waits for a step that runs on no Worker, which the roster does not list', () => {
+    const f = fixture()
+    const system = running(f)
+    const gate: FakeWork = { runId: 'run_T224', nodeId: 'acceptance:1', since: '2026-10-26T09:30:00.000Z', taskId: 'T224' }
+    system.work([gate], [gate], [])
+    try {
+      const { status, output } = run(f, f.target, '--apply', '--check-with', builtTarget(f), '--runs-every', '1')
+      expect(output, output).toMatch(/waiting for what runs, \d+ s of at most 1 h 30 min:\n {2}run run_T224 step acceptance:1 on no Worker, for \d+ (s|min|h \d+ min) \(task T224, algorithm-development\)/)
+      expect(output).toMatch(/nothing runs: no workflow step runs \(after \d+ s\)/)
+      expect(output.indexOf('nothing runs')).toBeLessThan(output.indexOf('systemctl --user stop system.service'))
+      expect(status).toBe(1)
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('a dry run prints what --apply would wait for, and pauses nothing', () => {
+    const f = fixture()
+    const system = running(f)
+    system.work([T223])
+    try {
+      const { status, output } = run(f, f.target)
+      expect(output, output).toContain('what --apply would wait for before the stop (up to 90 min):')
+      expect(output).toContain('running now:')
+      expect(output).toMatch(T223_LINE)
+      expect(output).toContain('at the bound: stop, exit 1, system.service not stopped')
+      expect(status).toBe(0)
+      expect(f.unit.calls()).toEqual(['start system.service'])
+      expect(system.calls()).not.toContain('dispatch_pause')
+    } finally {
+      f.unit.cleanup()
+    }
+  })
+
+  it('takes --runs-wait in whole minutes and --runs-every in whole seconds, at least 1', () => {
+    const f = fixture()
+    for (const args of [['--runs-wait', 'soon'], ['--runs-every', '0']]) {
+      const { status, output } = run(f, f.target, ...args)
+      expect(status).toBe(2)
+      expect(output).toContain('[--runs-wait <minutes>] [--runs-every <seconds>] [--cut-running]')
+    }
+  })
+})
+
+describe('live-update-check: what runs before the stop (T234)', () => {
+  const item = { runId: 'run_T223', template: 'algorithm-development', nodeId: 'develop:1', attempt: 1, task: { taskId: 'T223' }, since: { value: '2026-10-26T09:00:00.000Z' }, summary: 'Working on …' }
+  const roster = (items: unknown[], more = 0, extra: { unread?: string; unlisted?: number } = {}) => ({
+    workers: { value: [{ worker: 'agent:codex-main/develop', work: { value: { items, more, ...(extra.unread ? { unread: extra.unread } : {}) } } }, { worker: 'worker:gemini-main/flash', work: { value: { items: [], more: 0 } } }] },
+    unlisted: extra.unlisted ?? 0,
+  })
+  /** T223's develop step as the store holds it: no task or start read there. */
+  const stored = { runId: 'run_T223', nodeId: 'develop:1', worker: 'agent:codex-main/develop', template: 'algorithm-development' }
+  const none = { steps: [] }
+  const busy: Running = runningOf({ steps: [stored] }, roster([item]))
+  const OLDER = 'only the newest 500 runs were read: an older run still running is not shown'
+
+  /** A store as the engine's migrations leave it, with only the columns the read names. */
+  function store(): DatabaseSync {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`CREATE TABLE workflow_runs (run_id TEXT PRIMARY KEY, template TEXT NOT NULL, status TEXT NOT NULL);
+      CREATE TABLE workflow_nodes (run_id TEXT, node_id TEXT, state TEXT, worker TEXT);
+      CREATE TABLE workflow_tasks (run_id TEXT, task_id TEXT);
+      CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, type TEXT, run_id TEXT, node_id TEXT)`)
+    return db
+  }
+
+  it('reads every RUNNING step of every running run from the store, on a Worker or not', () => {
+    const db = store()
+    db.exec(`INSERT INTO workflow_runs VALUES ('run_T223', 'algorithm-development', 'running'), ('run_T224', 'algorithm-development', 'running'), ('run_done', 'ask', 'completed');
+      INSERT INTO workflow_nodes VALUES ('run_T223', 'develop:1', 'RUNNING', 'agent:codex-main/develop'), ('run_T223', 'plan:1', 'COMPLETED', 'agent:codex-main/plan'),
+        ('run_T224', 'acceptance:1', 'RUNNING', NULL), ('run_T224', 'report:1', 'WAITING', NULL), ('run_done', 'ask:1', 'RUNNING', 'w');
+      INSERT INTO workflow_tasks VALUES ('run_T224', 'T224');
+      INSERT INTO events (at, type, run_id, node_id) VALUES ('2026-10-26T09:00:00.000Z', 'workflow.node.started', 'run_T224', 'acceptance:1'), ('2026-10-26T09:30:00.000Z', 'workflow.node.started', 'run_T224', 'acceptance:1')`)
+    expect(runningInStore(db)).toEqual({ steps: [stored, { runId: 'run_T224', nodeId: 'acceptance:1', template: 'algorithm-development', taskId: 'T224', since: '2026-10-26T09:30:00.000Z' }] })
+    // A store from before workflow_tasks, or without the event log: the steps, without what those add.
+    db.exec('DROP TABLE workflow_tasks; DROP TABLE events')
+    expect(runningInStore(db)).toEqual({ steps: [stored, { runId: 'run_T224', nodeId: 'acceptance:1', template: 'algorithm-development' }] })
+    db.exec('DROP TABLE workflow_nodes')
+    expect(runningInStore(db)).toEqual({ unread: "the store's runs: no such table: workflow_nodes" })
+    db.close()
+  })
+
+  it('a step on no Worker, which the roster never lists, keeps the wait waiting', () => {
+    const gate = { runId: 'run_T224', nodeId: 'acceptance:1', template: 'algorithm-development', taskId: 'T224' }
+    const running = runningOf({ steps: [gate] }, roster([]))
+    expect(running).toEqual({ steps: [gate], more: 0, notes: [] })
+    expect(idle(running)).toBe(false)
+    expect(runningLines(running, 0)).toEqual(['run run_T224 step acceptance:1 on no Worker, since when unknown (task T224, algorithm-development)'])
+  })
+
+  it('takes the roster\'s task and start for a store step, and counts a step only the roster lists', () => {
+    expect(busy).toEqual({ steps: [{ ...stored, taskId: 'T223', since: '2026-10-26T09:00:00.000Z' }], more: 0, notes: [] })
+    expect(idle(busy)).toBe(false)
+    expect(runningOf(none, roster([item]))).toEqual(busy)
+    expect(idle(runningOf(none, roster([])))).toBe(true)
+    expect(idle(runningOf(none, roster([], 2)))).toBe(false)
+  })
+
+  it('a store it cannot read is never nothing running', () => {
+    const unread = runningOf({ unread: 'the store: database is locked' }, roster([]))
+    expect(unread).toEqual({ unread: 'the store: database is locked' })
+    expect(idle(unread)).toBe(false)
+    expect(runningLines(unread, 0)).toEqual(['what runs cannot be read: the store: database is locked'])
+  })
+
+  it('past the roster\'s newest 500 runs, a run the store holds still runs, and the bound is said', () => {
+    const old = { runId: 'run_old', nodeId: 'develop:1', worker: 'agent:codex-main/develop', template: 'algorithm-development' }
+    const running = runningOf({ steps: [old] }, roster([], 0, { unread: OLDER }))
+    expect(idle(running)).toBe(false)
+    expect(runningLines(running, 0)).toEqual([
+      'run run_old step develop:1 on agent:codex-main/develop, since when unknown (algorithm-development)',
+      `note: the roster: ${OLDER}; the store's read covers every run`,
+    ])
+    // When nothing runs, the bound is said too.
+    expect(runningLines(runningOf(none, roster([], 0, { unread: OLDER })), 0)).toEqual([`note: the roster: ${OLDER}; the store's read covers every run`])
+  })
+
+  it('a step on a Worker past the 256 the roster lists still runs, and the Workers not listed are said', () => {
+    const far = { runId: 'run_far', nodeId: 'review:1', worker: 'worker:zz-last/flash', template: 'review' }
+    const running = runningOf({ steps: [far] }, roster([], 0, { unlisted: 3 }))
+    expect(idle(running)).toBe(false)
+    expect(runningLines(running, 0)).toEqual([
+      'run run_far step review:1 on worker:zz-last/flash, since when unknown (review)',
+      "note: the roster did not list 3 Worker(s); the store's read covers their steps",
+    ])
+  })
+
+  it('what the roster cannot tell is a note; the store still decides', () => {
+    const unknown = runningOf({ steps: [stored] }, { workers: { value: [{ worker: 'a', work: { unknown: 'the engine is not mounted' } }, { worker: 'b' }] } })
+    expect(idle(unknown)).toBe(false)
+    expect('notes' in unknown && unknown.notes).toEqual(["the roster does not know what runs on 2 Worker(s): a (the engine is not mounted), b (the roster lists no work for it); the store's read covers their steps"])
+    expect(runningOf(none, { workers: { unknown: 'the Worker registry is not mounted' } })).toEqual({
+      steps: [], more: 0, notes: ["the roster's Workers are unknown (the Worker registry is not mounted): the store's steps are named without what it adds"],
+    })
+    expect(runningOf({ steps: [stored] }, { unread: 'roster: unknown tool roster' })).toEqual({
+      steps: [stored], more: 0, notes: ["the roster was not read (roster: unknown tool roster): the store's steps are named without what it adds"],
+    })
+  })
+
+  it('names each run, its step, its Worker, and for how long', () => {
+    expect(runningLines(busy, Date.parse('2026-10-26T10:31:20.000Z'))).toEqual(['run run_T223 step develop:1 on agent:codex-main/develop, for 1 h 31 min (task T223, algorithm-development)'])
+    expect(runningLines(runningOf({ steps: [stored] }, roster([{ ...item, task: undefined, since: { unknown: 'retention' } }], 1)), 0))
+      .toEqual(['run run_T223 step develop:1 on agent:codex-main/develop, since when unknown (algorithm-development)', 'and 1 more step(s) the roster counted and did not list'])
+  })
+
+  it('waits, bounded, until nothing runs, and says what runs when it changes and every five minutes', async () => {
+    let clock = Date.parse('2026-10-26T10:00:00.000Z')
+    const sleeps: number[] = []
+    const reports: string[][] = []
+    const options = { waitMs: 90 * 60_000, everyMs: 30_000, reportEveryMs: 300_000, report: (lines: string[]) => reports.push(lines), sleep: async (ms: number) => { sleeps.push(ms); clock += ms }, now: () => clock }
+    const reads = [busy, busy, runningOf(none, roster([]))]
+    let read = 0
+    const done = await awaitIdle(async () => reads[Math.min(read++, reads.length - 1)]!, options)
+    expect(done.idle).toBe(true)
+    expect(done.waitedMs).toBe(60_000)
+    expect(sleeps).toEqual([30_000, 30_000])
+    expect(reports).toEqual([['waiting for what runs, 0 s of at most 1 h 30 min:', '  run run_T223 step develop:1 on agent:codex-main/develop, for 1 h 0 min (task T223, algorithm-development)']])
+
+    // Still running at the bound: no more than the wait, a report every five minutes.
+    const start = clock
+    sleeps.length = 0
+    reports.length = 0
+    const stuck = await awaitIdle(async () => busy, options)
+    expect(stuck.idle).toBe(false)
+    expect(clock - start).toBe(90 * 60_000)
+    expect(sleeps).toHaveLength(180)
+    expect(reports).toHaveLength(18)
+
+    // Nothing runs: one read, no wait.
+    sleeps.length = 0
+    expect((await awaitIdle(async () => runningOf(none, roster([])), options)).idle).toBe(true)
+    expect(sleeps).toEqual([])
   })
 })
 

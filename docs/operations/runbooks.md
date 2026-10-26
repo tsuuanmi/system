@@ -1677,19 +1677,23 @@ check` (37 rows, checked on a copy, 2026-10-23).
    descendant), the vault key, free space, and the candidate patch against the target's code
    (`system check --env-file` on a scratch copy of the profile, with the unit's environment file);
    that the daemon runs under `system.service`; captures what the profile answers now (a read),
-   with each Worker's availability from its roster (`system roster --json`) as a table; and prints
-   `system health` and the plan. Fix what it reports until it ends with the plan.
+   with each Worker's availability from its roster (`system roster --json`) as a table; prints
+   `system health`, then what `--apply` would wait for before the stop (each step running now, as
+   below), and the plan. Fix what it reports until it ends with the plan.
 3. **Apply:** the same command with `--apply`, in a shell that outlives a disconnect (`tmux`, or
-   `nohup … > ~/system-backups/live-update.out 2>&1 &`): the drain alone may take ten minutes. The
-   unit starts the daemon with its environment file, never this shell's environment. Notes and the
-   backup go to `~/system-backups/<date>-before-base/` (`-2`, `-3` for a later attempt).
+   `nohup … > ~/system-backups/live-update.out 2>&1 &`): the wait for running steps may take up to
+   `--runs-wait`, and the drain up to ten minutes more. The unit starts the daemon with its
+   environment file, never this shell's environment. Notes and the backup go to
+   `~/system-backups/<date>-before-base/` (`-2`, `-3` for a later attempt).
 4. **Read the outcome.**
    - Exit 0, `updated`: Base runs. `system plugins` lists each plugin's lifecycle, and `system
      health` names each agent Worker that cannot take work yet (`agent:codex-review
      (unavailable)`): [Codex Workers](#codex-workers) and [Antigravity CLI
      Workers](#antigravity-cli-workers) list the reasons and what to do.
    - Exit 1, `STOP` (nothing was changed) or `rolled back`: e218ae7 runs, on its store as it was at the
-     stop. The notes say why. A Worker that took work before and stays unavailable names its reason
+     stop. The notes say why. `STOP: steps still run after <n> min` is the wait's bound: the unit
+     was not stopped and dispatch was resumed. Run the same command again once those runs are done
+     (or with a longer `--runs-wait`), or with `--cut-running` to cut them. A Worker that took work before and stays unavailable names its reason
      in the table of the Workers before and after: fix its cause on the host (a runtime's probe, its
      sandbox), then update again.
    - Exit 2, `LOOK FIRST`: the script will not act on what it found, or the rollback failed. It prints
@@ -1703,6 +1707,34 @@ check` (37 rows, checked on a copy, 2026-10-23).
   start`, the main process of `system.service`, which runs in `system-live` on Node 24 with one
   required environment file naming this DSH home, its output going to a file. A daemon started any
   other way is refused, before anything changes.
+- **No running step is cut** (T234). On 2026-10-26 the update to c2a45415 stopped the unit while
+  T223's develop step ran: the drain ran into `TimeoutStopSec` (720 s), the daemon exited with the
+  run going, and the run failed `reconciliation_failed` ([a run's liveness is
+  unknown](#a-runs-liveness-is-unknown)) with its usage left uncounted. So before the stop, after
+  the capture, the script:
+  1. pauses dispatch (`system dispatch pause`, its reason naming the update) unless it is paused
+     already (yours stays as it is, and is never resumed by the script) or off. Its own pause is
+     recorded in the update's state and lifted (`system dispatch resume`) once the profile runs
+     again: after the upgrade checks, after a rollback, or at the wait's bound. The lead's and your
+     own starts are not paused: hold them yourself while you update;
+  2. reads what runs every `--runs-every` seconds (30), up to `--runs-wait` minutes (90), until no
+     workflow step runs. The store, opened read-only as the capture opens it, is the source: every
+     node in state `RUNNING` of every run in status `running`, whether it runs on a Worker or not
+     (a step the engine runs itself, or one not routed yet, names no Worker), and however old the
+     run. The roster (MCP `roster`, read-only) adds a step's Worker, task, and start where it lists
+     it, and a step it lists counts too. Its bounds are said, never read as nothing running: only
+     the newest 500 runs read, Workers past the 256 listed, a Worker whose work it cannot read, or
+     no roster at all. A store that cannot be read counts as running. It says what it waits for at
+     the first look, whenever that changes, and every 5 minutes: each run, its step, its Worker, and
+     for how long (`run run_… step develop:1 on agent:codex-main/develop, for 12 min (task T223,
+     algorithm-development)`);
+  3. at the bound, stops with exit 1, the unit not stopped and nothing changed; with
+     `--cut-running` it goes on to the stop as before, naming each run it cuts first. A cut agent run
+     fails or resumes as its source tells; one that fails `reconciliation_failed` is yours to look
+     at ([a run's liveness is unknown](#a-runs-liveness-is-unknown)).
+
+  The drain keeps its own deadline (`--deadline 600` in `ExecStop`). The automatic update passes
+  neither option: a pass whose wait reaches the bound stops, exit 1, and pauses itself.
 - The stop: `systemctl --user stop system.service`. Its `ExecStop` is `system shutdown --deadline
   600` (the drain), and the daemon and `system start` exit. It never kills.
 - The backup, taken once the daemon has stopped, so it is the store a rollback returns to: `system
