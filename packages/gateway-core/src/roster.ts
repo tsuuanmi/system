@@ -72,7 +72,7 @@ export interface RosterDescriptor {
   cooldowns?: Array<{ capability: string; until: string }> | undefined
   tier: 'economy' | 'standard' | 'frontier'
   /** `@1.10`: every tier it offers (ADR-0073), each closed while its model is at its limit. */
-  tiers?: ReadonlyArray<{ tier: 'economy' | 'standard' | 'frontier'; closed?: true | undefined; until?: string | undefined }> | undefined
+  tiers?: ReadonlyArray<RosterTier> | undefined
   quotaClass: 'subscription-chat' | 'agent-plan' | 'metered' | 'local'
   locality: 'local' | 'remote'
   state: 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
@@ -248,6 +248,8 @@ export interface RosterWork {
 }
 export interface RosterWindow { id: string; kind: string; seconds?: number; state: 'ok' | 'limited' | 'unknown'; used: Known<number>; resets: Known<string>; observedAt?: string; source?: string }
 export interface RosterPoolView { pool: string; kind: string; available: boolean; until?: string; windows: RosterWindow[]; unknownUsage: Known<{ runs: number; kinds: Partial<Record<UsageUnknownKind, number>> }> }
+/** One tier a Worker offers (`mcp-roster@1.10`): its model's display label from the live profile, its turn limit, and whether its model's limit closes it now. */
+export interface RosterTier { tier: 'economy' | 'standard' | 'frontier'; label?: string | undefined; maxTurns?: number | undefined; closed?: true | undefined; until?: string | undefined }
 export interface RosterEntry {
   worker: string
   /**
@@ -267,6 +269,8 @@ export interface RosterEntry {
   /** The role the Worker serves on its account, `null` for a Worker that is no role's (a website account's tier, a model, a hand-named agent Worker). */
   role: Known<string | null>
   tier: RosterDescriptor['tier']
+  /** `@1.10`: every tier it offers, lowest first, each with its model's display label and turn limit; only a Worker that offers tiers (ADR-0073) has it. */
+  tiers?: RosterTier[]
   quotaClass: RosterDescriptor['quotaClass']
   locality: RosterDescriptor['locality']
   /** The state its source describes; `availability` is what the roster makes of it with the account. */
@@ -552,7 +556,7 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
         description: d.description !== undefined ? known(d.description) : unknown('no description is configured for it'),
         derived: derivedOf(d, role),
         family: d.family !== undefined ? known(d.family) : unknown('its Worker source declares no provider family'),
-        account, role, tier: d.tier, quotaClass: d.quotaClass, locality: d.locality, state: d.state, observedAt: d.observedAt,
+        account, role, tier: d.tier, ...(d.tiers?.length ? { tiers: tiersOf(d.tiers) } : {}), quotaClass: d.quotaClass, locality: d.locality, state: d.state, observedAt: d.observedAt,
         availability,
         load: d.load ? known({ running: d.load.running, queued: d.load.queued, pending: d.load.pending, slots: d.load.slots }) : unknown('its Worker source reports no load'),
         limits: [...(d.cooldowns ?? [])].map((c) => ({ capability: c.capability, until: c.until })).sort((a, b) => cmp(a.capability, b.capability)),
@@ -573,6 +577,25 @@ export function projectRoster(input: RosterInput, options: { scope: RosterScope;
       }))) : input.sources,
     unknownUsage: isKnown(usage) ? known({ unreadable: usage.value.unreadable, unconfigured: usage.value.unconfigured }) : unknown(usage.unknown),
   }
+}
+
+const TIER_ORDER = ['economy', 'standard', 'frontier']
+
+/** The tiers a Worker offers as the roster lists them: lowest first, each with what a reader needs and nothing a router reads. */
+function tiersOf(offers: ReadonlyArray<RosterTier>): RosterTier[] {
+  return [...offers].sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier)).map((t) => ({
+    tier: t.tier,
+    ...(t.label !== undefined && /^[^\p{Cc}]{1,256}$/u.test(t.label) ? { label: t.label } : {}),
+    ...(t.maxTurns !== undefined ? { maxTurns: t.maxTurns } : {}),
+    ...(t.closed ? { closed: true as const } : {}),
+    ...(t.until ? { until: t.until } : {}),
+  }))
+}
+
+/** One offered tier in a line: `economy (model label, 12 turns, closed until …)`. */
+const tierText = (t: RosterTier): string => {
+  const parts = [...(t.label ? [t.label] : []), ...(t.maxTurns !== undefined ? [`max ${t.maxTurns} turns`] : []), ...(t.closed ? [`at its model's limit${t.until ? ` until ${t.until}` : ''}`] : [])]
+  return parts.length ? `${t.tier} (${parts.join(', ')})` : t.tier
 }
 
 /** A Worker's line made from what its source says: provider, role, tier, quota class, and locality (shown, marked as derived, when it has no description). */
@@ -783,7 +806,7 @@ export function formatRoster(roster: Roster): string {
     for (const w of roster.workers.value) {
       lines.push('', `${w.name} (${w.worker})  ${w.availability.summary}`)
       lines.push(`  is         ${isKnown(w.description) ? w.description.value : `${w.derived} (derived: no description is configured)`}`)
-      lines.push(`  serves     ${w.tier}, ${w.quotaClass}, ${w.locality}; provider ${w.provider}, family ${text(w.family)}; role ${text(w.role, (r) => r ?? 'none')}`)
+      lines.push(`  serves     ${w.tiers ? `${w.tiers.map(tierText).join('; ')}` : w.tier}, ${w.quotaClass}, ${w.locality}; provider ${w.provider}, family ${text(w.family)}; role ${text(w.role, (r) => r ?? 'none')}`)
       lines.push(`  account    ${text(w.account, (a) => `${a.id} (${a.group}, ${a.mode}): ${text(a.record, (r) => `${r.kind} ${r.status}${r.label ? `, ${text(r.label, (l) => JSON.stringify(l))}` : ''}${r.slot !== undefined ? `, slot ${r.slot}` : ''}${r.quarantine ? `, quarantined ${r.quarantine.reason} since ${r.quarantine.since} (${r.quarantine.decision})` : ''}${r.sameAs ? `, same person as ${r.sameAs.join(', ')}` : ''}`)}`)}`)
       lines.push(`  load       ${text(w.load, (l) => `${l.running} running of ${l.slots}, ${l.queued} queued, ${l.pending} pending`)}${w.limits.length ? `; limited: ${w.limits.map((l) => `${l.capability} until ${l.until}`).join(', ')}` : ''}`)
       lines.push(`  work       ${text(w.work, (work) => [

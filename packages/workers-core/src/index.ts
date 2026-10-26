@@ -104,6 +104,10 @@ export interface TierOffer {
   closed?: true
   /** When a closed tier is expected back, when its source knows. */
   until?: string
+  /** `@1.11`: its model's display label, as the live profile gives it (for people only, never a routing input). */
+  label?: string
+  /** `@1.11`: the turn limit a run at this tier gets, when one is set. */
+  maxTurns?: number
 }
 
 /** The tiers a Worker offers, lowest first: its `tiers` (`@1.10`), else its one `tier`. */
@@ -124,7 +128,7 @@ export const servedTier = (worker: Pick<CapabilityDescriptor, 'tier' | 'tiers'>,
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9' | 'capability-descriptor@1.10'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5' | 'capability-descriptor@1.6' | 'capability-descriptor@1.7' | 'capability-descriptor@1.8' | 'capability-descriptor@1.9' | 'capability-descriptor@1.10' | 'capability-descriptor@1.11'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string

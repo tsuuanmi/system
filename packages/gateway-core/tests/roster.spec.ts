@@ -496,6 +496,28 @@ describe('the roster: every Worker in one read model, projected on read (REQ-HOS
     for (const e of entries(failed)) expect(e.teams, e.worker).toEqual({ unknown: 'it could not be read: the router is busy' })
   })
 
+  it('lists every tier a tiered Worker offers, each with its model\'s label and turn limit, in the text and the record (mcp-roster@1.10)', async () => {
+    const tiered = `agent:${CLAUDE}/develop`
+    const offers = [
+      { tier: 'frontier' as const, label: 'Frontier Model', maxTurns: 60 },
+      { tier: 'economy' as const, label: 'Economy Model', maxTurns: 12 },
+      { tier: 'standard' as const, label: 'Standard Model', maxTurns: 30, closed: true as const, until: '2026-10-24T11:00:00Z' },
+    ]
+    const workers = [descriptor(tiered, { account: agentAccount(CLAUDE), tier: 'economy', tiers: offers }), descriptor(`agent:${CLAUDE}/review`, { account: agentAccount(CLAUDE) })]
+    const roster = await readRoster(services({}, workers), { scope: 'operator', now: NOW })
+    valid(roster)
+    const e = entry(roster, tiered)
+    expect(e.tiers).toEqual([
+      { tier: 'economy', label: 'Economy Model', maxTurns: 12 },
+      { tier: 'standard', label: 'Standard Model', maxTurns: 30, closed: true, until: '2026-10-24T11:00:00Z' },
+      { tier: 'frontier', label: 'Frontier Model', maxTurns: 60 },
+    ])
+    expect(e.tier).toBe('economy')
+    expect(entry(roster, `agent:${CLAUDE}/review`)).not.toHaveProperty('tiers')
+    const text = formatRoster(roster)
+    expect(text).toContain("  serves     economy (Economy Model, max 12 turns); standard (Standard Model, max 30 turns, at its model's limit until 2026-10-24T11:00:00Z); frontier (Frontier Model, max 60 turns), agent-plan")
+  })
+
   it('the example validates against mcp-roster@1.7, its now included, and a record that is not one is refused', async () => {
     const { readFileSync } = await import('node:fs')
     const example = JSON.parse(readFileSync(new URL('../../../schemas/examples/mcp-roster.call.json', import.meta.url), 'utf8')) as { output: Roster }

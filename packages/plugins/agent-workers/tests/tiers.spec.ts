@@ -168,7 +168,7 @@ describe('a role with tiers: one Worker per account offers them all (ADR-0073)',
 })
 
 describe('a tiered Worker in the agents source (ADR-0073)', () => {
-  it('describes one Worker offering its three tiers (capability-descriptor@1.10), and runs a frontier step on the frontier model, recording the tier and the model it ran on', async () => {
+  it('describes one Worker offering its three tiers (capability-descriptor@1.11), and runs a frontier step on the frontier model, recording the tier and the model it ran on', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agent-tiers-'))
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }))
     const account = await enrolled(dir, 'alice@example.test')
@@ -176,7 +176,7 @@ describe('a tiered Worker in the agents source (ADR-0073)', () => {
     const workers = await described(b)
     expect([...workers.keys()]).toEqual([`agent:${account}/review`])
     const worker = workers.get(`agent:${account}/review`)!
-    expect(worker).toMatchObject({ schema: 'capability-descriptor@1.10', state: 'ready', tier: 'economy', tiers: [{ tier: 'economy' }, { tier: 'standard' }, { tier: 'frontier' }] })
+    expect(worker).toMatchObject({ schema: 'capability-descriptor@1.11', state: 'ready', tier: 'economy', tiers: [{ tier: 'economy', label: ECONOMY, maxTurns: 4 }, { tier: 'standard', label: STANDARD, maxTurns: 4 }, { tier: 'frontier', label: FRONTIER, maxTurns: 8 }] })
     schemas.assertRecord(worker)
 
     // A frontier step: routed at frontier, run on the frontier model with its own turn limit.
@@ -321,7 +321,7 @@ describe('quota per model (ADR-0073)', () => {
     schemas.assertRecord(worker)
     // The one-tier Worker names the one pool it draws on, so no model's pool (the frontier one, closed) is read as its quota.
     const one = (await described(b)).get(quick)!
-    expect(one).toMatchObject({ schema: 'capability-descriptor@1.10', state: 'ready', tier: 'standard', tiers: [{ tier: 'standard', pools: [`plan/${account}`] }] })
+    expect(one).toMatchObject({ schema: 'capability-descriptor@1.11', state: 'ready', tier: 'standard', tiers: [{ tier: 'standard', pools: [`plan/${account}`] }] })
     expect(one.tiers![0]).not.toHaveProperty('closed')
     schemas.assertRecord(one)
     const onQuick = await b.ctx.workers.route(requirement('standard'), { restrict: { workers: [quick], reason: 'test' } })

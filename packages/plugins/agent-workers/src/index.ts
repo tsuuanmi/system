@@ -894,7 +894,7 @@ export class AgentWorkers extends Service {
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027); the kinds of work
         // the operator gives it, so it takes no other (ADR-0057).
-        schema: tiers ? 'capability-descriptor@1.10' : why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
+        schema: tiers ? 'capability-descriptor@1.11' : why !== undefined ? 'capability-descriptor@1.9' : worker.description ? 'capability-descriptor@1.7' : worker.kinds ? 'capability-descriptor@1.6' : 'capability-descriptor@1.5', account, ...(worker.kinds ? { kinds: [...worker.kinds] } : {}),
         ...(worker.description ? { description: worker.description } : {}),
         ...(why !== undefined ? { unavailableReason: boundedReason(why) } : {}),
         worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, ...(load ? { load } : {}), tier: worker.tier, ...(tiers ? { tiers } : {}), quotaClass: worker.quotaClass ?? 'agent-plan',
@@ -913,11 +913,14 @@ export class AgentWorkers extends Service {
     const gates = new Map<string, Promise<{ state: string; until?: string | undefined }>>()
     return Promise.all(worker.tiers!.map(async (t): Promise<TierOffer> => {
       const pools = worker.pool !== undefined ? [worker.pool, ...(t.modelPool ? [t.modelPool.pool] : [])] : undefined
-      if (!read || !t.modelPool) return { tier: t.tier, ...(pools ? { pools } : {}) }
+      // What a run at this tier uses (its model as the live profile names it, and its turn limit), for people to read.
+      const at = this.atTier(worker, t.tier)
+      const shown = { ...(at.model ? { label: at.model } : {}), ...(at.maxTurns ? { maxTurns: at.maxTurns } : {}) }
+      if (!read || !t.modelPool) return { tier: t.tier, ...(pools ? { pools } : {}), ...shown }
       const pool = t.modelPool.pool
       if (!gates.has(pool)) gates.set(pool, this.poolGate(id, { ...worker, pool }))
       const gate = await gates.get(pool)!
-      return { tier: t.tier, ...(pools ? { pools } : {}), ...(gate.state !== 'ready' ? { closed: true as const, ...(gate.until ? { until: gate.until } : {}) } : {}) }
+      return { tier: t.tier, ...(pools ? { pools } : {}), ...shown, ...(gate.state !== 'ready' ? { closed: true as const, ...(gate.until ? { until: gate.until } : {}) } : {}) }
     }))
   }
 
