@@ -1,10 +1,10 @@
 ---
 id: PROP-0017
 type: proposal
-status: proposed
+status: accepted
 owners: [operator]
 created: 2026-10-26
-summary: System uses GitHub the way a team does. An issue a permitted person opens or labels becomes a proposed board task once a person approves it. An accepted result is pushed to a branch and opened as a pull request against its target, with a summary of its evidence. GitHub CI runs on it, and its required check runs are read back as evidence. GitHub merges it when the required checks pass and D80's conditions hold; otherwise it waits for a person. The board is copied one way to a GitHub Projects board. Each increment keeps System's invariants. Issue text is data and never an instruction. Only public-classified text goes to GitHub. The token is fine-grained and kept in System's vault, and each use is an egress decision. Local landing (ADR-0060) stays as the second provider of one landing seam, for private repositories.
+summary: System uses GitHub the way a team does. An issue a permitted person opens or labels becomes a proposed board task once a person approves it. An accepted result is pushed to a branch and opened as a pull request against its target, with a summary of its evidence. GitHub CI runs on it, and its required check runs are read back as evidence. GitHub merges it when the required checks pass and D80's conditions hold; otherwise it waits for a person. A one-way GitHub Projects mirror was proposed and dropped on acceptance (D84). Each increment keeps System's invariants. Issue text is data and never an instruction. Only public-classified text goes to GitHub. The token is fine-grained and kept in System's vault, and each use is an egress decision. Local landing (ADR-0060) stays as the second provider of one landing seam, for private repositories.
 evidence: [operator request 2026-10-26, .github/workflows (ci, codeql, audit, release), ADR-0060, ADR-0063, ADR-0067, ADR-0068, PROP-0013]
 related: [PROP-0013, PROP-0014, PROP-0015, PROP-0016, ADR-0036, ADR-0060, ADR-0063, ADR-0067, ADR-0068, INV-2, INV-5, INV-6, INV-12, INV-13, INV-15, D56, D80]
 implementation: []
@@ -366,7 +366,19 @@ costs. Intake first would add work to a queue that still lands by hand.
 
 ## Decision
 
-Pending: proposed 2026-10-26 (T227).
+Accepted by the operator on 2026-10-26 (D84), each decision as recommended above except the
+Projects mirror:
+
+- **G4 is dropped.** No Projects mirror, of any task (decision 7). The board stays the one place
+  tasks live, and `/ui` its view. A one-way copy that people can edit but System ignores would
+  drift, and only `public` tasks could be shown at all. G4's credential rows in G5 are not needed.
+- **The order is G0, L0, G2, G3, G1** (decision 8). G0 is the operator's: rulesets on `main`,
+  tags `v*`, and `dev` (the operator may bypass it), auto-merge on, and a machine identity.
+- Decisions 1 to 6 as recommended: `tsuuanmi/system` only, target `dev`; intake by the `system`
+  label from listed logins; intake always asks on a public repository; auto-merge to `dev` only
+  after the one `merge` approval at the exact head (D56 kept) and D80's conditions; a GitHub App,
+  else a bot account's fine-grained token of at most 90 days, never `workflows` or
+  `administration`; rulesets before G2.
 
 ## Implementation
 

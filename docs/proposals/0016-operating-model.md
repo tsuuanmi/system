@@ -1,7 +1,7 @@
 ---
 id: PROP-0016
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-26
 summary: System runs as a startup inside a group. It has room to grow itself inside clear policies, rules, and workflows, and the operator keeps objectives, budgets, trust boundaries, irreversible actions, and exceptional risk. A maturity model from L0 to L6 judges each level by criteria observed over a rolling 30 days, not by a list of features. System is between L2 and L3 today, and the target is L4 by 2028 to 2029, with L5 only where the evidence allows it. Getting to L3 needs five things. A handbook in five layers, each with an owner, a version, and a check that enforces it, and each Worker gets only its role's and its task's slice. A process tiered by risk, light for docs and heavy (two model families and an adversarial review) for the gate, dispatch, and security. Onboarding and probation for a new Worker or model. A weekly scorecard from an evidence ledger. A research function that proposes direction, with the operator approving direction and budget only. After L5, System is packaged so one operator can run several projects within an attention budget. Five increments, each measurable, I1 to I5.
 owners: [operator]
@@ -393,7 +393,24 @@ Each has a recommendation; the operator decides.
 
 ## Decision
 
-Pending the operator's review.
+Accepted by the operator on 2026-10-26, each open question answered as this proposal recommends
+(D83):
+
+1. The target is L4 by 2028 to 2029, with L5 only in kinds of work where L4's metrics hold for 90
+   days.
+2. The L3 lines of §1 are starting lines, revisited once I4 has 30 days of data and before any
+   level is declared.
+3. The handbook part of a brief is bounded at 6,000 tokens: a warning for 30 tasks, then a refusal.
+4. The heavy path's list is §4's, and an unreadable path counts as heavy.
+5. A new version of a trusted model starts at T1 when its predecessor was T2 or above, T0
+   otherwise.
+6. The research function may spend at most 10 % of each week's quota without asking, never from
+   the operator's 20 % reserve (D63).
+7. The order is I4's metrics and I2 first, then I1 and I3, then I5. The operator gave the go-ahead
+   for I4's metrics and I2.
+8. The second project is of a different kind from `system`; the attention budget is 15 decisions a
+   day in total, 10 for `system`. The operator wants several projects on System soon: I5 is the
+   goal the earlier increments serve.
 
 ## Implementation
 

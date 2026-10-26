@@ -136,7 +136,7 @@ accepted/implemented -> superseded
   PROP-0002's `ctx.decisions` seam, one query per decision with the whole distribution recorded,
   in shadow, never widening a gate.
 
-- [PROP-0016: Operating model, a startup inside a group](0016-operating-model.md), **proposed**
+- [PROP-0016: Operating model, a startup inside a group](0016-operating-model.md), **accepted** (D83)
   (2026-10-26, from the operator's vision of that day and the T224 brainstorm). System grows
   itself inside clear policies, and the operator keeps objectives, budgets, trust boundaries,
   irreversible actions, and exceptional risk. A maturity model from L0 to L6, each level read from
@@ -149,14 +149,14 @@ accepted/implemented -> superseded
   operator steers by direction and budget; and packaging for several projects. Increments I1 to
   I5.
 
-- [PROP-0017: GitHub as System's front door](0017-github-front-door.md), **proposed** (T227, from
+- [PROP-0017: GitHub as System's front door](0017-github-front-door.md), **accepted** (D84, without the Projects mirror) (T227, from
   the operator's request of 2026-10-26). An issue an allowed person opens or labels becomes a
   proposed board task once a person approves it, and its text is data, never an instruction. An
   accepted result is pushed to its own branch and opened as a PR against its target with an
   evidence summary of ids and verdicts. It merges through GitHub's auto-merge at the exact head
   that the one `merge` approval named (D56 kept), and only when D80's conditions hold. Its required
-  check runs are recorded as evidence, and a failed one reopens the task. The board is mirrored one
-  way to GitHub Projects. A fine-grained token or a GitHub App, held in the vault, writes only
+  check runs are recorded as evidence, and a failed one reopens the task. The Projects mirror (G4) was
+  dropped on acceptance. A fine-grained token or a GitHub App, held in the vault, writes only
   through the egress check. Local landing stays as the second provider of one landing seam, for
   private repositories.
 
