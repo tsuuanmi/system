@@ -54,7 +54,7 @@ import {
   type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
-import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, recordDenial, runGate, unaskedNote } from './gate.ts'
+import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, readToolsOf, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { repositoryLessons } from './lessons.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
 import { Overlaps } from './overlaps.ts'
@@ -1993,7 +1993,7 @@ export class AgentWorkers extends Service {
     try {
       const evidence = await this.evidence(worker, 'proven').catch(() => undefined)
       const note = unaskedNote(await approvals.policy(), workspace, {
-        shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
+        shellReads: evidence?.cleanShells === true, workspaceReads: evidence?.workspaceReads === true, readTools: readToolsOf(evidence, worker.tools), resumes: row.session_id !== null && row.session_id !== undefined, sandbox: worker.sandbox,
       })
       return { ...turn, prompt: `${turn.prompt}\n\n${note}` }
     } catch (error) {
@@ -2107,6 +2107,8 @@ export class AgentWorkers extends Service {
       shellReads: evidence.cleanShells === true,
       // The workspace reads server's tools are reads only where the runtime gives its agent that server (T200b).
       workspaceReads: evidence.workspaceReads === true,
+      // A shell inspection command the agent has a reading tool for is denied at once, naming it (T222).
+      readTools: readToolsOf(evidence, worker.tools),
     })
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,

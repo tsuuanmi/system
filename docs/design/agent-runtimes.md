@@ -81,6 +81,7 @@ interface RuntimeEvidence {
   gatesToolCalls: boolean;                  // asks RunSpec.toolGate before every tool call
   cleanShells?: boolean;                    // it starts every call's shell with no startup code (T198)
   workspaceReads?: boolean;                 // its agent gets the workspace reads server, proven to start (T200b)
+  readTools?: string[];                     // its own reading tools its agent has (Claude Code: Read, Grep, Glob; T222)
   homes?: boolean;                          // runs in the home a run or probe names (ADR-0051)
 }
 
@@ -1176,6 +1177,39 @@ scripts without a unix socket, as this one does: `node --import tsx <script>` re
 loader in the process and opens no socket, where the `tsx` CLI listens on its pipe. (A worktree's setup runs under the read confinement alone, so its
 commands can listen on one.) The sandbox runtime does not claim to stop a kernel escape
 ([threat model](../security/threat-model.md#threats-and-controls)).
+
+### Reading tools and shell inspection
+
+Since T198 no runtime here has a `Bash` call that is a `read`, so a Worker's `cat`, `ls`, `wc -l`,
+`head`, `tail`, `grep`, `rg`, `find`, or `sed -n` was a `command` that opened an approval request
+and waited for the operator. Where the run's agent has a reading tool for it, the gate denies such
+a command at once instead, never asking (T222, `use-read-tool`;
+[approvals](approvals.md#how-a-call-is-classified)), and the reason it is told names the tool:
+
+| Shell inspection | Claude Code | Codex (workspace reads server) |
+|---|---|---|
+| `cat`, `head`, `tail`, `sed -n` | `Read` | `read_file` |
+| `wc` | `Read` (its lines are numbered, so the last number is the count) | `read_file` (the same) |
+| `grep`, `rg` | `Grep` | `search` |
+| `ls`, `find` | `Glob` | `list_dir` |
+
+- **Which reading tools the agent has** comes from the runtime's evidence, never its name
+  (INV-11): `readTools`, its own reading tools (Claude Code reports `Read`, `Grep`, `Glob`), kept
+  as far as the Worker's `tools` list names them (an absent or empty list keeps every one, as the
+  runtime then gives its default set); and the workspace reads server's three where it reports
+  `workspaceReads`. A Claude Code Worker whose list names `Read` alone has no `Grep`, so its `grep`
+  stays a `command`.
+- **Recognised by its first word**, after the gate's own split on single spaces and its
+  metacharacter and empty-word refusals, whatever its other words (a relative path too): a `sed`
+  only as `sed -n <a>[,<b>]p <path>…` (not an in-place edit, a `-e` or `-f` script, or a script
+  that writes a file or runs a command), a `find` only without an action (`-exec`, `-delete`,
+  …), since a form that writes is no inspection; it stays a `command`. `stat`, `file`, and `git`
+  are no inspection a reading tool serves, and stay `command`s.
+- **Under a runtime that gives its agent no reading tool** for the form, it stays a `command`,
+  judged as before. Under one that enforces clean shells, an inspection command the gate takes for
+  a read (every path absolute, inside the workspace) still runs unasked.
+- **Told before the work.** The Worker's Tools section says that a shell inspection command one of
+  its reading tools serves is denied at once, never asked, and names the tool for each form.
 
 ## Metering
 

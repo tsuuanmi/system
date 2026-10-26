@@ -149,7 +149,7 @@
     }
   },
   "agent-tool-event.v1.json": {
-    "version": "1.0",
+    "version": "1.1",
     "nodes": {
       "": {"h":"bc6b510b3a1b03e2","r":["data","type"],"p":["data","type"]},
       "/$defs/call": {"h":"a2c799262a3ce3c1","r":["agentRun","tool","worker"],"p":["actionClass","agentRun","tool","worker","workerKind"]},
@@ -178,7 +178,7 @@
       "/$defs/notified/properties/pendingChecks": {"h":"5088d04569638e48"},
       "/$defs/pendingChecks": {"h":"a9c51e27e5a2fa6d"},
       "/$defs/pendingChecks/items": {"h":"93d2d2248644e67d"},
-      "/$defs/reason": {"h":"defb23af4cc8dfbc"},
+      "/$defs/reason": {"h":"417cc6a0a4c23607"},
       "/allOf/0": {"h":"44136fa355b3678a"},
       "/allOf/0/if": {"h":"44136fa355b3678a","p":["type"]},
       "/allOf/0/if/properties/type": {"h":"a5413fd118fe9b30"},

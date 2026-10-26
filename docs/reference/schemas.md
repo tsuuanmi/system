@@ -697,8 +697,8 @@ guesses.
   `outside-workspace`, `git-data`, `unclassified-tool`, `unsupported-field`, `invalid-input`,
   `invalid-patch`, `policy-forbid`, `not-listed`, `request-rejected`, `request-expired`,
   `request-withdrawn`, `workflow-denied`, `request-mismatch`, `request-unreadable`, `no-session`,
-  `run-stopped`, `review-member`, `no-approvals`, `unknown-checks`, `unknown-mode`, `gate-error`;
-  a code is never renamed or reused), `explanation` (the code's fixed plain sentence, at most 300
+  `run-stopped`, `review-member`, `no-approvals`, `unknown-checks`, `unknown-mode`, `gate-error`,
+  and since T222 `use-read-tool`; a code is never renamed or reused), `explanation` (the code's fixed plain sentence, at most 300
   characters, never the call's input), `workerKind` (the Worker's runtime), `actionClass` (once
   the call was classified), `requestId` (a denial on a request), and `decision` (the decision
   behind it, as on the entry). An entry from before T207 has none of them.
@@ -706,8 +706,8 @@ guesses.
   `tool`, and `actionClass` (and `workerKind` since T207); `deferred` adds `requestId`, the others
   `pendingChecks` when checks are pending (always for `checks-pending`).
 - The data of these four tool events is declared by
-  [`agent-tool-event.v1.json`](../../schemas/agent-tool-event.v1.json) (`agent-tool-event@1.0`,
-  T211), one definition per event type (`$defs/denied`, `deferred`, `notified`, `checks-pending`).
+  [`agent-tool-event.v1.json`](../../schemas/agent-tool-event.v1.json) (`agent-tool-event@1.1`,
+  T211; 1.1 adds the reason `use-read-tool`, T222), one definition per event type (`$defs/denied`, `deferred`, `notified`, `checks-pending`).
   The data carries no schema tag: a reader names the definition by the entry's type. `reason` is
   an enum of the codes above (a test derives the gate's own list, `DENIAL_REASONS`, and requires each
   in it, so a new code is a minor version of the schema); `explanation` is 1 to 300 characters and

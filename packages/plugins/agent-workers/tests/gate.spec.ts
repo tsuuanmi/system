@@ -29,7 +29,7 @@ import Workflow from '@tsuuanmi/system-workflow'
 import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
-import { classify, DENIAL_REASONS, EXPLANATION_MAX, TOOLS_NOTE_MAX, unaskedNote } from '../src/gate.ts'
+import { classify, DENIAL_REASONS, EXPLANATION_MAX, readToolsOf, TOOLS_NOTE_MAX, unaskedNote } from '../src/gate.ts'
 import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 
@@ -46,9 +46,9 @@ class GatedAgent implements AgentRuntimeProvider {
   readonly kind = 'gated'
   readonly runs: RunSpec[] = []
   readonly verdicts: ToolVerdict[][] = []
-  constructor(private readonly script: Array<Array<Omit<ToolCall, 'callId'>>>, private readonly options: { goesOn?: boolean; deferredMetering?: RunMetering } = {}) {}
+  constructor(private readonly script: Array<Array<Omit<ToolCall, 'callId'>>>, private readonly options: { goesOn?: boolean; deferredMetering?: RunMetering; evidence?: { readTools?: string[]; workspaceReads?: boolean } } = {}) {}
   async probe() {
-    return { available: true, detail: 'gated 1.0', sandboxes: ['read-only', 'workspace-write'] as Array<'read-only' | 'workspace-write'>, resume: true, executes: true, readsConfined: true, gatesToolCalls: true }
+    return { available: true, detail: 'gated 1.0', sandboxes: ['read-only', 'workspace-write'] as Array<'read-only' | 'workspace-write'>, resume: true, executes: true, readsConfined: true, gatesToolCalls: true, ...this.options.evidence }
   }
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void) {
     this.runs.push(spec)
@@ -184,6 +184,48 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     // The explanation never names the call's input.
     expect(JSON.stringify(events)).not.toContain('/etc/passwd')
     expect(decisionOf(ctx, (outside as { reason: string }).reason).outcome.detail).toMatchObject({ reason: 'outside-workspace' })
+  })
+
+  it('denies each shell inspection command at once, naming the reading tool, with no request, where the runtime gives its agent read tools; under one that gives none, it asks as before (T222)', async () => {
+    const forms: Array<[string, string, string]> = [
+      ['cat src/a.ts', 'Read', 'read_file'], ['head -n 5 src/a.ts', 'Read', 'read_file'], ['tail src/a.ts', 'Read', 'read_file'], ['sed -n 1,9p src/a.ts', 'Read', 'read_file'],
+      ['wc -l src/a.ts', 'Read', 'read_file'], ['grep -rn needle src', 'Grep', 'search'], ['rg needle src', 'Grep', 'search'], ['ls -la src', 'Glob', 'list_dir'], ['find src -name a.ts', 'Glob', 'list_dir'],
+    ]
+    const script = [forms.map(([command]) => bash(command))]
+    const kinds = { claude: { readTools: ['Read', 'Grep', 'Glob'] }, codex: { workspaceReads: true } }
+    for (const [kind, evidence] of Object.entries(kinds)) {
+      const agent = new GatedAgent(script, { evidence })
+      const { ctx, run } = await boot(agent)
+      const done = await run()
+      expect(done.status, kind).toBe('completed')
+      for (const [i, [command, own, server]] of forms.entries()) {
+        const tool = kind === 'claude' ? own : server
+        const verdict = agent.verdicts[0]![i] as { decision: string; reason: string }
+        expect(verdict, `${command} under ${kind}`).toMatchObject({ decision: 'deny', reason: expect.stringContaining(`use ${tool} instead`) })
+        expect(decisionOf(ctx, verdict.reason), command).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny', detail: { reason: 'use-read-tool' } } })
+      }
+      // No request: nothing waits for the operator.
+      expect(await ctx.approvals.list(), kind).toEqual([])
+      const events = ctx.eventLog.query({ type: 'agent-workers.tool.denied' })
+      expect(events.map((e) => e.data!.reason)).toEqual(forms.map(() => 'use-read-tool'))
+      expect(events.map((e) => e.data!.explanation)).toEqual(forms.map(() => DENIAL_REASONS['use-read-tool']))
+      for (const event of events) expect(agentToolDenialOf(event.data), kind).toBeDefined()
+      // The brief's Tools section says so, naming the tool for each.
+      const prompt = agent.runs[0]!.prompt
+      expect(prompt).toContain('A Bash inspection command you have a reading tool for is denied at once, never asked')
+      expect(prompt).toContain(kind === 'claude' ? 'grep, rg: use Grep' : 'grep, rg: use search')
+      expect(prompt).toContain(kind === 'claude' ? 'ls, find: use Glob' : 'ls, find: use list_dir')
+    }
+    // A runtime that gives its agent no read tools: the first form is the exact command, asked as before; the run stops there.
+    const agent = new GatedAgent(script)
+    const { ctx, run } = await boot(agent)
+    const done = await run()
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(agent.verdicts[0]).toEqual([expect.objectContaining({ decision: 'defer' })])
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: cat src/a.ts' }) })])
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' })).toEqual([])
+    expect(agent.runs[0]!.prompt).not.toContain('A Bash inspection command you have a reading tool for')
+    expect(agent.runs[0]!.prompt).toContain('cat, ls, rg, and the like are commands, judged as one')
   })
 
   it('gives every denial reason a plain explanation of at most 300 characters (T207)', () => {
@@ -1058,6 +1100,57 @@ describe('classify: a tool call as the action the policy judges', () => {
     }
   })
 
+  it('refuses a shell inspection command at once, naming the reading tool to use, where the run\'s agent has it: Claude Code\'s own, or the workspace reads server\'s; under none it stays a command (T222)', () => {
+    const a = join(ws, 'src/a.ts')
+    // Each inspection form, by its first word whatever its other words (relative paths and all), and the tool each runtime kind names for it.
+    const forms: Array<[string, string, string]> = [
+      [`cat ${a}`, 'Read', 'read_file'], ['cat src/a.ts', 'Read', 'read_file'], [`head -n 5 ${a}`, 'Read', 'read_file'], ['tail -20 src/a.ts', 'Read', 'read_file'],
+      [`sed -n 1,5p ${a}`, 'Read', 'read_file'], ['wc -l src/a.ts', 'Read', 'read_file'],
+      [`grep -n needle ${ws}`, 'Grep', 'search'], ['grep -rn needle .', 'Grep', 'search'], ['rg needle', 'Grep', 'search'], [`rg -i needle ${ws}`, 'Grep', 'search'],
+      ['ls', 'Glob', 'list_dir'], [`ls -la ${ws}`, 'Glob', 'list_dir'], ['find . -name a.ts', 'Glob', 'list_dir'], [`find ${ws} -type f`, 'Glob', 'list_dir'],
+    ]
+    const kinds = { claude: ['Read', 'Grep', 'Glob'], codex: ['read_file', 'list_dir', 'search'] }
+    for (const [command, own, server] of forms) {
+      for (const [kind, readTools] of Object.entries(kinds)) {
+        const tool = kind === 'claude' ? own : server
+        for (const options of [{ readTools }, { readTools, workspaceReads: kind === 'codex' }]) {
+          const refused = classify(bash(command), ws, options)
+          expect(refused, `${command} under ${kind}`).toEqual({ refused: expect.stringContaining(`you have ${tool} for it`), reason: 'use-read-tool' })
+          expect((refused as { refused: string }).refused, `${command} under ${kind}`).toContain(`use ${tool} instead`)
+        }
+      }
+      // Both kinds' tools at once: each is named.
+      expect(classify(bash(command), ws, { readTools: [...kinds.claude, ...kinds.codex] })).toMatchObject({ refused: expect.stringContaining(`you have ${own} or ${server} for it`), reason: 'use-read-tool' })
+      // No reading tools: the exact command, as before.
+      for (const options of [undefined, {}, { readTools: [] }, { workspaceReads: false }]) {
+        expect(classify(bash(command), ws, options), `${command} under none`).toMatchObject({ class: 'command', command: command.split(' ') })
+      }
+    }
+    // Only the tool the agent has counts: a Claude Code Worker listing Read alone has no Grep, so its grep stays a command.
+    expect(classify(bash('grep needle src'), ws, { readTools: ['Read'] })).toMatchObject({ class: 'command' })
+    expect(classify(bash('cat src/a.ts'), ws, { readTools: ['Read'] })).toMatchObject({ reason: 'use-read-tool' })
+    // A form that writes is no inspection, and neither is another program: each stays a command.
+    // A sed script that writes a file (w), runs a command (e), or comes from -e or -f is no read-only print either.
+    for (const command of ['sed -i s/a/b/ src/a.ts', 'sed -n -i 1p src/a.ts', 'sed s/a/b/ src/a.ts', 'sed -n -e woutput.txt src/a.ts', 'sed -n woutput.txt src/a.ts', 'sed -n 1woutput.txt src/a.ts', 'sed -n 1,2pw src/a.ts', 'sed -n 1e src/a.ts', 'sed -n -f script.sed src/a.ts', 'sed -n 1p -f script.sed src/a.ts', 'sed -n /x/p src/a.ts', 'sed -n 1p', 'find . -delete', `find ${ws} -name a.ts -exec rm`, 'npm test', `stat ${a}`, 'git status']) {
+      expect(classify(bash(command), ws, { readTools: kinds.claude }), command).toMatchObject({ class: 'command' })
+    }
+    // A metacharacter or an empty word is still refused for that first.
+    expect(classify(bash('cat src/a.ts | head'), ws, { readTools: kinds.claude })).toMatchObject({ reason: 'metacharacter' })
+    expect(classify(bash('cat  src/a.ts'), ws, { readTools: kinds.claude })).toMatchObject({ reason: 'empty-word' })
+    // Where the runtime enforces clean shells, an inspection inside the workspace is still a read that runs unasked; any other is refused.
+    expect(classify(bash(`cat ${a}`), ws, { ...CLEAN, readTools: kinds.claude })).toMatchObject({ class: 'read' })
+    expect(classify(bash('cat src/a.ts'), ws, { ...CLEAN, readTools: kinds.claude })).toMatchObject({ reason: 'use-read-tool' })
+  })
+
+  it('derives the reading tools a run\'s agent has from its runtime\'s evidence and the Worker\'s tools list (T222)', () => {
+    expect(readToolsOf(undefined, undefined)).toEqual([])
+    expect(readToolsOf({ readTools: ['Read', 'Grep', 'Glob'] }, undefined)).toEqual(['Read', 'Grep', 'Glob'])
+    expect(readToolsOf({ readTools: ['Read', 'Grep', 'Glob'] }, [])).toEqual(['Read', 'Grep', 'Glob'])
+    expect(readToolsOf({ readTools: ['Read', 'Grep', 'Glob'] }, ['Read', 'Bash'])).toEqual(['Read'])
+    expect(readToolsOf({ workspaceReads: true }, ['Bash'])).toEqual(['read_file', 'list_dir', 'search'])
+    expect(readToolsOf({ workspaceReads: false }, undefined)).toEqual([])
+  })
+
   it('refuses a tool it does not know and an input that is not an object', () => {
     for (const call of [{ tool: 'mcp__x__y', input: {} }, { tool: 'Agent', input: {} }, { tool: 'request_user_input', input: { questions: [] } }, { tool: 'write_stdin', input: { session_id: 1, chars: 'x' } }, { tool: 'Read', input: 'a' }, { tool: 'Read', input: null }]) {
       expect(classify(call, ws)).toHaveProperty('refused')
@@ -1142,7 +1235,7 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
   })
 
-  it('takes a shell read for a read only where the runtime enforces shells with no startup files: Claude Code does not, so a function named cat in a startup file or its shell snapshot could run instead, and the exact command waits for the operator (T198)', async () => {
+  it('takes a shell read for a read only where the runtime enforces shells with no startup files: Claude Code does not, so a function named echo in a startup file or its shell snapshot could run instead, and the exact command waits for the operator (T198); its cat is denied at once, naming Read (T222)', async () => {
     const a = join(WORKSPACE, 'src/a.ts')
     const calls = [['Bash', { command: `cat ${a}` }], ['Bash', { command: 'echo probe' }]] as const
     // A runtime that enforced it: both read, nothing asked.
@@ -1151,13 +1244,17 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect((await enforced.run()).status).toBe('completed')
     expect(clean).toEqual([{}, {}])
     expect(await enforced.ctx.approvals.list()).toEqual([])
-    // Claude Code itself: the same read is the exact command, which the operator decides; the run stops there.
+    // Claude Code itself: its cat is denied at once, naming Read; the probe is the exact command, which the operator decides; the run stops there.
     const unproven: Array<Record<string, unknown>> = []
     const { ctx, run } = await boot(claude(calls, unproven, []), bundlePolicies()[0]!)
     const done = await run()
-    expect(unproven.map((o) => (o.hookSpecificOutput as { permissionDecision?: string }).permissionDecision)).toEqual(['defer'])
+    const hook = (o: Record<string, unknown>) => o.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string }
+    expect(unproven.map((o) => hook(o).permissionDecision)).toEqual(['deny', 'defer'])
+    expect(hook(unproven[0]!).permissionDecisionReason).toContain('you have Read for it')
+    expect(decisionOf(ctx, hook(unproven[0]!).permissionDecisionReason!)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny', detail: { reason: 'use-read-tool' } } })
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['use-read-tool'])
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
-    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: echo probe' }) })])
   })
 })
 
@@ -1188,7 +1285,7 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     return { runtime, hooks: () => s.calls.flatMap((c) => c.hooks), prompts: () => s.calls.map((c) => c.prompt) }
   }
 
-  it('reads its workspace through the workspace reads server with no approval request, as its brief tells it; another tool of that server is denied, and Bash cat stays a command (T200b)', async () => {
+  it('reads its workspace through the workspace reads server with no approval request, as its brief tells it; another tool of that server is denied, and Bash cat is denied at once, naming read_file (T200b, T222)', async () => {
     const a = join(WORKSPACE, 'src/a.ts')
     const { runtime, hooks, prompts } = codex([
       { tool: 'mcp__workspace__read_file', input: { path: 'src/a.ts', startLine: 1, endLine: 20 }, item: 'mcp_tool_call' },
@@ -1199,18 +1296,21 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     expect(await runtime.probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false, workspaceReads: true })
     const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
     const done = await run()
-    // The two reads run unasked; the server's other tool is denied by the gate's own rule; the shell read waits for the operator.
+    // The two reads run unasked; the server's other tool is denied by the gate's own rule; the shell read is denied at once, naming read_file.
     expect(hooks().map((h) => h.blocked)).toEqual([false, false, true, true])
     expect(hooks()[2]!.reason).toContain('mcp__workspace__write_file is not one of the workspace reads server\'s tools')
     expect(decisionOf(ctx, hooks()[2]!.reason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
-    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['unclassified-tool'])
-    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
-    // One request, for the shell command alone: no read asked the operator.
-    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
-    // Its brief says to read with the server's tools, never with a shell, and names no shell read as unasked.
+    expect(hooks()[3]!.reason).toContain('you have read_file for it')
+    expect(decisionOf(ctx, hooks()[3]!.reason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny', detail: { reason: 'use-read-tool' } } })
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.denied' }).map((e) => e.data!.reason)).toEqual(['unclassified-tool', 'use-read-tool'])
+    // Nothing waits for the operator: no request at all.
+    expect(done.status).toBe('completed')
+    expect(await ctx.approvals.list()).toEqual([])
+    // Its brief says to read with the server's tools, never with a shell, names no shell read as unasked, and says a shell inspection is denied.
     expect(prompts()[0]).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file')
     expect(prompts()[0]).toContain('- Reading tools (the workspace server\'s read_file, list_dir, and search) on paths inside your workspace')
     expect(prompts()[0]).not.toContain('Bash read-only inspection')
+    expect(prompts()[0]).toContain('A Bash inspection command you have a reading tool for is denied at once, never asked: cat, head, tail, sed -n: use read_file')
   })
 
   it('is admitted on its probe, patches its workspace through the hook, is denied outside it, and waits for the operator on a command', async () => {
@@ -1232,18 +1332,18 @@ describe('a Codex Worker under the bundle\'s default policy, end to end (docs/de
     expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ tool: 'apply_patch', pendingChecks: ['tests', 'lint'] }) })])
   })
 
-  it('reads nothing through its shell: each call picks its own shell, which the hook does not see, so even a read inside the workspace waits for the operator as the exact command it is (T198)', async () => {
+  it('reads nothing through its shell: each call picks its own shell, which the hook does not see, so even a probe waits for the operator as the exact command it is (T198); its cat is denied at once, naming read_file (T222)', async () => {
     const shell = (command: string) => ({ tool: 'Bash', input: { command }, item: 'command_execution' })
     const a = join(WORKSPACE, 'src/a.ts')
     const { runtime, hooks } = codex([shell(`cat ${a}`), shell('echo probe')])
     expect(await runtime.probe()).toMatchObject({ gatesToolCalls: true, cleanShells: false })
     const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
     const done = await run()
-    // The read is blocked (deferred); nothing after it runs.
-    expect(hooks()[0]!.blocked).toBe(true)
-    expect(hooks().every((h) => h.blocked)).toBe(true)
+    // The cat is denied, the probe blocked (deferred).
+    expect(hooks().map((h) => h.blocked)).toEqual([true, true])
+    expect(hooks()[0]!.reason).toContain('you have read_file for it')
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
-    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: cat ${a}` }) })])
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: echo probe' }) })])
   })
 })
 

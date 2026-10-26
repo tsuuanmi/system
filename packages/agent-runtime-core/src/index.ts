@@ -74,6 +74,15 @@ export interface RuntimeEvidence {
    */
   workspaceReads?: boolean
   /**
+   * The reading tools of its own its agent has on a run whose `tools` list names them, or names
+   * none (Claude Code: `Read`, `Grep`, `Glob`). Where the agent has the reading tool for a shell
+   * inspection command (`cat` and `Read`, `grep` and `Grep`, `ls` and `Glob`, …), a run's gate denies
+   * that command at once, naming the tool, instead of asking the operator about it (T222). The
+   * workspace reads server's tools are {@link workspaceReads}, never listed here. Absent or empty:
+   * none.
+   */
+  readTools?: string[]
+  /**
    * It runs in the home a run or probe names ({@link RunSpec.home}, {@link ProbeOptions.home}), one
    * account's own sign-in, binding back only that home (ADR-0051). Absent or false: it runs in its
    * own configured home only, and refuses a run that names another.

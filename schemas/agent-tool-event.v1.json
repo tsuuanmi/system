@@ -46,11 +46,11 @@
       }
     },
     "reason": {
-      "description": "Why the gate denied a call, a stable code (T207): never renamed or reused; a new cause gets a new code (a minor version). The gate's own list (`DENIAL_REASONS`, agent-workers) is tested to be in this enum.",
+      "description": "Why the gate denied a call, a stable code (T207): never renamed or reused; a new cause gets a new code (a minor version). The gate's own list (`DENIAL_REASONS`, agent-workers) is tested to be in this enum. 1.1 adds `use-read-tool` (T222): a Bash inspection command (cat, head, tail, sed -n, wc, grep, rg, ls, find) denied at once where the run's runtime gives its agent the reading tool for it.",
       "enum": [
         "metacharacter", "empty-word", "outside-workspace", "git-data", "unclassified-tool", "unsupported-field", "invalid-input", "invalid-patch",
         "policy-forbid", "not-listed", "request-rejected", "request-expired", "request-withdrawn", "workflow-denied", "request-mismatch", "request-unreadable",
-        "no-session", "run-stopped", "review-member", "no-approvals", "unknown-checks", "unknown-mode", "gate-error"
+        "no-session", "run-stopped", "review-member", "no-approvals", "unknown-checks", "unknown-mode", "gate-error", "use-read-tool"
       ]
     },
     "pendingChecks": {

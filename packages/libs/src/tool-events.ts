@@ -8,7 +8,7 @@
 import { SchemaRegistry } from './schemas.ts'
 
 /** The schema tag the tool events' data is validated under. */
-export const AGENT_TOOL_EVENT_SCHEMA = 'agent-tool-event@1.0'
+export const AGENT_TOOL_EVENT_SCHEMA = 'agent-tool-event@1.1'
 
 /** Each tool event type, and the definition of its data. */
 export const AGENT_TOOL_EVENTS = {
