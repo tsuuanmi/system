@@ -25,6 +25,7 @@ import { cycleOf, missingSubject, remediate, reviewSubject, subjectGate, wording
 import { riskAtAcceptance, settleRisk } from './risk.ts'
 import { leaveSession, type Moved, sessionGaps } from './session-moves.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
+import { fallbackSpent, singleFamilyBrief, singleFamilyDecision, singleFamilyRecovery } from './single-family.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
 import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
@@ -568,6 +569,9 @@ export class Engine {
     // A re-review an earlier engine grew says literal while its review is a template: its spec says what it is composed from now.
     const { literal: _literal, ...worded } = spec
     const composed: ResolvedNode = !!spec.literal === wording.literal ? spec : { ...worded, ...(wording.literal ? { literal: true } : {}) }
+    // A step built on one that ran on a single family is told so, before any reply format (./single-family.ts).
+    const single = singleFamilyBrief(this, spec, nodes)
+    if (single) parts = appended(parts, `\n\n${single}`)
     if (spec.resultSchema) parts = appended(parts, `\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`)
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
     // A re-review reads the change since the subject the last review read, and the whole change (review cycles).
@@ -761,29 +765,43 @@ export class Engine {
         }
         admitted = got
       } else {
+        // A step that prefers another family, whose Worker of that family failed it: the prompt is never sent there again (./single-family.ts).
+        const recovered = spec.diversity === 'preferred' ? singleFamilyRecovery(this, run.run_id, node.node_id) : undefined
+        const routing = recovered ? (options: RouteOptions): Promise<AdmittedWorker> => this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...options, ...pinned, ...away }) : route
         try {
           try {
-            admitted = await route({ ...restricted, ...(exclude ? { exclude } : {}) })
+            admitted = await routing({ ...restricted, ...(exclude ? { exclude } : {}) })
           } catch (error) {
-            // A heavy change's second review is the other family's judgement, or nothing (ADR-0071): never lifted.
-            if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts) || spec.secondReview) throw error
-            // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
-            // A session's own Worker still binds it; only the family and distinct-account rules are
-            // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and
-            // so does one the operator's teams.excludeWorkers leaves out of teams.
-            // First the family rule alone: a team on one provider keeps distinct accounts while it can
-            // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
-            // When nothing passes even then, the first refusal, with what the team needs, stands.
-            const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
-            if (kept) {
-              admitted = kept
-              sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
-            } else {
-              admitted = await route(distinctAccounts ? (teams ? { restrict: teams } : {}) : restricted).catch(() => {
+            // A step that prefers another family runs on the family it differs from, once no Worker of
+            // another is admitted, in a conversation of its own, and says so (./single-family.ts, D89).
+            // Once per step: after a fallback was admitted, at any escalation, the rule is never lifted again; the refusal stands.
+            if (error instanceof AdmissionFailure && exclude && spec.diversity === 'preferred' && !spec.secondReview && !distinctAccounts) {
+              if (fallbackSpent(this, run.run_id, node)) throw error
+              admitted = await routing(restricted).catch(() => {
                 throw error
               })
-              const rules = [exclude?.reason, distinctAccounts].filter((r): r is string => !!r)
-              sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
+              sameFamily = singleFamilyDecision(this, run, node, spec, error, admitted, recovered)
+            } else {
+              // A heavy change's second review is the other family's judgement, or nothing (ADR-0071): never lifted.
+              if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts) || spec.secondReview) throw error
+              // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
+              // A session's own Worker still binds it; only the family and distinct-account rules are
+              // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused, and
+              // so does one the operator's teams.excludeWorkers leaves out of teams.
+              // First the family rule alone: a team on one provider keeps distinct accounts while it can
+              // (ADR-0035); then the distinct-account rule too, members sharing an account (ADR-0029).
+              // When nothing passes even then, the first refusal, with what the team needs, stands.
+              const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
+              if (kept) {
+                admitted = kept
+                sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
+              } else {
+                admitted = await route(distinctAccounts ? (teams ? { restrict: teams } : {}) : restricted).catch(() => {
+                  throw error
+                })
+                const rules = [exclude?.reason, distinctAccounts].filter((r): r is string => !!r)
+                sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
+              }
             }
           }
         } catch (error) {

@@ -17,6 +17,7 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 | Kind | optional: the kind of work the step is, a label such as `code` (a variant may change it); a Worker the operator gives kinds takes only steps of those kinds, a Worker given none takes any ([work kinds](../design/routing.md#work-kinds)). No built-in template names one |
 | Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist`; `own`: a new persistent conversation of this node alone ([conversations](../design/workflow-engine.md#conversations)) |
 | Acceptance | the contract the result must pass; a rejected result may escalate one tier (`maxEscalations`, default 1) |
+| Diversity | optional, with `differentFrom`: `required` (default) fails closed when no Worker of another provider family is admitted (unless `allowSameFamily`); `preferred` runs the step once on the family it differs from, in a conversation of its own, recorded `single-family` and stated to every later step and in the answer ([`research`](#research)) |
 
 A node's prompt is text with placeholders the engine fills when the node is promoted
 ([briefs](../design/workflow-engine.md#briefs)): `{{input}}`, the caller's input;
@@ -103,18 +104,34 @@ The two reviews run in parallel, on two provider families
 review A (`literature:1`) proves web search; review B (`literature:2`) runs on another family,
 whose provider need not prove a search, so its citations gate it. `evidence:1` reads both,
 labelled A and B, and records which review states each claim (`reviews`). `conclusion:1` says
-where the reviews agree and differ. `research` therefore needs Workers of two provider
-families: with one, `literature:2` fails admission (`same provider family (differs from node
-literature:1)`), fail closed.
+where the reviews agree and differ.
+
+Two families are preferred, not required (`diversity: preferred` on `literature:2` and
+`critique:1`; operator decision D89). When no Worker of another family can take one of them
+(none admitted: unavailable, signed out, over its input bound; or the one that took it failed:
+stalled after the prompt, failed on the infrastructure, answered with the site's own error),
+that step runs once on the first family's provider, in a fresh conversation that never sees the
+step it differs from, rather than failing, waiting, or being resent there. The prompt is never
+sent again to the Worker that failed it. Never silently:
+- an `admission` decision by `workflow.diversity`, outcome `single-family`, names why the other
+  family could not take it (after a failure, a `recovery` decision `single-family` first);
+- every later step built on it (`evidence:1`, `critique:1`, `conclusion:1`) is told in its brief
+  that the two share one family (`Single family: …`) and to weigh their agreement as weaker;
+- the run's answer starts with `Single family: …`, and the run's page in `/ui` shows a
+  `single family` chip.
+
+It happens once per step: a fallback that fails too fails the step as before, never retried or
+resent. A run where both families answered is unchanged. The template's preference decides even
+with `allowSameFamily` on (it records `single-family`, never `same-family`).
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
 | `frame:1` | `reason` | standard | persistent (the run's conversation) | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
 | `literature:1` (review A) | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
-| `literature:2` (review B; differs from `literature:1`) | `reason` | standard | temporary | `acceptance.cited` |
+| `literature:2` (review B; differs from `literature:1`, preferred) | `reason` | standard | temporary | `acceptance.cited` |
 | `literature:1`, `literature:2` (variant `deep`) | `reason`, `deep-research` | frontier | own (each review its own conversation) | `acceptance.cited` |
 | `evidence:1` | `reason` | economy | persistent (the run's conversation) | `resultSchema: evidence-table@1.1`, then `acceptance.answer` |
-| `critique:1` (differs from `evidence:1`) | `reason` | standard | temporary | `acceptance.answer` |
+| `critique:1` (differs from `evidence:1`, preferred) | `reason` | standard | temporary | `acceptance.answer` |
 | `conclusion:1` | `reason` | standard | persistent (the run's conversation) | `acceptance.cited-conclusions` |
 
 The synthesis steps (`frame:1`, `evidence:1`, `conclusion:1`) run in order in the run's one

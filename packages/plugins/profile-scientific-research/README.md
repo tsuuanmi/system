@@ -19,9 +19,9 @@ may use.
 |---|---|---|---|
 | `frame:1` | `reason`, standard, the run's conversation | `resultSchema: hypothesis-set@1.0` | 2 to 4 testable hypotheses, as a `criteria` artifact (`hypothesis-set@1.0`) |
 | `literature:1` | `reason` + `web-search`, standard, temporary; variant `deep`: `reason` + `deep-research`, frontier, its own conversation | `acceptance.cited` | review A: a cited review of the published evidence |
-| `literature:2` | `reason`, standard, temporary, on another provider family than `literature:1`; variant `deep`: as `literature:1` | `acceptance.cited` | review B, in parallel with review A; its citations gate it, since its provider need not prove a search |
+| `literature:2` | `reason`, standard, temporary, on another provider family than `literature:1` (preferred: else once on its family, marked single-family); variant `deep`: as `literature:1` | `acceptance.cited` | review B, in parallel with review A; its citations gate it, since its provider need not prove a search |
 | `evidence:1` | `reason`, economy, the run's conversation | `resultSchema: evidence-table@1.1` | claims from both reviews with source URLs, which review states each (`reviews`), and their bearing on each hypothesis, as an `evidence` artifact (`evidence-table@1.1`) |
-| `critique:1` | `reason`, standard, temporary, on another provider family than `evidence:1` | `acceptance.answer` | an independent critique that sees only the hypotheses and the evidence, never the reviews |
+| `critique:1` | `reason`, standard, temporary, on another provider family than `evidence:1` (preferred, as `literature:2`) | `acceptance.answer` | an independent critique that sees only the hypotheses and the evidence, never the reviews |
 | `conclusion:1` | `reason`, standard, the run's conversation | `acceptance.cited-conclusions` | a conclusion per hypothesis, citing evidence as `[E1]`, saying where the reviews agree and differ |
 
 The synthesis steps share the run's one conversation, in order. The reviews and
@@ -39,9 +39,18 @@ Each synthesis step quotes every result it builds on (`{{node:frame:1}}`,
 by `workflow.session-move` says so
 ([sessions](../../../docs/design/sessions-and-messaging.md#a-step-its-sessions-worker-cannot-take)).
 
-`research` needs Workers of two provider families; with one, `literature:2`
-fails admission, fail closed, unless the operator sets the engine's
-`allowSameFamily` (ADR-0029)
+`research` prefers Workers of two provider families (`diversity: preferred` on
+`literature:2` and `critique:1`, operator decision D89). When no Worker of
+another family can take one of them (unavailable, over its input bound,
+stalled after the prompt, failed on the infrastructure), it runs once on the
+first family's provider in a fresh conversation that never sees the step it
+differs from, and the prompt is never sent again to the Worker that failed it.
+It is never silent: a `single-family` decision by `workflow.diversity` names
+why, the later steps' briefs and the answer's first line say `Single family: …`,
+and `/ui` shows a `single family` chip on the run. Two reviews on one family
+share one blind spot (T229: the Gemini answer's unsourced claims were caught by
+the ChatGPT answers), so the conclusion weighs their agreement as weaker. A run
+where both families answered is unchanged
 ([templates](../../../docs/reference/workflow-templates.md#research)).
 
 - **Contract:** it registers `acceptance.cited-conclusions`: the conclusion

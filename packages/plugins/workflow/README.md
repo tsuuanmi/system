@@ -30,6 +30,12 @@ second execution path (INV-1).
     families; a named node that failed stops it, and a Worker whose family
     cannot be read fails it as `config_error`
     ([design](../../../docs/design/workflow-engine.md#different-provider-families)).
+    With `diversity: preferred`, a node no Worker of another family can take
+    (none admitted, or the one that took it failed it) runs once on their
+    family in a conversation of its own, never resent to the Worker that failed
+    it, recorded as a `workflow.diversity` decision `single-family`; later
+    steps' briefs and the run's answer say `Single family: …`
+    (`src/single-family.ts`, D89).
   - **Exact-subject review (REQ-WF-5).**
     - When a step that proves `review` depends on an agent result whose
       workspace is a git working tree, the engine captures that tree's
@@ -102,6 +108,7 @@ second execution path (INV-1).
       the engine's team ballots use) is refused;
     - exactly one final node, whose result is the run's;
     - `differentFrom` names only other, non-team nodes;
+    - `diversity` is `required` or `preferred`, on a node with `differentFrom`;
     - a team node has no `differentFrom`, `grows`, `resultSchema`, or `kind`;
     - a source step (`snapshot: true`) has no `team`, `grows`, `variants`,
       `differentFrom`, `resultSchema`, or `kind`;

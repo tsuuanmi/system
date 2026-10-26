@@ -9,6 +9,7 @@ import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, typ
 import { noteDeferral } from './continuations.ts'
 import type { Engine } from './engine.ts'
 import { MATERIAL, type SourceSnapshot } from './sources.ts'
+import { isSingleFamily, recoverSingleFamily, singleFamilyOf } from './single-family.ts'
 import type { ResolvedNode } from './spec.ts'
 import { type NodeRecord, type NodeRow, type RunRow, TASK_WAIT_MS, type TaskDispatch, type WorkflowError } from './types.ts'
 
@@ -117,11 +118,11 @@ export function sameFamilyOf(e: Engine, decision: ArtifactRef | undefined): stri
   return body?.decider?.id === 'workflow.same-family' ? body.outcome?.option ?? 'same-family' : undefined
 }
 
-/** The decisions recorded when the node's current attempt was routed: tier and route, after a same-family admission if there was one. */
+/** The decisions recorded when the node's current attempt was routed: tier and route, after a same-family or single-family admission if there was one. */
 export function routedDecisions(node: NodeRow, e?: Engine): ArtifactRef[] {
   const stored = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
   const before = stored.at(-3)
-  return e && isSameFamily(e, before) ? stored.slice(-3) : stored.slice(-2)
+  return e && (isSameFamily(e, before) || isSingleFamily(e, before)) ? stored.slice(-3) : stored.slice(-2)
 }
 
 /** Failures an unsent attempt fails over from, to another Worker (ADR-0034). */
@@ -348,7 +349,15 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // A site's own error after the send, as its source read it on the execution's page (ADR-0062).
   const siteError = attempt.sent && attempt.execution?.error?.siteError === true ? attempt.execution : undefined
   const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
-  const notResent = siteError ? resend(e, run, node, error, siteError, kept, lease) : undefined
+  // Both guards come before a site error's resend, so a resend never runs the step again on either family.
+  // A step that prefers another family, whose Worker of that family failed its execution (sent or not:
+  // a stall, the infrastructure, the site's own error), runs once on the family it differs from at once,
+  // never resent, retried, or waited on there (./single-family.ts, D89).
+  if ((attempt.sent || attempt.execution) && recoverSingleFamily(e, run, node, error, attempt, kept, lease)) return
+  // An attempt that was that one fallback ends the step on any failure: it falls back once, never twice.
+  const spent = singleFamilyOf(e, node) && (JSON.parse(node.spec) as ResolvedNode).diversity === 'preferred'
+    ? 'it was the step\'s one single-family fallback (diversity: preferred), which never runs twice' : undefined
+  const notResent = siteError ? (spent ?? resend(e, run, node, error, siteError, kept, lease)) : undefined
   if (siteError && notResent === undefined) return
   const max = e.config.maxAttempts ?? 3
   const reasons = {
@@ -363,7 +372,8 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // An assigned account's unsent failure never moves inside its provider group (ADR-0052).
   const assigned = !attempt.sent && node.worker && FAILOVER.has(error.kind) ? assignedOf(node) : undefined
   // Why a failover is not possible: the first of its conditions that does not hold.
-  const noFailover = attempt.sent ? 'the prompt was sent, so the turn stays with its Worker'
+  const noFailover = spent ? spent
+    : attempt.sent ? 'the prompt was sent, so the turn stays with its Worker'
     : !node.worker ? 'no Worker served the attempt'
     : !FAILOVER.has(error.kind) ? `${error.kind} is not a failure of one Worker (usage limit, challenge, sign-out, or overload)`
     : node.attempt >= max ? `attempt ${node.attempt} of ${max} failed`
@@ -371,7 +381,8 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
     : assigned && error.kind === 'overloaded' ? `${node.worker}'s account is assigned: an overload is retried on it with back-off, never moved to another account of its provider`
     : undefined
   // Why the node cannot run again at all: the first of a retry's conditions that does not hold.
-  const noRetry = !RETRYABLE.has(error.disposition) ? `${error.kind} is ${error.disposition}, not retryable`
+  const noRetry = spent ? spent
+    : !RETRYABLE.has(error.disposition) ? `${error.kind} is ${error.disposition}, not retryable`
     : attempt.sent ? `${error.kind} came after the prompt was sent; resending could duplicate the provider turn`
     : node.attempt >= max ? `attempt ${node.attempt} of ${max} failed`
     : undefined
