@@ -126,6 +126,20 @@ describe('web UI: each required check of a review with its state, from what the 
     ])
   })
 
+  it('says a check that passed without running its browser tests passed with what did not run: checks passed, browser tests not run (T247, T255)', () => {
+    const detail = {
+      checks: { tests: true, lint: true },
+      checkRun: { asked: ['tests', 'lint'], source: 'agents', outcome: 'checked', results: [
+        { check: 'tests', outcome: 'passed', exitCode: 0, notRun: 'its browser tests (12 browser tests skipped: no usable Chrome)' },
+        { check: 'lint', outcome: 'passed', exitCode: 0 },
+      ] },
+    }
+    expect(checkStates(['tests', 'lint'], [], acceptanceOf({ lastDecision: HOLD }, ledger(detail)))).toEqual([
+      { check: 'tests', state: 'passed', exitCode: 0, notRun: 'its browser tests (12 browser tests skipped: no usable Chrome)' },
+      { check: 'lint', state: 'passed', exitCode: 0 },
+    ])
+  })
+
   it('never says passed without a record: no acceptance read, a check the board still holds pending, or a check required and not recorded (INV-2)', () => {
     // No acceptance could be read: every required check is pending, with why.
     expect(acceptanceOf({ lastDecision: HOLD }, () => undefined)).toBeUndefined()
@@ -392,5 +406,57 @@ describe('web UI: what the operator reads before a review verdict (T122)', () =>
     const pending = card.locator('p.pending-checks')
     expect(await pending.innerText()).toMatch(/^Checks that failed: tests\. Checks not run: lint\. Accepting counts them as passed — fix the failed ones and run the others first\./)
     expect(await pending.innerText()).not.toMatch(/not run: [^.]*tests/)
+  }, 90_000)
+
+  /** A review held by the auto-accept rule: its acceptance records tests and lint passed, tests without its browser tests (T255). */
+  const unrunReview = async (): Promise<Awaited<ReturnType<typeof boot>>> => {
+    const booted = await boot()
+    const { ctx } = booted
+    await activeProject(ctx)
+    const { task } = await reviewed(ctx, 'Keep the header test')
+    const store = ctx.artifacts as unknown as { get: (ref: string) => { body?: unknown } | undefined }
+    const get = store.get.bind(store)
+    const hold = get(task.lastDecision!)?.body as { inputs?: string[] }
+    const acceptanceRef = [task.lastDecision!, ...(hold.inputs ?? [])].find((ref) => (get(ref)?.body as { decisionType?: string } | undefined)?.decisionType === 'acceptance')!
+    store.get = (ref) => {
+      const found = get(ref)
+      if (ref !== acceptanceRef || !found) return found
+      const body = found.body as { outcome: { detail?: Record<string, unknown> } }
+      return { ...found, body: { ...body, outcome: { ...body.outcome, detail: { ...body.outcome.detail,
+        checks: { tests: true, lint: true }, checkRun: { asked: ['tests', 'lint'], source: 'agents', outcome: 'checked', results: [
+          { check: 'tests', outcome: 'passed', exitCode: 0, notRun: 'its browser tests (12 browser tests skipped: no usable Chrome)' },
+          { check: 'lint', outcome: 'passed', exitCode: 0 },
+        ] } } } } }
+    }
+    onTestFinished(() => void (store.get = get))
+    // The board no longer holds them pending: the hold is the auto-accept rule's.
+    ctx.store.db.prepare('UPDATE board_tasks SET record = json_set(record, \'$.waiting.pendingChecks\', json(\'[]\')) WHERE task_id = ?').run(task.taskId)
+    return booted
+  }
+
+  it('lists a review whose checks passed without their browser tests with each passed check and what it did not run (T247, T255)', async () => {
+    const { call } = await unrunReview()
+    expect(((await call('reviews')).value.reviews as Array<Record<string, unknown>>)[0]!.checks).toEqual({ value: [
+      { check: 'tests', state: 'passed', exitCode: 0, notRun: 'its browser tests (12 browser tests skipped: no usable Chrome)' },
+      { check: 'lint', state: 'passed', exitCode: 0 },
+    ] })
+  })
+
+  headlessIt('says a review whose checks passed without their browser tests: checks passed, browser tests not run, with the check and what did not run (T247, T255)', async () => {
+    const { ctx } = await unrunReview()
+    const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch(headlessLaunchOptions())
+    onTestFinished(() => browser.close())
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    const card = page.getByRole('region', { name: 'Reviews' }).getByRole('article', { name: 'Keep the header test' })
+    const required = card.getByRole('list', { name: 'Required checks' })
+    await expect.poll(() => required.count(), { timeout: 15_000 }).toBe(1)
+    expect(await required.innerText()).toBe('tests: ▲ Passed, browser tests not run · exit code 0\nlint: ● Passed · exit code 0')
+    const unrun = card.locator('p.unrun-tests')
+    expect(await unrun.innerText()).toMatch(/^Checks passed, browser tests not run: tests \(its browser tests \(12 browser tests skipped: no usable Chrome\) did not run\)\. Their pass says nothing of those tests, so the result was not accepted automatically/)
+    expect(await card.locator('p.pending-checks').count()).toBe(0)
+    await card.getByText('Details', { exact: true }).click()
+    expect(await card.getByRole('list', { name: 'Each required check' }).innerText()).toBe('tests: ▲ Passed, browser tests not run · exit code 0 — its browser tests (12 browser tests skipped: no usable Chrome) did not run\nlint: ● Passed · exit code 0')
   }, 90_000)
 })

@@ -132,9 +132,11 @@ export function reviewOf(task: BoardTask, project: { projectId: string; title: s
 /**
  * A required check as a review card shows it (ADR-0063, T160): `passed` or `failed` (with its exit
  * code when a command ran) only on a record of it in the run's acceptance; `not-run` when the run asked
- * for it and it did not run to an exit code, with why; `pending` when nothing recorded it.
+ * for it and it did not run to an exit code, with why; `pending` when nothing recorded it. A passed
+ * check whose command reported tests it did not run (T247) names them in `notRun`: "checks passed,
+ * browser tests not run", which the board's auto-accept rule holds (T255).
  */
-export interface CheckState { check: Check; state: 'passed' | 'failed' | 'pending' | 'not-run'; exitCode?: number; why?: string }
+export interface CheckState { check: Check; state: 'passed' | 'failed' | 'pending' | 'not-run'; exitCode?: number; why?: string; notRun?: string }
 
 /** The checks in the order a card lists them. */
 const CHECK_ORDER: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
@@ -180,7 +182,10 @@ export function checkStates(required: readonly Check[], pending: readonly Check[
     const code = result?.['exitCode']
     const exit = typeof code === 'number' ? { exitCode: code } : {}
     if (recorded[check] === false) return { check, state: 'failed', ...exit }
-    if (recorded[check] === true && !pending.includes(check)) return { check, state: 'passed', ...exit }
+    if (recorded[check] === true && !pending.includes(check)) {
+      const notRun = result?.['notRun']
+      return { check, state: 'passed', ...exit, ...(typeof notRun === 'string' ? { notRun } : {}) }
+    }
     if (asked.includes(check)) {
       const outcome = run?.['outcome']
       const source = run?.['source']
