@@ -116,6 +116,9 @@
 | `worktreeSetup[].generated` | object | `{}` | The repository's generated files: a landing whose merge conflicts only in them takes either side, runs the commands in the run's worktree in this setup's confinement, and merges only when they exit 0, change no other file, and change nothing on a repeat (T166) |
 | `worktreeSetup[].generated.paths` | string[] | `[]` | 1 to 32 repository-relative paths of generated files; a * stands for any characters within one path segment, for example packages/*/plugin-manifest.json |
 | `worktreeSetup[].generated.commands` | string[] | `[]` | 1 to 16 commands that regenerate them, run in order, each its words split on single spaces (no shell), each judged by the autonomy policy as a command with that exact argv and run only when it allows it unasked |
+| `checks` | object | `{}` | The load acceptance checks put on the host (T292) |
+| `checks.maxConcurrent` | number (1…32) | `2` | How many acceptance check runs the host runs at once, across every workflow run; the rest wait their turn, in order, and never fail for the wait (T292) |
+| `checks.maxWorkers` | number (1…256) |  | The test workers each check run gets (the vitest config reads SYSTEM_CHECK_MAX_WORKERS); default the host's cores less one, shared among maxConcurrent checks, at most 32 each (T292) |
 | `workspaceReads` | object | `{}` | The bounds of the workspace reads server a runtime gives its agent to read its workspace without a shell (read_file, list_dir, search; T200b), each within its range |
 | `workspaceReads.maxReadBytes` | number (1024…8388608) | `262144` | The most bytes read_file returns, line numbers included (1024 to 8388608) |
 | `workspaceReads.maxScanBytes` | number (65536…268435456) | `8388608` | The most bytes of one file read through: for a line range, and per file searched (a larger file is not searched) (65536 to 268435456) |

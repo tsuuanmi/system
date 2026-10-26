@@ -983,9 +983,10 @@ function launched(said: string): boolean {
  * namespace with it). `check`: a check's command ({@link confineIn} in `check` mode), whose launcher
  * says on fd 3 whether its command was executed, and its end says whether it was ({@link launched});
  * what it wrote to its report file `check.report` is read once it ended.
- * `onOutput` is called on each piece the command prints (a check's stall watch, ./checks.ts).
+ * `onOutput` is called with each piece the command prints, all of it, never only the end kept (a
+ * check's stall watch and its reading of timeouts, ./checks.ts).
  */
-export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, check?: { report: string }, onOutput?: () => void): Promise<Ended> {
+export function runBounded(command: { command: string; args: string[] }, env: Record<string, string>, signal: AbortSignal, check?: { report: string }, onOutput?: (text: string) => void): Promise<Ended> {
   const acknowledged = check !== undefined
   return new Promise((resolvePromise, reject) => {
     let output = ''
@@ -994,10 +995,11 @@ export function runBounded(command: { command: string; args: string[] }, env: Re
     let stopped = false
     const hash = createHash('sha256')
     const keep = (chunk: Buffer): void => {
-      onOutput?.()
+      const text = chunk.toString('utf8')
+      onOutput?.(text)
       bytes += chunk.length
       hash.update(chunk)
-      output = (output + chunk.toString('utf8')).slice(-64 * 1024)
+      output = (output + text).slice(-64 * 1024)
     }
     const stdio: StdioOptions = acknowledged ? ['ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe']
     const child = spawn(command.command, command.args, { env, stdio })

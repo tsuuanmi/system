@@ -24,6 +24,10 @@
  * worktree set up again first (./setup.ts `refresh`), refused as `dependency_unavailable` when that
  * needs a package the store lacks; a check runs with pnpm's verify-deps-before-run off, offline, so it
  * never installs; and one quiet for `checkStallSeconds` is told as stalled ({@link CHECK_EVENT}).
+ * Checks run under a bounded load (T292): at most `checks.maxConcurrent` at once on the host, the rest
+ * queued in order (./check-queue.ts), each told its test worker count (`SYSTEM_CHECK_MAX_WORKERS`); one
+ * that failed only on tests that timed out runs once more alone, on a recorded decision, and that
+ * second result counts.
  * @module @tsuuanmi/system-agent-workers/checks
  */
 import { randomUUID } from 'node:crypto'
@@ -35,7 +39,8 @@ import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { Checked, CheckResult, CheckStep, RunCheck } from '@tsuuanmi/system-workers-core'
-import { failureLines } from './failures.ts'
+import { type CheckQueue, checkWorkers, hostChecks, type Place } from './check-queue.ts'
+import { failureLines, TimeoutReader } from './failures.ts'
 import { CHECKS } from './gate.ts'
 import { BROWSER_TESTS_NOT_RUN, confineIn, type Confined, NESTED_REFUSED, noInstallEnvironment, runBounded, type Setup, WorktreeSetups } from './setup.ts'
 import type { Worktrees } from './worktrees.ts'
@@ -60,6 +65,20 @@ export const MAX_CHECK_CUTS = 3
 
 /** The rule of the decision that runs again a check the host cut (T269). */
 const RERUN_RULE = { type: 'rule', id: 'agent-workers.check-cut-rerun', version: '1' } as const
+
+/** The rule of the decision that runs once more, alone, a check that failed only on tests that timed out (T292). */
+const TIMEOUT_RERUN_RULE = { type: 'rule', id: 'agent-workers.check-timeout-rerun', version: '1' } as const
+
+/** The event a check that waits for a place (`queued`, with how many wait ahead of it) or runs again alone after failing only on timeouts (`retried`) is told by (T292). */
+const QUEUE_EVENT = 'agent-workers.check.queue'
+
+/** How many checks run at once on the host when `checks.maxConcurrent` is not set (T292). */
+export const DEFAULT_MAX_CONCURRENT_CHECKS = 2
+
+/** The environment a check's command reads its test worker count from (the repository's vitest config, T292). */
+export const CHECK_WORKERS_ENV = 'SYSTEM_CHECK_MAX_WORKERS'
+/** Set to `1` for a check run again alone after failing only on timeouts (T292). */
+export const CHECK_ALONE_ENV = 'SYSTEM_CHECK_ALONE'
 
 /** Each check that ran, by run, worktree, subject, check, argv, and setup: its outcome, reused on that subject, never run again (INV-4). */
 export const CHECKS_MIGRATION = {
@@ -94,6 +113,10 @@ interface CheckRecord {
   cutIn?: string
   /** How many times the host cut it on this subject so far (T269). The store's only. */
   cuts?: number
+  /** How many failed tests of its run failed on a timeout and on nothing else (T292): it is then run again alone. The store's only. */
+  timedOut?: number
+  /** How long it waited for a place among the host's checks, in ms (T292). The store's only; the reason says it when it waited. */
+  queuedMs?: number
 }
 
 /** What a started check's row holds until it ends: the daemon that started it, and the cuts before it (T269). */
@@ -121,6 +144,8 @@ const evidenceOf = (record: CheckRecord): CheckRecord => {
   delete copy.failures
   delete copy.cutIn
   delete copy.cuts
+  delete copy.timedOut
+  delete copy.queuedMs
   return copy
 }
 
@@ -132,10 +157,21 @@ export interface RunChecksOptions {
    * where a stop may come: what the command came to is stored all the same, INV-4).
    */
   commandEnded?: (check: RunCheck) => void
+  /**
+   * Called as a check's command is about to start, before its deadline does (a test's view of how many
+   * commands run at once, T292); the command starts once what it returns settles.
+   */
+  commandStarting?: (check: RunCheck) => void | Promise<void>
   /** The source's worktree setups, so a setup run again for a result waits for one in flight in its worktree (one at a time per worktree). */
   setups?: WorktreeSetups
   /** Aborted when this source is stopping with the host: a check it kills then is cut by the host (T269). */
   hostStopped?: AbortSignal
+  /** How many checks run at once on the host, across every run (`checks.maxConcurrent`, default {@link DEFAULT_MAX_CONCURRENT_CHECKS}); the rest wait their turn (T292). */
+  maxConcurrent?: number
+  /** The test workers of each check run (`checks.maxWorkers`); default the host's cores shared among `maxConcurrent` checks (T292). */
+  maxWorkers?: number
+  /** Where checks wait for a place: the daemon's one queue, host-wide (a test passes its own). */
+  queue?: CheckQueue
 }
 
 /** What the run of one check came to. */
@@ -171,6 +207,53 @@ export class RunChecks {
   /** `runDir`: the owner-only directory where the setups' private views are made (`<worktreeRoot>/.setup`). */
   constructor(private readonly ctx: Context, private readonly worktrees: Worktrees, private readonly setups: ReadonlyMap<string, Setup>, private readonly runDir: string, private readonly options: RunChecksOptions = {}) {
     this.worktreeSetups = options.setups ?? new WorktreeSetups(ctx, runDir)
+    this.maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT_CHECKS
+    this.workers = checkWorkers(this.maxConcurrent, options.maxWorkers)
+    this.queue = options.queue ?? hostChecks
+  }
+
+  /** How many checks run at once on the host (T292). */
+  private readonly maxConcurrent: number
+  /** The test workers each check run gets, so that `maxConcurrent` runs of them fit the host's cores (T292). */
+  private readonly workers: number
+  private readonly queue: CheckQueue
+
+  /**
+   * Record the decision to run once more, alone, a check that failed only on tests that timed out
+   * (T292, INV-13): a `gate` decision of rule `agent-workers.check-timeout-rerun`, before the second
+   * command starts, naming what the first run came to (its exit code, its timed-out tests, the hash
+   * of what it printed) and that the second result replaces it. The check-run evidence names it.
+   */
+  private timeoutRerun(step: CheckStep, workspace: string, a: Allowed, first: CheckRecord): ArtifactRef {
+    const subject = subjectId({ type: 'git-head', ...step.subject })
+    const firstRun = {
+      exitCode: first.exitCode ?? null, timedOutTests: first.timedOut ?? 0, durationMs: first.durationMs ?? null,
+      output: first.output ? { bytes: first.output.bytes, sha256: first.output.sha256 } : null, failures: (first.failures ?? []).slice(0, 20),
+    }
+    return this.ctx.artifacts.recordDecision({
+      decisionType: 'gate', question: `May the ${a.check} check of workflow run ${step.runId} run once more, alone, on ${subject}, having failed only on tests that timed out?`.slice(0, 500),
+      inputs: [a.autonomy],
+      candidates: [
+        { option: 'run', selected: true, reasons: [`every failure of its run was a test or hook that passed its time bound (${first.timedOut} test(s)), read from all it printed, and its summary counts exactly those: the host's load, not the tree, is the likely cause; it runs once more with no other check on the host, and that second result counts, passed or failed`.slice(0, 500)] },
+        { option: 'count', selected: false, reasons: ['not count the first result: it failed only on timeouts, and it has not been run alone yet (at most one re-run)'] },
+      ],
+      decider: TIMEOUT_RERUN_RULE,
+      outcome: { option: 'run', detail: { check: a.check, command: a.line, workspace, subject, cause: 'timed-out-only', firstRun, alone: true, maxReruns: 1 } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'agent-workers' }, runId: step.runId, classification: step.classification }).id as ArtifactRef
+  }
+
+  /** Tell, in the event log and the log, that a check waits for its turn (`queued`) or runs again alone (`retried`) (T292). */
+  private queued(step: CheckStep, workspace: string, a: Allowed, state: 'queued' | 'retried', count: number, decision?: ArtifactRef): void {
+    const data = { check: a.check, command: a.line, state, workspace, subject: subjectId({ type: 'git-head', ...step.subject }), ...(state === 'queued' ? { ahead: count, maxConcurrent: this.maxConcurrent } : { timedOutTests: count }) }
+    try {
+      this.ctx.get('eventLog')?.append({ type: QUEUE_EVENT, runId: step.runId, ...(decision ? { decision } : {}), data })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the ${state} event of the ${a.check} check of run ${step.runId} was not appended: ${(error as Error).message}`)
+    }
+    this.ctx.logger.info(state === 'queued'
+      ? `agent Workers: the ${a.check} check of run ${step.runId} waits for its turn: ${count} wait ahead of it, at most ${this.maxConcurrent} checks run at once`
+      : `agent Workers: the ${a.check} check of run ${step.runId} failed only on ${count} test(s) that timed out; it runs once more alone (decision ${decision})`)
   }
 
   /**
@@ -375,6 +458,16 @@ export class RunChecks {
         records.set(a.check, { ...base, outcome: 'error', reason: `not run: ${moved}` })
         continue
       }
+      // A place among the host's checks first (T292): it waits its turn, told and recorded, and never fails for the wait.
+      const waitStart = Date.now()
+      let place: Place
+      try {
+        place = await this.queue.acquire(this.maxConcurrent, signal, (ahead) => this.queued(step, found.path, a, 'queued', ahead))
+      } catch {
+        throw stopped()
+      }
+      /** Its waits for a place: the first, and the wait for the host to be free before a re-run alone (T292). */
+      let queuedMs = Date.now() - waitStart
       // A confinement of its own for each check: its scratch directories are fresh, and gone once it ended,
       // so nothing one check writes there is seen by the next.
       let confined: Confined
@@ -382,6 +475,7 @@ export class RunChecks {
         if (!worktree) throw new Error(`its worktree ${found.path} cannot be read`)
         confined = await confineIn(this.ctx, setup, worktree, this.runDir, 'check')
       } catch (error) {
+        place.release()
         records.set(a.check, { ...base, outcome: 'error', reason: `not run: ${(error as Error).message}` })
         continue
       }
@@ -400,7 +494,46 @@ export class RunChecks {
             ON CONFLICT (workflow_run_id, workspace, subject, check_name, argv, setup_hash) DO UPDATE SET state = excluded.state, record = excluded.record, started_at = excluded.started_at, ended_at = NULL`)
             .run(...key, 'started', JSON.stringify(mark), now())
         })
-        const ran = await this.runOne(confined, setup, a, base, tree, found.path, env, signal, step.runId)
+        let ran = await this.runOne(confined, setup, a, base, tree, found.path, { ...env, [CHECK_WORKERS_ENV]: String(this.workers) }, signal, step.runId)
+        // A check that failed only on tests that timed out is run once more, alone on the host: the
+        // timeouts say the host was loaded, not that the tree is wrong. Its second result counts (T292).
+        const first = 'moved' in ran || 'unstarted' in ran || 'interrupted' in ran ? undefined : ran.record
+        if (first?.outcome === 'failed' && first.timedOut) {
+          // INV-13: the re-run, and that its result replaces the first, is a decision recorded before it runs.
+          const decision = this.timeoutRerun(step, found.path, a, first)
+          reruns.push(decision)
+          this.queued(step, found.path, a, 'retried', first.timedOut, decision)
+          place.release()
+          const aloneStart = Date.now()
+          let waitStopped = false
+          try {
+            place = await this.queue.acquire(this.maxConcurrent, signal, (ahead) => this.queued(step, found.path, a, 'queued', ahead), true)
+          } catch {
+            waitStopped = true
+          }
+          queuedMs += Date.now() - aloneStart
+          let again: Confined | undefined
+          if (waitStopped) {
+            // Its row is stored as started: a stop while it waits for the host stores the first result as
+            // what it came to, as a stop of its command does (below), never leaving the row without its end (INV-4).
+            ran = { record: { ...first, reason: `${first.reason}; it failed only on ${first.timedOut} test(s) that timed out, and its re-run alone (decision ${decision}) was stopped while it waited for the host to be free of other checks, so this first result stands` }, interrupted: true }
+          } else {
+            confined.dispose()
+            try {
+              again = await confineIn(this.ctx, setup, worktree!, this.runDir, 'check')
+            } catch (error) {
+              // Its second run cannot start: the first result stands, and says so.
+              first.reason = `${first.reason}; it failed only on ${first.timedOut} test(s) that timed out, and its re-run alone (decision ${decision}) could not start: ${(error as Error).message}`
+            }
+          }
+          if (again) {
+            confined = again
+            ran = await this.runOne(confined, setup, a, base, tree, found.path, { ...env, [CHECK_WORKERS_ENV]: String(checkWorkers(1, this.options.maxWorkers)), [CHECK_ALONE_ENV]: '1' }, signal, step.runId)
+            ran.record.reason = `${ran.record.reason}; it failed first only on ${first.timedOut} test(s) that timed out (exit code ${first.exitCode ?? 'none'}), so it was run once more alone on the host (decision ${decision}), and this second result counts`
+          }
+        }
+        if (queuedMs >= 1000) ran.record.reason = `${ran.record.reason}; it waited ${Math.round(queuedMs / 1000)} s in all for its turns among the host's checks`
+        ran.record.queuedMs = queuedMs
         if ('unstarted' in ran) {
           // Its command was never executed: nothing of the check ran, so a later call may run it. A
           // check that was to run again goes back to the row it had, its cuts with it.
@@ -425,6 +558,7 @@ export class RunChecks {
         if ('interrupted' in ran || signal?.aborted) throw stopped()
       } finally {
         this.running.delete(id)
+        place.release()
         confined.dispose()
       }
     }
@@ -455,12 +589,17 @@ export class RunChecks {
     confined: Confined, setup: Setup, a: Allowed, base: Pick<CheckRecord, 'check' | 'argv' | 'autonomy'>, tree: string, path: string,
     env: Record<string, string>, signal: AbortSignal | undefined, runId: string,
   ): Promise<Ran> {
+    await this.options.commandStarting?.(a.check)
     const deadline = AbortSignal.timeout(setup.checkTimeoutSeconds * 1000)
     const started = Date.now()
     const watch = new StallWatch(this.ctx, { runId, check: a.check, line: a.line, workspace: path, subject: tree, deadline: new Date(started + setup.checkTimeoutSeconds * 1000).toISOString() }, setup.checkStallSeconds)
+    const timeouts = new TimeoutReader()
     let ended
     try {
-      ended = await runBounded(confined.command(a.argv), env, signal ? AbortSignal.any([signal, deadline]) : deadline, { report: confined.report! }, () => watch.heard())
+      ended = await runBounded(confined.command(a.argv), env, signal ? AbortSignal.any([signal, deadline]) : deadline, { report: confined.report! }, (text) => {
+        watch.heard()
+        timeouts.feed(text)
+      })
     } catch (error) {
       return { record: { ...base, outcome: 'error', reason: `its command (${a.line}) ${(error as Error).message.replace(/^its commands /, '')}` }, unstarted: true }
     } finally {
@@ -503,7 +642,9 @@ export class RunChecks {
       return { record: { ...ran, outcome: 'error', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree} and reported a nested bubblewrap refused${refused ? ` (${refused})` : ''}: an infrastructure failure, neither passed nor failed` } }
     }
     // What failed, read here from the output it kept: the Worker that fixes it cannot open the evidence artifact (T270).
-    return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}${unrun}`, ...notRun, failures: failureLines(ended.output) } }
+    // Read from all it printed as it printed it, never the end kept: a failure cut off is never taken for a timeout (T292).
+    const timedOut = timeouts.result()
+    return { record: { ...ran, outcome: 'failed', reason: `its command (${a.line}) exited with code ${ended.code} on ${tree}${unrun}`, ...notRun, failures: failureLines(ended.output), ...(timedOut ? { timedOut } : {}) } }
   }
 }
 

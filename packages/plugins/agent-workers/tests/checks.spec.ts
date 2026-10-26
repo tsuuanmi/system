@@ -21,6 +21,7 @@ import WorkerRouter, { type RunCheck, type WorkRequirement } from '@tsuuanmi/sys
 import type { Checked } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
+import { CheckQueue } from '../src/check-queue.ts'
 import { RunChecks, type RunChecksOptions } from '../src/checks.ts'
 import { missingPackages } from '../src/dependencies.ts'
 import AgentWorkers, { type Config } from '../src/index.ts'
@@ -748,6 +749,125 @@ describe('a workflow run\'s checks (worktreeSetup checks, T151)', { timeout: 60_
       expect(rerunsOf(ctx, 'run_bound').map((r) => (r.body as { outcome: { detail: { check: string; cuts: number } } }).outcome.detail)).toEqual([expect.objectContaining({ check: 'lint', cuts: 1 })])
       // What the store keeps of a cut is its own: the evidence keeps to check-run@1.0.
       new SchemaRegistry().assert('check-run@1.0', ctx.artifacts.get((checked as { evidence: `sha256:${string}` }).evidence)!.body)
+    })
+  })
+
+  describe('under a bounded load (T292)', () => {
+    /** What vitest prints for tests that passed their time bound, as a failed run of the suite. */
+    const timeoutOutput = (tests: number): string => [
+      ...Array.from({ length: tests }, (_, i) => ` FAIL  packages/x/tests/a.spec.ts > suite > test ${i}\nError: Test timed out in 5000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".\n`),
+      ` Tests  ${tests} failed | 90 passed (${90 + tests})`,
+    ].join('\n')
+    /** A command that prints `output` and exits 1, unless `passes` (a JS expression over `alone`) holds: then it prints ok and exits 0. */
+    const script = (output: string, passes: string): string => `const alone = process.env.SYSTEM_CHECK_ALONE === '1'\nif (${passes}) { console.log('ok'); process.exit(0) }\nconsole.error(${JSON.stringify(output)})\nprocess.exit(1)\n`
+    const files = (): Record<string, string> => ({
+      // Long enough that the checks started together overlap; nothing asserts on how long it took.
+      'slow.mjs': "await new Promise((resolve) => setTimeout(resolve, 1500))\nconsole.log('slow ok')\n",
+      'flaky.mjs': script(timeoutOutput(2), 'alone'),
+      'stuck.mjs': script(timeoutOutput(1), 'false'),
+      'assertion.mjs': script(' FAIL  packages/x/tests/a.spec.ts > suite > test\nAssertionError: expected 1 to be 2\n Tests  1 failed | 90 passed (91)', 'alone'),
+      'workers.mjs': 'console.log(`workers ${process.env.SYSTEM_CHECK_MAX_WORKERS}`)\n',
+    })
+    const step = (runId: string, at: { workspace: string; subject: { ref: string; version: string } }, checks: RunCheck[] = ['tests']) =>
+      ({ runId, workspace: at.workspace, subject: at.subject, checks, classification: 'operator-shared' as const })
+    const timeoutReruns = (ctx: Context, runId: string) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId })
+      .filter((d) => (d.body as { decider?: { id?: string } }).decider?.id === 'agent-workers.check-timeout-rerun')
+
+    needsBubblewrap()
+
+    it('runs the commands of three runs\' checks started together at most two at a time, and none fails for waiting', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith } = await boot(repo, { checks: { tests: 'node slow.mjs' } }, [...SETUP, 'node slow.mjs'])
+      // Counted at the commands themselves, from just before each starts to its end, never at the queue.
+      let running = 0
+      let peak = 0
+      let started = 0
+      let second!: () => void
+      const twoRunning = new Promise<void>((resolve) => { second = resolve })
+      const runs = [await write('run_q1'), await write('run_q2'), await write('run_q3')]
+      const checks = checksWith({
+        queue: new CheckQueue(), maxConcurrent: 2,
+        commandStarting: async () => {
+          running++
+          started++
+          peak = Math.max(peak, running)
+          // The first waits for a second to start, so two surely run at once; the third may start only when one has ended.
+          if (running >= 2) second()
+          else if (started === 1) await twoRunning
+        },
+        commandEnded: () => { running-- },
+      })
+      const checked = await Promise.all(runs.map((at, i) => checks.check(step(`run_q${i + 1}`, at))))
+      expect(started).toBe(3)
+      expect(peak).toBe(2)
+      for (const one of checked) expect(one).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0 }] })
+    })
+
+    it('tells each check run its test worker count', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node workers.mjs' } }, [...SETUP, 'node workers.mjs'])
+      const at = await write('run_w1')
+      const checked = await checksWith({ maxConcurrent: 2, maxWorkers: 3, queue: new CheckQueue() }).check(step('run_w1', at))
+      expect(evidenceOf(ctx, checked).checks[0]!.output!.tail).toBe('workers 3\n')
+    })
+
+    it('runs a check that failed only on timeouts once more alone, on a recorded decision, and its second result counts', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node flaky.mjs' } }, [...SETUP, 'node flaky.mjs'])
+      const at = await write('run_flaky')
+      const checked = await checksWith({ queue: new CheckQueue() }).check(step('run_flaky', at))
+      expect(checked).toMatchObject({ outcome: 'checked', results: [{ check: 'tests', outcome: 'passed', exitCode: 0, reason: expect.stringContaining('failed first only on 2 test(s) that timed out') }] })
+      expect(evidenceOf(ctx, checked).checks[0]!.reason).toContain('this second result counts')
+      // The re-run is a gate decision recorded before it ran, naming the first run, and the evidence names it (INV-13).
+      const decisions = timeoutReruns(ctx, 'run_flaky')
+      expect(decisions).toHaveLength(1)
+      expect(decisions[0]!.body).toMatchObject({ outcome: { option: 'run', detail: { check: 'tests', cause: 'timed-out-only', firstRun: { exitCode: 1, timedOutTests: 2 } } } })
+      if (checked?.outcome !== 'checked') throw new Error('not checked')
+      expect(ctx.artifacts.get(checked.evidence as `sha256:${string}`)!.inputs).toContain(decisions[0]!.id)
+    })
+
+    it('stores the first result when a stop comes while its re-run waits for the host, cut only by the host\'s own stop (INV-4, T269)', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node flaky.mjs' } }, [...SETUP, 'node flaky.mjs'])
+      /** A queue whose wait to run alone is stopped by `stop`, as the run's stop or the host's would stop it then. */
+      const stoppingAlone = (stop: () => void) => new (class extends CheckQueue {
+        override acquire(...args: Parameters<CheckQueue['acquire']>) {
+          if (args[3]) stop()
+          return super.acquire(...args)
+        }
+      })()
+      const row = (runId: string) => ctx.store.db.prepare('SELECT state, record, ended_at FROM agent_check_runs WHERE workflow_run_id = ?').get(runId) as { state: string; record: string; ended_at: string | null }
+      for (const [runId, reason, cut] of [['run_wait_op', new Error('the operator stopped run_wait_op'), false], ['run_wait_host', { hostStopped: true, message: 'the host stops' }, true]] as const) {
+        const at = await write(runId)
+        const controller = new AbortController()
+        await expect(checksWith({ queue: stoppingAlone(() => controller.abort(reason)) }).check(step(runId, at), controller.signal)).rejects.toBeDefined()
+        const stored = row(runId)
+        expect(stored.state).toBe('done')
+        expect(stored.ended_at).not.toBeNull()
+        const record = JSON.parse(stored.record) as { outcome: string; exitCode: number; reason: string; cutIn?: string; cuts?: number }
+        expect(record).toMatchObject({ outcome: 'failed', exitCode: 1, reason: expect.stringContaining('was stopped while it waited for the host to be free of other checks, so this first result stands') })
+        if (cut) expect(record).toMatchObject({ cutIn: expect.any(String), cuts: 1 })
+        else expect(record.cutIn).toBeUndefined()
+      }
+    })
+
+    it('counts a second run that fails again, and never runs a check again for a failure that is not a timeout', async () => {
+      const repo = repository()
+      commit(repo, files())
+      const { write, checksWith, ctx } = await boot(repo, { checks: { tests: 'node stuck.mjs', lint: 'node assertion.mjs' } }, [...SETUP, 'node stuck.mjs', 'node assertion.mjs'])
+      const at = await write('run_stuck')
+      const checked = await checksWith({ queue: new CheckQueue() }).check(step('run_stuck', at, ['tests', 'lint']))
+      expect(checked).toMatchObject({ outcome: 'checked', results: [
+        { check: 'tests', outcome: 'failed', exitCode: 1, reason: expect.stringContaining('this second result counts') },
+        { check: 'lint', outcome: 'failed', exitCode: 1 },
+      ] })
+      if (checked?.outcome !== 'checked') throw new Error('not checked')
+      expect(checked.results[1]!.reason).not.toContain('once more')
+      expect(timeoutReruns(ctx, 'run_stuck').map((d) => (d.body as { outcome: { detail: { check: string } } }).outcome.detail.check)).toEqual(['tests'])
     })
   })
 
