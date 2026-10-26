@@ -1080,8 +1080,9 @@ guesses.
   one; `attempt` is the task's attempt it was written in.
 - `author` is the Worker that wrote it (by its step's gated tool, or as the step's own entry the
   engine appended for it), with the run, step, and execution, or the engine (`system`, `workflow`),
-  which writes the System's `evidence` (its checks, acceptance, and landing). A writing step's Worker
-  also writes `evidence`: the output of the checks it ran (T267), told from the System's by `author`.
+  which writes the System's `evidence` (its checks, acceptance, and landing, and, T284, the commands a
+  writing step's Worker ran with the exit codes its runtime reported). A writing step's Worker may
+  also write `evidence` as optional prose (T267), told from the System's by `author`.
 - `refs` link (never copy) what the entry is about: a step's result, a review's assessment, a
   decision; `subject` is the exact subject a review reviewed or a step left; `commits`,
   `finding`, and `inReplyTo` say what a response fixed, in which commit, and which review entry it

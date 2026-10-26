@@ -142,7 +142,7 @@ the repository.
 | W16 | a user-visible change adds a changeset | CONTRIBUTING; [releasing](../engineering/releasing.md) | **none** (the release refuses a version with no changelog, not a change with no changeset) |
 | W17 | take the next free ADR, proposal, and migration number; the change landing second renumbers | CONTRIBUTING; testing.md "What parallel changes collide on"; lesson L2; development.md | `check:docs`, `check:migrations` (`scripts/collisions.spec.ts`) |
 | W18 | how a schema changes (minor or major) | reference/schemas.md; CONTRIBUTING; lesson L3; AGENTS.md | in part: `check:schemas` (that a version moved), a `*.v2.json` and above heavy in the map; a major written in place: the review. See [contradiction X1](#contradictions) |
-| W19 | before its review, a writing step of a board task's run runs the required checks and appends their real output, verbatim, to the task's dossier as an `evidence` entry; a fresh session of its account then reviews the diff and the author answers the findings (T267) | `VERIFY` in the profile's writing prompts ([template](../reference/workflow-templates.md#algorithm-development)) | `workflow.evidence` gate: a step whose template says `showsEvidence` is refused at its end without an entry that shows an exit code and output for each required command check (`evidence_missing`), and is admitted only to a Worker with the dossier tools; its fixes are held to the same; the self-review is a graph step, so it cannot be skipped, and its brief holds no dossier; that the output is real: **none** (the acceptance checks run again) |
+| W19 | before its review, a writing step of a board task's run runs the required checks, which the System records itself (command, exit code, output tail), and may add its own `evidence` prose to the task's dossier; a fresh session of its account then reviews the diff and the author answers the findings (T267) | `VERIFY` in the profile's writing prompts ([template](../reference/workflow-templates.md#algorithm-development)) | `workflow.evidence` gate: a step whose template says `showsEvidence` is refused at its end when no command the System recorded runs a required command check (and its own entry does not say why it could not run): the first refusal continues its session once with the message, and a second fails it (`evidence_missing`, "evidence refused twice"); it is admitted only to a Worker with the dossier tools; its fixes are held to the same; the self-review is a graph step, so it cannot be skipped, and its brief holds no dossier; that the checks passed: **none** (the acceptance checks run again) |
 | Q1 | a package imports from its layer or a lower one | code quality | **none** (`check:packages` makes a new upward seam edge visible, it does not refuse it) |
 | Q2 | a file past about 800 lines is a smell | code quality | **none** |
 | Q3 | typed failures; no bare strings thrown | code quality | **none** |
@@ -536,18 +536,27 @@ documents' own path map makes `docs/` light, so a change to a guide is light unt
 The validation step of `algorithm-development` measured a median of 0.4 minutes and caught nothing the
 acceptance checks did not. It is replaced by two things that run before the independent review:
 
-1. **The author runs the required checks and shows their output.** `develop:1` ends with its Worker
-   appending the commands, the output lines that hold the result, and each exit code its tool
-   reports, verbatim, to the task's dossier as an `evidence` entry. The step is refused at its end
-   without one, or with one whose shape shows no checks' output: at least one command, each command
-   check the criteria name named (with its output, or why it could not run), and an output line.
-   Exit codes are not required, since a Worker's shell tool may not print them (2026-10-26: requiring
-   them refused every honest Worker; T274) (`evidence_missing`; a
-   `workflow.evidence` `gate` decision says what is missing). The step requires the `dossier`
+1. **The author runs the required checks; the System records them itself (T284).** `develop:1` ends
+   with the System holding, for every command its Worker ran, the command, its exit code, and a
+   bounded tail of its output, as the runtime reports them (Codex reports exit codes; for Claude
+   Code the tool result's error flag is the failure, and an `Exit code N` its error text names is
+   read). The Worker pastes nothing: a required check counts as shown when a recorded command for it
+   ran to its end in the step (`tests`, `typecheck`, `lint`), whatever the Worker wrote. A command
+   the runtime reported no end of (a background launch, which answers once it starts; an
+   interrupted command) is recorded with no exit code and shows no check. The records are bounded
+   per step, and the bound never drops the last record that shows a check. The System writes them to
+   the dossier as its own `evidence` entries, every check command first with its exit code and output
+   tail, split into as many entries as the entry's bound needs, so a reviewer reads real exit codes. The Worker's own `evidence` entry is optional prose, still read
+   (its shape: a command, each check named with its output or why it could not run, an output line)
+   for a check no recorded command runs, such as one the Worker could not run and says why. A refusal
+   (`evidence_missing`; a `workflow.evidence` `gate` decision says what is missing) does not end the
+   step the first time: **the step continues its own session once**, the refusal's message (what is
+   missing and how to show it) its next message. Only a second refusal fails the step, and the attempt
+   is reported as "evidence refused twice" (T274, 2026-10-26: refusing at once spent the attempt of
+   every honest Worker, whose shell tool prints no exit codes). The step requires the `dossier`
    capability, so a Worker that could not write the entry is never admitted to it. Every fix grown
-   from it shows the checks' output again, for the tree it leaves, under the same gate. The entry is
-   the author's report, told from the System's own evidence by its author; the gate reads its shape,
-   never whether the commands ran, so the run's required checks run again on the exact result at
+   from it shows the checks again, for the tree it leaves, under the same gate. The gate reads what
+   ran, never whether it passed, so the run's required checks run again on the exact result at
    acceptance (ADR-0063).
 2. **A fresh session of the author's account reviews the diff** (`selfreview:1`): it never sees the
    author's transcript, and is given only the task's goal and criteria, the exact diff (the goal as its

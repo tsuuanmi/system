@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { captureGitSubject, subjectId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { attempt, bootPilot, charter, decide, EVIDENCE, FIXED, MEASURED, ORIGINAL, operatorAccepts, type Pilot, propose, queued, reported, until } from './pilot.ts'
+import { attempt, bootPilot, charter, decide, EVIDENCE, FIXED, MEASURED, ORIGINAL, operatorAccepts, type Pilot, propose, queued, reported, TESTS, until } from './pilot.ts'
 
 // The algorithm-development template end to end (PROP-0010 B8, T267): one attempt of a board task,
 // over the real board, approval queue, ledger, digests, and agents source with a worktree per run;
@@ -152,7 +152,46 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     expect(pilot.ctx.workflow.templateSteps('algorithm-development')!.map((s) => s.nodeId)).toEqual(['develop:1', 'selfreview:1', 'review:1'])
   })
 
-  it('refuses a develop step at its end that shows no output of its checks in the dossier: nothing reviews it, the failure is the attempt\'s, and a gate decision says why (T267, INV-2, INV-13)', async () => {
+  it('passes a develop step whose Worker ran the check, recorded by the System with its exit code, though it wrote no evidence; the dossier lists the recorded command (T284)', async () => {
+    const pilot = await boot({ ran: true, evidence: false })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    expect(agent.appended).toEqual([])
+    expect(agent.runs.map((r) => r.role).slice(0, 2)).toEqual(['develop', 'selfreview'])
+    const entries = ctx.workflow.dossier({ taskId: task.taskId }).entries
+    expect(entries.some((e) => e.kind === 'evidence' && e.author.type === 'worker')).toBe(false)
+    const recorded = entries.find((e) => e.kind === 'evidence' && e.author.type === 'system' && e.text.includes('recorded them'))!
+    expect(recorded.text).toContain(`$ ${TESTS}`)
+    expect(recorded.text).toContain('exit 0')
+    expect(recorded.text).toContain(MEASURED)
+  })
+
+  it('refuses a develop step that ran no check once and continues its session with the refusal; it passes after it runs one (T284)', async () => {
+    const pilot = await boot({ ranAfterRefusal: true, evidence: false })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const run = await attempt(ctx, task.taskId)
+    const done = await reported(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    // The second run of develop:1 is the first one's session, its next message the refusal: what is missing and how to show it.
+    const work = agent.runs.filter((r) => r.role !== 'digest')
+    expect(work.slice(0, 2).map((r) => r.role)).toEqual(['develop', 'develop'])
+    expect(work[1]!.resume).toBe('h-1')
+    expect(work[1]!.prompt).toContain('ended without showing the checks it ran')
+    expect(work[1]!.prompt).toContain('the System records each command you run, its exit code, and the tail of its output itself')
+    expect(done.nodes.find((n) => n.nodeId === 'develop:1')).toMatchObject({ state: 'COMPLETED' })
+    const refused = ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId: run.runId, outcome: 'refuse', limit: 100 }).filter((a) => (a.body as { decider: { id: string } }).decider.id === 'workflow.evidence')
+    expect(refused).toHaveLength(1)
+    const recorded = ctx.workflow.dossier({ taskId: task.taskId }).entries.find((e) => e.kind === 'evidence' && e.author.type === 'system' && e.text.includes('recorded them'))!
+    expect(recorded.text).toContain(`$ ${TESTS}`)
+  })
+
+  it('refuses a develop step at its end twice: the second refusal fails it, nothing reviews it, the failure is the attempt\'s, and a gate decision says why (T267, T284, INV-2, INV-13)', async () => {
     const pilot = await boot({ evidence: false })
     const { ctx, agent } = pilot
     await charter(ctx, 'p1')
@@ -162,8 +201,9 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     expect(failed.status).toBe('failed')
     expect(failed.nodes.find((n) => n.nodeId === 'develop:1')).toMatchObject({ state: 'FAILED' })
     expect(JSON.stringify(failed.nodes.find((n) => n.nodeId === 'develop:1'))).toContain('evidence_missing')
-    // Developed and nothing else: neither the self-review nor the review was started.
-    expect(agent.runs.map((r) => r.role)).toEqual(['develop'])
+    expect(JSON.stringify(failed.nodes.find((n) => n.nodeId === 'develop:1'))).toContain('evidence refused twice')
+    // Developed, then continued once, and nothing else: neither the self-review nor the review was started.
+    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'develop'])
     expect(failed.nodes.find((n) => n.nodeId === 'selfreview:1')!.state).toBe('WAITING')
     const gate = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'develop:1')!.decisions.map((d) => ctx.artifacts.get(d.id as ArtifactRef)!.body as { decider: { id: string }; outcome: { option: string } }).find((b) => b.decider.id === 'workflow.evidence')!
     expect(gate.outcome.option).toBe('refuse')
@@ -181,10 +221,11 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     const run = await attempt(ctx, task.taskId)
     const failed = await reported(ctx, run.runId)
     expect(failed.status).toBe('failed')
-    expect(agent.appended).toEqual([expect.objectContaining({ isError: false })])
-    expect(agent.runs.map((r) => r.role)).toEqual(['develop'])
+    expect(agent.appended).toEqual([expect.objectContaining({ isError: false }), expect.objectContaining({ isError: false })])
+    expect(agent.runs.map((r) => r.role)).toEqual(['develop', 'develop'])
     const develop = JSON.stringify(failed.nodes.find((n) => n.nodeId === 'develop:1'))
     expect(develop).toContain('evidence_missing')
+    expect(develop).toContain('evidence refused twice')
     expect(develop).toContain('shows no command it ran')
   })
 

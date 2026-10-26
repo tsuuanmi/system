@@ -55,7 +55,7 @@ import {
   type TierOffer, TIERS, type WorkerExecution, type WorkerSandbox, type WorkerStart, type WorkScope,
 } from '@tsuuanmi/system-workers-core'
 import { ACCOUNTS_MIGRATION, type AgentAccount, AgentAccounts, type HomeGate, MAX_SLOTS } from './accounts.ts'
-import { type DossierCaller, dossiersOf, dossierTools, type StepDossiers } from './dossier.ts'
+import { commandRecorder, type DossierCaller, dossiersOf, dossierTools, type StepDossiers } from './dossier.ts'
 import { DENIAL_MIGRATION, GATE_MIGRATION, type Deferral, readToolsOf, recordDenial, runGate, unaskedNote } from './gate.ts'
 import { repositoryLessons } from './lessons.ts'
 import { type Applied, CUTOVER_MIGRATION, Cutover, type CutoverRecord, type MigrationPlan, type Moved, planMigration, type RolledBack } from './migrate.ts'
@@ -2326,6 +2326,8 @@ export class AgentWorkers extends Service {
       workspaceReads: this.readBounds,
       ...(hostTools.length ? { hostTools } : {}),
       toolGate: gate.gate,
+      // The commands a writing step's Worker ran, with the exit code and output tail its runtime reports, are recorded by the System itself (T284).
+      ...(dossier && worker.sandbox === 'workspace-write' ? { onToolResult: commandRecorder(this.ctx, dossier.dossiers, dossier.caller) } : {}),
     }
     // A writing run's commands say on a report file of its own what their tests did not run, as a
     // check's command does (T265): its result says so, and its review is told. One that cannot be

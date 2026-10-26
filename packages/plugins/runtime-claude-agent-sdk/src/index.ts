@@ -65,7 +65,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
-  type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand,
+  type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, type ToolResultSink, askToolGate, childEnvironment, confinedCommand, tailOf,
   agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, WEB_RUN_TOOLS, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, homeSocketDirectories, readHomeJson, SOCKET_ROOTS, socketCovers, socketDirectories, toolSandboxAllowances, withMetering, withRunReport, writableUnixSockets,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
@@ -405,7 +405,11 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           ...(writes ? { sandbox: commandSandbox(spec.workspace, [home, ...shell.startup], { ...withHomeState(toolSandboxAllowances(confinement, spec.reportFile), shell), unixSockets, socketDirectories: deniedDirectories }) } : {}),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
           // No matcher: every tool call, subagents' included, passes the gate before it runs.
-          ...(spec.toolGate ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }] } } : {}),
+          // Its results are reported where the run's source asked (T284): a tool that failed is the error flag, since its shell prints no exit code.
+          ...(spec.toolGate
+            ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }],
+              ...(spec.onToolResult ? { PostToolUse: [{ hooks: [resultHook(spec.onToolResult, false)] }], PostToolUseFailure: [{ hooks: [resultHook(spec.onToolResult, true)] }] } : {}) } }
+            : {}),
         },
       })
       for await (const message of messages as AsyncIterable<Record<string, unknown>>) {
@@ -800,6 +804,41 @@ function gateHook(gate: ToolGate, deferral: { current?: Deferral }): HookCallbac
       return hookDecision('defer', verdict.reason)
     }
     return hookDecision('deny', verdict.reason)
+  }
+}
+
+/**
+ * What a tool call came to (T284), reported to the run's source from the SDK's `PostToolUse` (it ran)
+ * and `PostToolUseFailure` (it failed) hooks. The shell tool prints no exit code: a command that
+ * exited non-zero is the failure hook, and its error text says `Exit code N`, which is read when it
+ * does. A `Bash` call that ran to its end is reported with exit code 0, its success being its exit 0.
+ * A command that did not run to its end when the tool answered is `unfinished`, with no exit code: a
+ * background launch (`run_in_background`, or a response that names a background task), whose
+ * success is only that it started, and an interrupted one. Never fails the run: the sink's errors
+ * are swallowed.
+ */
+function resultHook(sink: ToolResultSink, failed: boolean): HookCallback {
+  return async (input, toolUseId) => {
+    try {
+      const body = input as unknown as { tool_name?: unknown; tool_input?: unknown; tool_response?: unknown; error?: unknown; tool_use_id?: unknown; is_interrupt?: unknown }
+      if (typeof body.tool_name !== 'string') return {}
+      const callId = typeof body.tool_use_id === 'string' && body.tool_use_id ? body.tool_use_id : toolUseId
+      const response = body.tool_response as { stdout?: unknown; stderr?: unknown; interrupted?: unknown; backgroundTaskId?: unknown } | string | undefined
+      const output = failed ? String(body.error ?? '')
+        : typeof response === 'string' ? response
+          : [response?.stdout, response?.stderr].filter((s): s is string => typeof s === 'string' && s !== '').join('\n')
+      const bash = body.tool_name === 'Bash'
+      const background = (body.tool_input as { run_in_background?: unknown } | null)?.run_in_background === true
+        || (typeof response === 'object' && response !== null && response.backgroundTaskId !== undefined && response.backgroundTaskId !== null)
+      const interrupted = body.is_interrupt === true || (typeof response === 'object' && response !== null && response.interrupted === true)
+      const unfinished = bash && (background || interrupted)
+      const named = failed && !unfinished ? /\bExit code (-?\d+)\b/i.exec(output) : undefined
+      const exitCode = unfinished ? undefined : named ? Number(named[1]) : !failed && bash ? 0 : undefined
+      sink({ tool: body.tool_name, input: body.tool_input, ...(callId ? { callId } : {}), isError: failed, ...(exitCode !== undefined ? { exitCode } : {}), ...(unfinished ? { unfinished: true } : {}), tail: tailOf(output) })
+    } catch {
+      // Observing never fails the run.
+    }
+    return {}
   }
 }
 

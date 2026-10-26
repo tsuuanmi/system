@@ -11,7 +11,7 @@
  * @module @tsuuanmi/system-agent-workers/dossier
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { HostTool } from '@tsuuanmi/system-agent-runtime-core'
+import type { HostTool, ToolResult } from '@tsuuanmi/system-agent-runtime-core'
 
 /** The step a run's dossier tools are bound to: the engine's `DossierCaller`. */
 export interface DossierCaller {
@@ -41,6 +41,43 @@ export interface DossierEntryInput {
 export interface StepDossiers {
   readDossier(caller: DossierCaller, page: { from?: number | undefined; limit?: number | undefined }): { total: number; entries: unknown[]; next?: number | undefined; taskId: string }
   appendToDossier(caller: DossierCaller, entry: DossierEntryInput): { id: string; seq: number }
+  /** Keep a command the step's Worker ran, for the engine's evidence gate (T284); an engine without it records none. */
+  recordCommand?(caller: DossierCaller, report: CommandReport): void
+}
+
+/** A command a step's Worker ran, as its runtime reported it (T284): what the System records itself. */
+export interface CommandReport {
+  command: string
+  exitCode?: number | undefined
+  isError: boolean
+  /** The runtime reported no end of it (a background launch, an interrupted command): it carries no exit code. */
+  unfinished?: true | undefined
+  tail: string
+}
+
+/**
+ * The recorder of the commands a run ran (T284): each `Bash` result its runtime reports, for the step
+ * its dossier tools are bound to, kept by the engine for its evidence gate. A result its runtime
+ * reports unfinished, or a background launch (`run_in_background`, whatever its runtime said), is
+ * recorded as unfinished, with no exit code: its launch is never taken for its end. Never fails the
+ * run: a record the engine refuses (the step ended) is dropped, with a warning.
+ */
+export function commandRecorder(ctx: Context, dossiers: StepDossiers, caller: DossierCaller): (result: ToolResult) => void {
+  const bound: DossierCaller = { runId: caller.runId, nodeId: caller.nodeId, execution: caller.execution }
+  return (result) => {
+    const input = result.input as { command?: unknown; run_in_background?: unknown } | null
+    const command = input?.command
+    if (result.tool !== 'Bash' || typeof command !== 'string' || !command.trim() || !dossiers.recordCommand) return
+    const unfinished = result.unfinished === true || input?.run_in_background === true
+    try {
+      dossiers.recordCommand(bound, {
+        command: command.slice(0, 500), isError: result.isError,
+        ...(unfinished ? { unfinished: true as const } : result.exitCode !== undefined ? { exitCode: result.exitCode } : {}), tail: result.tail,
+      })
+    } catch (error) {
+      ctx.logger.warn(`agent Workers: a command of ${bound.nodeId} in ${bound.runId} was not recorded: ${(error as Error)?.message?.slice(0, 200) ?? String(error)}`)
+    }
+  }
 }
 
 /** The engine's dossier, when an engine that keeps one is loaded. */

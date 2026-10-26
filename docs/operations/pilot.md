@@ -178,8 +178,10 @@ For each milestone, the lead proposes tasks with `board_propose`, one hypothesis
    The run claims the task, and the board records it before anything runs. Then, in the run's own
    worktree:
    - the developer states a hypothesis and changes the code (`develop:1`), runs the criteria's
-     commands, confined, and appends each command, its exit code, and what it measured to the task's
-     dossier as an evidence entry; the step is refused at its end without it;
+     commands, confined; the System records each command, its exit code, and the tail of its output
+     and lists them in the task's dossier as an evidence entry. The step is refused at its end when
+     no recorded command runs a required check; the first refusal continues its session once, and a
+     second fails it ("evidence refused twice");
    - a fresh session of the developer's account reviews its own change (`selfreview:1`), and the
      developer answers its confirmed important findings before anyone else reviews, with nothing for you to approve;
    - the reviewer reviews that exact change (`review:1`), given the

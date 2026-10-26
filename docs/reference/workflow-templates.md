@@ -207,20 +207,26 @@ ignored, so an update never stops a row from loading; remove it.
   failed only after its `develop:1` completed (its review's session broke, say), no review having
   judged that change, this attempt's worktree already holds it, and its brief says so: it builds on
   it ([starting from the previous attempt's work](../design/workflow-engine.md#starting-from-the-previous-attempts-work)).
-- **The author verifies before anyone reviews** (T267). `develop:1` ends with the author running the
-  checks the task's criteria name and appending their real output, verbatim (each command, its exit
-  code, the lines that hold the result), to the task's dossier as an `evidence` entry
-  (`dossier_append`; its author is the Worker, so a reader tells it from the System's own evidence).
-  The step is refused at its end without that entry, or with one that does not show the checks'
-  output: its evidence must report an exit code for each command it ran (one at least, and one per
-  command check the criteria name, `tests`, `typecheck`, `lint`), name each of those checks, and hold
-  an output line beside the commands and exit codes (`evidenceProblem`). Refused, it fails with
-  `evidence_missing`, a `gate` decision (`workflow.evidence`, version 2) says what is missing, nothing
-  after it starts, and the board counts the attempt. A step that must show its evidence requires the
+- **The author verifies before anyone reviews** (T267, T284). `develop:1` ends with the author having
+  run the checks the task's criteria name. The System records, for every command the Worker ran, the
+  command, its exit code as the runtime reports it (Codex's command items; for Claude Code the tool
+  result's error flag, and the `Exit code N` its error text names), and a bounded tail of its output.
+  A required check (`tests`, `typecheck`, `lint`) counts as shown when a recorded command for it ran
+  to its end in the step, whatever the Worker wrote; a background launch or an interrupted command is
+  recorded with no exit code and shows nothing. The records are bounded per step (15 check commands,
+  50 others), and the bound never drops the last record that shows a check. The System lists the
+  recorded commands and exit codes in the dossier as its own `evidence` entries, check commands first,
+  in as many entries as the entry's bound needs, so none is cut. The Worker's own `evidence` entry (`dossier_append`) is
+  optional prose, read only for a check no recorded command runs (it must then say which and why it
+  could not run: `evidenceProblem`). When no recorded command shows a required check, a `gate`
+  decision (`workflow.evidence`, version 3) says what is missing, and the step continues its own
+  session once, the refusal's message (what is missing and how to show it) its next message. A
+  second refusal fails the step with `evidence_missing`, "evidence refused twice", nothing after it
+  starts, and the board counts the attempt. A step that must show its evidence requires the
   `dossier` capability, which a Worker offers when its runtime gives it the dossier tools: one that
   cannot is never admitted to it, and nothing is sent. Every fix grown from it (by the self-review or
-  the review) must show the checks' output again, for the tree it leaves, under the same gate. The
-  entry is the author's report, never a check the engine reports: the run's required checks run again
+  the review) must show the checks again, for the tree it leaves, under the same gate. The
+  gate reads what ran, never a check the engine reports: the run's required checks run again
   on the exact result at acceptance
   ([ADR-0063](../decisions/adr/0063-a-runs-required-checks-run-on-its-exact-result.md)).
 - `selfreview:1` is **the author's own review in a fresh context** (T267): a review of the exact

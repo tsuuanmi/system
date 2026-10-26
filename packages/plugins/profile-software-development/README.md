@@ -19,9 +19,10 @@ holds no engine code and no rules of its own.
     and `tests` make it that kind of work, changing documentation only or tests
     only (`system run algorithm-development --variant docs`, MCP `run` with
     `variant`). **It ends with the author's own checks (T267):** it runs the checks
-    the task's criteria name and appends their real output to the task's dossier as an
-    `evidence` entry; without one that shows each command's exit code and output, the
-    step is refused at its end (`evidence_missing`). It is admitted only to a Worker
+    the task's criteria name; the System records each command it ran, its exit code,
+    and an output tail (T284), and a required check counts as shown when a recorded
+    command runs it. Without one, the step's session continues once with the refusal's
+    message, and a second refusal fails it (`evidence_missing`, "evidence refused twice"). It is admitted only to a Worker
     given the dossier tools (`dossier`), and every fix grown from it shows the checks'
     output again;
   - `selfreview:1` (`review`, `local-data`) is the author's own review in a fresh

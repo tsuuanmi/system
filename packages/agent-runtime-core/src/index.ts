@@ -352,6 +352,43 @@ export type ToolVerdict =
  */
 export type ToolGate = (call: ToolCall, signal: AbortSignal) => Promise<ToolVerdict>
 
+/**
+ * What a tool call came to, as its runtime reports it (T284): the call, whether the tool reported an
+ * error (Claude Code's `PostToolUseFailure`: its shell tool prints no exit code, so a failing
+ * command is the error flag), the exit code where the runtime reports one (Codex's command items)
+ * or the tool's own error text names one (`Exit code 2`), and a bounded tail of its output
+ * ({@link RESULT_TAIL_CHARS}). Only what the runtime reports: never a guess.
+ */
+export interface ToolResult {
+  tool: string
+  input: unknown
+  callId?: string | undefined
+  /** The tool reported an error (a command that exited non-zero, was interrupted, or was refused). */
+  isError: boolean
+  exitCode?: number | undefined
+  /**
+   * The runtime reported no end of the command (T284): a background launch (it answers once the
+   * command starts), a command interrupted or still running when the tool answered. Such a result
+   * never carries an exit code, and is never taken for a command that ran to its end.
+   */
+  unfinished?: boolean | undefined
+  /** The last {@link RESULT_TAIL_CHARS} characters of the output. */
+  tail: string
+}
+
+/** The characters of a tool result's output a runtime reports: its tail (INV-9). */
+export const RESULT_TAIL_CHARS = 1000
+
+/** The tail of `output` a {@link ToolResult} carries. */
+export function tailOf(output: unknown): string {
+  const text = typeof output === 'string' ? output : output === undefined || output === null ? '' : JSON.stringify(output)
+  const trimmed = text.trimEnd()
+  return trimmed.length > RESULT_TAIL_CHARS ? `…${trimmed.slice(-(RESULT_TAIL_CHARS - 1))}` : trimmed
+}
+
+/** A run's observer of its tool calls' results: never a gate (the call has run), and a failure of it never fails the run. */
+export type ToolResultSink = (result: ToolResult) => void
+
 /** How long a gate may take over one tool call by default (30 s); past it the call is denied. */
 export const TOOL_GATE_MS = 30_000
 
@@ -405,6 +442,8 @@ export interface RunSpec {
   resume?: string | undefined
   /** Asked before every tool call the agent makes ({@link ToolGate}). */
   toolGate?: ToolGate | undefined
+  /** Told what each tool call came to, once it ran (T284), by a runtime that can observe it; ignored by one that cannot. */
+  onToolResult?: ToolResultSink | undefined
   /**
    * The home the agent runs in (an absolute path): one account's own sign-in, the only home its
    * confinement binds back (ADR-0051). Absent: the provider's own configured home. A provider that
