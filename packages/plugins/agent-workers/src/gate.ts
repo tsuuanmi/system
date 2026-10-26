@@ -72,6 +72,12 @@ export interface ToolAction {
   class: ActionClass
   /** For `command`: the argv, the command split on single spaces (never parsed by a shell). */
   command?: string[]
+  /**
+   * For `command`: a git history read ({@link gitHistory}, T276) in a shell that is not proven clean.
+   * The policy judges it as a command; where that asks, it is judged as a workspace write, as the
+   * policy judges a command on its commands list, so a forbidden command class still binds.
+   */
+  historyRead?: true
   summary: string
   consequences: string
 }
@@ -422,9 +428,78 @@ function findRule(args: string[], workspace: string): boolean {
 const HEAD_TAIL: Record<string, RegExp> = { '-n': /^\+?\d+$/, '-c': /^\+?\d+$/ }
 const LS_FLAGS = among('-l', '-a', '-A', '-la', '-al', '-lA', '-1', '-R', '-h', '-lh', '-lah', '-alh', '-F')
 /**
- * Each read-only program and the rule its words must pass. `git` is not one: it finds its
- * repository, and the configuration it runs (`core.fsmonitor`, a diff driver), from the working
- * directory, which the gate does not see; it stays a `command`.
+ * A ref name, a hex id, or one with `^` suffixes: `/`-separated segments, each starting with a letter,
+ * a digit, or `_`, holding no `..` and no segment that starts with `.`. So it can never name a path
+ * that climbs out of the directory git runs in (`src/../../etc/passwd`): `git diff` takes two words
+ * outside the repository for files, diffing them with no index (T276).
+ */
+const REF_NAME = '[A-Za-z0-9_](?:[A-Za-z0-9_-]|\\.(?![./])|/(?=[A-Za-z0-9_]))*\\^*'
+/** A revision word: a {@link REF_NAME}, or a range of two (`a..b`, `a...b`): never an option, never a path that leaves the directory. */
+const REVISION = new RegExp(`^${REF_NAME}(?:\\.\\.\\.?${REF_NAME})?$`)
+/** `show`'s `<rev>:<path>`: one {@link REF_NAME}, the path relative to the repository root (its `..` and `.git` segments refused). */
+const REVISION_PATH = new RegExp(`^(${REF_NAME}):([A-Za-z0-9_.][A-Za-z0-9_./-]*)$`)
+/** A run's branch (agent-workers worktrees, `system/run/<runId>`): the only names `git branch --list` looks up. */
+const RUN_BRANCH = /^system\/run\/[A-Za-z0-9_-]+$/
+/** `log`'s `--format=`: placeholders and plain characters, no space (a command is split on spaces), so one word. */
+const LOG_FORMAT = /^--format=[A-Za-z0-9%:,._-]+$/
+
+/**
+ * The git history reads a Worker needs (T276), and no other form:
+ * - `git log`: at most one revision (a ref or a range), `--oneline`, `-n <k>`, `--format=<placeholders>`,
+ *   and paths, each absolute and inside the workspace, bare or after `--`;
+ * - `git show <rev>[:<path>]`: exactly one, its path relative to the root, with no `..` and no `.git` segment;
+ * - `git diff <a> <b>`: exactly two revisions, `--stat` the only option;
+ * - `git branch --list system/run/<runId>`: one run branch, by name (no wildcard passes the shell check).
+ * Any other word fails it (`-c`, `-C`, `--git-dir`, `--output`, `--ext-diff`, `-p`, …), and so does
+ * every other subcommand: a write (`commit`, `push`, `checkout`, `branch <name>`) stays a `command`.
+ * `git` finds its repository from the working directory, which the gate does not see: the runtime
+ * starts a Worker's shell in the run's worktree, and the configuration git reads there (`.git`, which
+ * no file tool writes, {@link gitData}) is the operator's, as for a listed `git` command.
+ */
+function gitHistory(argv: readonly string[], workspace: string): boolean {
+  const [program, sub, ...rest] = argv
+  if (program !== 'git') return false
+  if (sub === 'branch') return rest.length === 2 && rest[0] === '--list' && RUN_BRANCH.test(rest[1]!)
+  const forms: Record<string, { flags: (word: string) => boolean; valued: Record<string, RegExp>; revisions: [number, number]; shows: boolean; paths: boolean }> = {
+    log: { flags: (w) => w === '--oneline' || LOG_FORMAT.test(w), valued: { '-n': NUMBER }, revisions: [0, 1], shows: false, paths: true },
+    show: { flags: () => false, valued: {}, revisions: [1, 1], shows: true, paths: false },
+    diff: { flags: (w) => w === '--stat', valued: {}, revisions: [2, 2], shows: false, paths: false },
+  }
+  const form = sub !== undefined && Object.hasOwn(forms, sub) ? forms[sub] : undefined
+  if (!form) return false
+  let revisions = 0
+  let paths = false
+  for (let i = 0; i < rest.length; i += 1) {
+    const word = rest[i]!
+    if (paths) {
+      if (!pathWord(workspace, word)) return false
+      continue
+    }
+    if (word === '--' && form.paths) {
+      paths = true
+      continue
+    }
+    if (form.flags(word)) continue
+    const value = Object.hasOwn(form.valued, word) ? form.valued[word] : undefined
+    if (value) {
+      const next = rest[i + 1]
+      if (next === undefined || !value.test(next)) return false
+      i += 1
+      continue
+    }
+    if (form.paths && pathWord(workspace, word)) continue
+    const shown = form.shows ? REVISION_PATH.exec(word) : null
+    if (shown) {
+      if (shown[2]!.split('/').some((segment) => segment === '..' || segment.toLowerCase() === '.git')) return false
+    } else if (!REVISION.test(word)) return false
+    revisions += 1
+  }
+  return revisions >= form.revisions[0] && revisions <= form.revisions[1]
+}
+
+/**
+ * Each read-only program and the rule its words must pass. `git` is not one: only its history
+ * reads are ({@link gitHistory}), judged on their own.
  */
 const READ_COMMANDS: Record<string, (args: string[], workspace: string) => boolean> = {
   cat: (args, ws) => optionsAndPaths(args, ws, among('-n'), {}, 1),
@@ -599,6 +674,9 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     }
   }
   if (unasked('workspace-write') && !readOnly) lines.push(`- Writing tools (Write, Edit) on files inside ${ws}, outside its .git.`)
+  // The git history reads (T276): a read in a clean shell, else judged as a listed command is (a workspace write unless commands are forbidden).
+  const history = (options.shellReads === true && unasked('read')) || unasked('command') || (mode('command') !== 'forbid' && unasked('workspace-write'))
+  if (history && !options.research) lines.push(`- Bash git history, read-only, every path absolute and inside ${ws}: git log [<ref>|<a>..<b>] [--oneline] [-n <k>] [--format=<placeholders>] [-- <path>], git show <sha>[:<path>], git diff <a> <b> [--stat], git branch --list system/run/<runId>.`)
   // A research run's web calls under the web access grant (T262): never a call the policy forbids.
   const research = options.research
   const webTools = research ? research.tools.filter((t) => research.grant?.tools.includes(t)) : []
@@ -645,7 +723,7 @@ export function unaskedNote(policy: { policies: readonly AutonomyPolicyLike[]; e
     'Tools (your tool gate and the autonomy policy now):',
     `- Workspace: ${ws}. A tool's path outside it is denied, and so is a write in its .git.`,
     ...(workspaceReads
-      ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Read its git history the same way, never with git in a shell: git_log (count, skip, commit, paths), git_show (commit; stat, patch), git_diff (the worktree, or cached: the index, against HEAD; or from and to), git_status; a commit is always its hex id (from git_log), never a branch name. Each path is relative to the workspace, or absolute inside it, with no "..".']
+      ? ['- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range), its lines numbered; list_dir (path; default the workspace); search, the lines that hold a fixed string (pattern) or match a regular expression (regex: true), under a path (default the workspace). Read its git history the same way: git_log (count, skip, commit, paths), git_show (commit; stat, patch), git_diff (the worktree, or cached: the index, against HEAD; or from and to), git_status; a commit is always its hex id (from git_log), never a branch name. Each path is relative to the workspace, or absolute inside it, with no "..".']
       : []),
     ...(readOnly ? ['- Your sandbox is read-only: no tool call writes a file (Write, Edit, and any command that changes one fail), so read, and answer with what you found.'] : []),
     ...(research ? [`- You are a research role: you read your workspace and search and fetch the web (${research.tools.length ? research.tools.join(', ') : 'no web tool'}), and nothing else; a call that writes a file or runs a command is denied.${research.grant ? '' : ' No web access is granted now, so each web call waits for the operator.'}`] : []),
@@ -896,6 +974,11 @@ export function classify(call: ToolCall, workspace: string, options: ClassifyOpt
     // function or an alias a startup file defined could run instead, so nothing is taken for a read.
     if (options.shellReads === true && noopCommand(argv)) return { class: 'read', summary: clamp(command), consequences: `Prints its words or the working directory, or nothing, and reads and changes nothing: ${clamp(command)}. ${ANSWER}` }
     if (options.shellReads === true && readCommand(argv, workspace)) return { class: 'read', summary: clamp(command), consequences: `Reads inside the run's workspace: ${clamp(command)}. ${ANSWER}` }
+    // A git history read (T276): a read in a clean shell; elsewhere a command the gate judges as a listed one is judged.
+    if (gitHistory(argv, workspace)) {
+      if (options.shellReads === true) return { class: 'read', summary: clamp(command), consequences: `Reads the git history of the run's workspace: ${clamp(command)}. ${ANSWER}` }
+      return { class: 'command', command: argv, historyRead: true, summary: clamp(`${tool}: ${command}`), consequences: `Runs this read-only git command in the run's workspace: it reads its history and changes nothing. ${ANSWER}` }
+    }
     // An inspection command the agent has a reading tool for is denied at once, naming it, never asked (T222).
     const inspection = inspectionRefusal(argv, options.readTools)
     if (inspection) return inspection
@@ -1324,8 +1407,9 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     if (run.profile === 'research' && run.webProbe && !(call.tool === 'WebSearch' && isProbeSearch(call.input))) {
       return refuse(call, `the web probe makes one call, WebSearch with the query ${JSON.stringify(WEB_PROBE_QUERY)} and nothing else; this ${call.tool.slice(0, 100)} call is not it`, 'research-role')
     }
-    const action = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true, readTools: run.readTools, hostTools: run.hostTools })
-    if ('refused' in action) return refuse(call, action.refused, action.reason)
+    const classified = classify(call, run.workspace, { shellReads: run.shellReads === true, workspaceReads: run.workspaceReads === true, readTools: run.readTools, hostTools: run.hostTools })
+    if ('refused' in classified) return refuse(call, classified.refused, classified.reason)
+    let action: ToolAction = classified
     // A research role reads and searches the web only (ADR-0074): its board task's dossier is System's own record, no file.
     if (run.profile === 'research' && (action.class === 'workspace-write' || action.class === 'command') && !call.tool.startsWith(HOST_PREFIX)) {
       return refuse(call, `a research role's run writes no file and runs no command; this ${call.tool.slice(0, 100)} call is ${action.class}`, 'research-role', [], action.class)
@@ -1333,7 +1417,17 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
     // A research run's calls are judged under its task's project's policy too (T262): the policy that
     // gives the web grant also binds, so a project's forbid holds whatever the grant says.
     const projectId = researchProject()
-    const verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}), ...(projectId !== undefined ? { projectId } : {}) })
+    let verdict = await approvals.check({ class: action.class, ...(action.command ? { command: action.command } : {}), ...(projectId !== undefined ? { projectId } : {}) })
+    // A git history read (T276) the policy asks about as a command is judged as a workspace write, as
+    // the policy judges a command on its commands list: it runs where writes run unasked; a forbidden
+    // command class, or writes that are not unasked, leave the command's own verdict.
+    if (action.historyRead === true && verdict.mode === 'ask') {
+      const write = await approvals.check({ class: 'workspace-write', ...(projectId !== undefined ? { projectId } : {}) })
+      if (write.mode === 'auto' || write.mode === 'notify') {
+        verdict = write
+        action = { class: 'workspace-write', summary: action.summary, consequences: action.consequences }
+      }
+    }
     // A research run's web call the policy asks about goes out unasked only under the web access grant (T262).
     if (run.profile === 'research' && action.class === 'external-send' && verdict.mode === 'ask' && Object.hasOwn(SENDS, call.tool)) {
       const web = await serially(() => webAccess(approvals, call, action, verdict))

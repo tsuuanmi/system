@@ -224,7 +224,10 @@ What it does with a hook was established live on the host, and the bridge is bui
   bridge checks only the hook's own directory), so the gate cannot know where a relative path,
   or a form with no path (`ls`, `rg foo`, `find`), would read: those stay `command`, and so does
   `git`, which finds its repository and the configuration it runs (`core.fsmonitor`, a diff
-  driver) from the working directory. They are safe as reads because none of them writes or
+  driver) from the working directory, but for its history reads (`git log` by ref or range,
+  `git show <rev>[:<path>]`, `git diff <a> <b>`, `git branch --list system/run/<runId>`; T276),
+  which the gate judges as a listed command is judged
+  ([approvals](approvals.md#how-a-call-is-classified)). They are safe as reads because none of them writes or
   runs anything: with no metacharacter the shell expands nothing, so the absolute words name the
   same files from any directory, under the read confinement and Codex's own sandbox; and they
   are reads only under a runtime that enforces shells which read no startup code

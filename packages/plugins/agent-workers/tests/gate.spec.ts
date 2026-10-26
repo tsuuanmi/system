@@ -336,6 +336,42 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     expect(agent.verdicts[0]).toEqual([{ decision: 'allow' }])
   })
 
+  it('lets a git history read run unasked as a listed command does, under a runtime with no clean shells, and still defers a git write (T276)', async () => {
+    const reads = ['git log --oneline -n 30 main', 'git log system/run/run_d2fdef633d3e37b6', 'git log abc1234..HEAD --format=%h:%s', 'git show abc1234', 'git show abc1234:src/a.ts', 'git diff abc1234 def5678', 'git diff --stat abc1234 def5678', 'git branch --list system/run/run_d2fdef633d3e37b6']
+    for (const write of ['git commit -m x', 'git push', 'git checkout -b x', `git diff --output=${join(tmpdir(), 'out.diff')} abc1234 def5678`]) {
+      const agent = new GatedAgent([[...reads, write].map(bash)])
+      const { ctx, run } = await boot(agent)
+      expect(await run(), write).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+      expect(agent.verdicts[0], write).toEqual([...reads.map(() => ({ decision: 'allow' })), expect.objectContaining({ decision: 'defer' })])
+      // One request, the write's: no read waited for the operator.
+      expect(await ctx.approvals.list(), write).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: `Bash: ${write}` }) })])
+      expect(agent.runs[0]!.prompt).toContain('- Bash git history, read-only, every path absolute and inside')
+    }
+  })
+
+  it('judges a git history read by the command mode first, then as a workspace write where that asks: a forbidden command class, or writes that ask, still bind (T276)', async () => {
+    const read = bash('git log --oneline -n 30 main')
+    // Commands forbidden: denied, as a listed command is.
+    const forbidden = new GatedAgent([[read]])
+    const one = await boot(forbidden, policy({ command: { mode: 'forbid' } }))
+    expect((await one.run()).status).toBe('completed')
+    expect(forbidden.verdicts[0]).toEqual([expect.objectContaining({ decision: 'deny' })])
+    expect(forbidden.runs[0]!.prompt).not.toContain('Bash git history')
+    // Commands and writes ask: it asks, as the command it is.
+    const asked = new GatedAgent([[read]])
+    const two = await boot(asked, policy({ 'workspace-write': { mode: 'ask' } }))
+    expect((await two.run()).status).toBe('failed')
+    expect(asked.verdicts[0]).toEqual([expect.objectContaining({ decision: 'defer' })])
+    expect(await two.ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: git log --oneline -n 30 main' }) })])
+    expect(asked.runs[0]!.prompt).not.toContain('Bash git history')
+    // Writes run with checks pending: it runs, the checks pending as for any workspace write.
+    const pending = new GatedAgent([[read]])
+    const three = await boot(pending, policy({ 'workspace-write': { mode: 'auto', requires: ['tests'] } }))
+    expect((await three.run()).status).toBe('completed')
+    expect(pending.verdicts[0]).toEqual([{ decision: 'allow' }])
+    expect(three.ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' }).map((e) => e.data!.actionClass)).toEqual(['workspace-write'])
+  })
+
   it('tells a Worker that may run commands which calls run unasked, the policy\'s commands list word for word, so it asks less (T199)', async () => {
     const agent = new GatedAgent([[]])
     const { run } = await boot(agent, { ...policy(), commands: ['npm run build', 'git status --short'] })
@@ -361,9 +397,14 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     const effective = [{ actionClass: 'read' as const, mode: 'auto' }]
     expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('Bash read-only inspection')
     expect(unaskedNote({ policies: [], effective }, '/ws', { shellReads: true })).toContain('- Bash read-only inspection, every path absolute and inside /ws')
+    // The git history reads (T276), in one line, wherever the gate runs them unasked.
+    expect(unaskedNote({ policies: [], effective }, '/ws', { shellReads: true })).toContain('- Bash git history, read-only, every path absolute and inside /ws: git log [<ref>|<a>..<b>] [--oneline] [-n <k>] [--format=<placeholders>] [-- <path>], git show <sha>[:<path>], git diff <a> <b> [--stat], git branch --list system/run/<runId>.')
+    expect(unaskedNote({ policies: [], effective }, '/ws')).not.toContain('Bash git history')
+    expect(unaskedNote({ policies: [], effective: [...effective, { actionClass: 'workspace-write' as const, mode: 'auto' }] }, '/ws')).toContain('- Bash git history, read-only')
+    expect(unaskedNote({ policies: [], effective: [...effective, { actionClass: 'workspace-write' as const, mode: 'auto' }, { actionClass: 'command' as const, mode: 'forbid' }] }, '/ws')).not.toContain('Bash git history')
     const reads = unaskedNote({ policies: [], effective }, '/ws', { workspaceReads: true })
     expect(reads).toContain('- Reading tools (the workspace server\'s read_file, list_dir, search, git_log, git_show, git_diff, and git_status) on paths inside your workspace /ws.')
-    expect(reads).toContain('Read its git history the same way, never with git in a shell: git_log (count, skip, commit, paths)')
+    expect(reads).toContain('Read its git history the same way: git_log (count, skip, commit, paths)')
     expect(reads).toContain('- Read your workspace with the workspace server\'s tools, never with a shell: read_file (path; startLine and endLine for a range)')
     expect(reads).toContain('read with the workspace server\'s tools, never with a shell.')
     // A read-only Worker is told the same, whatever the policy runs unasked.
@@ -925,13 +966,72 @@ describe('classify: a tool call as the action the policy judges', () => {
       ]) {
         notRead(command)
       }
+      // git but its history reads (T276, below): a command, which the policy asks about.
       for (const command of [
-        'git status', 'git status --short', 'git diff', 'git log --oneline -n 5', 'git show HEAD:src/a.ts', 'git ls-files src', 'git grep -n foo', 'git blame src/a.ts', 'git rev-parse HEAD',
-        `git diff -- ${join(repo, 'src/a.ts')}`, `git log ${repo}`,
+        'git status', 'git status --short', 'git diff', 'git ls-files src', 'git grep -n foo', 'git blame src/a.ts', 'git rev-parse HEAD',
+        `git diff -- ${join(repo, 'src/a.ts')}`,
       ]) {
         asks(command, repo)
         asks(command)
       }
+    })
+
+    // The git history reads a Worker needs (T276), each with a path inside the workspace it runs in.
+    const history = (workspace: string): string[] => {
+      const a = join(workspace, 'src/a.ts')
+      return [
+        'git log', 'git log main', 'git log system/run/run_d2fdef633d3e37b6', 'git log abc1234..HEAD', 'git log main...HEAD^', 'git log --oneline', 'git log -n 5', 'git log --oneline -n 30 main',
+        'git log --format=%h:%s', 'git log --format=%H', `git log -- ${a}`, `git log ${a}`, `git log --oneline -n 3 --format=%h main -- ${a}`,
+        'git show abc1234', 'git show HEAD', 'git show abc1234:src/a.ts', 'git show HEAD^:docs/x.md', 'git show v1.2.3', 'git log origin/main..feature/x.y',
+        'git diff abc1234 def5678', 'git diff main HEAD', 'git diff --stat abc1234 def5678', 'git diff abc1234 def5678 --stat',
+        'git branch --list system/run/run_d2fdef633d3e37b6',
+      ]
+    }
+    // The writes, and every form beyond those reads: never taken for one.
+    const notHistory = [
+      'git commit', 'git commit -m x', 'git push', 'git push origin main', 'git checkout -b x', 'git checkout main', 'git reset --hard', 'git branch x', 'git branch -D x', 'git branch',
+      `git diff --output=${join(outside, 'x')} a b`, 'git diff --output=/etc/x a b', `git diff --output ${join(outside, 'x')} a b`, 'git log --output=/x', 'git show --output=/x HEAD',
+      'git diff --ext-diff a b', 'git diff --no-index a b', 'git -c core.pager=x log', `git -C ${ws} log`, `git --git-dir=${ws}/.git log`, 'git log -p', 'git log --exec-path',
+      'git diff', 'git diff abc1234', 'git diff a b c', 'git diff --cached a b', 'git diff --name-only a b', `git diff a b -- ${join(ws, 'src/a.ts')}`,
+      'git show', 'git show a b', 'git show --stat abc1234', 'git show abc:../x', 'git show abc:src/../../x', 'git show abc:.git/config', 'git show abc:src/.GIT/config', `git show ${join(ws, 'src/a.ts')}`,
+      'git log a b', 'git log --pretty=%h', 'git log -5', 'git log --stat HEAD', 'git log -n', 'git log -n x', 'git log --format=', 'git log --format=%h %s', 'git log -- relative/path',
+      `git log -- ${join(outside, 'secret')}`, `git log ${join(outside, 'secret')}`, `git log -- ${join(ws, 'link-file')}`, `git log -- ${ws}/../outside/secret`,
+      // A revision word that could name a path climbing out of the directory git runs in: git diffs two such words as files, with no index.
+      'git diff src/../../../x src/../../../y', 'git diff a/../../.. b', 'git diff src/../../../../etc/passwd src/../../../../dev/null', 'git diff a..b/../../x c', 'git diff ../x HEAD',
+      'git diff a/./b c', 'git diff .hidden HEAD', 'git diff a/.. b', 'git diff a/ b', 'git diff a//b c', 'git log src/../../../etc/passwd', 'git log a..b/../../x', 'git log ../x',
+      'git show src/../../../etc/passwd', 'git show a/../..:src/a.ts', 'git show ..', 'git log a....b', 'git diff a.. b', 'git diff ..a b',
+      'git branch --list', 'git branch --list main', 'git branch --list system/run/a system/run/b', 'git branch --list system/run/', 'git branch --list system/run/a/b', 'git branch --list -d system/run/a',
+    ]
+
+    it('takes the git history reads for reads where shells are clean (T276): log by ref or range with --oneline, -n, --format and a path; show <sha>[:<path>]; diff <a> <b> [--stat]; branch --list of a run branch', () => {
+      for (const workspace of [ws, repo]) {
+        for (const command of history(workspace)) {
+          expect(classify(bash(command), workspace, CLEAN), `${command} in ${workspace}`).toEqual({ class: 'read', summary: command, consequences: expect.stringContaining('Reads the git history of the run\'s workspace') })
+        }
+      }
+    })
+
+    it('takes them for history reads elsewhere (T276): the exact command, marked so the gate judges it as a listed command, under every runtime that reports no clean shells', () => {
+      for (const options of [undefined, {}, { shellReads: false }, { readTools: ['Read', 'Grep', 'Glob'] }, { workspaceReads: true }]) {
+        for (const workspace of [ws, repo]) {
+          for (const command of history(workspace)) {
+            expect(classify(bash(command), workspace, options), `${command} in ${workspace}`).toEqual({
+              class: 'command', command: command.split(' '), historyRead: true, summary: `Bash: ${command}`, consequences: expect.stringContaining('read-only git command'),
+            })
+          }
+        }
+      }
+    })
+
+    it('leaves a git write, and every git form beyond the history reads, a plain command the policy asks about (T276)', () => {
+      for (const options of [undefined, CLEAN]) {
+        for (const command of notHistory) {
+          expect(classify(bash(command), ws, options), command).toEqual({ class: 'command', command: command.split(' '), summary: `Bash: ${command}`, consequences: expect.any(String) })
+        }
+      }
+      // A path inside one workspace is outside another: not a history read there.
+      expect(classify(bash(`git log -- ${join(ws, 'src/a.ts')}`), repo, CLEAN)).toMatchObject({ class: 'command' })
+      expect(classify(bash(`git log -- ${join(ws, 'src/a.ts')}`), repo)).not.toHaveProperty('historyRead')
     })
 
     it('leaves every other form of these programs a command, which the policy asks about: an option off the list, an action, a missing path or value, a cluster or an abbreviation', () => {
