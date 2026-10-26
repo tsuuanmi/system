@@ -792,7 +792,7 @@ export class Worktrees {
   async plan(workflowRunId: string, commit: boolean, freeing: string): Promise<WorktreeRelease[]> {
     const plans: WorktreeRelease[] = []
     for (const row of this.ctx.store.db.prepare('SELECT * FROM agent_worktrees WHERE workflow_run_id = ? AND removed_at IS NULL ORDER BY path').all(workflowRunId) as unknown as WorktreeRow[]) {
-      plans.push(await this.exclusive(row.repository, () => this.planOne(row, commit, freeing)))
+      plans.push(await this.exclusive(row.repository, () => this.planSafely(row, commit, freeing)))
     }
     return plans
   }
@@ -834,8 +834,17 @@ export class Worktrees {
     const total = Number((this.ctx.store.db.prepare(`SELECT COUNT(*) AS n FROM agent_worktrees WHERE ${where}`).get(...args) as { n: number }).n)
     const rows = this.ctx.store.db.prepare(`SELECT * FROM agent_worktrees WHERE ${where} ORDER BY created_at, workflow_run_id LIMIT ?`).all(...args, SWEEP_BATCH) as unknown as WorktreeRow[]
     const plans: RunWorktreeRelease[] = []
-    for (const row of rows) plans.push({ runId: row.workflow_run_id, ...await this.exclusive(row.repository, () => this.planOne(row, commit, null)) })
+    for (const row of rows) plans.push({ runId: row.workflow_run_id, ...await this.exclusive(row.repository, () => this.planSafely(row, commit, null)) })
     return { plans, more: total - rows.length }
+  }
+
+  /** {@link planOne}, one that git cannot look at kept with why: it never fails the others (T250). */
+  private async planSafely(row: WorktreeRow, commit: boolean, freeing: string | null): Promise<WorktreeRelease> {
+    try {
+      return await this.planOne(row, commit, freeing)
+    } catch (error) {
+      return { path: row.path, branch: row.branch, outcome: 'kept', why: `git could not look at it, so it stays: ${(error as Error).message.slice(0, 300)}` }
+    }
   }
 
   /** What a worktree holds, as {@link RunWorktree.changes} says it; git runs only in an intact one. */
@@ -889,7 +898,7 @@ export class Worktrees {
         continue
       }
       done.push(await this.exclusive(row.repository, async (): Promise<WorktreeRelease> => {
-        const again = await this.planOne(row, commit, freeing)
+        const again = await this.planSafely(row, commit, freeing)
         if (again.outcome !== 'remove') return again
         try {
           const committed = await this.retire(row)

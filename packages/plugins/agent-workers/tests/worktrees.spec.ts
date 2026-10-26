@@ -570,6 +570,62 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     untouched(repo, head)
   })
 
+  /** Worktrees of finished workflow runs, added as a run's are and recorded at fixed instants, oldest first, with no agent run. */
+  const finished = (ctx: Context, repo: string, root: string, runIds: string[]): string[] => runIds.map((runId, i) => {
+    const path = join(root, runId)
+    git(repo, 'worktree', 'add', '-q', '-b', `system/run/${runId}`, path)
+    ctx.store.db.prepare('INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(repo, runId, path, `system/run/${runId}`, realpathSync(git(path, 'rev-parse', '--absolute-git-dir')), new Date(Date.UTC(2026, 9, 1, 0, 0, i)).toISOString())
+    return path
+  })
+
+  it('removes 40 finished worktrees in one call, recorded as one decision its schema accepts: the reasons counted by why, every worktree named in its outcome (T250, INV-13)', async () => {
+    const repo = realpathSync(repository())
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const root = realpathSync(temp('system-worktrees-'))
+    const { ctx } = await boot(developer(), { workers: [writer(repo)], worktreeRoot: root })
+    const runIds = Array.from({ length: 40 }, (_, i) => `run_many${String(i).padStart(2, '0')}`)
+    const paths = finished(ctx, repo, root, runIds)
+    // One removed by hand: only its record is closed, for a reason of its own.
+    git(repo, 'worktree', 'remove', paths[7]!)
+    const removed = await ctx.agentWorkers.removeWorktrees({ note: 'merged' })
+    expect(removed.more).toBe(0)
+    expect(removed.worktrees.map((w) => [w.runId, w.outcome])).toEqual(runIds.map((runId) => [runId, 'removed']))
+    for (const path of paths) expect(existsSync(path)).toBe(false)
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'retention' })).toHaveLength(1)
+    const decision = ctx.artifacts.get(removed.decision!)!
+    new SchemaRegistry().assertRecord(decision.body as { schema: string })
+    const body = decision.body as { candidates: Array<{ option: string; reasons: string[] }>; outcome: { detail: { worktrees: Array<{ runId: string; path: string }> } } }
+    expect(body.candidates[0]!.reasons).toEqual([
+      '40 worktrees, each named in the outcome\'s detail; the operator asked to remove the finished worktrees: merged',
+      '39 worktree(s): it holds nothing uncommitted: it is removed, and its branch stays',
+      '1 worktree(s): it is gone from disk already: only its record is closed',
+    ])
+    expect(body.outcome.detail.worktrees.map((w) => [w.runId, w.path])).toEqual(runIds.map((runId, i) => [runId, paths[i]]))
+    expect(ctx.store.db.prepare('SELECT DISTINCT decision FROM agent_worktrees').all()).toEqual([{ decision: removed.decision }])
+    // The branches stay; the main working tree is as the operator left it.
+    expect(git(repo, 'branch', '--list', 'system/run/*', '--format=%(refname:short)').split('\n')).toEqual(runIds.map((runId) => `system/run/${runId}`))
+    untouched(repo, head)
+  })
+
+  it('goes on with the other worktrees when git cannot look at one or cannot remove another: each stays, and says why (T250)', async () => {
+    const repo = realpathSync(repository())
+    const root = realpathSync(temp('system-worktrees-'))
+    const { ctx } = await boot(developer(), { workers: [writer(repo)], worktreeRoot: root })
+    const runIds = ['run_one0', 'run_one1', 'run_one2', 'run_one3', 'run_one4']
+    const paths = finished(ctx, repo, root, runIds)
+    // Locked: git refuses to remove it. A broken index: git cannot say what it holds.
+    git(repo, 'worktree', 'lock', paths[1]!)
+    writeFileSync(join(git(paths[3]!, 'rev-parse', '--absolute-git-dir'), 'index'), 'broken')
+    const removed = await ctx.agentWorkers.removeWorktrees({})
+    expect(removed.worktrees.map((w) => [w.runId, w.outcome])).toEqual([['run_one0', 'removed'], ['run_one1', 'kept'], ['run_one2', 'removed'], ['run_one3', 'kept'], ['run_one4', 'removed']])
+    expect(removed.worktrees[1]!.why).toMatch(/^git could not remove it, so it stays for the retention: /)
+    expect(removed.worktrees[3]!.why).toMatch(/^git could not look at it, so it stays: /)
+    expect(runIds.map((_, i) => existsSync(paths[i]!))).toEqual([false, true, false, true, false])
+    new SchemaRegistry().assertRecord(ctx.artifacts.get(removed.decision!)!.body as { schema: string })
+    expect(ctx.store.db.prepare('SELECT workflow_run_id AS runId FROM agent_worktrees WHERE removed_at IS NULL ORDER BY workflow_run_id').all()).toEqual([{ runId: 'run_one1' }, { runId: 'run_one3' }])
+  })
+
   it('serves the run worktree tools to the operator, each output as its schema says, and checks the removal\'s output on its plan before anything is decided: a defect removes nothing (D12, INV-2, INV-14)', async () => {
     const repo = repository()
     const agent = developer()

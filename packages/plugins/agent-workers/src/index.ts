@@ -1565,7 +1565,7 @@ export class AgentWorkers extends Service {
       question: `Are ${removing.length} finished run worktree(s) removed now, on the operator's word, before the retention would?`,
       inputs: [],
       candidates: [
-        { option: 'remove', selected: true, reasons: [`the operator asked to remove the finished worktrees${input.runId ? ` of workflow run ${input.runId}` : ''}${note ? `: ${note}` : ''}`, ...removing.map((p) => `worktree ${p.path} of ${p.runId}: ${p.why}`)] },
+        { option: 'remove', selected: true, reasons: removalReasons(`the operator asked to remove the finished worktrees${input.runId ? ` of workflow run ${input.runId}` : ''}${note ? `: ${note}` : ''}`, removing) },
         { option: 'keep', selected: false, reasons: ['not kept: no agent run of their workflow runs is unfinished or held, and each holds nothing uncommitted or has its changes committed on its branch first, so nothing is lost; the branch stays'] },
       ],
       decider: WORKTREES_DECIDER,
@@ -2795,6 +2795,35 @@ export interface WorktreeRemoval {
   decision?: ContentId
   worktrees: RunWorktreeRelease[]
   more: number
+}
+
+/** The most reasons a decision's candidate holds, and the longest one (decision@1.x `candidates[].reasons`). */
+const DECISION_REASONS = 32
+const DECISION_REASON_LENGTH = 300
+
+/** `text` cut to `max` characters, an ellipsis marking the cut. */
+function clip(text: string, max = DECISION_REASON_LENGTH): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
+
+/**
+ * The reasons of the operator's removal (T250), within the decision's bounds however many worktrees
+ * it removes: the operator's ask, then each worktree and why while they fit; else the worktrees
+ * counted by why, the last line saying how many more. Every worktree is named in the outcome's detail.
+ */
+function removalReasons(ask: string, removing: ReadonlyArray<{ runId: string; path: string; why: string }>): string[] {
+  const room = DECISION_REASONS - 1
+  if (removing.length <= room) return [clip(ask), ...removing.map((p) => clip(`worktree ${p.path} of ${p.runId}: ${p.why}`))]
+  const byWhy = new Map<string, number>()
+  for (const p of removing) byWhy.set(p.why, (byWhy.get(p.why) ?? 0) + 1)
+  const groups = [...byWhy].map(([why, n]) => ({ why, n }))
+  const shown = groups.length <= room ? groups : groups.slice(0, room - 1)
+  const rest = groups.slice(shown.length).reduce((sum, g) => sum + g.n, 0)
+  return [
+    clip(`${removing.length} worktrees, each named in the outcome's detail; ${ask}`),
+    ...shown.map((g) => clip(`${g.n} worktree(s): ${g.why}`)),
+    ...(rest ? [`and ${rest} more worktree(s), each with its own why, named in the outcome's detail`] : []),
+  ]
 }
 
 /** A stored JSON column's value, or undefined when it holds nothing readable. */
