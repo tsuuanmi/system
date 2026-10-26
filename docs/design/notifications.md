@@ -63,7 +63,8 @@ it. Its row is off by default; the operator turns it on
   `/ui`, Home, `system status`, and the report show it); its reminder, kept under `review:<task>`,
   comes `expiryLeadMinutes` before the hold expires, or at once when the hold is shorter than that,
   and a `board.review.ended` read first cancels it. Unanswered, the review expires and the task
-  waits for input (`review-expired`), which nothing revives, so this is the notice that matters.
+  waits for input (`review-expired`), which only a re-opening by the operator or the lead revives
+  (`board_reopen_review`, while the run's worktree exists), so this is the notice that matters.
   It is `notification@1.1`, the record that names the kind.
 - **Content** is made by code from ids, classes, kinds, and times. A value the event gives that is
   not an id (`common@1`) or a word is left out, never quoted; each field is cut to its bound, and

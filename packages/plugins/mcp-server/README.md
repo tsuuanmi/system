@@ -76,7 +76,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     operator (`operator-review`), the soonest to expire first (five named, the rest counted),
     with when it expires (`expires in 3 h (at …)`), from the projects that are not closed (the
     tasks of at most 64 read, the rest said): advice, always `ok`, as the vault key's is, since an
-    unanswered review expires and its task waits for input that nothing revives (T99 D6). A board
+    unanswered review expires and its task waits for input that only a re-opening revives (T99 D6, T286). A board
     that cannot be read is down.
   - `liveness` (with a router that tells `ctx.workers.liveness()`, PROP-0013) is degraded while a
     run that ended without being known to be gone holds its session and worktree, or while a

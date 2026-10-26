@@ -1233,7 +1233,7 @@ export const APP_JS = `'use strict'
     }
     // Every card once, its evidence read; Home places each in its project's group (T253).
     const cards = new Map(await Promise.all(listed.map(async (r) => [r.taskId, card(r, r.run ? await reviewOf(r.run.runId, subjectText(r.subject)) : undefined)])))
-    // A review held for the operator expires unseen, and its task then waits for input that nothing revives: say when the first does.
+    // A review held for the operator expires unseen, and its task then waits for input that only a re-opening revives: say when the first does.
     const heldOf = (list) => list.filter((r) => r.heldFor === 'operator' && r.expiresAt)
     // A verdict's consequence stays in sight: each accepted result still on its way into the repository, its project named
     // unless its group's heading or the page's filter already names it (T256).
@@ -1249,7 +1249,7 @@ export const APP_JS = `'use strict'
         // When the first held for the operator expires, and what then: in sight within the hour, else folded (T239).
         first ? (() => {
           const said = [mine.length + (mine.length === 1 ? ' review is' : ' reviews are') + ' held for you; the first expires ',
-            el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which nothing revives.']
+            el('span', { class: Date.parse(first) - Date.now() < 3600000 ? 'soon' : '' }, relative(first) + ' — ' + absolute(first)), '. Unanswered by then, its task waits for input, which only a re-opening revives (board_reopen_review).']
           return Date.parse(first) - Date.now() < 3600000 ? el('p', {}, said) : keptFold(id + '-expiry', 'When they expire', said)
         })() : null,
         list.length ? list.map((r) => cards.get(r.taskId)) : el('p', { class: 'muted' }, 'No review waits. When a Worker finishes a task, its result waits here for you to accept it or send it back.'),

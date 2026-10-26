@@ -153,6 +153,11 @@ charters, and their tasks.
     the lead or the operator records a defect found in an auto-accepted result, which trips the
     auto-accept circuit breaker at `autoAccept.breaker`'s line, lists the breakers tripped, and turns
     auto-accept on again once the line holds; who it was is the caller's token, never an argument;
+  - `board_reopen_review` (`mcp-board` 1.4, T286): the lead (for its own project) or the operator
+    brings a `review-expired` task back to review, held for the operator, with a reason, while it
+    has its result and its run's worktree is recorded (`agent_worktrees`) and on disk
+    (`runWorktrees`); a review whose holder's lease lapsed is held for the operator by the sweep,
+    never expired by it;
   - `board_propose` takes the attempts the task gets (`maxAttempts`, 1 to 10, `mcp-board` 1.2);
     without it, the task gets the configuration's `templateAttempts` for its template, else
     `maxAttempts` (3) ([attempts](../../../docs/design/board.md#attempts));

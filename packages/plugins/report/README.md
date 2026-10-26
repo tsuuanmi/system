@@ -26,7 +26,7 @@ decides nothing, and no model takes part.
   scope's tasks in review waiting `operator-review` as the report is made, the soonest to expire
   first, each with its title, its pending checks, and `expiresAt` (at most 64, the rest counted in
   `reviewsHeldOmitted`), only when there is any; the rendering says how long each has left as of
-  `asOf`, since an unanswered review expires and its task waits for input that nothing revives.
+  `asOf`, since an unanswered review expires and its task waits for input that only a re-opening revives (`board_reopen_review`).
 - **The dispatch advisor in shadow** (PROP-0015 J1, `mcp-report` 1.5, `advice`): choices advised
   and not (`workflow.dispatch.advised`), dispatched attempts whose outcome was recorded
   (`workflow.dispatch.outcome`) and how many were advised, D74's 100 attempts, and per question

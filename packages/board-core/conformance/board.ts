@@ -591,20 +591,62 @@ export const boardSuite = defineSuite<Boot>({
       expect(decisionOf(ctx, abandoned.lastDecision)).toMatchObject({ decisionType: 'board', outcome: { option: 'closed' } })
       expect((await ctx.board.task(early.taskId))?.cancellation?.reason).toBe('project-closed')
     }),
-    scenario('review-expires', 'bounds review: a reviewer whose lease lapses with no decision leaves the task waiting for input, which expires in turn (INV-9)', async (ctx) => {
+    scenario('review-expires', 'bounds review by the policy\'s wait, never by a lease: a holder whose lease lapses (its process gone across a host stop) leaves the result held for the operator; with no decision by that wait the task waits for input, which expires in turn (INV-9, T286)', async (ctx) => {
       await active(ctx)
       const t = await ready(ctx, task('p1', 't'))
       const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
       await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+      // Submitted inside the 60 s lease, which ends at at(4).
       await ctx.board.submit(t.taskId, generation, { artifacts: [result(ctx, 'r')], subject: HEAD }, at(3.5))
+      expect(await stateOf(ctx, t.taskId)).toBe('review')
+      // The holder is gone past its lease: the review is held for the operator, for the policy's wait from the sweep that saw it.
       await ctx.board.sweep(at(10))
+      const held = validTask((await ctx.board.task(t.taskId))!)
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' }, result: { subject: HEAD } })
+      expect(held.holder).toBeUndefined()
+      expect(Date.parse(held.waiting!.expiresAt)).toBeGreaterThan(at(10).getTime())
+      // Not before the wait ends.
+      await ctx.board.sweep(new Date(Date.parse(held.waiting!.expiresAt) - 1000))
+      expect(await stateOf(ctx, t.taskId)).toBe('review')
+      await ctx.board.sweep(new Date(Date.parse(held.waiting!.expiresAt)))
       const expired = validTask((await ctx.board.task(t.taskId))!)
       expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
       expect(expired.holder).toBeUndefined()
-      expect(await failureOf(ctx.board.answer(t.taskId, [], at(11)))).toBe('invalid')
-      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'r')), at(11)))).toBe('invalid-transition')
+      const after = Date.parse(held.waiting!.expiresAt)
+      expect(await failureOf(ctx.board.answer(t.taskId, [], new Date(after + 1000)))).toBe('invalid')
+      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'r')), new Date(after + 1000)))).toBe('invalid-transition')
       await ctx.board.sweep(new Date(Date.parse(expired.waiting!.expiresAt)))
       expect((await ctx.board.task(t.taskId))?.cancellation?.reason).toBe('input-expired')
+    }),
+    scenario('review-reopened', 're-opens a review-expired task to review with its result, held for the operator again, by the lead or the operator, recorded as a decision and counting no attempt (T286)', async (ctx) => {
+      await active(ctx)
+      expect(ctx.board.reopenReview, 'a provider that re-opens an expired review').toBeTypeOf('function')
+      const reopen = (taskId: string, by: 'operator' | 'lead', reason: string, when: Date): Promise<BoardTask> => ctx.board.reopenReview!(taskId, by, reason, when)
+      const t = await ready(ctx, task('p1', 't'))
+      const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+      await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+      const r = result(ctx, 'r')
+      await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(3.5))
+      // Only a review-expired wait is re-opened.
+      expect(await failureOf(reopen(t.taskId, 'lead', 'too early', at(3.6)))).toBe('invalid-transition')
+      await ctx.board.sweep(at(10))
+      const held = validTask((await ctx.board.task(t.taskId))!)
+      const ended = Date.parse(held.waiting!.expiresAt)
+      await ctx.board.sweep(new Date(ended))
+      expect(validTask((await ctx.board.task(t.taskId))!)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
+      // Refused, nothing changes: no reason, or one who is neither the lead nor the operator.
+      const when = new Date(ended + 60_000)
+      expect(await failureOf(reopen(t.taskId, 'lead', '', when))).toBe('invalid')
+      expect(await failureOf(reopen(t.taskId, 'worker' as 'lead', 'x', when))).toBe('invalid')
+      expect(await stateOf(ctx, t.taskId)).toBe('waiting-for-input')
+      const back = validTask(await reopen(t.taskId, 'lead', 'approved by two families before a host restart', when))
+      expect(back).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' }, result: { artifacts: [r], subject: HEAD }, run: { runId: 'run-1' }, attempts: { count: 1 } })
+      expect(back.holder).toBeUndefined()
+      expect(Date.parse(back.waiting!.expiresAt)).toBeGreaterThan(when.getTime())
+      expect(back.lastDecision).not.toBe(held.lastDecision)
+      expect(decisionOf(ctx, back.lastDecision)).toMatchObject({ decisionType: 'board' })
+      // Once back in review it is not re-opened again.
+      expect(await failureOf(reopen(t.taskId, 'operator', 'again', new Date(when.getTime() + 1000)))).toBe('invalid-transition')
     }),
     scenario('retries-bounded', 'waits for input once review rejected the last attempt allowed, a wait no input revives, which expires (INV-9)', async (ctx) => {
       await active(ctx)
@@ -1417,6 +1459,20 @@ export class FakeBoard extends Board {
     return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: this.decide(taskId, 'done', 'waiting-for-input', at, `${why}; no attempt is left`, { inputs: [back.decision] }) })
   }
 
+  async reopenReview(taskId: string, by: 'operator' | 'lead', reason: string, at: Date = new Date()) {
+    const task = this.taskOf(taskId)
+    if (by !== 'operator' && by !== 'lead') throw new BoardError('invalid', 'an expired review is re-opened by the operator or the lead')
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > REOPEN_REASON_MAX) throw new BoardError('invalid', `a re-opening says why, in 1 to ${REOPEN_REASON_MAX} characters`)
+    if (task.state !== 'waiting-for-input' || task.waiting?.reason !== 'review-expired') throw new BoardError('invalid-transition', `${taskId} is not a review-expired wait`)
+    if (!task.result || !task.run) throw new BoardError('invalid-transition', `${taskId} has no run's result to put back to review`)
+    const { policies } = await this.ctx.approvals.policy(task.projectId)
+    return this.save(task, at, {
+      state: 'review', holder: undefined,
+      waiting: { reason: 'operator-review', pendingChecks: [], since: at.toISOString(), expiresAt: new Date(at.getTime() + waitSeconds(policies, task.actionClass) * 1000).toISOString() },
+      lastDecision: this.decide(taskId, 'waiting-for-input', 'review held for the operator', at, `the ${by} re-opened the expired review: ${reason}`),
+    })
+  }
+
   async sweep(at: Date) {
     const moved = new Map<string, BoardTask>()
     const movedProjects = new Map<string, Project>()
@@ -1469,13 +1525,18 @@ export class FakeBoard extends Board {
         // The run's outcome is unknown here; its owner may still report it (reconcileRun), which withdraws the request.
         moved.set(task.taskId, await this.gate(task, 'remediation', 'reconciliation-failed', at))
       } else if (task.state === 'review' && task.waiting) {
-        // A review held for the operator ends at its wait's expiry, as one whose reviewer's lease lapsed does.
+        // A review held for the operator ends at its wait's expiry, and only then (INV-9).
         if (Date.parse(task.waiting.expiresAt) <= now) {
           moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('review-expired', at), lastDecision: this.decide(task.taskId, 'review', 'waiting-for-input', at, 'review-expired: the operator gave no acceptance decision in time') }))
         }
       } else if (task.state === 'review' && Date.parse(task.holder!.leaseExpiresAt) <= now) {
-        // Review is bounded: no acceptance decision came while the reviewer held the task (INV-9).
-        moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('review-expired', at), lastDecision: this.decide(task.taskId, 'review', 'waiting-for-input', at, 'review-expired') }))
+        // A lapsed lease never expires a review: the result is held for the operator for the policy's wait (INV-9, T286).
+        const { policies } = await this.ctx.approvals.policy(task.projectId)
+        moved.set(task.taskId, this.save(task, at, {
+          holder: undefined,
+          waiting: { reason: 'operator-review', pendingChecks: [], since: at.toISOString(), expiresAt: new Date(at.getTime() + waitSeconds(policies, task.actionClass) * 1000).toISOString() },
+          lastDecision: this.decide(task.taskId, 'review', 'review held for the operator', at, 'the holder\'s lease lapsed with no acceptance decision'),
+        }))
       } else if (task.state === 'waiting-for-approval') {
         const request = await this.ctx.approvals.get(task.waiting!.approvalRequest!)
         // A request the queue withdrew on a policy change: the wait's gate runs again under the policy now.

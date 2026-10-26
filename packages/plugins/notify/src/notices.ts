@@ -221,7 +221,7 @@ export function reminderNotice(reminder: Reminder, now: number, options: ReadOpt
     const taskId = reminder.review.taskId
     return make({ seq: reminder.seq, type: 'board.review.held', at: new Date(now).toISOString() }, options, 'review.expiring', taskId, {
       title: `A review expires soon: board task ${clip(taskId, 60)}`,
-      text: `Board task ${taskId}${of} waits for your Accept or Reject, held for you until ${expiresAt}, in about ${minutes} min. Unanswered by then, the review expires: the task waits for input (review-expired), which nothing revives.`,
+      text: `Board task ${taskId}${of} waits for your Accept or Reject, held for you until ${expiresAt}, in about ${minutes} min. Unanswered by then, the review expires: the task waits for input (review-expired), which only a re-opening revives (board_reopen_review).`,
       act: ['system ui', `MCP board_task {"taskId":"${taskId}"}`],
     })
   }

@@ -137,7 +137,9 @@ stateDiagram-v2
   running --> done: owner reports the run completed and accepted
   review --> done: acceptance accepted
   review --> review: only the operator may accept now (held for the operator)
-  review --> waiting_for_input: reviewer's lease lapsed, or the operator's wait expired, no decision
+  review --> review: the holder's lease lapsed, no decision (held for the operator)
+  review --> waiting_for_input: the operator's wait expired, no decision
+  waiting_for_input --> review: an expired review re-opened (the lead or the operator)
   review --> ready: rejected, attempts left (gate: auto or notify)
   review --> waiting_for_approval: rejected, attempts left (gate: ask)
   review --> waiting_for_input: rejected, no attempt left
@@ -246,7 +248,9 @@ policy change; the other cases only the store-backed provider checks.
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; a failed run that failed only on the infrastructure, with a free retry left, is not counted (`attempts.count` back by one, the same attempt through the gate, the kind and reason in the decision; [attempts](#an-attempt-not-spent-on-the-infrastructure)); the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval; a malformed `infrastructure` is refused (`invalid`) |
 | review → review (held for the operator) | `accept` (or a run owner's completed report) with an accepting decision that is not the operator's, while the class's required checks have not passed or the policy forbids the class | a `board` decision naming the acceptance and the `autonomy` decision; the lease released; `waiting` (`operator-review`, the checks still pending, and the policy's wait for the class) | only the operator's acceptance accepts it now: another such decision is refused (`invalid`); a rejection, or one with the checks passed, applies |
-| review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision, or a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
+| review → review (held for the operator) | `sweep`, the holder's lease lapsed with no decision (its process gone, a host stop across it; T286) | a `board` decision (`operator-review`) naming the `autonomy` decision; the holder released; `waiting` (`operator-review`, the class's required checks pending, the policy's wait for the class from that sweep) | a lapsed lease never expires a review |
+| review → waiting-for-input | `sweep`, a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
+| waiting-for-input (`review-expired`) → review (held for the operator) | `reopenReview` by the lead or the operator, with a reason (`board_reopen_review`, which first checks the run's worktree is still recorded and on disk, and holds a lead's token to its own project) | a `board` decision naming who and why; `waiting` (`operator-review`, a fresh policy wait); the result, the run, and the attempts unchanged | refused unless the wait is `review-expired` and the task has its run and result (`invalid-transition`), or without a reason (`invalid`) |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay; under `autoAccept`, a `board` decision of rule `board.auto-accept` naming the acceptance, the review, and the check-run record ([System accepts a listed branch's result](#system-accepts-a-listed-branchs-result)) | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed, and under `autoAccept` the rule's conditions met, else it is held for the operator |
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
 | waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt, a `funding` ask's lines added to the budget first, in the same transaction); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, the board withdrew it, or the queue no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open; a raise: `funding` and its `board` decision, which the gate's decision names | rejection and expiry never start work, and raise nothing: the task waits for input (`rejected`) |
@@ -260,14 +264,14 @@ policy change; the other cases only the store-backed provider checks.
 Only a question wait takes input. The other input waits record why a person is needed, and no
 input revives them: `answer` refuses them (`invalid`), and they only expire to `cancelled`
 (`input-expired`), or end earlier by `cancel`. To go on, the lead or the operator proposes the
-work again as a new task.
+work again as a new task; an expired review alone has a way back, its re-opening.
 
 | `waiting.reason` | From | Revived by | Otherwise |
 |---|---|---|---|
 | `question` | `block` with questions | `answer` (`board_update` `answers`, one `{question, answer}` per question, `question` its index from 0 in `waiting.questions`), every question once: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked (a policy that does not ask, or a funding ask past the bound) | nothing | expires: `input-expired` |
 | `retries-spent` | review rejected the last attempt, a failed run with none left (an infrastructure failure too, once the task's free retries are used, its decision saying so with the reason), or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
-| `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
+| `review-expired` | a review held for the operator expired with no acceptance decision | re-opened to review by the lead or the operator (`board_reopen_review`), while its run's worktree and result exist | expires: `input-expired` |
 
 ### Funding a spent budget
 
@@ -353,6 +357,17 @@ when the result is accepted:
   outlives the run that held the lease. At that expiry the task waits for input
   (`review-expired`). The board opens no approval request for this, since the queue takes a
   request only on an `ask` verdict; the operator decides on `/ui`, the human channel (INV-6).
+- A review waits for a person on the policy's wait, never on a process (T286). When the holder's
+  lease lapses in review with no decision (its process gone, or a host stop across it, as on
+  2026-10-26 when two approved results expired twenty minutes after a restart), the sweep holds
+  the result for the operator on `operator-review`, with the class's required checks pending (none
+  reported) and the policy's wait for the class from that sweep, as if the run had reported it
+  after the restart. Only that wait ends it.
+- An expired review keeps a way back: `board_reopen_review` (the operator's token, else the
+  lead's for its own project, with a reason) brings a `review-expired` task back to review on
+  `operator-review`, a fresh policy wait, while it still has its result and its run's worktree is
+  still recorded (`agent_worktrees`, not removed) and on disk. It is recorded as a `board`
+  decision naming who and why; the result, the run, and the attempts are unchanged.
 - A `reject` applies with or without checks: a failed check goes back to the lead as another
   attempt ([approvals](approvals.md#the-autonomy-policy)).
 - The workflow engine's acceptance reports, beside `schema` and `review`, the required checks that
@@ -499,8 +514,8 @@ D82 #3): its owner reports it failed with `infrastructure`, a kind and a reason
    request, an input wait cancels the task (INV-9). The board does not depend on the queue for
    this: it applies an unresolved or unknown request's expiry itself, for a task and a charter.
 5. A task is done only by an accepting `acceptance` decision on a result with its exact subject.
-   The board never accepts by default, and review is bounded by the reviewer's lease, or, held
-   for the operator, by the policy's wait for the class.
+   The board never accepts by default, and review is bounded by the policy's wait for the class:
+   a lapsed lease holds the review for the operator, never ends it.
 6. One task at a time holds write authority over a subject (`writes`), and every write presents
    the holder's generation ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
 7. With `ctx.approvals` unavailable, every move that needs it fails and nothing moves.

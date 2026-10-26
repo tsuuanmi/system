@@ -421,6 +421,17 @@ Scope: `client`
 | `maxAttempts` | integer |  | Attempts the task gets (default: the board's for its template, else its maxAttempts, 3); each run that serves it is one, a rejected review included |
 | `clientRequestId` | string |  | Retry-safe request key |
 
+## `board_reopen_review`
+
+Bring a task that waits for input as review-expired back to review, held for the operator for the policy's wait, as the caller (the operator, else the lead, for its own project). Only while the task has its result and its run's worktree is still recorded and on disk (refused otherwise). Recorded as a board decision; no attempt is counted.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes | The task waiting for input as review-expired |
+| `reason` | string | yes | Why it is re-opened |
+
 ## `board_resume`
 
 Resume a paused project: its proposed tasks go through the gate on the board's next sweep, and its ready tasks may be claimed again. Recorded as a board decision.

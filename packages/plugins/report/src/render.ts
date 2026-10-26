@@ -77,13 +77,13 @@ export function renderReport(report: Report): string {
     lines.push(`- Charter allows ${allowed} a day: ${at.daysOver ? `over it on ${plural(at.daysOver, 'day')} (${at.days.filter((d) => d.over).map((d) => d.date).join(', ')})` : 'never over it'}.`)
   }
   if (at.reviewsHeld) {
-    // When each expires unseen, as of the report: unanswered, its task waits for input, which nothing revives.
+    // When each expires unseen, as of the report: unanswered, its task waits for input, which only a re-opening revives.
     const asOf = Date.parse(report.asOf)
     const held = at.reviewsHeld.map((r) => {
       const left = Math.round((Date.parse(r.expiresAt) - asOf) / 1000)
       return `${r.taskId} "${r.title}" (${left > 0 ? `expires in ${duration(left)}` : 'expired'}, at ${r.expiresAt}${r.pendingChecks.length ? `; ${r.pendingChecks.join(', ')} not run` : ''})`
     })
-    lines.push(`- Reviews held for you now: ${held.join(', ')}${at.reviewsHeldOmitted ? ` and ${whole(at.reviewsHeldOmitted)} more` : ''}. Accept or Reject each on /ui before it expires: unanswered, its task waits for input, which nothing revives.`)
+    lines.push(`- Reviews held for you now: ${held.join(', ')}${at.reviewsHeldOmitted ? ` and ${whole(at.reviewsHeldOmitted)} more` : ''}. Accept or Reject each on /ui before it expires: unanswered, its task waits for input, which only a re-opening revives (board_reopen_review).`)
   }
   if (at.liveness) {
     const l = at.liveness
