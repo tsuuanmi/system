@@ -184,9 +184,14 @@ export class TaskLandings {
   private async watch(row: TaskRow, board: Board, landing: TaskLanding): Promise<TaskLanding | undefined> {
     const task = await board.task(row.task_id)
     if (!task) return { ...landing, state: 'none', reason: `task ${row.task_id} is unknown to the board`, at: now() }
-    if (task.run?.runId !== row.run_id) return { ...landing, state: 'none', reason: `task ${task.taskId} moved on to another attempt`, at: now() }
+    // A result held for the operator and not accepted ends its attempt unaccepted: its change is kept as the attempt's result (T271).
+    const unaccepted = (reason: string): TaskLanding => {
+      void this.e.tasks.carries.rejected(row.run_id).catch((error: unknown) => this.e.ctx.logger.warn(`workflow: the change of run ${row.run_id} was not kept yet: ${(error as Error)?.message ?? String(error)}`))
+      return { ...landing, state: 'none', reason, at: now() }
+    }
+    if (task.run?.runId !== row.run_id) return unaccepted(`task ${task.taskId} moved on to another attempt`)
     if (task.state === 'review' || task.state === 'running' || task.state === 'waiting-for-approval') return this.touch(row, landing)
-    if (task.state !== 'done' || !task.result?.acceptance) return { ...landing, state: 'none', reason: `task ${task.taskId} is ${task.state}: its result was not accepted`, at: now() }
+    if (task.state !== 'done' || !task.result?.acceptance) return unaccepted(`task ${task.taskId} is ${task.state}: its result was not accepted`)
     return { ...landing, state: 'commit', acceptance: task.result.acceptance, at: now() }
   }
 

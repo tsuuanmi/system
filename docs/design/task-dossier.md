@@ -24,7 +24,7 @@ critics, a human accountable). The dossier is that artifact for a board task.
 | `progress` | the author, after a step; the engine for a step that wrote none | what was done, commits, what remains, small decisions and why |
 | `review` | a reviewer; the engine from a review's assessment | the verdict and findings, bound to the exact subject reviewed; the review's result and assessment linked, not copied |
 | `response` | the author of a fix; the engine for a fix that wrote none | per finding: fixed in which commit, or not and why |
-| `evidence` | the engine (the run's checks and acceptance, the report to the board, the landing); and a writing step's Worker (T267) | the System's: what it checked. The author's: the output of the checks it ran before its review, verbatim (a command, its exit code, the lines that hold the result); told from the System's by its author, and never a check the engine reports |
+| `evidence` | the engine (the run's checks and acceptance, the report to the board, the landing, an ended attempt's kept change, where a new attempt's tree came from); and a writing step's Worker (T267) | the System's: what it checked. The author's: the output of the checks it ran before its review, verbatim (a command, its exit code, the lines that hold the result); told from the System's by its author, and never a check the engine reports |
 
 Every entry is a content-hashed `task-dossier-entry@1.0` artifact. Its `seq` is its place in the
 task's dossier, from 1 with no gap, and `prev` names the entry before it, so the dossier at an entry
@@ -79,6 +79,17 @@ sequenceDiagram
   the report of the run's outcome to the board, and the landing of an accepted result once it is
   committed, asked to merge, and where it ends (merged, returned, refused, rejected, or nothing to
   land; never the steps between) are appended as `evidence`, the decisions and records linked.
+- **Attempts, and where each tree came from** (T271). An attempt that ends without its result being
+  accepted keeps its change as a commit on its run's branch, and its dossier says so once it is
+  settled, as an entry of that attempt: "Attempt N (run …) ended without being accepted; its change
+  is kept as commit <sha> on <branch>, on top of <base>, as the attempt's result", the sha in the
+  entry's `commits`; or that it is not kept, and why. The next attempt's entry says which tree it
+  starts from: "Attempt N+1 (run …) starts from the tree of attempt N (run …): its change is kept as
+  commit <sha> …", the sha in `commits`, and what a move of the base did: replayed on the new tip
+  without conflict, or a conflict (the files named) that left the tree at the change's own base for
+  the Worker to resolve. A fresh start says "starts fresh, not from the tree of attempt N" and why
+  (the task opted out, or the change could not be carried). The carry's decisions are linked
+  ([starting from the previous attempt's work](workflow-engine.md#starting-from-the-previous-attempts-work)).
 - A failure to append is logged and never fails the work it records.
 
 ## Reading

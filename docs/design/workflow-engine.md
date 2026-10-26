@@ -825,9 +825,9 @@ is refused (`config_error`), and every other run is unaffected.
 - **Briefs.** Every execution of the run is briefed from the task
   ([a board task's brief](#a-board-tasks-brief)); its next attempt may resume this run's session.
 - **The previous attempt's work.** When the attempt before this one completed its writing step and
-  failed only after it, for a reason that says nothing about the change (a later step's Worker or
-  session, a limit, a timeout), this run's worktree starts from that change, carried before its
-  first step, and its writing step builds on it
+  ended without being accepted, however it ended, its change was kept as a commit on its run's
+  branch, and this run's worktree starts from that change, replayed on the current HEAD, carried
+  before its first step; its writing step builds on it, unless the task opted out (`task.fresh`)
   ([below](#starting-from-the-previous-attempts-work)).
 - **Run first, then work.** The run is written `starting`, the board records it (`start`, with
   the holder's generation), and only then is it opened and scheduled. A restart in between is
@@ -1124,15 +1124,38 @@ person's answer. The protocol is the brief's: every brief of a board task's run 
 > (`src/carries.ts`), the source's part in [`agent-workers`](../../packages/plugins/agent-workers/README.md)
 > ([carrying an earlier run's work](agent-runtimes.md#carrying-an-earlier-runs-work)).
 
-An attempt whose writing step completed and whose next step then failed for its own reasons (T110a:
-the review reached its turn limit) leaves a change no review judged. The board counts the attempt
-and decides the next one, a new run, as always; that run's worktree starts from the change instead
-of HEAD, and its writing step builds on it rather than making it again.
+An attempt whose writing step completed and that then ended without its result being accepted
+leaves a change: T110a's review reached its turn limit; T267's attempt 2 wrote a 40-file change that
+acceptance failed on tests, and attempt 3 began again from a clean tree (T271). That change is the
+attempt's result. It is kept as a commit on the attempt's own run branch when the attempt ends,
+its sha in the dossier. The board counts the attempt and decides the next one, a new run, as always.
+That run's worktree starts from the change, replayed on the current HEAD, instead of from a clean
+HEAD, and its writing step builds on the change rather than making it again, unless the task opts
+out.
+
+#### Keeping an ended attempt's change
+
+| When | What |
+|---|---|
+| the run's outcome reaches its task, and the task is neither `done` nor held for the operator's acceptance (`review`): a failed step, a failed acceptance, a cut, the review bound reached, a rejected fix, a question | the report marks the outcome `kept: pending` in its own transaction |
+| a result held for the operator is not accepted (the landing's watch sees the task move on, or the next attempt starts) | the outcome is marked `kept: pending` then |
+| pending | the run's latest writing step's tree (a step that proves `develop`, completed, on a git working tree) is committed on the run's own branch by the source that holds it, through the `commit` landing step: only while the tree is still exactly the subject that step left and no run of it can still write it (INV-5, INV-15). Then `kept` with the commit, and an `evidence` entry of the attempt's dossier: "Attempt N (run …) ended without being accepted; its change is kept as commit <sha> on <branch>", the sha in its `commits` |
+| it cannot be | `not-kept` with why (no `land` on the `workers` seam, no source that holds the tree, the tree moved, the task writes no commit), said in the same dossier entry form; nothing is skipped without being said. The worktree is left as it is. A tree a run of it may still write (`busy`) stays pending |
+
+Durable (INV-4): pending is on the run's row, so every pending report is asked again when the engine
+starts (a source not yet registered then leaves it pending), and the next attempt's first turn keeps
+the previous attempt's change before it decides what to do with it. One keep runs at a time per run.
+Its dossier entry is written apart from settling it, and the outcome marks it `said`: a stop between
+the two writes the entry at the next keep or start, once.
+A failed landing of an accepted result is the landing's own: its commit on the run's branch is
+recorded in the dossier already ([below](#landing-an-accepted-result)).
+
+#### Starting from it
 
 ```mermaid
 stateDiagram-v2
   [*] --> none: no earlier writing step in a worktree (nothing decided)
-  [*] --> fresh: admission decision fresh (a bound does not hold)
+  [*] --> fresh: admission decision fresh (the task opts out, or a bound does not hold)
   [*] --> due: admission decision carry
   due --> carried: first turn, before any step: the source carried it (gate decision carry)
   due --> fresh: refused, no source, a source that cannot answer, a lost holder (gate decision fresh)
@@ -1144,44 +1167,68 @@ stateDiagram-v2
 | Step | Records | On failure |
 |---|---|---|
 | decided | when the run is admitted, before the task is taken, if the task's previous attempt left a writing step's result (a step that proves `develop`, completed, an agent's result naming a git working tree and its subject): an `admission` decision (rule `workflow.task-worktree`) whose inputs are that result, `carry` when every bound below holds, else `fresh` naming the first that does not; `carry` on the run's `workflow_tasks` row (`due` or `fresh`), in the run's admission | — |
-| carried | at the run's first turn, after the board recorded it and before any step is promoted or routed: `ctx.workers.carry` with the run, the earlier run's worktree and the subject its writing step left, and a commit message naming the task, both runs, and the step; then a `gate` decision of the same rule, its inputs the admission decision and the result: `carry` naming the earlier run, the commit on its branch, the base, and the run's worktree, or `fresh` with why; the row `carried` or `fresh`, and `workflow.task.carry` in the same transaction | no `carry` on `ctx.workers`, no source that holds the tree, a refusal (`moved`, `gone`, `busy`, `base-moved`, `exists`, `empty`, `failed`), a source that cannot answer (the seam's `failed` refusal), or a run whose holder was lost: `fresh`, recorded with why, and the run's worktree is cut from HEAD at its first agent run, as for any attempt |
-| briefed | every brief of a carried run points first at the `gate` decision (role `prior`), its note: the worktree already holds the change the step made (the commit, its branch, the base): build on it, do not make it again | — |
+| carried | at the run's first turn, after the board recorded it and before any step is promoted or routed, once the previous attempt's change is kept (above): `ctx.workers.carry` with the run, the earlier run's worktree and the subject its writing step left, the commit the task writes now (`onto`), and a commit message naming the task, both runs, and the step; then a `gate` decision of the same rule, its inputs the admission decision and the result: `carry` naming the earlier run, the commit on its branch, the base, the run's worktree, and what a move of the base did (`rebase`), or `fresh` with why; the row `carried` or `fresh`, and `workflow.task.carry` in the same transaction; then an `evidence` entry of the dossier saying which attempt the tree came from (below) | no `carry` on `ctx.workers`, no source that holds the tree, a refusal (`moved`, `gone`, `busy`, `base-moved`, `exists`, `empty`, `failed`), a source that cannot answer (the seam's `failed` refusal), or a run whose holder was lost: `fresh`, recorded with why (the dossier says so too), and the run's worktree is cut from HEAD at its first agent run, as for any attempt |
+| briefed | every brief of a carried run points first at the `gate` decision (role `prior`), its note: the worktree already holds the change the step made (the commit, its branch, the base): build on it, do not make it again; then, when the base moved, `Dev moved to <sha>: replayed` or `Dev moved to <sha>: conflicts`, else where to read why the attempt ended. The dossier, which every brief holds, says it in full | — |
 
-The bounds, each a reason for `fresh` (INV-2: any doubt starts from HEAD):
+However the previous attempt ended, its change is carried (T271): a failed step, a failed
+acceptance, a cut, the review bound reached with real findings, a rejected fix, a question, the
+operator's rejection. The admission decision says how it ended, the dossier holds the reviews and
+the acceptance that judged it, and the writing step judges the change again. Redoing a 40-file
+change in one attempt is what T267 showed costs more than a judged change kept. The bounds, each a
+reason for `fresh` (INV-2: any doubt starts from HEAD):
 
+- **A task can opt out.** A start with `task.fresh: true` (the MCP `run` tool's `task.fresh`, the
+  lead's choice, as when a review rejected the approach itself) starts from HEAD: the admission
+  decision is `fresh` (`optedOut`), and the dossier says the attempt starts fresh, not from the tree
+  of the attempt before. The earlier change is still kept as that attempt's result.
 - **Only the attempt just before.** The task's latest run the board recorded must have served
   attempt `attempts.count`; a chain carries from the one before each time, never further back.
-- **Only a later step's failure.** That run failed (a completed run's result went to the board,
-  which judged it), and it and each of its failed steps failed as `session_broken`,
-  `provider_stalled`, `timeout`, `network`, `overloaded`, `quota_exhausted`, `reauth_required`,
-  `challenge`, `reconciliation_failed`, `config_error`, `worker_changed`, `internal`, `budget_spent`, or
-  `holder_lost`. A review's or a person's verdict (`plan_rejected`, `gate_timeout`,
-  `call_rejected`, `call_expired`, `stopped`, `aborted`), a moved subject (`stale_subject`), a
-  denied egress, or a kind not listed is not.
-- **Only a change no one judged.** Nothing in the run was grown (a remediation cycle, a plan), no
-  exact-subject review of it judged the change other than `approve`, and no step asked questions
-  ([a question from a run](#a-question-from-a-run)).
 - **Only on the subject the task writes** (INV-15): the task writes a `git-head` subject, the run
-  was admitted to write the same one, and the writing step's tree is on its commit. A task that
-  writes nothing never carries.
-- **Only that exact tree, onto the same base** (INV-5), checked by the source when it carries:
-  nothing of the earlier workflow run still runs or is not known to be gone, its worktree is intact
-  and still exactly the subject its writing step left, and the repository's HEAD is still the
-  commit that tree is on, where a fresh worktree would be cut from.
+  was admitted to write a `git-head` subject, and the writing step's tree is on the commit that run
+  was admitted to write (a developer that committed moved its own subject). A task that writes
+  nothing never carries.
+- **Only that exact tree** (INV-5), checked by the source when it carries: nothing of the earlier
+  workflow run still runs or is not known to be gone, its worktree is intact and still exactly the
+  subject its writing step left, or the system's commit of exactly that subject on its base (the
+  keep's, or a carry's before a restart); and the commit the task writes now is the repository's
+  HEAD, where a fresh worktree is cut from. A task whose subject still names a commit the repository
+  moved past starts from HEAD (`base-moved`); the lead moves the task's subject to the new tip, and
+  the next attempt carries.
 
-- **What the run then does.** Its worktree's HEAD is that commit, with the earlier change on top,
+- **Onto the current tip.** When the repository's HEAD is not the commit the change is on (dev
+  moved), the source replays the change there: a three-way merge of the trees in a scratch index
+  (`git read-tree -m`, plumbing every git has; nothing of the repository's own index, refs, or
+  working trees touched). Merged by whole files, the new worktree starts at HEAD holding the
+  replayed change (`rebase: rebased`). A file both sides changed is a conflict: the new worktree
+  starts at the change's own base holding the change as it was, the conflict named (`rebase:
+  conflict`, the files), and the Worker resolves the move. The brief, the gate decision, and the
+  dossier say which.
+- **What the run then does.** Its worktree's HEAD is that base, with the earlier change on top,
   staged, as if it had been made there: the writing step runs as in any attempt, the review is
   shown and binds to the whole change, and the result is on the subject the task writes; its
   landing commits the whole change on the run's branch ([below](#landing-an-accepted-result)). The
-  earlier run's branch keeps the system's carry commit, which is never merged.
+  earlier run's branch keeps the commit that kept its change, which is never merged.
+- **The dossier shows where the tree came from** ([task dossier](task-dossier.md)): "Attempt N (run
+  …) starts from the tree of attempt M (run …): its change is kept as commit <sha> on <branch>, on
+  top of <base>", the sha in its `commits`, and what a move of the base did; or "Attempt N starts
+  fresh, not from the tree of attempt M", and why. Written at the run's first turn from the carry its
+  row stores, and the row marks it noted.
+- **Restart, the move of the base** (INV-4): a carry the source made before a stop is said again as
+  it first was, from where its worktree was cut, as nothing else of it is stored. Cut at another
+  commit than the tree's base, it was replayed there (`rebased`). Cut at the base while the commit
+  the task writes is another, it conflicted (`conflict`, the files found by the same replay again).
+  The gate decision, the brief, and the dossier then say what they would have said. A carry
+  settled and not yet noted in the dossier is noted at the next turn.
 - **Restart** (INV-4): `due` is on the row, so a restart carries before any step as the first turn
   would, and the source finds its own commit and worktree and says so (`carried: false`); a worktree
   it cut and had not yet given the tree is never run in, and is given it, or put back to its base
   when it can no longer be.
 - **Seams:** only the optional `carry` on the `workers` seam is new
-  ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md));
-  with a provider that has none, every attempt starts from HEAD as before, and the board reads
-  nothing new.
+  ([ADR-0061](../decisions/adr/0061-a-tasks-next-attempt-starts-from-the-work-its-previous-attempt-left.md)),
+  with T271's additive optional fields (`CarryStep.onto`, `Carried.rebase`); keeping a change uses
+  the `commit` landing step as it is. With a provider that has none, every attempt starts from HEAD
+  as before (said as `not-kept` and `fresh`), and the board reads nothing new: `TaskClaim.fresh` and
+  the outcome's `kept` are the engine's own.
 
 ### A digest of a task's result
 

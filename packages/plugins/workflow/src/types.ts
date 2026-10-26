@@ -157,6 +157,11 @@ export interface TaskClaim {
   holder?: string | undefined
   generation?: number | undefined
   revision?: number | undefined
+  /**
+   * Opt out of starting from the work the task's previous attempt left (T271): the run's worktree is
+   * cut from HEAD, as when a review rejected the previous approach. Default: the work is carried.
+   */
+  fresh?: boolean | undefined
 }
 
 /**
@@ -238,6 +243,9 @@ export interface TaskCarry {
   worktree?: string
   branch?: string
   commit?: string
+  /** Once carried: the commit the worktree starts at, and what a move of the repository's HEAD since the earlier tree did (T271). */
+  base?: string
+  rebase?: { outcome: 'rebased' | 'conflict'; from: string; onto: string; files?: string[] }
   cause?: string
   reason?: string
   at: string
@@ -437,6 +445,14 @@ export interface TaskOutcome {
   /** The decision the report applied or recorded (acceptance or reconciliation). */
   decision?: ArtifactRef
   reason?: string
+  /**
+   * Whether the change the attempt left was kept as a commit on its run's branch (T271): `pending`
+   * from the report (or from the operator's rejection of a result held for review) until it is, asked
+   * again at start and before the next attempt decides; then `kept` with the commit and its branch,
+   * or `not-kept` with why. Its dossier entry says the same; `said` once it is written, so a stop
+   * between the two writes it at the next keep (INV-4).
+   */
+  kept?: { state: 'pending' | 'kept' | 'not-kept'; commit?: string; branch?: string; reason?: string; said?: boolean; at: string }
 }
 
 export interface ExplainedDecision {

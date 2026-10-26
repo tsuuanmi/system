@@ -453,13 +453,13 @@ export class TaskDossiers {
   }
 
   /** An `evidence` entry by the engine for a task's run (its checks and acceptance, its report, its landing). */
-  evidence(runId: string, text: string, refs: ArtifactRef[], subject?: Subject): void {
+  evidence(runId: string, text: string, refs: ArtifactRef[], subject?: Subject, commits: string[] = []): void {
     const frame = this.e.tasks.frame(runId)
     if (!frame) return
     const run = this.e.runRow(runId)
     this.append({
       projectId: frame.projectId, taskId: frame.taskId, attempt: frame.attempt, kind: 'evidence', text, refs: refs.filter((r) => !!this.e.ctx.artifacts.get(r)),
-      author: { type: 'system', ref: 'workflow', runId }, ...(subject ? { subject } : {}),
+      author: { type: 'system', ref: 'workflow', runId }, ...(subject ? { subject } : {}), ...(commits.length ? { commits } : {}),
     }, run?.classification ?? this.e.ctx.egress.defaultClassification)
   }
 

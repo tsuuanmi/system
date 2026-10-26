@@ -502,19 +502,25 @@ export interface WorkChange {
 export const CHANGE_BOUNDS = { files: 200, fileChars: 64_000, totalChars: 512_000 } as const
 
 /**
- * Start a workflow run's worktree from an earlier run's work (ADR-0061): the next attempt of a board
- * task whose previous attempt's writing step completed, and failed only after it, continues from that
- * tree instead of redoing it. The source that holds `from.workspace` as the worktree of workflow run
- * `from.runId` commits it on that worktree's branch, only while it is still exactly `from.subject`
- * (the tree the writing step left) and no run of it can still write it, with `message`; then it cuts
- * the worktree of `runId` at the commit `from.subject.ref` names, only while that is still the
- * repository's HEAD (where a fresh worktree is cut from), holding the committed tree as changes on top.
- * Never a force, a reset, or a push.
+ * Start a workflow run's worktree from an earlier run's work (ADR-0061, T271): the next attempt of a
+ * board task whose previous attempt's writing step completed, and that ended unaccepted, continues
+ * from that tree instead of redoing it. The source that holds `from.workspace` as the worktree of
+ * workflow run `from.runId` commits it on that worktree's branch (or finds it committed there, kept as
+ * that attempt's result), only while it is still exactly `from.subject` (the tree the writing step
+ * left) and no run of it can still write it, with `message`; then it cuts the worktree of `runId` at
+ * the repository's HEAD (where a fresh worktree is cut from) holding the change as changes on top,
+ * replayed there when HEAD is not `from.subject.ref`; when the replay conflicts, at `from.subject.ref`
+ * itself, the conflict named in the answer. Never a force, a reset, or a push.
  */
 export interface CarryStep {
   runId: string
   from: { runId: string; workspace: string; subject: { ref: string; version: string } }
   message: string
+  /**
+   * The commit the task writes now (T271): the carry goes onto it, and only while it is the
+   * repository's HEAD; else it is refused as `base-moved`. Absent: onto the HEAD, whatever it is.
+   */
+  onto?: string
 }
 
 /**
@@ -535,7 +541,16 @@ export type CarryRefusal = 'moved' | 'gone' | 'busy' | 'base-moved' | 'exists' |
  *   as the retention would commit it).
  */
 export type Carried =
-  | { outcome: 'carried'; repository: string; from: { branch: string; commit: string }; base: string; branch: string; worktree: string; carried: boolean }
+  | {
+    outcome: 'carried'; repository: string; from: { branch: string; commit: string }; base: string; branch: string; worktree: string; carried: boolean
+    /**
+     * What a move of the repository's HEAD since the tree's base did (T271): `rebased`, the change
+     * replays on it without conflict, so `base` is that HEAD and the worktree holds the replayed change;
+     * `conflict`, the replay conflicts (`files`), so `base` stays the tree's own base and the Worker
+     * resolves the move. Absent: HEAD was still the tree's base.
+     */
+    rebase?: { outcome: 'rebased' | 'conflict'; from: string; onto: string; files?: string[] }
+  }
   | { outcome: 'refused'; cause: CarryRefusal; reason: string }
 
 /**

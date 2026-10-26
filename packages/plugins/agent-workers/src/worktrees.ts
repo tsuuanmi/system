@@ -1258,10 +1258,13 @@ export class Worktrees {
    * - the earlier worktree is committed on its branch, as the retention commits it, only while no
    *   agent run of its workflow run is unfinished or not known to be gone (INV-15), while it is intact,
    *   and while it is still exactly `step.from.subject`, the tree its writing step left (INV-5);
-   * - only while that subject's commit is still the repository's HEAD, where a fresh worktree is cut
-   *   from: the carry never moves a run onto another base;
-   * - the new worktree is added on the run's branch at that commit and given the committed tree, staged,
-   *   so its subject is the base with the earlier change on top, as if the change had been made in it.
+   *   A commit the system made of exactly that subject (a carry's before a restart, or the commit that
+   *   kept it as its attempt's result, T271) is taken as it is;
+   * - only while the commit the task writes now (`step.onto`) is the repository's HEAD, where a fresh
+   *   worktree is cut from;
+   * - the new worktree is added on the run's branch at the HEAD and given the change replayed there
+   *   (a three-way merge of the trees), staged, so its subject is the HEAD with the earlier change on
+   *   top; when the replay conflicts, at the change's own base, the conflicting files named (T271).
    *
    * Each step checks first that its work is not done already, so a carry repeated after a restart says
    * so instead of doing it twice (INV-4). Nothing is forced, reset, deleted, or pushed.
@@ -1286,7 +1289,9 @@ export class Worktrees {
         } catch (error) {
           return { outcome: 'refused', cause: 'failed', reason: (error as Error).message }
         }
-        return { outcome: 'carried', repository, from: { branch: from.branch, commit: earlier.carried_commit }, base, branch: earlier.branch, worktree: earlier.path, carried: false }
+        // What the move of HEAD did is said again as the carry first said it (INV-4): derived from where the worktree was cut.
+        const rebase = await this.movedAt(repository, base, earlier.forked_at ?? base, step, earlier.carried_commit)
+        return { outcome: 'carried', repository, from: { branch: from.branch, commit: earlier.carried_commit }, base: earlier.forked_at ?? base, branch: earlier.branch, worktree: earlier.path, carried: false, ...(rebase ? { rebase } : {}) }
       }
     }
     let carried: Carried | undefined
@@ -1320,9 +1325,11 @@ export class Worktrees {
     } catch (error) {
       return refuse('failed', (error as Error).message)
     }
-    // A fresh worktree is cut from the repository's HEAD: the earlier work is carried only onto that same commit.
+    // A fresh worktree is cut from the repository's HEAD: the earlier work is carried onto that commit, replayed there when HEAD moved
+    // since the tree's base (T271), and only while it is the commit the task writes now.
     const head = (await git(repository, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).catch(() => '')).trim()
-    if (!cut && head !== base) return refuse('base-moved', `the HEAD of ${repository} is ${head || 'unreadable'} now, not ${base}, the commit the tree ${subject} is on: a fresh worktree starts from the HEAD, so the earlier work is not carried onto another base`)
+    if (!cut && !head) return refuse('base-moved', `the HEAD of ${repository} is unreadable now: a fresh worktree starts from the HEAD, so the earlier work is not carried`)
+    if (!cut && step.onto !== undefined && step.onto !== head) return refuse('base-moved', `the HEAD of ${repository} is ${head} now, not ${step.onto}, the commit the task writes: a fresh worktree starts from the HEAD, so the earlier work is not carried onto another base`)
     // Where the run's worktree goes, checked before anything changes: nothing there is ever taken over.
     const branch = branchOf(step.runId)
     let path = cut?.path
@@ -1347,36 +1354,99 @@ export class Worktrees {
       return refuse('moved', `the worktree ${from.path} is now ${subjectId(current.subject)}, not ${subject} as its writing step left it: it changed since, so its work is not carried`)
     }
     const commit = (await inside(['rev-parse', 'HEAD'])).trim()
+    // Where the run's worktree is cut, and the tree it is given (T271): the commit itself on its own base; its replay on the HEAD
+    // that moved since; or, when the replay conflicts, the commit on its own base, the conflict named for the Worker to resolve.
+    let onto = cut?.forked_at ?? base
+    let tree = commit
+    let rebase: Extract<Carried, { outcome: 'carried' }>['rebase']
+    if (cut ? onto !== base : head !== base) {
+      // A worktree cut before a restart was cut at the commit its replay went onto: the same replay gives it the same tree.
+      const target = cut ? onto : head
+      const replayed = await this.replayOnto(repository, base, target, commit)
+      if ('tree' in replayed) {
+        onto = target
+        tree = replayed.tree
+        rebase = { outcome: 'rebased', from: base, onto: target }
+      } else if (cut) return refuse('failed', `the work of ${from.branch} at ${commit} no longer replays on ${target}, where ${cut.path} was cut for it`)
+      else rebase = { outcome: 'conflict', from: base, onto: head, files: replayed.files }
+    } else if (cut) {
+      // Cut at its own base before a restart: a conflict then, said again now (INV-4).
+      rebase = await this.movedAt(repository, base, onto, step, commit)
+    }
     if (!cut) {
-      // Added on its own branch at the base, its files not checked out: the commit's tree is read in next.
-      await git(repository, ['worktree', 'add', '--no-checkout', '-b', branch, path, base])
+      // Added on its own branch at its base, its files not checked out: the tree is read in next.
+      await git(repository, ['worktree', 'add', '--no-checkout', '-b', branch, path, onto])
       const common = real(resolve(repository, (await git(repository, ['rev-parse', '--git-common-dir'])).trim()))
       const gitdir = pointer(path)
       if (!common || !gitdir || !under(gitdir, join(common, 'worktrees'))) throw new WorktreeError(`${path} was added, and its .git file does not point into the worktrees of ${repository}; it is left for the operator`)
       this.ctx.store.transaction((db) => {
         db.prepare(`INSERT INTO agent_worktrees (repository, workflow_run_id, path, branch, gitdir, created_at, removed_at, decision, failure, failed_at, carried_from, carried_commit, forked_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, NULL, ?)
           ON CONFLICT (repository, workflow_run_id) DO UPDATE SET path = excluded.path, branch = excluded.branch, gitdir = excluded.gitdir, created_at = excluded.created_at,
-          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = excluded.carried_from, carried_commit = NULL, forked_at = excluded.forked_at`).run(repository, step.runId, path, branch, gitdir, new Date().toISOString(), from.workflow_run_id, base)
+          removed_at = NULL, decision = NULL, failure = NULL, failed_at = NULL, setup_hash = NULL, setup_decision = NULL, carried_from = excluded.carried_from, carried_commit = NULL, forked_at = excluded.forked_at`).run(repository, step.runId, path, branch, gitdir, new Date().toISOString(), from.workflow_run_id, onto)
       })
       cut = this.row(repository, step.runId)!
     }
     if (pointer(cut.path) !== cut.gitdir) return refuse('failed', `the .git file of ${cut.path} no longer points to the worktree's own directory ${cut.gitdir}; it is left for the operator`)
     try {
-      // Index and files become the commit's tree; HEAD stays at the base, so the earlier change is the worktree's own change.
-      await git(cut.path, [`--git-dir=${cut.gitdir}`, `--work-tree=${cut.path}`, 'read-tree', '-u', '--reset', commit])
+      // Index and files become the tree; HEAD stays at the base, so the earlier change is the worktree's own change.
+      await git(cut.path, [`--git-dir=${cut.gitdir}`, `--work-tree=${cut.path}`, 'read-tree', '-u', '--reset', tree])
     } catch (error) {
       return refuse('failed', `the work of ${from.branch} at ${commit} could not be read into ${cut.path}: ${(error as Error).message}`)
     }
     this.ctx.store.transaction((db) => void db.prepare('UPDATE agent_worktrees SET carried_commit = ? WHERE repository = ? AND workflow_run_id = ?').run(commit, repository, step.runId))
-    this.ctx.logger.info(`agent Workers: run ${step.runId} works in ${cut.path} on ${cut.branch}, starting from the work of run ${from.workflow_run_id} (${commit} on ${from.branch}, on top of ${base})`)
-    return { outcome: 'carried', repository, from: { branch: from.branch, commit }, base, branch: cut.branch, worktree: cut.path, carried: true }
+    this.ctx.logger.info(`agent Workers: run ${step.runId} works in ${cut.path} on ${cut.branch}, starting from the work of run ${from.workflow_run_id} (${commit} on ${from.branch}, on top of ${base}${rebase ? `; ${rebase.outcome === 'rebased' ? `replayed on ${rebase.onto}` : `${rebase.onto} moved and the replay conflicts, so it stays on ${base}`}` : ''})`)
+    return { outcome: 'carried', repository, from: { branch: from.branch, commit }, base: onto, branch: cut.branch, worktree: cut.path, carried: true, ...(rebase ? { rebase } : {}) }
   }
 
-  /** The earlier worktree is clean, and its HEAD is the system's commit of `subject` for `runId` on top of `base`: committed before a restart. */
+  /**
+   * What a move of the repository's HEAD did to a carry made before a restart (T271, INV-4), derived
+   * from where its worktree was cut, as nothing else of it is stored: cut at another commit than the
+   * tree's base, it was replayed there (`rebased`); cut at the base while the commit the task writes
+   * (`step.onto`, else the HEAD) is another, the replay conflicted (`conflict`, the files found by the
+   * same replay again). Undefined when nothing moved.
+   */
+  private async movedAt(repository: string, base: string, forkedAt: string, step: CarryStep, commit: string): Promise<Extract<Carried, { outcome: 'carried' }>['rebase']> {
+    if (forkedAt !== base) return { outcome: 'rebased', from: base, onto: forkedAt }
+    const target = step.onto ?? (await git(repository, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).catch(() => '')).trim()
+    if (!target || target === base) return undefined
+    const replayed = await this.replayOnto(repository, base, target, commit)
+    return { outcome: 'conflict', from: base, onto: target, files: 'files' in replayed ? replayed.files : [] }
+  }
+
+  /**
+   * The change `commit` made on `base`, replayed on `onto` (T271): a three-way merge of the trees in a
+   * scratch index of its own (`git read-tree -m -i --aggressive`, plumbing every git has; no working
+   * tree, no ref, nothing of the repository's own index touched), then its tree written. Only the
+   * merges git resolves at the level of whole files are taken: a file both sides changed is a conflict,
+   * named, and the change then stays on its own base for the Worker to resolve. Fail closed: a replay
+   * git cannot do at all is a conflict with no file named.
+   */
+  private async replayOnto(repository: string, base: string, onto: string, commit: string): Promise<{ tree: string } | { files: string[] }> {
+    const scratch = mkdtempSync(join(tmpdir(), 'system-replay-'))
+    const index = { GIT_INDEX_FILE: join(scratch, 'index') }
+    try {
+      await git(repository, ['read-tree', '-m', '-i', '--aggressive', base, onto, commit], index)
+      const unmerged = (await git(repository, ['ls-files', '--unmerged', '-z'], index)).split('\0').filter(Boolean)
+      if (unmerged.length) return { files: [...new Set(unmerged.map((l) => l.slice(l.indexOf('\t') + 1)))].slice(0, 50) }
+      const tree = (await git(repository, ['write-tree'], index)).trim()
+      return /^[0-9a-f]{40,64}$/.test(tree) ? { tree } : { files: [] }
+    } catch {
+      return { files: [] }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
+  }
+
+  /**
+   * The earlier worktree is clean, and its HEAD is the system's commit of exactly `subject` on top of
+   * `base`: committed by a carry to run `runId` before a restart, or kept as its attempt's result when
+   * that attempt ended (T271); never a carry's commit to another run.
+   */
   private async carriedCommit(inside: (args: string[]) => Promise<string>, base: string, subject: string, runId: string): Promise<boolean> {
     if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) return false
     const [parent, author, ...message] = (await inside(['log', '-1', '--format=%P%n%an <%ae>%n%B', 'HEAD'])).split('\n')
-    return parent === base && author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` && message.includes(`${SUBJECT_TRAILER}: ${subject}`) && message.includes(`${CARRIED_TRAILER}: ${runId}`)
+    return parent === base && author === `${SYSTEM_AUTHOR.name} <${SYSTEM_AUTHOR.email}>` && message.includes(`${SUBJECT_TRAILER}: ${subject}`)
+      && !message.some((l) => l.startsWith(`${CARRIED_TRAILER}: `) && l !== `${CARRIED_TRAILER}: ${runId}`)
   }
 
   /**

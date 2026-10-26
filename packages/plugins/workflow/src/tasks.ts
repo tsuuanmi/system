@@ -30,7 +30,7 @@ import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/sys
 import type { Check } from '@tsuuanmi/system-approvals-core'
 import { recordOutcome } from './advisor.ts'
 import type { TaskFrame } from './briefs.ts'
-import { TaskCarries } from './carries.ts'
+import { keepable, TaskCarries } from './carries.ts'
 import { type LandingTarget, type RanChecks, ranOn } from './checks.ts'
 import { withdrawCalls } from './continuations.ts'
 import { holderLapsedAtStart, infrastructureOf } from './infrastructure.ts'
@@ -164,6 +164,8 @@ export class TaskRuns {
   /** On start: outcomes a stop or crash left unreported are reported (running runs resume through their advance). */
   recover(): void {
     this.digests.recover()
+    // Changes a stop left pending to be kept as their attempts' commits (T271) are kept now.
+    this.carries.recover()
     // Reservations a stop or crash left held after their run finished are released (they would expire on their own).
     const held = this.e.ctx.store.db.prepare(`SELECT t.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
       WHERE t.budget IS NOT NULL AND (json_extract(t.budget, '$.state') IN ('due', 'reserved') OR json_array_length(t.budget, '$.holds') > 0)
@@ -237,7 +239,7 @@ export class TaskRuns {
     // Whether its worktree starts from the work the previous attempt left, carried at its first turn
     // (ADR-0061): decided once the run holds the task, so a refused claim decides nothing for a run
     // that never exists; a record of the earlier attempt it cannot read starts the run from HEAD, recorded.
-    const carry = this.carries.plan(task, runId)
+    const carry = this.carries.plan(task, runId, claim.fresh === true)
     const bound = {
       runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
       ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}), ...(carry ? { carry } : {}), ...(options.dispatch ? { dispatch: options.dispatch } : {}),
@@ -1612,9 +1614,13 @@ export class TaskRuns {
   }
 
   private settled(row: TaskRow, outcome: TaskOutcome): void {
+    // The change an attempt left without its acceptance is kept as a commit on its branch (T271): marked pending in the
+    // report's own transaction, so a stop before the commit loses nothing (./carries.ts).
+    const keep = keepable(outcome)
+    const stored: TaskOutcome = keep ? { ...outcome, kept: { state: 'pending', at: now() } } : outcome
     // A result that reached the board is due its digest, in the transaction that reports it, so a restart asks for it once.
     const due = this.e.ctx.store.transaction((db) => {
-      db.prepare("UPDATE workflow_tasks SET phase = 'reported', outcome = ?, updated_at = ? WHERE run_id = ?").run(JSON.stringify(outcome), now(), row.run_id)
+      db.prepare("UPDATE workflow_tasks SET phase = 'reported', outcome = ?, updated_at = ? WHERE run_id = ?").run(JSON.stringify(stored), now(), row.run_id)
       this.e.ctx.eventLog.append({ type: 'workflow.task.reported', runId: row.run_id, ...(outcome.decision ? { decision: outcome.decision } : {}), data: { taskId: row.task_id, ...outcome } })
       // A dispatched attempt's labels, which the advisor's calibration and the local adapter read (PROP-0015 J1).
       recordOutcome(this.e, row, outcome.status)
@@ -1627,6 +1633,7 @@ export class TaskRuns {
     this.dossiers.safely('the report', () => this.dossiers.evidence(row.run_id,
       `Reported to the board: run ${row.run_id} ${outcome.status}${outcome.state ? `, task ${outcome.state}` : ''}${outcome.reason ? `: ${outcome.reason}` : ''}.`,
       outcome.decision ? [outcome.decision] : []))
+    if (keep) void this.carries.keep(row.run_id).catch((error: unknown) => this.warn(`the change of run ${row.run_id} was not kept yet; it is asked again`, error))
     clearTimeout(this.retries.get(row.run_id)?.timer)
     this.retries.delete(row.run_id)
     if (outcome.status === 'review' || outcome.status === 'refused') this.e.ctx.logger.warn(`workflow: run ${row.run_id}'s outcome left board task ${row.task_id} ${outcome.state ?? 'as it was'}: ${outcome.reason ?? outcome.status}`)

@@ -865,7 +865,8 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
       writeFileSync(join(repo, 'README.md'), 'calc\n')
       git(repo, 'add', 'README.md')
       git(repo, 'commit', '-q', '-m', 'operator: a readme')
-      expect(await carry(ctx, 'run_based_next', based)).toMatchObject({ outcome: 'refused', cause: 'base-moved', reason: expect.stringMatching(new RegExp(`now, not ${head}, the commit the tree .* is on`)) })
+      // The task still writes the commit the repository moved past (T271): a fresh worktree starts at the HEAD, so nothing is carried.
+      expect(await ctx.workers.carry!({ runId: 'run_based_next', from: based, onto: head, message: 'system: carry' })).toMatchObject({ outcome: 'refused', cause: 'base-moved', reason: expect.stringMatching(new RegExp(`now, not ${head}, the commit the task writes`)) })
       expect(git(based.workspace, 'status', '--porcelain')).toContain('calc.py')
 
       // None of them cut a worktree or a branch for the run that would have started from it.
@@ -875,6 +876,80 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
       }
       // And no earlier branch moved but the removed one's, which the operator's removal committed.
       for (const runId of ['run_moved', 'run_empty', 'run_tampered', 'run_taken', 'run_branched', 'run_based']) expect(git(repo, 'rev-parse', `system/run/${runId}`)).toBe(head)
+    })
+
+    it('carries the earlier change onto the repository\'s HEAD that moved since, replayed without conflict: the new worktree starts at the HEAD holding the change, and the earlier branch keeps it on its own base (T271)', async () => {
+      const repo = repository()
+      const head = git(repo, 'rev-parse', 'HEAD')
+      const agent = developer()
+      const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+      const earlier = await wrote(ctx, agent, 'run_p')
+      // Dev moves on meanwhile, by a change the earlier one does not touch.
+      writeFileSync(join(repo, 'README.md'), 'calc\n')
+      git(repo, 'add', 'README.md')
+      git(repo, 'commit', '-q', '-m', 'operator: a readme')
+      const moved = git(repo, 'rev-parse', 'HEAD')
+      const step = { runId: 'run_r', from: earlier, onto: moved, message: 'system: carry into run_r' }
+      const carried = await ctx.workers.carry!(step)
+      expect(carried).toMatchObject({ outcome: 'carried', base: moved, rebase: { outcome: 'rebased', from: head, onto: moved }, branch: 'system/run/run_r', carried: true })
+      const commit = (carried as { from: { commit: string } }).from.commit
+      // The attempt's change stays on its own branch, on its own base.
+      expect(git(repo, 'rev-parse', 'system/run/run_p')).toBe(commit)
+      expect(git(repo, 'rev-parse', `${commit}^`)).toBe(head)
+      // The new worktree: at the moved HEAD, holding the earlier change and the move both.
+      const worktree = join(dirname(earlier.workspace), 'run_r')
+      expect(git(worktree, 'rev-parse', 'HEAD')).toBe(moved)
+      expect(git(worktree, 'diff', '--cached', '--name-only')).toBe('calc.py\nnote-run_p.txt')
+      expect(readFileSync(join(worktree, 'calc.py'), 'utf8')).toBe(FIXED)
+      expect(readFileSync(join(worktree, 'README.md'), 'utf8')).toBe('calc\n')
+      expect(captureGitSubject(worktree)!.subject.ref).toBe(moved)
+      // Asked again (a restart before the engine recorded it): found done, at the HEAD it was cut at, the replay said again (INV-4).
+      expect(await ctx.workers.carry!(step)).toMatchObject({ outcome: 'carried', base: moved, carried: false, rebase: { outcome: 'rebased', from: head, onto: moved } })
+    })
+
+    it('carries the earlier change at its own base when the HEAD that moved conflicts with it, naming the conflict for the Worker to resolve (T271)', async () => {
+      const repo = repository()
+      const head = git(repo, 'rev-parse', 'HEAD')
+      const agent = developer()
+      const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+      const earlier = await wrote(ctx, agent, 'run_p')
+      // Dev changes the very file the earlier change changed.
+      writeFileSync(join(repo, 'calc.py'), 'def add(a, b):\n    return b + a\n')
+      git(repo, 'commit', '-q', '-am', 'operator: calc another way')
+      const moved = git(repo, 'rev-parse', 'HEAD')
+      const step = { runId: 'run_r', from: earlier, onto: moved, message: 'system: carry into run_r' }
+      const carried = await ctx.workers.carry!(step)
+      expect(carried).toMatchObject({ outcome: 'carried', base: head, rebase: { outcome: 'conflict', from: head, onto: moved, files: ['calc.py'] }, carried: true })
+      // Still the earlier change, on its own base: nothing of the move is mixed in.
+      const worktree = join(dirname(earlier.workspace), 'run_r')
+      expect(git(worktree, 'rev-parse', 'HEAD')).toBe(head)
+      expect(readFileSync(join(worktree, 'calc.py'), 'utf8')).toBe(FIXED)
+      expect(git(worktree, 'diff', '--cached', '--name-only')).toBe('calc.py\nnote-run_p.txt')
+      // Asked again (a restart before the engine recorded it): found done, the conflict said again with its files (INV-4).
+      expect(await ctx.workers.carry!(step)).toMatchObject({ outcome: 'carried', base: head, carried: false, rebase: { outcome: 'conflict', from: head, onto: moved, files: ['calc.py'] } })
+      expect(git(worktree, 'rev-parse', 'HEAD')).toBe(head)
+      // Cut before a restart and never given the tree: given it when asked again, and the conflict said again (INV-4).
+      ctx.store.db.prepare("UPDATE agent_worktrees SET carried_commit = NULL WHERE workflow_run_id = 'run_r'").run()
+      git(worktree, 'read-tree', '-u', '--reset', head)
+      expect(await ctx.workers.carry!(step)).toMatchObject({ outcome: 'carried', base: head, carried: true, rebase: { outcome: 'conflict', from: head, onto: moved, files: ['calc.py'] } })
+      expect(readFileSync(join(worktree, 'calc.py'), 'utf8')).toBe(FIXED)
+    })
+
+    it('takes the earlier tree as the system kept it when its attempt ended: a commit of exactly that subject on its base, committed by the landing\'s commit step (T271)', async () => {
+      const repo = repository()
+      const head = git(repo, 'rev-parse', 'HEAD')
+      const agent = developer()
+      const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+      const earlier = await wrote(ctx, agent, 'run_p')
+      // The attempt ended unaccepted: its change is kept on its branch, as the landing's commit step commits it.
+      const kept = await ctx.workers.land!({ step: 'commit', runId: 'run_p', workspace: earlier.workspace, subject: earlier.subject, message: 'system: keep the change of attempt 1' })
+      expect(kept).toMatchObject({ outcome: 'committed', committed: true })
+      const commit = (kept as { head: string }).head
+      expect(git(repo, 'rev-parse', `${commit}^`)).toBe(head)
+      const carried = await carry(ctx, 'run_r', earlier)
+      expect(carried).toMatchObject({ outcome: 'carried', from: { branch: 'system/run/run_p', commit }, base: head, carried: true })
+      expect(git(repo, 'rev-parse', 'system/run/run_p')).toBe(commit)
+      expect(git(join(dirname(earlier.workspace), 'run_r'), 'diff', '--cached', '--name-only')).toBe('calc.py\nnote-run_p.txt')
     })
 
     it('carries nothing while an agent run of the earlier workflow run is unfinished: it may still write the tree (INV-15)', async () => {

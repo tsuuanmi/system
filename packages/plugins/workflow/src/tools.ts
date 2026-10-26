@@ -137,6 +137,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
         taskId: zod.string().max(200),
         holder: zod.string().max(200).optional().describe('The owner your board_claim named, to hand your claim to the run (with generation)'),
         generation: zod.number().int().min(1).optional().describe('The generation board_claim returned (with holder)'),
+        fresh: zod.boolean().optional().describe('Start from HEAD, not from the change the previous attempt left (as when review rejected its approach)'),
       }).optional().describe('Run for this board task, one attempt of it: without holder and generation the run claims the ready task itself'),
       classification, clientRequestId, waitSeconds,
     },

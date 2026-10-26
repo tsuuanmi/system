@@ -339,9 +339,9 @@ export async function propose(pilot: Pilot, projectId: string, title: string, ex
   return (await pilot.ctx.board.task(task.taskId))!
 }
 
-/** Start one attempt of the task, as a lead does with MCP `run` and `task`. */
-export const attempt = (ctx: Context, taskId: string, input = 'Fix add() so it adds'): Promise<RunView> =>
-  ctx.workflow.start({ template: 'algorithm-development', input, classification: 'operator-shared', task: { taskId } })
+/** Start one attempt of the task, as a lead does with MCP `run` and `task`; `fresh`, opting out of the previous attempt's change (T271). */
+export const attempt = (ctx: Context, taskId: string, input = 'Fix add() so it adds', fresh = false): Promise<RunView> =>
+  ctx.workflow.start({ template: 'algorithm-development', input, classification: 'operator-shared', task: { taskId, ...(fresh ? { fresh } : {}) } })
 
 /** The run, once it waits on its remediation fix's request in the approval queue. */
 export const queued = (ctx: Context, runId: string): Promise<{ approvalRequest: string; plan: string; nodeId: string }> => until(() => {

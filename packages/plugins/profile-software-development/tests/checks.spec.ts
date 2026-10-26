@@ -1,7 +1,7 @@
 import { captureGitSubject } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { needsBubblewrap } from '../../../agent-runtime-core/tests/host.ts'
-import { attempt, bootPilot, charter, type Pilot, propose, reported, until } from './pilot.ts'
+import { attempt, bootPilot, charter, FIXED, ORIGINAL, type Pilot, propose, reported, until } from './pilot.ts'
 
 // A run's required checks on the real stack (T151, ADR-0063): the algorithm-development template
 // over the real board, approval queue, ledger, digests, and agents source with a worktree per run and
@@ -92,5 +92,31 @@ describe('the algorithm-development template with the repository\'s checks confi
     }, 'the task ready for its next attempt')
     expect(back.attempts.count).toBe(1)
     expect((await ctx.approvals.list({ states: ['open', 'batched'] })).filter((r) => r.action.class !== 'charter')).toEqual([])
+  })
+
+  it('keeps the change of an attempt acceptance failed as a commit on its branch, its sha in the dossier, and starts the next attempt\'s worktree from it (T271)', async () => {
+    const pilot = await boot({ checks: { tests: 'node tests.mjs', lint: 'node lint-strict.mjs' } })
+    const { ctx, agent } = pilot
+    await charter(ctx, 'p1')
+    const task = await propose(pilot, 'p1', 'make add() add')
+    const first = await attempt(ctx, task.taskId)
+    expect(await reported(ctx, first.runId)).toMatchObject({ status: 'completed', task: { outcome: { status: 'rejected' } } })
+    // Kept when the attempt ended: a commit on its own run branch, on the commit the task writes, recorded with its sha.
+    const kept = await until(() => {
+      const k = ctx.workflow.get(first.runId)?.task?.outcome?.kept
+      return k && k.state !== 'pending' ? k : undefined
+    }, 'the rejected attempt\'s change kept')
+    expect(kept).toMatchObject({ state: 'kept', commit: pilot.git(pilot.repo, 'rev-parse', `system/run/${first.runId}`) })
+    expect(pilot.git(pilot.repo, 'rev-parse', `${kept.commit}^`)).toBe(pilot.head)
+    expect(pilot.git(pilot.repo, 'show', `${kept.commit}:calc.py`)).toBe(FIXED.trim())
+
+    // The next attempt's worktree holds that change before its developer starts.
+    const second = await attempt(ctx, task.taskId)
+    await reported(ctx, second.runId)
+    expect(agent.found).toEqual([ORIGINAL, FIXED])
+    expect(ctx.workflow.get(second.runId)!.task!.carry).toMatchObject({ state: 'carried', from: { runId: first.runId, attempt: 1 }, commit: kept.commit })
+    const entries = ctx.workflow.dossier({ taskId: task.taskId, limit: 50 }).entries
+    expect(entries.find((e) => e.attempt === 1 && e.text.includes('its change is kept as commit'))).toMatchObject({ kind: 'evidence', commits: [kept.commit] })
+    expect(entries.find((e) => e.attempt === 2 && e.text.includes('starts from the tree of attempt 1'))).toMatchObject({ kind: 'evidence', commits: [kept.commit] })
   })
 })
