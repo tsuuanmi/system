@@ -76,7 +76,7 @@ export const AGENT_REVIEW: NodeTemplate[] = [
  * entry, which the engine requires at the step's end. A fresh session of the author then reviews the
  * diff (`selfreview:1`) and the author answers its findings; only then does the independent review start.
  */
-const VERIFY = 'Before you end, verify your change: run the checks the task requires (its acceptance criteria name them), then append their real output, verbatim, to the task\'s dossier as an evidence entry (dossier_append, kind evidence: each command, its exit code, and the lines that hold the result). The step is refused at its end without that entry, or with one that shows no command, exit code, or output. Never write output you did not get from running the command.'
+const VERIFY = 'Before you end, verify your change: run the checks the task requires (its acceptance criteria name them), then append their real output, verbatim, to the task\'s dossier as an evidence entry (dossier_append, kind evidence: each command as `$ <command>`, the lines that hold the result, and its exit code when your tool reports one; a required check you could not run, named, with why). The step is refused at its end without that entry, or with one that shows no command, names no required check, or holds no output. Never write output you did not get from running the command.'
 
 const DEVELOP_PROMPT = [
   '{{input}}',

@@ -185,7 +185,7 @@ describe('the algorithm-development template (PROP-0010 B8, T267)', () => {
     expect(agent.runs.map((r) => r.role)).toEqual(['develop'])
     const develop = JSON.stringify(failed.nodes.find((n) => n.nodeId === 'develop:1'))
     expect(develop).toContain('evidence_missing')
-    expect(develop).toContain('reports 0 exit codes')
+    expect(develop).toContain('shows no command it ran')
   })
 
   it('never admits a develop step to a Worker that could not show its checks\' output: with no dossier tool, it fails admission and nothing is sent (T267, INV-2)', async () => {

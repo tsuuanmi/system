@@ -537,10 +537,12 @@ The validation step of `algorithm-development` measured a median of 0.4 minutes 
 acceptance checks did not. It is replaced by two things that run before the independent review:
 
 1. **The author runs the required checks and shows their output.** `develop:1` ends with its Worker
-   appending the commands, their exit codes, and the output lines that hold the result, verbatim, to
-   the task's dossier as an `evidence` entry. The step is refused at its end without one, or with one
-   whose shape shows no checks' output: an exit code per command (one at least, one per command check
-   the criteria name), each such check named, and an output line (`evidence_missing`; a
+   appending the commands, the output lines that hold the result, and each exit code its tool
+   reports, verbatim, to the task's dossier as an `evidence` entry. The step is refused at its end
+   without one, or with one whose shape shows no checks' output: at least one command, each command
+   check the criteria name named (with its output, or why it could not run), and an output line.
+   Exit codes are not required, since a Worker's shell tool may not print them (2026-10-26: requiring
+   them refused every honest Worker; T274) (`evidence_missing`; a
    `workflow.evidence` `gate` decision says what is missing). The step requires the `dossier`
    capability, so a Worker that could not write the entry is never admitted to it. Every fix grown
    from it shows the checks' output again, for the tree it leaves, under the same gate. The entry is

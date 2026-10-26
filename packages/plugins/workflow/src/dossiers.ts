@@ -168,24 +168,31 @@ export const DOSSIER_CAPABILITY = 'dossier'
 const COMMAND_CHECKS: readonly BriefCheck[] = ['tests', 'typecheck', 'lint']
 /** A reported exit code: `exit 0`, `exit code: 1`, `exited 2`, `exit status 0`. */
 const EXIT_CODE = /\bexit(?:ed)?(?:\s+(?:code|status))?\s*[:=]?\s*-?\d+\b/gi
+/** A command named in prose: `Command: corepack pnpm lint`. */
+const COMMAND_LINE = /^command\s*:/i
 
 /**
  * Why the evidence a writing step appended does not show its checks' output (T267), or undefined when
- * it does: some evidence; at least one reported exit code, and one for each command check the task's
- * criteria name (`tests`, `typecheck`, `lint`), each named; and output beside the exit codes (a line
- * that is neither a command nor an exit code). A shape the engine can read, never proof the commands
- * ran: the run's required checks run again on the exact result at acceptance (ADR-0063).
+ * it does: some evidence; at least one command it ran (a `$ …` line, a `Command:` line, or a reported
+ * exit code); each command check the task's criteria name (`tests`, `typecheck`, `lint`) named, with
+ * its output or why it could not run; and output beside the commands (a line that is neither a command
+ * nor an exit code). Exit codes are not required: a Worker's shell tool may not print them, and a
+ * Worker that says so must not be refused for its honesty. A shape the engine can read, never proof
+ * the commands ran: the run's required checks run again on the exact result at acceptance (ADR-0063).
  */
 export function evidenceProblem(texts: readonly string[], checks: readonly BriefCheck[]): string | undefined {
   const text = texts.join('\n').trim()
   if (!text) return 'the step\'s dossier holds no evidence entry by its Worker in this attempt'
   const required = COMMAND_CHECKS.filter((c) => checks.includes(c))
-  const exits = text.match(EXIT_CODE)?.length ?? 0
-  if (exits < Math.max(1, required.length)) return `its evidence reports ${exits} exit code${exits === 1 ? '' : 's'}; each command it ran is shown with its exit code (${Math.max(1, required.length)} at least)`
+  const lines = text.split('\n').map((l) => l.trim())
+  const exitCode = new RegExp(EXIT_CODE.source, 'i')
+  const commands = lines.filter((l) => l.startsWith('$') || COMMAND_LINE.test(l) || exitCode.test(l)).length
+  if (!commands) return 'its evidence shows no command it ran: each command is shown (`$ <command>` or `Command: <command>`), with its output and its exit code when the tool reports one'
   const missing = required.filter((c) => !new RegExp(`\\b${c === 'tests' ? 'tests?' : c}\\b`, 'i').test(text))
   if (missing.length) return `its evidence does not name the check${missing.length > 1 ? 's' : ''} ${missing.join(', ')} the task's criteria require`
   // Output: a line that is no command (`$ …`) and holds more than an exit code.
-  const output = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('$') && l.replace(EXIT_CODE, '').replace(/[\s:,.;()-]/g, '') !== '')
+  // A `Command: <c>` line is a command alone; `Command: <c> -> <output>` holds its output too.
+  const output = lines.filter((l) => l && !l.startsWith('$') && !(COMMAND_LINE.test(l) && !l.includes('->')) && l.replace(EXIT_CODE, '').replace(/[\s:,.;()-]/g, '') !== '')
   if (!output.length) return 'its evidence holds no output line beside the commands and their exit codes'
   return undefined
 }
@@ -369,7 +376,7 @@ export class TaskDossiers {
     const checks = [...new Set(frame.acceptance.map((a) => a.check).filter((c): c is BriefCheck => c !== undefined))]
     const why = evidenceProblem(this.evidenceOf(node), checks)
     if (!why) return undefined
-    const message = `step ${node.node_id} ended without the output of the checks its author ran in the task's dossier (${why}): run the required checks, append their real output as an evidence entry (dossier_append: each command, its exit code, and the lines that hold the result), then finish`
+    const message = `step ${node.node_id} ended without the output of the checks its author ran in the task's dossier (${why}): run the required checks, append their real output as an evidence entry (dossier_append: each command, the lines that hold the result, and its exit code when the tool reports one; a check that could not run, and why), then finish`
     const decision = this.e.ctx.artifacts.recordDecision({
       decisionType: 'gate',
       question: `May step ${node.node_id} of run ${run.run_id} end, with the output of its author's checks in the task's dossier?`,

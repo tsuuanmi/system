@@ -117,11 +117,18 @@ describe('the shape of an author\'s evidence (T267)', () => {
     expect(evidenceProblem(['$ corepack pnpm lint\nexit code: 0\nFound 0 warnings', '$ corepack pnpm typecheck\nexited 0\ntsc --noEmit: no errors'], ['lint', 'typecheck', 'review'])).toBeUndefined()
   })
 
-  it('refuses none, a bare word, no exit code, too few exit codes, an unnamed check, and exit codes with no output', () => {
+  it('passes a Worker whose shell tool prints no exit code, and one that says a check could not run and why (T274, 2026-10-26)', () => {
+    expect(evidenceProblem(['Command: corepack pnpm lint\nOutput: "$ oxlint scripts packages", no diagnostics; exit codes were not printed by the tool.'], ['lint'])).toBeUndefined()
+    expect(evidenceProblem(['Command: corepack pnpm lint -> output "$ oxlint scripts packages", no diagnostics, no error.\nNot run: the tests (layout.spec.ts), not on the allowed command list.'], ['lint', 'tests'])).toBeUndefined()
+    expect(evidenceProblem(['$ corepack pnpm lint\nclean', '$ corepack pnpm test\nTests 12 passed'], ['lint', 'tests'])).toBeUndefined()
+  })
+
+  it('refuses none, a bare word, no command, an unnamed check, and commands with no output', () => {
     expect(evidenceProblem([], ['tests'])).toMatch(/no evidence entry/)
-    expect(evidenceProblem(['done'], [])).toMatch(/reports 0 exit codes/)
-    expect(evidenceProblem(['all checks passed'], ['lint'])).toMatch(/reports 0 exit codes/)
-    expect(evidenceProblem(['$ corepack pnpm lint\nexit 0\nclean'], ['lint', 'tests'])).toMatch(/reports 1 exit code; .*2 at least/)
+    expect(evidenceProblem(['done'], [])).toMatch(/shows no command it ran/)
+    expect(evidenceProblem(['all checks passed'], ['lint'])).toMatch(/shows no command it ran/)
+    expect(evidenceProblem(['$ corepack pnpm lint\nexit 0\nclean'], ['lint', 'tests'])).toMatch(/does not name the check tests/)
+    expect(evidenceProblem(['Command: corepack pnpm lint'], ['lint'])).toMatch(/no output line/)
     expect(evidenceProblem(['$ make\nexit 0\nok', '$ make again\nexit 0\nok'], ['lint', 'tests'])).toMatch(/does not name the checks tests, lint/)
     expect(evidenceProblem(['$ npm test\nexit 0'], ['tests'])).toMatch(/no output line/)
   })
