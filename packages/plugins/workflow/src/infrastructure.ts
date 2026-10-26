@@ -34,6 +34,7 @@ import type { InfrastructureFailure } from '@tsuuanmi/system-board-core'
 import type { AdmissionFailure, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import type { NodeRow, RunRow, WorkflowError } from './types.ts'
+import { errorLine } from './recovery.ts'
 
 export type { InfrastructureFailure }
 
@@ -69,7 +70,50 @@ export async function executionInfrastructure(e: Engine, node: NodeRow, executio
   return { kind: 'worker-unavailable', reason: reasonOf(`step ${node.node_id}'s Worker ${node.worker} became unavailable${state.why ? ` (${state.why})` : ''} before anything of it was sent: ${error.message}`) }
 }
 
-/** A routing refusal's mark: `worker-unavailable` when a Worker that would otherwise take the step is `unavailable`. */
+/** A Worker's quota window that ended a step, and until when it stays closed (T272b). */
+export interface QuotaLoss { mark: InfrastructureFailure; until: string; account?: string; window?: string; basis: 'error' | 'reading' | 'next-reading' }
+
+/**
+ * A step that failed only because its Worker's quota ran out (`quota_exhausted`: a session or window
+ * limit, not the task's own spending cap `error_max_budget_usd`) is a Worker-unavailable outcome,
+ * not an attempt (T272b): the step failed, so none of it was landed (a step lands by its result),
+ * and its account is closed until the window's reset. The reset is the one the error names (an ISO
+ * time), else the account's pools' reading (the ledger), else the next reading (one sweep on).
+ */
+export async function quotaLoss(e: Engine, node: NodeRow, execution: WorkerExecution, error: WorkflowError): Promise<QuotaLoss | undefined> {
+  if (error.kind !== 'quota_exhausted' || /error_max_budget_usd/.test(error.message) || execution.result) return undefined
+  const account = node.account ? (JSON.parse(node.account) as { id?: string }).id : undefined
+  const now = Date.now()
+  const named = /\b(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2}))/.exec(error.message)?.[1]
+  let until = named && Date.parse(named) > now ? new Date(named).toISOString() : undefined
+  let window: string | undefined
+  let basis: QuotaLoss['basis'] = 'error'
+  if (!until) {
+    try {
+      const pools = (await e.ctx.get('resources')?.pools({}, new Date(now))) ?? []
+      const times: Array<{ at: number; window?: string }> = []
+      for (const p of pools.filter((x) => account !== undefined && x.account === account)) {
+        if (!p.available && p.until && Date.parse(p.until) > now) times.push({ at: Date.parse(p.until) })
+        for (const r of p.readings) {
+          const at = Date.parse(r.cooldownUntil ?? r.resetsAt ?? '')
+          if (r.state === 'limited' && at > now) times.push({ at, window: r.window.id })
+        }
+      }
+      const latest = times.sort((a, b) => b.at - a.at)[0]
+      if (latest) { until = new Date(latest.at).toISOString(); window = latest.window; basis = 'reading' }
+    } catch {
+      // No reading: the next one decides.
+    }
+  }
+  if (!until) { until = new Date(now + e.dispatch.settings.sweepSeconds * 1000).toISOString(); basis = 'next-reading' }
+  const why = basis === 'error' ? 'the error names the reset' : basis === 'reading' ? 'the quota reading gives the reset' : 'no reset is known, so the next reading decides'
+  return {
+    until, basis, ...(account ? { account } : {}), ...(window ? { window } : {}),
+    mark: { kind: 'worker-unavailable', reason: reasonOf(`step ${node.node_id}'s Worker ${node.worker ?? '(none)'}${account ? ` (account ${account})` : ''} ran out of quota before the step landed anything (${errorLine(error.message)}); it is closed until ${until} (${why}), and the attempt is not spent`) },
+  }
+}
+
+/** A routing refusal's mark:`worker-unavailable` when a Worker that would otherwise take the step is `unavailable`. */
 export function admissionInfrastructure(node: NodeRow, failure: AdmissionFailure): InfrastructureFailure | undefined {
   const down = failure.rejections.filter((r) => r.state === 'unavailable' && r.failed.length > 0 && r.failed.every((f) => f.check === 'state'))
   if (!down.length) return undefined

@@ -942,6 +942,20 @@ The engine tells it from its own records when it reports the failed run (`reconc
   failed step is marked (the first mark says how), or when nothing of the run was sent and every
   failed step failed on one of the Worker failures `unsent` names. Anything else is an attempt the
   board counts, and the report's decision says why it is not the infrastructure's.
+- **A Worker's quota that ran out (T272b).** A step that fails with `quota_exhausted` (a session
+  or window limit; never the task's own spending cap, `error_max_budget_usd`) before its result
+  landed is a `worker-unavailable` outcome, sent or not: seen live on T268, whose attempt 3 failed
+  in `develop:1` on "You've hit your session limit" and was counted, leaving the task
+  retries-spent although the Worker never got to work. The step's row is marked, so the board
+  gives the attempt back (within `board.maxFreeRetries`). The reset is the one the error names (an
+  ISO time), else the account's pools' reading (the ledger: an unavailable pool's `until`, or a
+  limited window's `resetsAt`), else the next reading (one `dispatch.sweepSeconds` on). Dispatch
+  records the account's window as exhausted until then (it scores the account's Workers as not
+  free) and does not take the task before it ([ADR-0064](../decisions/adr/0064-system-starts-ready-work-under-the-dispatch-action-class.md)); both
+  records (the account's and the task's not-before) are rows of `workflow_dispatch_control`, so a
+  restart before the reset keeps them. The task's dossier notes the
+  lost time (the minutes the run ran before the quota ended it). A second failure of another
+  kind is not marked and counts as before.
 - **Always the attempt's**, fail closed, sent or not: an operator's stop (the operator's call); a
   run that failed for its own reason rather than a failed step's, as the task's budget spent
   (`budget_spent`, also on its last attempt, when the ledger refuses the first step's reservation

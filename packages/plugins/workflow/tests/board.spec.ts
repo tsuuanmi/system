@@ -1330,6 +1330,50 @@ describe('an attempt is not spent on an infrastructure failure (ADR-0069, D82 #3
     expect(board.outcome.detail).toMatchObject({ infrastructure: { kind: 'worker-unavailable' }, freeRetry: { used: 1, counted: false } })
   })
 
+  it('does not count a develop step that failed on its Worker\'s session limit after it was sent, and closes that window until its reset (T272b)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'session-limit', { maxAttempts: 1 })
+    workers.reply = () => ({ fail: 'quota_exhausted', disposition: 'USER_ACTION', sent: true })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'quota_exhausted' } })
+    const { reported, board, task: after } = await report(ctx, run.runId)
+    expect(reported.outcome.detail).toMatchObject({ infrastructure: { kind: 'worker-unavailable', reason: expect.stringMatching(/ran out of quota before the step landed anything .*closed until \d{4}-\d{2}-\d{2}T.*the attempt is not spent/) } })
+    // The attempt is given back: the task is ready again, its count unchanged from before the run.
+    expect(after).toMatchObject({ state: 'ready', attempts: { count: 0, max: 1 } })
+    expect(board.outcome.detail).toMatchObject({ freeRetry: { used: 1, counted: false } })
+    // The dossier says the time was lost.
+    expect(JSON.stringify(ctx.workflow.dossier({ taskId: task.taskId }))).toMatch(/Lost time: run .* min before its Worker's quota ran out/)
+  })
+
+  it('keeps the quota reset a task waits for across a restart: the account\'s window and the task\'s not-before are rows, not memory (T272b, INV-4)', async () => {
+    const { ctx, workers, restartWorkflow } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'limit-restart', { maxAttempts: 1 })
+    workers.reply = () => ({ fail: 'quota_exhausted', disposition: 'USER_ACTION', sent: true })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
+    await restartWorkflow()
+    const row = ctx.store.db.prepare('SELECT paused FROM workflow_dispatch_control WHERE id = ?').get(`quota-task:${task.taskId}`) as { paused: string } | undefined
+    expect(JSON.parse(row!.paused)).toMatchObject({ until: expect.any(Number), basis: expect.stringMatching(/error|reading|next-reading/) })
+  })
+
+  it('counts a second failure of another kind after a session limit: only the quota loss is given back (T272b)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'limit-then-own', { maxAttempts: 1 })
+    workers.reply = () => ({ fail: 'quota_exhausted', disposition: 'USER_ACTION', sent: true })
+    const first = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, first.runId)).toMatchObject({ status: 'failed' })
+    expect((await report(ctx, first.runId)).task).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    workers.reply = () => ({ fail: 'config_error', disposition: 'CODE_FIX', sent: true })
+    const second = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, second.runId)).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    const { reported, task: after } = await report(ctx, second.runId)
+    expect(reported.outcome.detail).not.toHaveProperty('infrastructure')
+    expect(after).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+  })
+
   it('counts a run the operator stopped before anything of it was sent: the operator\'s call, not the infrastructure\'s', async () => {
     const { ctx, workers } = await boot()
     await project(ctx)

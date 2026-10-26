@@ -19,7 +19,7 @@ import { awaitCall, continueWithMessage, settleCalls, waitsOnCall } from './cont
 import { authorDraft, commitFixed, commitReviewed, continued, waitForAuthor, waitForSelfReview } from './fix-sessions.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { heldNow, release } from './hold.ts'
-import { admissionInfrastructure, executionInfrastructure, sourceGone } from './infrastructure.ts'
+import { admissionInfrastructure, executionInfrastructure, quotaLoss, sourceGone } from './infrastructure.ts'
 import { admissionKind, assignmentOf, choiceHoldEnded, cutShort, escalate, executionKey, failAttempt, heldWorkers, inputHint, routedDecisions, waitForChoice, waitForLimit, waitForRetry } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { cycleOf, missingSubject, remediate, reviewSubject, settleReview, subjectGate, verificationGate, verificationSubject, wordingOf } from './review.ts'
@@ -987,7 +987,13 @@ export class Engine {
       // The node keeps the failure's kind, disposition, and message; a site's own error is read from the execution (ADR-0062).
       const failed = current.error ? { kind: current.error.kind, disposition: current.error.disposition, message: current.error.message } : { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }
       // Its source says the host's stop or its Worker going away alone ended it, or it is unsent on a Worker that became unavailable: the infrastructure's (ADR-0069).
-      const mark = await executionInfrastructure(this, node, current, failed)
+      // Its Worker's quota ran out before the step landed anything: a Worker-unavailable outcome, no attempt (T272b), and dispatch keeps that account's window closed until its reset.
+      const loss = await quotaLoss(this, node, current, failed)
+      if (loss) {
+        const task = this.ctx.store.db.prepare('SELECT task_id FROM workflow_tasks WHERE run_id = ?').get(run.run_id) as { task_id: string } | undefined
+        this.dispatch.exhaust({ until: loss.until, basis: loss.basis, ...(loss.account ? { account: loss.account } : {}), ...(loss.window ? { window: loss.window } : {}), ...(task ? { taskId: task.task_id } : {}) })
+      }
+      const mark = loss?.mark ?? await executionInfrastructure(this, node, current, failed)
       return failAttempt(this, run, node, failed, { sent: current.submitted, execution: current, ...(mark ? { infrastructure: mark } : {}) }, lease)
     }
     if (!current.result) {

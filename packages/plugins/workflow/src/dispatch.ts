@@ -360,6 +360,32 @@ export class Dispatcher {
     return this.swapped ?? this.e.ctx.get('dispatchAdvisor') ?? this.configured
   }
 
+  /**
+   * A Worker's quota window ended a step before it landed anything (T272b): the account is recorded
+   * as exhausted until `until`, so no pass chooses it for that window again, and the task is not
+   * taken again before then. Both are rows of `workflow_dispatch_control` (as the steps hold is), so
+   * a restart keeps them (INV-4); a later reset replaces an earlier one, never the reverse.
+   */
+  exhaust(loss: { until: string; basis: string; account?: string; window?: string; taskId?: string }): void {
+    const until = Date.parse(loss.until)
+    this.e.ctx.store.transaction((db) => {
+      const put = (id: string, value: { until: number; window?: string; basis: string }): void => {
+        const old = this.closedRow(id)
+        if (old && old.until >= value.until) return
+        db.prepare('INSERT OR IGNORE INTO workflow_dispatch_control (id, updated_at) VALUES (?, ?)').run(id, now())
+        db.prepare('UPDATE workflow_dispatch_control SET paused = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(value), now(), id)
+      }
+      if (loss.account) put(`quota-account:${loss.account}`, { until, basis: loss.basis, ...(loss.window ? { window: loss.window } : {}) })
+      if (loss.taskId) put(`quota-task:${loss.taskId}`, { until, basis: loss.basis })
+    })
+  }
+
+  /** A quota closure's row, as stored: until when (epoch ms), the window, and how the reset was known. */
+  private closedRow(id: string): { until: number; window?: string; basis: string } | undefined {
+    const row = this.e.ctx.store.db.prepare('SELECT paused FROM workflow_dispatch_control WHERE id = ?').get(id) as { paused: string | null } | undefined
+    return row?.paused ? JSON.parse(row.paused) as { until: number; window?: string; basis: string } : undefined
+  }
+
   /** Wait for a pass in flight, for a stop. */
   async close(): Promise<void> {
     await this.passing?.catch(() => undefined)
@@ -633,6 +659,11 @@ export class Dispatcher {
       const held = projectPaused.get(project.projectId)
       if (held) {
         why(`you paused dispatch in project ${project.projectId} at ${held.since}${held.reason ? `: ${held.reason}` : ''} (decision ${held.decision}); the lead and you still start its tasks by hand`)
+        continue
+      }
+      const until = this.closedRow(`quota-task:${task.taskId}`)?.until
+      if (until !== undefined && until > at.getTime()) {
+        why(`a Worker's quota ran out under its last attempt, which was not spent: it is not taken before ${new Date(until).toISOString()}`)
         continue
       }
       const denied = this.denied(task.taskId, n)
@@ -922,6 +953,8 @@ export class Dispatcher {
       else if (w.load.running + w.load.queued + w.load.pending >= s.maxRunningPerAccount) busy.push(`load ${w.load.running} of ${w.load.slots}${w.load.queued ? `, ${w.load.queued} queued` : ''}${w.load.pending ? `, ${w.load.pending} pending` : ''} (dispatch.maxRunningPerAccount ${s.maxRunningPerAccount})`)
       const step = running.get(w.worker)
       if (step) busy.push(`step ${step.node} of run ${step.run} runs on it`)
+      const out = account ? this.closedRow(`quota-account:${account}`) : undefined
+      if (out && out.until > at.getTime()) busy.push(`its account's ${out.window ? `${out.window} window` : 'quota window'} ended a step, and is closed until ${new Date(out.until).toISOString()}`)
       const used = counts.accounts.get(account ?? `worker:${w.worker}`) ?? 0
       if (used >= s.maxRunningPerAccount) busy.push(`its account has ${used} dispatched run(s) or ask(s) (dispatch.maxRunningPerAccount ${s.maxRunningPerAccount})`)
       const inRepo = repository ? counts.repositories.get(repository) ?? 0 : 0

@@ -1558,8 +1558,16 @@ export class TaskRuns {
       if ('infrastructure' in verdict) {
         const { infrastructure } = verdict
         // The statement first, the reason last: a decision's reason is clamped, and its detail keeps the reason whole.
-        return this.reconcile(row, board, { status: 'failed', infrastructure },
+        await this.reconcile(row, board, { status: 'failed', infrastructure },
           `the run failed${error ? ` (${error.kind})` : ''} only on the infrastructure: reported so, the board does not count it as an attempt while the task has free retries left; ${infrastructure.kind}: ${infrastructure.reason}`)
+        // A Worker's quota ended it: the dossier says how much time the attempt lost (T272b). Written once the
+        // report is made (a repeated settle returns early), and counted to the run's end, so a restart changes neither.
+        if (error?.kind === 'quota_exhausted') {
+          const minutes = Math.max(0, Math.round((Date.parse(run.updated_at) - Date.parse(run.created_at)) / 60_000))
+          this.dossiers.safely('the lost time', () => this.dossiers.evidence(row.run_id,
+            `Lost time: run ${row.run_id} ran ${minutes} min before its Worker's quota ran out; that attempt is not spent and its work is lost. ${infrastructure.reason}`, []))
+        }
+        return
       }
       return this.reconcile(row, board, { status: 'failed' }, `the run failed${error ? ` (${error.kind})` : ''}: an attempt the board counts; ${verdict.counted}`)
     } else if (run.status === 'failed' && task.state === 'waiting-for-input' && task.waiting?.reason === 'rejected') {
