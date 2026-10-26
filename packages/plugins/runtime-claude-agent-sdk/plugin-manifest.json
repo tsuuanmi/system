@@ -30,6 +30,10 @@
     {
       "key": "home",
       "sensitive": false
+    },
+    {
+      "key": "unixSockets",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED",

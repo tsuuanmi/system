@@ -269,6 +269,28 @@ inside a Worker's confinement as on the host (T247). What makes that so:
   vitest), that it was skipped with its reason, said at the end, and reported to the check. That
   case needs the suite run under pnpm (`npm_execpath`), as CI and a check run it. It needs real bubblewrap and a Chrome on the host, as CI
   has; under `SYSTEM_REQUIRE_BROWSER=1` a Chrome that cannot run fails it rather than skipping it.
+- **In a Worker's own tool call** (T265), `corepack pnpm exec vitest run <a web-ui browser spec>`
+  runs in the runtime's command sandbox, inside the confinement. That sandbox gets the managed
+  Chrome readable, `/dev/shm` and the run's report file writable
+  ([design](../design/agent-runtimes.md#credentials-and-egress)); under Claude Code its commands
+  may also make the unix sockets Chrome needs (the runtime's `unixSockets`, on by default, the
+  host's own sockets masked in the run first). A run whose tests skipped says so: its report file
+  gets `browser-tests-not-run: <why>`, its result `notRun`, and its review a note; a report file
+  that could not be made or read, `reportUnread`, and a note that it is not known.
+  [`worker-tool-browser.spec.ts`](../../packages/plugins/web-ui/tests/worker-tool-browser.spec.ts)
+  runs one web UI browser test through the real thing: the claude-agent-sdk runtime runs the
+  installed Claude Code under the agents' confinement with a writing run's production settings,
+  only its model scripted (a local Messages endpoint that answers with one Bash call of
+  `corepack pnpm exec vitest run <spec>` and reads back its result), and asserts the test passed;
+  then, every Chrome hidden, that it was skipped and the run's report file says so. It needs
+  Claude Code on `PATH`, bubblewrap, and a Chrome, and is skipped, with why, without any of them.
+- **A test of a confinement's mask puts the masked path where the child sees it**: under a
+  directory the confinement binds back. The host's `/tmp` is a private tmpfs inside, so a socket
+  under the host's temporary directory that nothing binds back is rightly left unmasked (T265).
+- **A sandbox's placeholders are not changes.** Inside a Worker's tool sandbox git lists the empty
+  placeholders the sandbox mounts in the worktree (`.bashrc`, `.gitconfig`, `.claude/settings.json`,
+  …) as untracked files. `pnpm test:affected` leaves an empty one out of the changed files
+  (`sandboxPlaceholder`), so it no longer runs the whole suite for them; one with content counts.
 
 ## Test groups
 

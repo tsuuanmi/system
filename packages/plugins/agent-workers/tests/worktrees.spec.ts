@@ -208,7 +208,10 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect((await run(after.ctx, 'agent:dev', 'k-2', 'run_keep')).status).toBe('completed')
     expect(second.runs[0]!.workspace).toBe(first.runs[0]!.workspace)
     expect(readFileSync(join(second.runs[0]!.workspace, 'note-run_keep.txt'), 'utf8')).toBe('k-1\n')
-    expect(readdirSync(elsewhere)).toEqual([])
+    // No worktree is made there: only the source's private directory, where the run's report file
+    // was made beside the worktrees (T265), and removed once the run ended.
+    expect(readdirSync(elsewhere)).toEqual(['.setup'])
+    expect(readdirSync(join(elsewhere, '.setup'))).toEqual([])
   })
 
   /** A board task's brief whose files hold `text` as the board's TASKS.md (brief@1.2 files). */

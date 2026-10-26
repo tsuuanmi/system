@@ -59,7 +59,7 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { accessSync, constants, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { delimiter, isAbsolute, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
@@ -68,13 +68,13 @@ import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec,
   type RuntimeEvidence, type ToolCall, WORKSPACE_READS_SCRIPT, type WorkspaceReadBounds, agentHome, agentShellEnvironment, childEnvironment, confinedCommand, homeProblem, identityHmac, proveConfinement,
-  readHomeJson, withMetering, workspaceReadArgs, workspaceReadBounds, writeLauncher,
+  readHomeJson, toolSandboxAllowances, withMetering, withRunReport, workspaceReadArgs, workspaceReadBounds, writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { type Deferral, type GateChannel, hookOverrides, openGateChannel } from './gate.ts'
 import { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
-import { configOverrides, readsOverride, refused } from './overrides.ts'
+import { configOverrides, readsOverride, refused, writableRootsOverride } from './overrides.ts'
 import { probeGate, proofFailure, startProbeModel } from './proof.ts'
 import { APP_SERVER_ARGS, VERIFIED_RATE_LIMITS_VERSIONS, askRateLimits, endAppServer, limitsFromRateLimits } from './rate-limits.ts'
 import { TurnUsage } from './usage.ts'
@@ -299,12 +299,19 @@ export class CodexRuntime implements AgentRuntimeProvider {
       // server, which confines itself again, the workspace read-only to it (T200b).
       const own = channel ? [channel.dir, this.hook(), this.node()] : []
       const readOnly = [...new Set([shell.path, ...own, this.readsScript(), this.node()])]
-      const bind = spec.sandbox === 'workspace-write' ? { writable: [home, spec.workspace], readOnly } : { writable: [home], readOnly: [spec.workspace, ...readOnly] }
+      const writes = spec.sandbox === 'workspace-write'
+      const bind = writes ? { writable: [home, spec.workspace], readOnly } : { writable: [home], readOnly: [spec.workspace, ...readOnly] }
       let confined: { command: string; args: string[] }
       let reads: { command: string; args: string[] }
+      // A writing run's commands run a browser test as a check's confinement does (T265): its report
+      // file bound back writable and named to them, and Codex's sandbox lets them write it (its
+      // directory, a writable root being a directory) and the confinement's private /dev/shm.
+      let roots: string[] = []
       try {
         reads = this.readsCommand(spec.workspace, readBounds)
-        confined = confinedCommand(executable, [], this.confinement(bind))
+        const confinement = withRunReport(this.confinement(bind), writes ? spec.reportFile : undefined)
+        confined = confinedCommand(executable, [], confinement)
+        if (writes) roots = toolSandboxAllowances(confinement, spec.reportFile).write.map((path) => (path === spec.reportFile ? dirname(path) : path))
       } catch (error) {
         throw new ProviderError('config_error', `codex-sdk: ${firstLine(error)}; nothing was run`, { cause: error })
       }
@@ -314,7 +321,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       env = this.environment(home, channel, shell.path)
       const client = (this.options.client ?? ((options) => new Codex(options)))({
         codexPathOverride: program,
-        configOverrides: [...this.overrides, readsOverride(reads, readBounds), ...(channel ? hookOverrides(this.node(), this.hook()) : [])],
+        configOverrides: [...this.overrides, readsOverride(reads, readBounds), ...(channel ? hookOverrides(this.node(), this.hook()) : []), ...(roots.length ? [writableRootsOverride(this.options.config, roots)] : [])],
         env,
       })
       const thread: ThreadOptions = {

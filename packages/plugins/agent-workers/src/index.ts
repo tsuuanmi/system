@@ -70,6 +70,7 @@ import {
 import { researchProblem, withResearchDefaults } from './research.ts'
 import { type WebProof, WebProbes } from './web-probe.ts'
 import { CHECKS_MIGRATION, RunChecks } from './checks.ts'
+import { type RunReport, type RunReported, runReport } from './run-report.ts'
 import { loadSetups, SETUP_MIGRATION, type Setup, type WorktreeSetupConfig, WorktreeSetups } from './setup.ts'
 import { registerAccountTools, registerRunTools } from './tools.ts'
 import { CARRY_MIGRATION, FORK_MIGRATION, notKnownGone, RUN_ID, type RepositoryCheck, type RunWorktree, type RunWorktreeRelease, type SweepOutcome, type WorktreeRelease, Worktrees } from './worktrees.ts'
@@ -577,6 +578,8 @@ export class AgentWorkers extends Service {
   /** Each repository's worktree setup, by its path as configured (resolved), and what runs them (ADR-0058). */
   private readonly setups: Map<string, Setup>
   private readonly worktreeSetups: WorktreeSetups
+  /** Where each writing run's report file is made (an owner-only directory beside the worktrees, T265). */
+  private readonly reportDir: string
   /** A workflow run's required checks, run on its result's worktree in its repository's setup's confinement (./checks.ts, T151). */
   private readonly runChecks: RunChecks
   /** Each runtime's account setting (ADR-0052); a runtime not configured is assigned. */
@@ -611,6 +614,8 @@ export class AgentWorkers extends Service {
     this.setups = loadSetups(config.worktreeSetup, [...this.workers.values()].filter((w) => w.worktreePerRun).map((w) => w.workspace))
     // Its private views are made beside the worktrees (a name no repository's directory there takes).
     this.worktreeSetups = new WorktreeSetups(ctx, join(worktreeRoot, '.setup'))
+    // Each writing run's report file is made there too, outside every worktree (T265).
+    this.reportDir = join(worktreeRoot, '.setup')
     this.runChecks = new RunChecks(ctx, this.worktrees, this.setups, join(worktreeRoot, '.setup'), { setups: this.worktreeSetups, hostStopped: this.stopped.signal })
     if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
     this.readBounds = readBoundsOf(config.workspaceReads)
@@ -2319,15 +2324,33 @@ export class AgentWorkers extends Service {
       ...(hostTools.length ? { hostTools } : {}),
       toolGate: gate.gate,
     }
-    // Metered: nothing runs without a reservation (INV-2, INV-9), on its model's pool too when it has one (ADR-0073).
-    const meter = this.meter(row.worker, worker, at.modelPool)
-    if (meter) await this.declareAccounts(meter.resources)
-    const reservation = meter ? await this.reserve(row, meter, lease) : undefined
+    // A writing run's commands say on a report file of its own what their tests did not run, as a
+    // check's command does (T265): its result says so, and its review is told. One that cannot be
+    // made is said on the result (`reportUnread`), never taken for a report naming no skip.
+    let report: RunReport | undefined
+    let unmade: RunReported | undefined
+    if (worker.sandbox === 'workspace-write' && !member) {
+      try {
+        report = runReport(this.reportDir)
+        spec.reportFile = report.path
+      } catch (error) {
+        unmade = { unread: `its report file could not be made in ${this.reportDir}: ${(error as Error).message}`.slice(0, 300) }
+        this.ctx.logger.warn(`agent Workers: ${row.worker}'s run ${row.run_id} has no report file (${unmade.unread}); its result says so`)
+      }
+    }
     try {
-      const result = await this.submit(row, worker, provider, spec, turn.native, signal, lease, meter, gate.deferral)
-      this.complete(row, worker, workspace, result, turn, lease, at)
+      // Metered: nothing runs without a reservation (INV-2, INV-9), on its model's pool too when it has one (ADR-0073).
+      const meter = this.meter(row.worker, worker, at.modelPool)
+      if (meter) await this.declareAccounts(meter.resources)
+      const reservation = meter ? await this.reserve(row, meter, lease) : undefined
+      try {
+        const result = await this.submit(row, worker, provider, spec, turn.native, signal, lease, meter, gate.deferral)
+        this.complete(row, worker, workspace, result, turn, lease, at, report?.read() ?? unmade)
+      } finally {
+        if (reservation) await this.release(row.worker, reservation)
+      }
     } finally {
-      if (reservation) await this.release(row.worker, reservation)
+      report?.dispose()
     }
   }
 
@@ -2509,7 +2532,8 @@ export class AgentWorkers extends Service {
   }
 
   /** Store the result as a `report` artifact and complete the run. */
-  private complete(row: RunRow, worker: WorkerSpec, workspace: string, result: RunResult, turn: Turn, lease: () => Lease, at?: AtTier): void {
+  private complete(row: RunRow, worker: WorkerSpec, workspace: string, result: RunResult, turn: Turn, lease: () => Lease, at?: AtTier, reported: RunReported = {}): void {
+    const { notRun, unread: reportUnread } = reported
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
     const native = turn.native
     const member = row.scope === REVIEW_MEMBER
@@ -2532,12 +2556,13 @@ export class AgentWorkers extends Service {
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
-      // `agent-result@1.4` for a Worker that offers tiers (ADR-0073: the tier it ran at and the model it
+      // `agent-result@1.5` when its commands reported tests they did not run, or what they reported is
+      // not known (T265), `@1.4` for a Worker that offers tiers (ADR-0073: the tier it ran at and the model it
       // was given there), `@1.3` for a review member's step (its profile, and the turns it replayed),
       // else `@1.2` when the runtime reported its token usage, `@1.1` otherwise.
       const usage = usageOf(result)
       const tiered = at && worker.tiers ? { tier: at.tier, ...(at.model ? { configuredModel: at.model } : {}) } : undefined
-      const schema = tiered ? 'agent-result@1.4' : member ? 'agent-result@1.3' : usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
+      const schema = notRun !== undefined || reportUnread !== undefined ? 'agent-result@1.5' : tiered ? 'agent-result@1.4' : member ? 'agent-result@1.3' : usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
       const artifact = this.ctx.artifacts.put({
         kind: 'report', bodySchema: schema,
         body: {
@@ -2551,6 +2576,8 @@ export class AgentWorkers extends Service {
           // The answer is bound to exactly what it answered: the earlier turns replayed, by run and answer, and the hash of all it was sent.
           ...(member ? { profile: REVIEW_MEMBER } : {}),
           ...(turn.replay ? { replay: { runs: turn.replay.runs, answers: turn.replay.answers, promptHash: sha256(turn.prompt) } } : {}),
+          // What its own test runs did not run, as they reported it, or that it is not known (T265): a review is told.
+          ...(notRun !== undefined ? { notRun } : {}), ...(reportUnread !== undefined ? { reportUnread } : {}),
           text: result.text,
         },
         ...(turn.replay ? { inputs: turn.replay.answers } : {}),

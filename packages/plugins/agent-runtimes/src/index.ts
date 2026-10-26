@@ -10,7 +10,7 @@ import { homedir, tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type AgentRuntimeProvider, AgentRuntimes, type Confinement } from '@tsuuanmi/system-agent-runtime-core'
+import { type AgentRuntimeProvider, AgentRuntimes, BROWSERS_DIR_VARIABLE, type Confinement } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, secretPaths } from '@tsuuanmi/system-libs'
 
 export * from '@tsuuanmi/system-agent-runtime-core'
@@ -36,7 +36,7 @@ const DEFAULT_READ_ONLY: readonly string[] = ['$DSH_HOME/system/tools', '$DSH_HO
  * (`$DSH_HOME/system/browsers`, a path and nothing secret): a child's `DSH_HOME` is scrubbed, so
  * under a custom DSH home its browser tests find it only by this (T247).
  */
-export const BROWSERS_DIR = 'SYSTEM_BROWSERS_DIR'
+export const BROWSERS_DIR = BROWSERS_DIR_VARIABLE
 
 /**
  * Always hidden from an agent child, when present: the DSH home (vault, key, tokens, store, login

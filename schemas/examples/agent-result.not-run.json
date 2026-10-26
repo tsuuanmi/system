@@ -1,0 +1,18 @@
+{
+  "schema": "agent-result@1.5",
+  "worker": "agent:claude-code:standard",
+  "runtime": "claude-agent-sdk",
+  "runId": "run_01JB9C7Q5T",
+  "nativeHandle": "8d2e1f0a-6b4c-4e3d-a9f1-2c7b5e8d0a13",
+  "promptHash": "sha256:4c2e8a1f0b3d5e7a9c1b3d5f7a9e2c4b6d8f0a2c4e6b8d0f1a3c5e7b9d2f4a6c",
+  "sandbox": "workspace-write",
+  "workspace": "/home/operator/.dsh/system/worktrees/system-1a2b3c4d5e6f/run_7c4e2a9b1d3f5e08",
+  "subject": {
+    "type": "git-head",
+    "ref": "HEAD",
+    "version": "3e7a9c1b5d2f4e6a8c0b1d3f5e7a9c2b4d6f8e0a"
+  },
+  "turns": 31,
+  "notRun": "its browser tests (58 browser tests skipped: Chrome cannot start here (Failed to create shared memory))",
+  "text": "Reworked the review page's layout; the web UI tests pass, but the browser tests did not run in my tool sandbox."
+}

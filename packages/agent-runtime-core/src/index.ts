@@ -6,9 +6,10 @@
  * @module @tsuuanmi/system-agent-runtime-core
  */
 import { execFile } from 'node:child_process'
-import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, closeSync, constants, type Dirent, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -430,6 +431,256 @@ export interface RunSpec {
    * so does one asked for it with any other sandbox.
    */
   web?: boolean | undefined
+  /**
+   * The run's report file (an absolute path to an empty, owner-only file its Worker source made
+   * outside the workspace, T265): a `workspace-write` run's commands see it writable, named in
+   * {@link RUN_REPORT_VARIABLE}, so a test run its agent starts says there what it did not run (its
+   * browser tests: `browser-tests-not-run: <why>`), as a check's command does. The source reads it
+   * once the run ended. A `read-only` run, which runs no command, ignores it.
+   */
+  reportFile?: string | undefined
+}
+
+/**
+ * The variable that names a command's report file, where a test run says what it did not run
+ * (`browser-tests-not-run: <why>`, scripts/browser-skips.ts): a check's report file (agent-workers),
+ * and a writing run's ({@link RunSpec.reportFile}, T265).
+ */
+export const RUN_REPORT_VARIABLE = 'SYSTEM_CHECK_REPORT_PATH'
+
+/**
+ * The variable that names, inside a confinement, where the managed Chrome is bound back read-only
+ * (`$DSH_HOME/system/browsers`, a path and nothing secret, T247).
+ */
+export const BROWSERS_DIR_VARIABLE = 'SYSTEM_BROWSERS_DIR'
+
+/**
+ * The shared memory directory Chrome writes. The read confinement hides the host's behind a fresh
+ * tmpfs of the child's own (empty, private, writable): a Worker's command sandbox gives it back
+ * writable, or a headless Chrome cannot start in a Worker's own tool call (T265).
+ */
+export const SHARED_MEMORY = '/dev/shm'
+
+/**
+ * What a writing run's own command sandbox (the runtime's second layer: Claude Code's sandbox,
+ * Codex's) gives its commands beyond the workspace, so a browser test runs in a Worker's own tool
+ * call as in a check's confinement (T247, T265): the managed Chrome readable (`read`: the directory
+ * the read confinement binds back read-only and names in {@link BROWSERS_DIR_VARIABLE}), and the
+ * confinement's private {@link SHARED_MEMORY} and the run's report file writable (`write`). Fonts
+ * and the rest of the host stay readable as the confinement shows them; vite's scratch
+ * (`node_modules/.vite`, `.vite-temp`) lies in the workspace, writable already. Nothing it names is
+ * a secret or a hidden path.
+ */
+export function toolSandboxAllowances(confinement: Confinement, reportFile?: string): { read: string[]; write: string[] } {
+  const browsers = confinement.env?.[BROWSERS_DIR_VARIABLE]
+  return {
+    read: browsers && isAbsolute(browsers) ? [browsers] : [],
+    write: [SHARED_MEMORY, ...(reportFile !== undefined ? [reportFile] : [])],
+  }
+}
+
+/**
+ * The confinement of a writing run with its report file (T265): the file bound back writable at its
+ * own path and named in {@link RUN_REPORT_VARIABLE}; `confinement` itself when the run has none.
+ * Throws when the file is not an absolute path to a regular file.
+ */
+export function withRunReport(confinement: Confinement, reportFile: string | undefined): Confinement {
+  if (reportFile === undefined) return confinement
+  if (!isAbsolute(reportFile) || !lstatSync(reportFile, { throwIfNoEntry: false })?.isFile()) throw new Error(`the run's report file ${reportFile} is not an absolute path to a regular file`)
+  return { ...confinement, writable: [...confinement.writable, reportFile], env: { ...confinement.env, [RUN_REPORT_VARIABLE]: reportFile } }
+}
+
+/**
+ * Where {@link writableUnixSockets} looks on disk, and how deep: the system's runtime directories
+ * (where daemons' sockets live: a container engine's, the system bus, snapd), the account's home two
+ * levels down, and, deeper, where container engines run for the account itself (Docker Desktop's
+ * `~/.docker/desktop` and `~/.docker/run`, Podman machines under `~/.local/share/containers`, Colima,
+ * Lima, Rancher Desktop). Every socket a process of the host has bound is found besides, wherever it
+ * lies ({@link BOUND_UNIX_SOCKETS}). The temporary directories, the session's runtime directory, and
+ * the DSH home are hidden from every agent already.
+ */
+export const SOCKET_ROOTS: ReadonlyArray<{ path: string; depth: number }> = [
+  { path: '/run', depth: 4 }, { path: '/var/run', depth: 4 }, { path: homedir(), depth: 2 },
+  { path: join(homedir(), '.docker'), depth: 4 }, { path: join(homedir(), '.local', 'share', 'containers'), depth: 8 },
+  { path: join(homedir(), '.colima'), depth: 4 }, { path: join(homedir(), '.lima'), depth: 4 }, { path: join(homedir(), '.rd'), depth: 4 },
+]
+
+/**
+ * The kernel's list of the unix sockets bound in this network namespace, the host's for the daemon:
+ * every socket a process of the host listens on, by the path it was bound to, at whatever depth.
+ */
+export const BOUND_UNIX_SOCKETS = '/proc/net/unix'
+
+/**
+ * The directories where the host's daemons make their unix sockets, by their real paths: the
+ * {@link SOCKET_ROOTS} but the account's home itself (the system's runtime directories, and the
+ * container engines' own directories in the home). A writing run whose commands may make unix sockets
+ * has every one of these covered for the whole run (T265): a socket a daemon makes there after the run
+ * started (dockerd starting, making `/run/docker.sock`; Docker Desktop starting for the first time,
+ * making `~/.docker/desktop/docker.sock`) is no more reachable than the ones there when it started; a
+ * mask of a socket is only a snapshot. A directory can be covered only if it exists when the run
+ * starts, so one in the home that does not is made now, empty and owner-only (the engine that would
+ * make it later finds it there and uses it); one outside the home that does not exist is left (only a
+ * process with the right to make it in `/` could, which a covered `/run` keeps no socket of anyway).
+ * `complete` is false when one in the home could not be made: its later socket could not be covered,
+ * so the run's commands make no unix socket. The sockets that exist elsewhere when the run starts are
+ * masked ({@link writableUnixSockets}).
+ */
+export function socketDirectories(roots: ReadonlyArray<{ path: string; depth: number }> = SOCKET_ROOTS, home: string = homedir()): { directories: string[]; complete: boolean } {
+  const own = real(home) ?? home
+  let complete = true
+  const directories = new Set<string>()
+  for (const root of roots) {
+    let path = real(root.path)
+    const inHome = under(resolve(root.path), resolve(home)) || (path !== undefined && under(path, own))
+    if (!path && inHome) {
+      try {
+        mkdirSync(root.path, { recursive: true, mode: 0o700 })
+        path = real(root.path)
+      } catch {
+        complete = false
+      }
+    }
+    if (!path || path === own) continue
+    if (!statSync(path).isDirectory()) {
+      complete = false
+      continue
+    }
+    directories.add(path)
+  }
+  return { directories: [...directories], complete }
+}
+
+/**
+ * Of `directories` ({@link socketDirectories}), those in the account's home, which a writing run's own
+ * confinement hides besides (its agent never needs a container engine's directory); the system's
+ * runtime directories stay seen there, where the agent itself reads `/run` (its DNS), and are denied
+ * to its commands by its command sandbox.
+ */
+export function homeSocketDirectories(directories: readonly string[], home: string = homedir()): string[] {
+  const own = real(home) ?? home
+  return directories.filter((path) => under(path, own))
+}
+
+/**
+ * How deep {@link writableUnixSockets} scans on disk a path bound back from under a hidden one (a
+ * run's worktree, an agent's home): a live socket there at any depth is in the kernel's list anyway.
+ */
+const BOUND_SCAN_DEPTH = 4
+
+/** The most directory entries {@link writableUnixSockets} reads before it gives up. */
+const SOCKET_SCAN_ENTRIES = 50_000
+
+/**
+ * The paths of the unix sockets named in `listing` ({@link BOUND_UNIX_SOCKETS}' text): each line's
+ * last field when it is an absolute path (an abstract socket, `@…`, has no path; a network namespace
+ * of the agent's own, which its sandbox has, holds none of the host's).
+ */
+export function boundUnixSockets(listing: string): string[] {
+  const paths = new Set<string>()
+  for (const line of listing.split('\n').slice(1)) {
+    const path = /^\s*\S+:\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+ (\/.*)$/.exec(line)?.[1]
+    if (path) paths.add(path)
+  }
+  return [...paths]
+}
+
+/**
+ * The unix sockets this account can connect to (it may write them) that a confined child sees, each
+ * by its real path: every one the host has bound ({@link BOUND_UNIX_SOCKETS}, read by `bound`), whose
+ * path is a socket now, and every one on disk under `roots`. What the child sees is the confinement's
+ * own view: a path under `skip` (the paths it hides) is left only when no path of `rebound` (the
+ * paths it binds back, read-only or writable) that lies inside that hidden one holds it, since a
+ * bind brings back what lies under it, a socket too (the runs' worktrees and the agents' homes lie
+ * under the hidden DSH home and are bound back); each such bound-back path is scanned on disk as a
+ * root of its own. `complete` is false when either may have missed one: the kernel's list cannot be
+ * read, or the scan reached its bound ({@link SOCKET_SCAN_ENTRIES}). A writing run whose commands may
+ * make unix sockets (Chrome needs them) has these masked in its confinement (T265,
+ * {@link Confinement.masks}), under paths it binds back too (a read-only mount does not stop a
+ * connect): its commands then reach no daemon of the host through one, as they reach none through
+ * the network. Links are never followed on disk; a directory it cannot read is passed over.
+ */
+export function writableUnixSockets(roots: ReadonlyArray<{ path: string; depth: number }> = SOCKET_ROOTS, skip: readonly string[] = [], bound: () => string = () => readFileSync(BOUND_UNIX_SOCKETS, 'utf8'), rebound: readonly string[] = []): { sockets: string[]; complete: boolean } {
+  const skipped = skip.map((path) => real(path) ?? path)
+  const binds = rebound.map((path) => real(path) ?? path)
+  const within = (path: string, root: string): boolean => path === root || under(path, root)
+  // Hidden: under a hidden path, and under no bind inside that hidden path, which would bring it back.
+  const hidden = (path: string): boolean => skipped.some((s) => within(path, s) && !binds.some((b) => within(path, b) && under(b, s)))
+  const sockets = new Set<string>()
+  const seen = new Set<string>()
+  let entries = 0
+  const writable = (path: string): boolean => {
+    try {
+      accessSync(path, constants.W_OK)
+      return true
+    } catch {
+      return false
+    }
+  }
+  let listing: string
+  try {
+    listing = bound()
+  } catch {
+    return { sockets: [], complete: false }
+  }
+  for (const path of boundUnixSockets(listing)) {
+    const at = real(path)
+    if (!at || hidden(at) || !lstatSync(at, { throwIfNoEntry: false })?.isSocket()) continue
+    if (writable(at)) sockets.add(at)
+  }
+  const walk = (dir: string, depth: number): boolean => {
+    let listed: Dirent[]
+    try {
+      listed = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return true
+    }
+    for (const entry of listed) {
+      if (++entries > SOCKET_SCAN_ENTRIES) return false
+      const path = join(dir, entry.name)
+      if (hidden(path)) continue
+      if (entry.isSocket()) {
+        if (writable(path)) sockets.add(path)
+      } else if (entry.isDirectory() && depth > 1 && entry.name !== 'node_modules' && entry.name !== '.git') {
+        if (!walk(path, depth - 1)) return false
+      }
+    }
+    return true
+  }
+  // What a bind brings back from under a hidden path is scanned on disk as a root of its own (a
+  // scan from `roots` passes over the hidden path it lies in).
+  const brought = binds.filter((b) => skipped.some((s) => under(b, s))).map((path) => ({ path, depth: BOUND_SCAN_DEPTH }))
+  for (const root of [...roots, ...brought]) {
+    const path = real(root.path)
+    if (!path || seen.has(path) || hidden(path)) continue
+    seen.add(path)
+    if (!walk(path, root.depth)) return { sockets: [...sockets].sort(), complete: false }
+  }
+  return { sockets: [...sockets].sort(), complete: true }
+}
+
+/**
+ * The directories to hide in a confinement instead of masking `sockets` one by one, where its
+ * bubblewrap cannot mount over a socket (bubblewrap 0.4 opens a mount point that is no regular file
+ * as one, and fails on a socket: `No such device or address`, T265): each socket's own directory, an
+ * empty tmpfs inside, what else it holds hidden with it. A socket under `denied` (the directories the
+ * run's commands are denied for the whole run, {@link socketDirectories}) needs none. `complete` is
+ * false when a socket's directory cannot be hidden without hiding what the run works in: `/`, the
+ * account's home or a directory above it, or one that is, lies under, or holds a path the confinement
+ * binds back (`binds`: the workspace, the run's homes and report file, the managed tools and Chrome).
+ */
+export function socketCovers(sockets: readonly string[], binds: readonly string[], denied: readonly string[] = [], home: string = homedir()): { directories: string[]; complete: boolean } {
+  const own = real(home) ?? home
+  const bound = binds.map((path) => real(path) ?? path)
+  const within = (path: string, root: string): boolean => path === root || under(path, root)
+  const directories = new Set<string>()
+  for (const socket of sockets) {
+    if (denied.some((dir) => within(socket, dir))) continue
+    const dir = resolve(socket, '..')
+    if (dir === sep || within(own, dir) || bound.some((b) => within(b, dir) || within(dir, b))) return { directories: [], complete: false }
+    directories.add(dir)
+  }
+  return { directories: [...directories].sort(), complete: true }
 }
 
 /**
@@ -832,6 +1083,13 @@ export interface Confinement {
    * nor a variable a shell runs code from.
    */
   env?: Readonly<Record<string, string>>
+  /**
+   * Files covered by the null device after every other mount, wherever they lie, under a path bound
+   * back too (T265: the host's unix sockets a writing run's commands could connect to, which a
+   * read-only bind does not stop). One that does not exist, or that the child does not see (under a
+   * hidden path that no deeper bind brings back), is left; a directory is refused.
+   */
+  masks?: readonly string[]
 }
 
 const real = (path: string): string | undefined => {
@@ -864,6 +1122,10 @@ interface Plan {
   conflicts: string[]
   /** The host's `/tmp` (its real path), when no hidden directory already lies over it: a tmpfs is mounted there. */
   tmp?: string
+  /** The confinement's masks the child would otherwise see (real paths): each covered by the null device, last. */
+  masks: string[]
+  /** Masks that are directories: refused. */
+  maskProblems: string[]
 }
 
 function plan(confinement: Confinement): Plan {
@@ -887,7 +1149,17 @@ function plan(confinement: Confinement): Plan {
   const masked = [...hides.keys(), ...(host !== undefined && !covered ? [host] : [])]
   const conflicts = [...binds.keys()].flatMap((bind) => masked.filter((h) => h === bind || under(h, bind)).map((h) => `binding back ${bind} would expose ${h}`))
   const hidden = [...hides].filter(([path]) => ![...hides.keys()].some((other) => other !== path && under(path, other))).map(([path, dir]) => ({ path, dir }))
-  return { hidden, hides: masked, binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts, ...(host !== undefined && !covered ? { tmp: host } : {}) }
+  // A mask the child would see: not under a hidden path (the private /tmp among them), unless a bind deeper than it brings it back.
+  const seen = (path: string): boolean => !masked.some((h) => (path === h || under(path, h)) && ![...binds.keys()].some((b) => (path === b || under(path, b)) && under(b, h)))
+  const masks: string[] = []
+  const maskProblems: string[] = []
+  for (const entry of confinement.masks ?? []) {
+    const path = real(entry)
+    if (!path || !seen(path) || masks.includes(path)) continue
+    if (statSync(path).isDirectory()) maskProblems.push(`the mask ${path} is a directory`)
+    else masks.push(path)
+  }
+  return { hidden, hides: masked, binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts, ...(host !== undefined && !covered ? { tmp: host } : {}), masks, maskProblems }
 }
 
 /**
@@ -933,8 +1205,9 @@ export interface ConfinedCommandOptions {
  * of its environment. Throws when a bind or a view would re-expose a hidden path or the host's `/tmp`.
  */
 export function confinedCommand(command: string, args: readonly string[], confinement: Confinement, options: ConfinedCommandOptions = {}): { command: string; args: string[] } {
-  const { hidden, hides, binds, conflicts, tmp } = plan(confinement)
+  const { hidden, hides, binds, conflicts, tmp, masks, maskProblems } = plan(confinement)
   if (conflicts.length) throw new Error(`read confinement refused: ${conflicts[0]}`)
+  if (maskProblems.length) throw new Error(`read confinement refused: ${maskProblems[0]}`)
   const views = (options.views ?? []).map((view) => {
     const source = real(view.source)
     if (!source) throw new Error(`read confinement refused: the view source ${view.source} does not exist`)
@@ -956,7 +1229,10 @@ export function confinedCommand(command: string, args: readonly string[], confin
   const root = options.readOnly ? ['--ro-bind', '/', '/', '--dev', '/dev'] : ['--dev-bind', '/', '/']
   const argv = [
     '--die-with-parent', '--unshare-pid', ...(options.network === false ? ['--unshare-net'] : []), '--new-session', ...root, '--proc', '/proc',
-    ...mounts.flatMap((m) => m.args), ...views.flat(), ...(options.chdir !== undefined ? ['--chdir', options.chdir] : []),
+    ...mounts.flatMap((m) => m.args), ...views.flat(),
+    // Last, so no bind or view lies over one; a nested command's outer confinement masks them already.
+    ...(options.nested ? [] : masks.flatMap((path) => ['--ro-bind', '/dev/null', path])),
+    ...(options.chdir !== undefined ? ['--chdir', options.chdir] : []),
     ...values.flatMap(([name, value]) => ['--setenv', name, value]),
     ...['TMPDIR', 'TMP', 'TEMP'].flatMap((name) => ['--setenv', name, PRIVATE_TMP]),
   ]
@@ -1018,8 +1294,8 @@ const runCommand: RunCommand = async (command, args) => (await promisify(execFil
  * 3. Inside, every hidden file is the null device (character device 1:3), never the file.
  */
 export async function proveConfinement(confinement: Confinement, run: RunCommand = runCommand): Promise<{ confined: boolean; detail: string }> {
-  const { hidden, binds, absent, conflicts } = plan(confinement)
-  if (conflicts.length) return { confined: false, detail: `read confinement refused: ${conflicts[0]}` }
+  const { hidden, binds, absent, conflicts, masks, maskProblems } = plan(confinement)
+  if (conflicts.length || maskProblems.length) return { confined: false, detail: `read confinement refused: ${conflicts[0] ?? maskProblems[0]}` }
   const confined = (command: string, args: string[]) => {
     const c = confinedCommand(command, args, confinement)
     return run(c.command, c.args)
@@ -1044,7 +1320,8 @@ export async function proveConfinement(confinement: Confinement, run: RunCommand
       if (dir !== b.path && !masked.has(dir)) masked.set(dir, new Set())
     }
   }
-  const files = hidden.filter((h) => !h.dir).map((h) => h.path)
+  // Every hidden file, and every mask (T265), is the null device inside.
+  const files = [...hidden.filter((h) => !h.dir).map((h) => h.path), ...masks]
   try {
     const lines = (await confined('stat', ['-c', '%n|%d:%i|%F|%t:%T', '--', ...masked.keys(), ...files])).split('\n').filter(Boolean)
     const inside = new Map(lines.map((line) => {

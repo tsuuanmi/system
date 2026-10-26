@@ -47,7 +47,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, subjectId } from '@tsuuanmi/system-libs'
+import { BRIEF_FILE_PATH, captureGitSubject, ensurePrivateDir, sandboxPlaceholder, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import {
   type Carried, type CarryRefusal, type CarryStep, CHANGE_BOUNDS, type ChangedFile, type Landed, type LandRefusal, type LandStep, REBASE_FILES_MAX, REBASE_MOVED_MAX, type Regenerated, reviewRef, type WorkChange,
@@ -1935,6 +1935,11 @@ export class Worktrees {
    * descriptor, as place writes it, then removed by name: rmdir takes only an empty directory, never a link.
    */
   private async clearSystem(row: WorktreeRow, inside: (args: string[]) => Promise<string>): Promise<void> {
+    // A command sandbox's empty placeholders left in the worktree (T265) are not the work either:
+    // never in its subject, and so never committed with it. Only an untracked one that holds nothing.
+    for (const path of (await inside(['ls-files', '--others', '--exclude-standard', '-z'])).split('\0')) {
+      if (path && sandboxPlaceholder(row.path, path)) rmSync(join(row.path, path), { recursive: true, force: true })
+    }
     const system = join(row.path, '.system')
     const own = openDirectory(system)
     if (typeof own !== 'object') return

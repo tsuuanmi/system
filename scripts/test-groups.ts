@@ -25,6 +25,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { sandboxPlaceholder } from '../packages/libs/src/subjects.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 
@@ -201,11 +202,16 @@ export function affected(changed: readonly string[], all: Package[] = packages()
   return { groups: names.filter((name) => [...ids].some((id) => groupOf(id) === name)), changed: [...touched].sort() }
 }
 
-/** The paths changed since the merge base of `base` and HEAD: committed, staged, unstaged, and untracked. */
-export function changedSince(base: string): string[] {
-  const git = (...args: string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8' })
+/**
+ * The paths changed since the merge base of `base` and HEAD: committed, staged, unstaged, and
+ * untracked, but a command sandbox's empty placeholders (`.bashrc`, `.gitconfig`, `.claude/…`: an
+ * agent's tool sandbox mounts them in the worktree, T265), which are no change of the repository.
+ */
+export function changedSince(base: string, dir: string = root): string[] {
+  const git = (...args: string[]): string => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
   const mergeBase = git('merge-base', base, 'HEAD').trim()
-  return [...new Set([...git('diff', '--name-only', mergeBase).split('\n'), ...git('ls-files', '--others', '--exclude-standard').split('\n')].filter(Boolean))].sort()
+  const untracked = git('ls-files', '--others', '--exclude-standard', '-z').split('\0').filter((path) => path && !sandboxPlaceholder(dir, path))
+  return [...new Set([...git('diff', '--name-only', mergeBase).split('\n'), ...untracked].filter(Boolean))].sort()
 }
 
 function defaultBase(): string {

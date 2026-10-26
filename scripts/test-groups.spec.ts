@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { affected, filters, graph, GROUPS, groupOf, packages, splitArgs } from './test-groups.ts'
+import { affected, changedSince, filters, graph, GROUPS, groupOf, packages, splitArgs } from './test-groups.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const all = packages()
@@ -19,6 +21,35 @@ describe('the runner\'s arguments (T247)', () => {
     expect(splitArgs(['group', 'survaces'])).toEqual({ command: 'group', rest: ['survaces'], extra: [] })
     // `affected` keeps its own options: only `--` gives vitest anything.
     expect(splitArgs(['affected', '--base', 'main'])).toEqual({ command: 'affected', rest: ['--base', 'main'], extra: [] })
+  })
+})
+
+describe('what test:affected counts as changed (T265)', () => {
+  it('leaves out a command sandbox\'s empty placeholders in the worktree (.bashrc, .gitconfig, .claude/…), but keeps one with content, a tracked change to one, and every other new file', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'system-test-groups-'))
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { stdio: 'ignore' })
+      git('init', '-q', '-b', 'main')
+      writeFileSync(join(repo, '.gitmodules'), '')
+      git('add', '.gitmodules')
+      git('commit', '-q', '-m', 'base')
+      // What Claude Code's sandbox leaves in the directory its commands start in: empty files and directories.
+      for (const file of ['.bashrc', '.profile', '.zshrc', '.mcp.json', '.idea']) writeFileSync(join(repo, file), '')
+      mkdirSync(join(repo, '.claude'))
+      writeFileSync(join(repo, '.claude', 'settings.json'), '')
+      mkdirSync(join(repo, '.vscode'))
+      symlinkSync('/dev/null', join(repo, '.gitconfig'))
+      expect(changedSince('main', repo)).toEqual([])
+      // A Worker's own: a placeholder path with content, a placeholder name elsewhere, a tracked change, and any other file.
+      writeFileSync(join(repo, '.profile'), 'export X=1\n')
+      mkdirSync(join(repo, 'docs'))
+      writeFileSync(join(repo, 'docs', '.bashrc'), '')
+      writeFileSync(join(repo, '.gitmodules'), '[submodule "x"]\n')
+      writeFileSync(join(repo, 'notes.md'), 'x\n')
+      expect(changedSince('main', repo)).toEqual(['.gitmodules', '.profile', 'docs/.bashrc', 'notes.md'])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 })
 

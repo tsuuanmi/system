@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writ
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { captureGitSubject, ignoredPath, subjectId } from '../src/index.ts'
+import { captureGitSubject, changeSince, ignoredPath, SANDBOX_PLACEHOLDERS, sandboxPlaceholder, subjectId } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -38,6 +38,30 @@ describe('exact git subjects (REQ-WF-5)', () => {
     const added = captureGitSubject(dir)!
     expect(added.subject.version).not.toBe(edited.subject.version)
     expect(added.diff).toContain('new file notes.md\nnew')
+  })
+
+  it('leaves a command sandbox\'s empty placeholders out of the subject and its diff, but never one with content, nor the same name elsewhere (T265)', () => {
+    const dir = repo()
+    const clean = captureGitSubject(dir)!
+    for (const file of ['.bashrc', '.bash_profile', '.profile', '.mcp.json', '.idea']) writeFileSync(join(dir, file), '')
+    mkdirSync(join(dir, '.claude'))
+    writeFileSync(join(dir, '.claude', 'settings.json'), '')
+    symlinkSync('/dev/null', join(dir, '.gitconfig'))
+    expect(sandboxPlaceholder(dir, '.bashrc')).toBe(true)
+    expect(sandboxPlaceholder(dir, 'calc.py')).toBe(false)
+    const placeheld = captureGitSubject(dir)!
+    expect(placeheld.subject).toEqual(clean.subject)
+    expect(placeheld.diff).toBe('')
+    expect(changeSince(dir, clean.subject.ref)!.diff).toBe('')
+    writeFileSync(join(dir, '.bashrc'), 'alias ls=rm\n')
+    mkdirSync(join(dir, 'sub'))
+    writeFileSync(join(dir, 'sub', '.profile'), '')
+    const written = captureGitSubject(dir)!
+    expect(written.subject.version).not.toBe(clean.subject.version)
+    expect(written.diff).toContain('new file .bashrc\nalias ls=rm')
+    expect(written.diff).toContain('new file sub/.profile')
+    expect(written.diff).not.toContain('.mcp.json')
+    expect(SANDBOX_PLACEHOLDERS).toContain('.claude/settings.json')
   })
 
   it('shows an untracked file over the size bound by its size only, and skips one that is not a regular file without waiting on it (REQ-WF-5)', () => {

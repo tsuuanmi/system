@@ -20,9 +20,22 @@
         "agent-result@1.1",
         "agent-result@1.2",
         "agent-result@1.3",
-        "agent-result@1.4"
+        "agent-result@1.4",
+        "agent-result@1.5"
       ],
-      "description": "1.1 adds `workspace` and `subject`; 1.2 adds `model`, `usage`, and `models`; 1.3 adds `profile` and `replay` (ADR-0049); 1.4 adds `tier` and `configuredModel` (ADR-0073)."
+      "description": "1.1 adds `workspace` and `subject`; 1.2 adds `model`, `usage`, and `models`; 1.3 adds `profile` and `replay` (ADR-0049); 1.4 adds `tier` and `configuredModel` (ADR-0073); 1.5 adds `notRun` and `reportUnread` (T265)."
+    },
+    "notRun": {
+      "description": "@1.5: what the run's own test runs reported they did not run, on the run's report file (T265): its browser tests, with why (no usable browser where the Worker ran them). The run's result says nothing of those tests, and its review is told so.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "reportUnread": {
+      "description": "@1.5: why what the run's own test runs reported is not known (T265): its report file could not be made, or cannot be read once the run ended. Never taken for a report that names no skipped test: its review is told whether the run's tests ran is not known.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
     },
     "tier": {
       "description": "@1.4: the tier the run ran at, of the tiers its Worker offers (ADR-0073): the one routing served the work at.",
@@ -202,7 +215,8 @@
             "enum": [
               "agent-result@1.2",
               "agent-result@1.3",
-              "agent-result@1.4"
+              "agent-result@1.4",
+              "agent-result@1.5"
             ]
           }
         }
@@ -239,7 +253,8 @@
           "schema": {
             "enum": [
               "agent-result@1.3",
-              "agent-result@1.4"
+              "agent-result@1.4",
+              "agent-result@1.5"
             ]
           }
         }
@@ -274,7 +289,44 @@
       "then": {
         "properties": {
           "schema": {
-            "const": "agent-result@1.4"
+            "enum": [
+              "agent-result@1.4",
+              "agent-result@1.5"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "@1.5 fields (notRun and reportUnread) are refused before @1.5.",
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "notRun": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "notRun"
+            ]
+          },
+          {
+            "properties": {
+              "reportUnread": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reportUnread"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "schema": {
+            "const": "agent-result@1.5"
           }
         }
       }

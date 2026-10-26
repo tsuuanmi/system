@@ -941,7 +941,7 @@ export function reportChannel(dir: string, confinement: Confinement): { path: st
  * The first {@link REPORT_BYTES} bytes of a check's report file, read as itself (O_NOFOLLOW, a
  * plain file, never blocking): `report` when it holds anything, `reportUnread` when it cannot be read.
  */
-function readReport(path: string): Pick<Ended, 'report' | 'reportUnread'> {
+export function readReport(path: string): Pick<Ended, 'report' | 'reportUnread'> {
   let fd: number
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)

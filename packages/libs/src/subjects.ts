@@ -6,7 +6,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, statSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readlinkSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { sha256 } from './canonical.ts'
 
@@ -113,6 +113,40 @@ function untrackedFile(path: string, maxBytes: number, budget: { left: number })
 }
 
 /**
+ * The paths, relative to the working directory, where an agent runtime's command sandbox puts a
+ * placeholder of its own (T265): Claude Code's sandbox denies writes to these files and directories
+ * of the directory its commands start in (shell startup files, git and editor configuration, its own
+ * settings), and, where one is missing, mounts an empty placeholder at its path for the command's
+ * time, which git then lists as an untracked file. They are the sandbox's, never the Worker's work.
+ */
+export const SANDBOX_PLACEHOLDERS: readonly string[] = [
+  '.bashrc', '.bash_profile', '.profile', '.zshrc', '.zprofile', '.gitconfig', '.gitmodules', '.ripgreprc', '.mcp.json', '.idea', '.vscode',
+  '.claude/agents', '.claude/commands', '.claude/hooks', '.claude/launch.json', '.claude/loop.md', '.claude/output-styles', '.claude/routines',
+  '.claude/scheduled_tasks.json', '.claude/settings.json', '.claude/settings.local.json', '.claude/skills', '.claude/workflows',
+]
+
+/**
+ * Whether the untracked `path` of the working tree `workspace` is a command sandbox's placeholder
+ * ({@link SANDBOX_PLACEHOLDERS}): one of those paths, holding nothing: gone, an empty file or
+ * directory, the null device, or a link to it. One with content is the Worker's, and counts.
+ */
+export function sandboxPlaceholder(workspace: string, path: string): boolean {
+  if (!SANDBOX_PLACEHOLDERS.includes(path)) return false
+  const full = join(workspace, path)
+  const stat = lstatSync(full, { throwIfNoEntry: false })
+  if (!stat) return true
+  if (stat.isSymbolicLink()) return readlinkSync(full) === '/dev/null'
+  if (stat.isCharacterDevice()) return statSync(full).rdev === statSync('/dev/null').rdev
+  if (stat.isDirectory()) return readdirSync(full).length === 0
+  return stat.isFile() && stat.size === 0
+}
+
+/** The untracked files of `workspace` as git lists them, without its command sandbox's placeholders. */
+function untrackedOf(workspace: string, timeoutMs: number): string[] {
+  return git(workspace, ['ls-files', '--others', '--exclude-standard', '-z'], timeoutMs).toString('utf8').split('\0').filter(Boolean).filter((path) => !sandboxPlaceholder(workspace, path)).sort()
+}
+
+/**
  * A name `git check-ignore` could read as more than itself: pathspec magic (a leading `:`) or a
  * glob character. check-ignore takes no `--literal-pathspecs`, so such a name is never judged.
  */
@@ -157,7 +191,8 @@ export function captureGitSubject(workspace: string, options: CaptureOptions = {
     throw new Error(`the subject of ${workspace} cannot be read: git rev-parse failed (${said!.slice(0, 200)})`, { cause: error })
   }
   const tracked = git(workspace, ['diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD'], timeoutMs).toString('utf8')
-  const untracked = git(workspace, ['ls-files', '--others', '--exclude-standard', '-z'], timeoutMs).toString('utf8').split('\0').filter(Boolean).sort()
+  // A command sandbox's empty placeholders are never part of the change (T265).
+  const untracked = untrackedOf(workspace, timeoutMs)
   const maxFileBytes = options.maxFileBytes ?? 1024 * 1024
   const budget = { left: options.maxHashBytes ?? 8 * 1024 ** 3 }
   const parts: string[] = []
@@ -203,7 +238,7 @@ export function changeSince(workspace: string, commit: string, options: CaptureO
     throw error
   }
   const tracked = git(workspace, ['diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', commit, '--'], timeoutMs).toString('utf8')
-  const untracked = git(workspace, ['ls-files', '--others', '--exclude-standard', '-z'], timeoutMs).toString('utf8').split('\0').filter(Boolean).sort()
+  const untracked = untrackedOf(workspace, timeoutMs)
   const maxFileBytes = options.maxFileBytes ?? 1024 * 1024
   const budget = { left: options.maxHashBytes ?? 8 * 1024 ** 3 }
   const shown: string[] = []

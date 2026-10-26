@@ -101,7 +101,8 @@ async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | nul
     ...(approvals ? [ctx.plugin(StoreApprovals, { policies: [approvals] })] : []),
     ...(metered ? [ctx.plugin(FakeResources, { pools: [POOL] })] : []),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry),
-    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox, tier: 'standard', ...(metered ? { pool: POOL.pool, account: POOL.account } : {}) }] }),
+    // Its worktree root, where a writing run's report file is made (T265), is the test's own, never the host's DSH home.
+    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox, tier: 'standard', ...(metered ? { pool: POOL.pool, account: POOL.account } : {}) }], worktreeRoot: join(dir, 'worktrees') }),
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
@@ -1267,7 +1268,8 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     const { ctx, run } = await boot(claude(calls, outputs, optionsSeen), bundlePolicies()[0]!)
     const done = await run()
     // The run's commands would run in the SDK's sandbox, yet the policy still decides each one.
-    expect(optionsSeen[0]).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: [WORKSPACE] }, network: { allowedDomains: [] } } })
+    // Besides the workspace, what a browser test writes: the confinement's private /dev/shm and the run's report file (T265).
+    expect(optionsSeen[0]).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: [WORKSPACE, '/dev/shm', expect.stringMatching(/\/worktrees\/\.setup\/run-report-[^/]+\/report$/)] }, network: { allowedDomains: [] } } })
     const decision = (output: Record<string, unknown>) => (output.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string }).permissionDecision
     expect(outputs.map(decision)).toEqual(['deny', 'defer'])
     expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })

@@ -94,18 +94,35 @@ export function wordingOf(spec: ResolvedNode, nodes: readonly NodeRow[]): Wordin
  * `missing` when an agent worked in a tree that can no longer be captured (its worktree was
  * cleaned up, say): the review is then never run unbound (INV-2, INV-5). A re-review (`cycle`) is
  * shown the change since the subject the last review read, with the open and answered findings.
+ * When the run that wrote the change reported tests its own test runs did not run (`agent-result@1.5`
+ * `notRun`, its browser tests, T265), the review is told so: its author's word that the tests pass
+ * says nothing of those; and when what they reported is not known (`reportUnread`), it is told that.
  */
 export function reviewSubject(e: Engine, results: ArtifactRef[], request: string, cycle?: (workspace: string, subject: GitSubject) => ReviewCycle | undefined): { workspace: string; subject: GitSubject; block: string } | { missing: string } | undefined {
-  const workspace = results
-    .map((r) => e.ctx.artifacts.get(r)?.body as { schema?: string; workspace?: string; subject?: unknown } | undefined)
+  const producer = results
+    .map((r) => e.ctx.artifacts.get(r)?.body as { schema?: string; workspace?: string; subject?: unknown; notRun?: unknown; reportUnread?: unknown } | undefined)
     .filter((b) => b?.schema?.startsWith('agent-result@') && b.workspace && b.subject)
-    .at(-1)?.workspace
+    .at(-1)
+  const workspace = producer?.workspace
   if (!workspace) return undefined
   const captured = captureGitSubject(workspace)
   if (!captured) return { missing: workspace }
   const id = subjectId(captured.subject)
-  return { workspace, subject: captured.subject, block: subjectBlock(id, workspace, captured.subject.ref, captured.diff, request, cycle?.(workspace, captured.subject)) }
+  const block = subjectBlock(id, workspace, captured.subject.ref, captured.diff, request, cycle?.(workspace, captured.subject))
+  const notes = [
+    ...(typeof producer.notRun === 'string' ? [notRunNote(producer.notRun)] : []),
+    ...(typeof producer.reportUnread === 'string' ? [reportUnreadNote(producer.reportUnread)] : []),
+  ]
+  return { workspace, subject: captured.subject, block: [...notes, block].join('\n') }
 }
+
+/** What a review is told of tests the run that wrote its change did not run (T265). */
+export const notRunNote = (notRun: string): string =>
+  `Note: the run that wrote this change ran its tests without running ${notRun.slice(0, 300)}; whatever it says of its tests says nothing of those. Judge what they cover from the change itself, and say so in a finding when it matters.`
+
+/** What a review is told when what the run that wrote its change reported of its tests is not known (T265). */
+export const reportUnreadNote = (why: string): string =>
+  `Note: what the run that wrote this change reported of its own test runs is not known (${why.slice(0, 300)}): whether its browser tests ran is not known, so whatever it says of its tests may not cover them. Judge what they cover from the change itself, and say so in a finding when it matters.`
 
 /**
  * A verification step's subject: the exact tree the review it verifies was bound to, captured again

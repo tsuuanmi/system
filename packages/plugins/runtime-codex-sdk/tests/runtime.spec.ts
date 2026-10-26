@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -62,8 +62,28 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
       ...FEATURES_OFF.map((f) => `features.${f}=false`), 'features.hooks=true', 'shell_environment_policy.exclude=["SYSTEM_CODEX_GATE_SOCKET", "SYSTEM_CODEX_GATE_KEY"]',
       // The workspace reads server, confined by its own bubblewrap (T200b).
       expect.stringMatching(/^mcp_servers\.workspace=\{command = "\/usr\/bin\/bwrap", args = \[/),
+      // A writing run's commands may write the confinement's private /dev/shm, which a headless Chrome writes (T265).
+      'sandbox_workspace_write.writable_roots=["/dev/shm"]',
     ])
     expect(s.lastClient.env).toMatchObject({ SYSTEM_MCP_TOKEN: 't', PATH: process.env.PATH })
+  })
+
+  it('lets a writing run\'s commands write its report file, bound back writable and named to them, beside the operator\'s own writable roots; a read-only run gets neither (T265)', async () => {
+    const dir = mkdtempSync(join(root, 'report-'))
+    const report = join(dir, 'report')
+    writeFileSync(report, '', { mode: 0o600 })
+    const s = scripted()
+    const launched: string[] = []
+    await runtime(s, { config: { sandbox_workspace_write: { writable_roots: ['/opt/cache'] } }, launcher: (c) => (launched.push([c.command, ...c.args].join(' ')), 'launcher') })
+      .run({ prompt: 'run the browser tests', workspace, sandbox: 'workspace-write', reportFile: report }, new AbortController().signal)
+    expect(s.lastClient.overrides!.at(-1)).toBe(`sandbox_workspace_write.writable_roots=["/opt/cache", "/dev/shm", ${JSON.stringify(dir)}]`)
+    expect(launched[0]).toContain(`--bind ${realpathSync(report)} ${realpathSync(report)}`)
+    expect(launched[0]).toContain(`--setenv SYSTEM_CHECK_REPORT_PATH ${report}`)
+    const reading = scripted()
+    const plain: string[] = []
+    await runtime(reading, { launcher: (c) => (plain.push([c.command, ...c.args].join(' ')), 'launcher') }).run({ prompt: 'x', workspace, sandbox: 'read-only', reportFile: report }, new AbortController().signal)
+    expect(reading.lastClient.overrides!.filter((o) => o.startsWith('sandbox_workspace_write.'))).toEqual([])
+    expect(plain[0]).not.toContain('SYSTEM_CHECK_REPORT_PATH')
   })
 
   it('refuses a configuration it cannot hold exactly: MCP servers, hooks of its own, a feature it keeps off, hooks off', async () => {

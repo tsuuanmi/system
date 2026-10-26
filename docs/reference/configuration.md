@@ -505,6 +505,7 @@ No options.
 | `env` | Record<string, string> | `{}` | Explicit environment for Claude Code (no secrets; use forwardEnv) |
 | `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as an API key Claude Code should use |
 | `home` | string |  | The Workers' Claude Code home (CLAUDE_CONFIG_DIR; default <DSH_HOME>/system/claude-home), never the operator's ~/.claude; sign in there once |
+| `unixSockets` | boolean | `true` | Let a writing run's commands make unix sockets, which a headless Chrome needs to run the browser tests in a Worker's own tool call (T265). Every unix socket of the host the account could connect to (a container daemon's, the system bus) is masked in that run first; false refuses unix sockets always |
 
 ## `runtime-codex-sdk`
 

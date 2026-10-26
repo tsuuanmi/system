@@ -63,7 +63,7 @@ import z from '@deepseek-ai/schemastery'
 import {
   type AgentHome, type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LimitReport, type LimitsOptions, type LoginCommand, type ModelUsage, type ProbeOptions,
   type RunMetering, type RunResult, type RunSpec, type RunObserver, type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand,
-  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, WEB_RUN_TOOLS, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, readHomeJson, withMetering,
+  agentHome, agentShellEnvironment, HOST_TOOLS_SERVER, homeProblem, WEB_RUN_TOOLS, hostToolsProblem, hostToolsServer, identityHmac, maskEmail, observe, proveConfinement, homeSocketDirectories, readHomeJson, SOCKET_ROOTS, socketCovers, socketDirectories, toolSandboxAllowances, withMetering, withRunReport, writableUnixSockets,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -108,12 +108,25 @@ const rule = (tool: string): string => (tool === COMMAND_TOOL || WEB_RUN_TOOLS.i
  * by name too (`denyWrite` wins over `allowWrite`), so no command writes startup code a later
  * command's shell would run; and no network: no domain is allowed, and `strictAllowlist` makes any
  * other host a refusal by the sandbox itself, never a question for a permission flow.
+ * `allow` is what a browser test needs there, as in a check's confinement (T265,
+ * `toolSandboxAllowances`): the managed Chrome readable (`read`), the confinement's private
+ * `/dev/shm` and the run's report file writable (`write`); none of them is a startup path, which
+ * stays denied. `unixSockets` lets its commands make unix sockets, which Chrome needs, given only
+ * when the run's confinement masks the host's sockets ({@link RuntimeOptions.unixSockets}), and then
+ * only with `socketDirectories` (where the host's daemons make their sockets: `/run`, the container
+ * engines' directories) denied to its commands for the whole run (`denyRead`), so a socket a daemon
+ * makes there after the run started is no more reachable than one there before; no network either way.
  */
-export function commandSandbox(workspace: string, startup: readonly string[] = []): SandboxSettings {
+export function commandSandbox(workspace: string, startup: readonly string[] = [], allow: { read?: readonly string[]; write?: readonly string[]; unixSockets?: boolean; socketDirectories?: readonly string[] } = {}): SandboxSettings {
+  const read = allow.read ?? []
+  const denyRead = allow.unixSockets ? [...(allow.socketDirectories ?? [])] : []
   return {
     enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false,
-    filesystem: { allowWrite: [workspace], ...(startup.length ? { denyWrite: [...startup] } : {}) },
-    network: { allowedDomains: [], strictAllowlist: true },
+    filesystem: {
+      allowWrite: [workspace, ...(allow.write ?? [])], ...(read.length ? { allowRead: [...read] } : {}), ...(startup.length ? { denyWrite: [...startup] } : {}),
+      ...(denyRead.length ? { denyRead } : {}),
+    },
+    network: { allowedDomains: [], strictAllowlist: true, ...(allow.unixSockets ? { allowAllUnixSockets: true } : {}) },
   }
 }
 
@@ -186,6 +199,27 @@ export interface RuntimeOptions {
    * `<DSH_HOME>/system/run`, hidden from Claude Code, the home bound back; T198).
    */
   runDir?: string | undefined
+  /**
+   * Let a writing run's commands make unix sockets (the SDK's sandbox `allowAllUnixSockets`; default
+   * on, T265). On Linux the sandbox refuses every `socket(AF_UNIX)` otherwise, and a headless Chrome
+   * cannot start without them (`socket() failed: Operation not permitted`), so the browser tests
+   * would skip in a Worker's own tool call. On, every unix socket of the host the account could
+   * connect to (`writableUnixSockets`: a container daemon's, the system bus) is masked in the run's
+   * confinement first, and the commands still have no network; a scan that may have missed one, or
+   * masks the host's bubblewrap cannot hold, leave them refused. `false` refuses them always.
+   */
+  unixSockets?: boolean | undefined
+  /**
+   * The sockets to mask in a writing run, given what its confinement hides and what it binds back
+   * (default: `writableUnixSockets` over `SOCKET_ROOTS` and the kernel's list, with those).
+   */
+  sockets?: (hide: readonly string[], rebound: readonly string[]) => { sockets: string[]; complete: boolean }
+  /**
+   * The directories where the host's daemons make their sockets, covered for a writing run's whole run
+   * when its commands may make unix sockets, and whether each could be (default: agent-runtime-core
+   * `socketDirectories`, which makes those in the home that are missing).
+   */
+  socketDirectories?: () => { directories: string[]; complete: boolean }
 
   query?: QueryFn
   findExecutable?: () => string | undefined
@@ -288,11 +322,30 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   private async drive(spec: RunSpec, signal: AbortSignal, home: string, tools: string[], executable: string, shellHome: string, onHandle?: (handle: string) => void, observer?: RunObserver): Promise<RunResult> {
     const writes = spec.sandbox === 'workspace-write'
     // The shells' home is bound back read-only (T198): it stays empty, so no shell finds a startup file there.
-    const confinement = this.confinement(home, writes ? { writable: [home, spec.workspace], readOnly: [shellHome] } : { writable: [home], readOnly: [spec.workspace, shellHome] })
+    // A writing run's report file is bound back writable and named to its commands, and its commands
+    // may make unix sockets, which Chrome needs, only with every socket of the host they could
+    // connect to masked (T265).
+    const plain = this.reporting(this.confinement(home, writes ? { writable: [home, spec.workspace], readOnly: [shellHome] } : { writable: [home], readOnly: [spec.workspace, shellHome] }), writes ? spec.reportFile : undefined)
     const env = this.environment(home, shellHome)
+    let confinement = plain
+    let unixSockets = false
+    let deniedDirectories: string[] = []
     if (writes) {
-      // The second layer is proven again before a run that writes: its sandbox must start (ADR-0038).
-      const commands = await this.proveCommands(confinement, env)
+      // The second layer is proven again before a run that writes: its sandbox must start (ADR-0038),
+      // with the host's sockets masked when its commands may make unix sockets; where it does not
+      // start so (by any of the ways the sockets can be kept from them), it is proven without the masks
+      // and runs with unix sockets refused, as before T265.
+      let commands: { proven: boolean; detail: string } | undefined
+      for (const way of this.socketsMasked(plain)) {
+        commands = await this.proveCommands(way.confinement, env)
+        if (!commands.proven) continue
+        confinement = way.confinement
+        unixSockets = way.unixSockets
+        deniedDirectories = way.socketDirectories
+        break
+      }
+      // The masks may be what keeps it from starting here: then it runs without them, unix sockets refused.
+      if (!commands?.proven) commands = await this.proveCommands(plain, env)
       if (!commands.proven) throw new ProviderError('config_error', `claude-agent-sdk: ${commands.detail}; refusing a workspace-write run, whose commands would not be confined (ADR-0038)`)
       if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
     }
@@ -323,7 +376,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           // Without the daemon's credentials (INV-8); its own sign-in lives in its home.
           env,
           // Every command in the SDK's sandbox: the workspace, no network, no way out (ADR-0038).
-          ...(writes ? { sandbox: commandSandbox(spec.workspace, [home, shellHome]) } : {}),
+          // A browser test runs there as in a check's confinement (T265).
+          ...(writes ? { sandbox: commandSandbox(spec.workspace, [home, shellHome], { ...toolSandboxAllowances(confinement, spec.reportFile), unixSockets, socketDirectories: deniedDirectories }) } : {}),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
           // No matcher: every tool call, subagents' included, passes the gate before it runs.
           ...(spec.toolGate ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }] } } : {}),
@@ -556,7 +610,63 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     }
   }
 
-  /** The SDK's Claude Code process, started under the confinement: the SDK's command line, wrapped. Its pid, when it has one, is the run's agent process. */
+  /**
+   * A writing run's confinement with the unix sockets of the host it could connect to masked (T265,
+   * `writableUnixSockets`: every socket the host has bound, from the kernel's list, and every one on
+   * disk under the system's runtime directories, the account's home, and container engines'
+   * directories, and under every path it binds back, by what the child sees: only a path the
+   * confinement hides and binds nothing back from is passed over; a socket under a path it binds
+   * back is masked, a read-only bind not stopping a connect), and whether its commands may then make
+   * unix sockets: only when `unixSockets` is on (the default) and the scan was complete. A scan that
+   * may have missed one (the kernel's list unreadable, or its bound reached) leaves them refused, as
+   * before, and so does a mask the confinement cannot hold. Masks are a snapshot, so the directories
+   * where the host's daemons make their sockets (`socketDirectories`, each made first if it is in the
+   * home and missing, so it can be covered) are covered for the whole run: those in the home hidden in
+   * the confinement itself, and all of them denied to its commands (`socketDirectories` of the result,
+   * the command sandbox's `denyRead`). One that cannot be made leaves unix sockets refused.
+   * The ways to confine such a run, in order: the sockets masked one by one, then, for a host whose
+   * bubblewrap cannot mount over a socket (bubblewrap 0.4), each socket's own directory hidden instead
+   * (`socketCovers`; one under a directory denied to the commands needs none), when that hides nothing
+   * the run works in. None when unix sockets stay refused; the first whose sandbox starts is used.
+   */
+  private socketsMasked(confinement: Confinement): Array<{ confinement: Confinement; unixSockets: boolean; socketDirectories: string[] }> {
+    const refused: Array<{ confinement: Confinement; unixSockets: boolean; socketDirectories: string[] }> = []
+    if (this.options.unixSockets === false) return refused
+    const where = (this.options.socketDirectories ?? socketDirectories)()
+    if (!where.complete) return refused
+    // The container engines' directories in the home are hidden from the agent itself too (its own
+    // confinement, which System builds); `/run` it keeps (its DNS), denied to its commands only.
+    const covered = { ...confinement, hide: [...confinement.hide, ...homeSocketDirectories(where.directories)] }
+    // What the child sees: what the confinement hides, less what it binds back from under it (a run's
+    // worktree and its homes lie under the hidden DSH home and are bound back).
+    const rebound = [...covered.writable, ...covered.readOnly]
+    const found = (this.options.sockets ?? ((hide, binds) => writableUnixSockets(SOCKET_ROOTS, hide, undefined, binds)))(covered.hide, rebound)
+    if (!found.complete) return refused
+    const masked = found.sockets.length ? { ...covered, masks: [...(covered.masks ?? []), ...found.sockets] } : covered
+    const byDirectory = found.sockets.length ? socketCovers(found.sockets, rebound, where.directories) : { directories: [], complete: false }
+    const candidates = [masked, ...(byDirectory.complete ? [{ ...covered, hide: [...covered.hide, ...byDirectory.directories] }] : [])]
+    return candidates.flatMap((candidate) => {
+      try {
+        confinedCommand('true', [], candidate)
+        return [{ confinement: candidate, unixSockets: true, socketDirectories: where.directories }]
+      } catch {
+        return []
+      }
+    })
+  }
+
+  /** `confinement` with a writing run's report file (T265), checked as a run's confinement is. */
+  private reporting(confinement: Confinement, reportFile: string | undefined): Confinement {
+    try {
+      const reporting = withRunReport(confinement, reportFile)
+      confinedCommand('true', [], reporting)
+      return reporting
+    } catch (error) {
+      throw new ProviderError('config_error', `claude-agent-sdk: ${firstLine(error)}; nothing was run`, { cause: error })
+    }
+  }
+
+  /** The SDK's Claude Code process, started under the confinement:the SDK's command line, wrapped. Its pid, when it has one, is the run's agent process. */
   private spawnConfined(options: SpawnOptions, confinement: Confinement, observer?: RunObserver): SpawnedProcess {
     const confined = confinedCommand(options.command, options.args, confinement)
     const spawned = (this.options.spawn ?? spawnPiped)(confined.command, confined.args, { cwd: options.cwd, env: options.env, signal: options.signal })
@@ -861,6 +971,8 @@ export interface Config {
   env?: Record<string, string>
   forwardEnv?: string[]
   home?: string
+  /** Let a writing run's commands make unix sockets, which Chrome needs ({@link RuntimeOptions.unixSockets}, T265). */
+  unixSockets?: boolean
 }
 
 export const name = 'runtime-claude-agent-sdk'
@@ -870,11 +982,12 @@ export const Config: z<Config> = z.object({
   env: z.dict(z.string()).description('Explicit environment for Claude Code (no secrets; use forwardEnv)'),
   forwardEnv: z.array(z.string()).description('Daemon environment variables forwarded by name, such as an API key Claude Code should use'),
   home: z.string().description('The Workers\' Claude Code home (CLAUDE_CONFIG_DIR; default <DSH_HOME>/system/claude-home), never the operator\'s ~/.claude; sign in there once'),
+  unixSockets: z.boolean().default(true).description('Let a writing run\'s commands make unix sockets, which a headless Chrome needs to run the browser tests in a Worker\'s own tool call (T265). Every unix socket of the host the account could connect to (a container daemon\'s, the system bus) is masked in that run first; false refuses unix sockets always'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
   ctx.agentRuntimes.register(new ClaudeAgentRuntime({
-    executable: config.executable, env: config.env, forwardEnv: config.forwardEnv, home: config.home,
+    executable: config.executable, env: config.env, forwardEnv: config.forwardEnv, home: config.home, unixSockets: config.unixSockets,
     confine: (bind) => ctx.agentRuntimes.confinement(bind),
   }))
 }

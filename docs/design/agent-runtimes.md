@@ -715,6 +715,67 @@ worktreeSetup:
   each skip names why, the suite says so at its end, and a check reports it
   ([a run's checks](#a-runs-checks)). How the tests find Chrome there:
   [testing](../engineering/testing.md#real-browser-tests-in-a-workers-confinement).
+- **A browser in a Worker's own tool call** (T265). A writing run's commands run inside a second
+  layer, the runtime's own command sandbox, which the read confinement alone does not open:
+  Claude Code's writes only its `allowWrite` paths, Codex's its writable roots. For a browser test
+  run there as in a check, `toolSandboxAllowances` (agent-runtime-core) gives that layer what the
+  confinement holds for it: the managed Chrome readable (`allowRead`, the directory
+  `SYSTEM_BROWSERS_DIR` names), the confinement's private `/dev/shm` writable, and the run's report
+  file writable (below). Fonts stay on the read-only host; vite's `node_modules/.vite` and
+  `.vite-temp` lie in the workspace, writable already. Claude Code's sandbox also refuses every unix
+  socket on Linux (a seccomp filter: `socket() failed: Operation not permitted`), which Chrome
+  needs: the runtime's `unixSockets` (default on) lets a writing run's commands make them
+  (`allowAllUnixSockets`), and only after its confinement masks every unix socket of the host the
+  account could connect to (`writableUnixSockets`): every socket a process of the host has bound,
+  from the kernel's list (`/proc/net/unix`), wherever it lies (Docker Desktop's
+  `~/.docker/desktop/docker.sock`, a Podman machine's), and every one on disk under `/run`,
+  `/var/run`, the home two levels down, container engines' own directories (`~/.docker`,
+  `~/.local/share/containers`, Colima, Lima, Rancher Desktop), and every path the confinement binds
+  back, by what the run's child sees: only a path the confinement hides and binds nothing back from
+  is passed over (the run's worktree and homes lie under the hidden DSH home and are bound back, so
+  a socket there is found and masked). Each is covered by the null device after every other mount
+  (the confinement's `masks`), under a path it binds back too, since a read-only mount does not stop
+  a connect; so no command reaches a host daemon through one, as none reaches the network. A mask
+  is a snapshot, so the directories where the host's daemons make their sockets (`socketDirectories`:
+  `/run`, `/var/run`, and the container engines' own directories in the home) are also denied to the
+  run's commands for the whole run (the command sandbox's `denyRead`, a mount over each): a socket a
+  daemon makes there after the run started (dockerd starting, making `/run/docker.sock`) is no more
+  reachable than one there before. A directory can be covered only if it is there when the run
+  starts, so one in the home that is not (`~/.docker` before Docker Desktop's first start) is made
+  then, empty and owner-only; one that cannot be made leaves unix sockets refused for the run. Those
+  in the home are also hidden from the agent's own confinement, which System builds; Claude Code
+  keeps `/run` there (it needs it for DNS to its API), denied to its commands only. A socket some daemon makes later elsewhere in the visible home, outside
+  these directories, is not covered: the daemons that control the host make theirs in them. A list
+  that cannot be read, or a scan that reaches its bound (50,000 entries), leaves unix sockets refused
+  for that run. A host whose bubblewrap cannot mount over a socket (bubblewrap 0.4 fails on one:
+  `No such device or address`) does not start the command sandbox with the masks: the run is then
+  proven with each such socket's own directory hidden instead (`socketCovers`: an empty tmpfs over
+  it, what else it holds hidden with it; one under a directory denied to the commands needs none),
+  when none is `/`, the home or above it, or a path the confinement binds back, under it, or above
+  it. Where that does not start either, or cannot be built, the run is proven again without them
+  and runs as before, its browser tests skipped and reported; `unixSockets: false` refuses them always. A socket served from another network namespace
+  (a container's) whose file lies deeper than the roots scanned is not in the kernel's list: the
+  daemons that control the host (dockerd, Docker Desktop, Podman, containerd) listen in the host's.
+  Codex's sandbox gets `/dev/shm` and the report file's directory as writable roots
+  (`sandbox_workspace_write.writable_roots`, after the operator's own).
+- **A writing run's report file** (T265). Each `workspace-write` run gets a fresh, empty,
+  owner-only file outside its worktree (`RunSpec.reportFile`, made in `<worktreeRoot>/.setup`),
+  bound into its confinement writable and named in `SYSTEM_CHECK_REPORT_PATH`, as a check's is.
+  When a test run its agent started skipped browser tests, the suite's reporter appends
+  `browser-tests-not-run: <why>` there; once the run ended the source reads it, and the run's
+  result says so (`agent-result@1.5` `notRun`: `its browser tests (<why>)`). The review of that
+  change is told before its subject: the author's word that its tests pass says nothing of those.
+  A report file that could not be made, or cannot be read once the run ended, is said on the
+  result too (`reportUnread`), and the review is told that whether its browser tests ran is not
+  known: never taken for a report naming no skip.
+- **A sandbox's placeholders are no change** (T265). Claude Code's command sandbox denies writes to
+  shell startup files, git and editor configuration, and its own settings in the directory its
+  commands start in, and mounts an empty placeholder where one is missing (`.bashrc`, `.profile`,
+  `.gitconfig`, `.mcp.json`, `.idea`, `.vscode`, `.claude/settings.json`, …): inside the sandbox
+  git lists them as untracked. The Worker's `HOME` is its private home elsewhere; these are the
+  sandbox's. An untracked one at one of those paths that holds nothing (empty, the null device, a
+  link to it) is left out of a run's subject and its diff (`sandboxPlaceholder`, libs), of
+  `test:affected`'s changed files, and is removed before a landing commits; one with content counts.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,
