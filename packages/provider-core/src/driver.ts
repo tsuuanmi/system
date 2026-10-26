@@ -27,7 +27,7 @@ export interface AskOptions {
   binding?: string | undefined
   signal?: AbortSignal
   /** Two-clock completion deadlines for this turn; the driver's defaults when absent. */
-  deadlines?: { timeoutMs: number; stallTimeoutMs: number } | undefined
+  deadlines?: { timeoutMs: number; stallTimeoutMs: number; now?: () => number } | undefined
   /**
    * Called after the prompt is in the composer and the mode is verified, immediately
    * before the send. The runtime persists the turn receipt here (INV-4); a throw aborts

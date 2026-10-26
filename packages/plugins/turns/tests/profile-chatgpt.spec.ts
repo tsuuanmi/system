@@ -26,12 +26,18 @@ describe.runIf(canRunBrowser)('ctx.turns: a ChatGPT account works in its own log
 
   it('reports a turn that stalls on a page the site signed out as a sign-out, so the account shows it (live 2026-10-17)', async () => {
     const { ctx, fake } = await bootBoundChatGpt({ fake: { thinkMs: 60_000 }, turns: { stallTimeoutMs: 4000 } })
+    // The turn's stall clock stands still until the page has been reloaded as signed out, then
+    // moves 1 s per read: the stall can only fire after the reload, however slow it was.
+    let ticking = false
+    let clock = 0
+    ctx.turns.stallClock = () => (ticking ? (clock += 1000) : clock)
     const { turnId } = await ask(ctx, { prompt: 'Still there?' })
     await vi.waitFor(() => expect(fake.sent).toHaveLength(1), { timeout: 30_000, interval: 100 })
     // The site signs the session out while the answer is pending: its page becomes the logged-out home.
     fake.options.loggedOutHome = true
     const held = (ctx.browser as unknown as { profiles: { held: Map<string, { context: import('patchright-core').BrowserContext }> } }).profiles.held.get('chatgpt-main')!
     await held.context.pages().find((p) => p.url().startsWith(fake.origin))!.reload()
+    ticking = true
     const done = await ctx.turns.wait(turnId, 60_000)
     expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reauth_required', disposition: 'USER_ACTION', message: expect.stringMatching(/signed out \(the turn had failed as provider_stalled/) } })
     expect((await ctx.accounts.get('chatgpt-main')).status).toBe('reauth-required')

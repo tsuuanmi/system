@@ -34,6 +34,8 @@ export interface WaitOptions {
   stableMs: number
   signal?: AbortSignal
   onProgress?: (event: ProviderProgressEvent) => void
+  /** The clock both deadlines read (milliseconds); the wall clock when absent. A test controls it; the page's own timers are not touched. */
+  now?: () => number
 }
 
 function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
@@ -68,17 +70,18 @@ export async function waitForStableCompletion(read: () => Promise<CompletionSnap
   if (options.stallTimeoutMs !== undefined && options.stallTimeoutMs >= options.timeoutMs) {
     throw new ProviderError('config_error', 'stallTimeoutMs must be lower than timeoutMs')
   }
-  const startedAt = Date.now()
+  const now = options.now ?? Date.now
+  const startedAt = now()
   const deadline = startedAt + options.timeoutMs
   let lastProgressAt = startedAt
   let previous: CompletionSnapshot | undefined
   let candidate: string | undefined
   let stableSince: number | undefined
 
-  while (Date.now() < deadline) {
+  while (now() < deadline) {
     if (options.signal?.aborted) throw abortReason(options.signal)
     const snapshot = await read()
-    const at = Date.now()
+    const at = now()
     const text = snapshot.text.trim()
     const presenceChanged = previous === undefined || snapshot.responsePresent !== previous.responsePresent
     if (presenceChanged) {
